@@ -24,6 +24,12 @@ type Process interface {
 type processPIDer interface{ PID() int }
 type processHardStopper interface{ ForceStop() error }
 
+type activeWallpaper struct {
+	assignment Assignment
+	state      State
+	engine     string
+}
+
 // processWatch owns the one Wait call for a process. The engine needs to reap
 // children during shutdown, while waitForQuery also needs to notice a child
 // that exits before its socket becomes ready.
@@ -126,6 +132,9 @@ type gslapperEngine struct {
 	mu          sync.Mutex
 	owned       map[string]Process
 	socketFiles map[string]os.FileInfo
+	sockets     map[string]string
+	active      map[string]activeWallpaper
+	generations map[string]uint64
 	fallbacks   map[string]Process
 	locks       map[string]*sync.Mutex
 	closed      bool
@@ -148,6 +157,9 @@ func NewEngine(dir string, lookup func(string) bool) *gslapperEngine {
 		cancel:       cancel,
 		owned:        map[string]Process{},
 		socketFiles:  map[string]os.FileInfo{},
+		sockets:      map[string]string{},
+		active:       map[string]activeWallpaper{},
+		generations:  map[string]uint64{},
 		fallbacks:    map[string]Process{},
 		locks:        map[string]*sync.Mutex{},
 	}
@@ -166,6 +178,15 @@ func probeCapabilities(lookup func(string) bool) Capabilities {
 			caps.GSlapper = helpSupports(help)
 		}
 	}
+	if lookup("sysc-terminal") {
+		if out, err := exec.Command("sysc-terminal", "--list").CombinedOutput(); err == nil {
+			cat := ParseList(string(out))
+			if len(cat.Effects) > 0 {
+				caps.Terminal = true
+				caps.Catalog = cat
+			}
+		}
+	}
 	caps.Statics = installedFallbacks(lookup)
 	return caps
 }
@@ -180,6 +201,14 @@ func (e *gslapperEngine) ownedProcess(connector string) Process {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.owned[connector]
+}
+
+// OwnedExited checks only the process belonging to the requested generation.
+// Replacement, restore and disconnect invalidate older observations.
+func (e *gslapperEngine) OwnedExited(connector string, generation uint64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.closed && e.generations[connector] == generation && processExited(e.owned[connector])
 }
 
 func (e *gslapperEngine) lockConnector(connector string) func() {
@@ -201,6 +230,23 @@ func (e *gslapperEngine) isClosed() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.closed
+}
+
+func (e *gslapperEngine) AdvanceGeneration(connector string, generation uint64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.generations == nil {
+		e.generations = map[string]uint64{}
+	}
+	if generation > e.generations[connector] {
+		e.generations[connector] = generation
+	}
+}
+
+func (e *gslapperEngine) generationCurrent(job Job) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.generations[job.Connector] == job.Gen
 }
 
 func processPID(proc Process) int {
@@ -270,6 +316,22 @@ func deadSocketFile(path string) (os.FileInfo, bool) {
 	return info, true
 }
 
+func clearDeadSocketIfPresent(connector, path string) error {
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("wallpaper: stat %s: %w", path, err)
+	}
+	info, dead := deadSocketFile(path)
+	if !dead {
+		return fmt.Errorf("wallpaper: %s socket is not owned by this shell", connector)
+	}
+	if err := removeSocketIfSame(path, info); err != nil {
+		return fmt.Errorf("wallpaper: clear stale %s socket: %w", connector, err)
+	}
+	return nil
+}
+
 func removeSocketIfSame(path string, expected os.FileInfo) error {
 	current, err := os.Lstat(path)
 	if os.IsNotExist(err) {
@@ -301,19 +363,77 @@ func (e *gslapperEngine) rememberSocket(connector string, proc Process, path str
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.owned[connector] != proc {
-		return errors.New("wallpaper: gSlapper ownership changed while it became ready")
+		return errors.New("wallpaper: process ownership changed while it became ready")
 	}
 	if e.socketFiles == nil {
 		e.socketFiles = map[string]os.FileInfo{}
 	}
+	if e.sockets == nil {
+		e.sockets = map[string]string{}
+	}
 	e.socketFiles[connector] = info
+	e.sockets[connector] = path
 	return nil
+}
+
+func (e *gslapperEngine) currentSocket(connector string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if p := e.sockets[connector]; p != "" {
+		return p
+	}
+	return socketPath(e.dir, connector)
+}
+
+func (e *gslapperEngine) actualPrevious(job Job) Job {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if active, ok := e.active[job.Connector]; ok {
+		job.Previous = active.assignment
+		job.HasPrevious = true
+		job.PreviousState = active.state
+		job.PreviousEngine = active.engine
+	}
+	return job
+}
+
+func (e *gslapperEngine) setActive(connector string, assignment Assignment, state State, engine string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.active == nil {
+		e.active = map[string]activeWallpaper{}
+	}
+	e.active[connector] = activeWallpaper{assignment: assignment, state: state, engine: engine}
+}
+
+func (e *gslapperEngine) clearActive(connector string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.active, connector)
+}
+
+func (e *gslapperEngine) rememberApply(job Job, preview, engine string, state State) {
+	assignment := Assignment{
+		Kind: job.Kind, Path: job.Path, Effect: job.Effect, Theme: job.Theme,
+		Artwork: job.Artwork, PreviewPath: preview, DesiredPlayback: state,
+	}
+	if job.Kind == KindEffect {
+		assignment.PreviewPath = stillFor(job.Previous)
+	}
+	e.setActive(job.Connector, assignment, state, engine)
 }
 
 var errEngineClosed = errors.New("wallpaper: engine is closed")
 
 // Apply puts one path on one output.
 func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
+	e.AdvanceGeneration(job.Connector, job.Gen)
+	if !e.generationCurrent(job) {
+		return "", nil
+	}
+	if job.Kind == KindEffect {
+		return e.applyEffect(job, set)
+	}
 	if err := checkPath(job.Path); err != nil {
 		return "", err
 	}
@@ -322,6 +442,10 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 	}
 	unlock := e.lockConnector(job.Connector)
 	defer unlock()
+	if !e.generationCurrent(job) {
+		return "", nil
+	}
+	job = e.actualPrevious(job)
 	if e.isClosed() {
 		return "", errEngineClosed
 	}
@@ -331,7 +455,15 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 		if job.Kind == KindVideo {
 			return "", errors.New("wallpaper: gslapper is not installed, so video cannot play")
 		}
-		return "", e.startFallback(job.Connector, job.Path)
+		if err := e.stopOwned(job.Connector, e.currentSocket(job.Connector)); err != nil {
+			return "", err
+		}
+		e.clearActive(job.Connector)
+		if err := e.startFallback(job.Connector, job.Path); err != nil {
+			return "", e.restorePreviousAfterApplyFailure(job, set, err)
+		}
+		e.rememberApply(job, "", caps.Static(), StateStatic)
+		return "", nil
 	}
 
 	// A fallback we started is stopped before gSlapper takes the output, so
@@ -341,6 +473,13 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 	}
 
 	socket := socketPath(e.dir, job.Connector)
+	if owned := e.ownedProcess(job.Connector); owned != nil {
+		if cur := e.currentSocket(job.Connector); cur != socket {
+			if err := e.stopOwned(job.Connector, cur); err != nil {
+				return "", err
+			}
+		}
+	}
 	owned := e.ownedProcess(job.Connector)
 	_, socketErr := os.Stat(socket)
 	switch {
@@ -356,7 +495,13 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 				if err == nil {
 					err = checkOK(reply)
 					if err == nil {
-						return e.stillFor(job), nil
+						preview := e.stillFor(job)
+						state := StatePlaying
+						if job.Kind == KindImage {
+							state = StateStatic
+						}
+						e.rememberApply(job, preview, EngineGSlapper, state)
+						return preview, nil
 					}
 				}
 				if classifyChangeError(err.Error()) == changeKeep {
@@ -374,12 +519,8 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 		// ponytail: probe-then-remove races a binder arriving in between;
 		// removeSocketIfSame narrows it to its own Lstat-to-Remove window and
 		// launch re-checks.
-		info, dead := deadSocketFile(socket)
-		if !dead {
-			return "", fmt.Errorf("wallpaper: %s socket is not owned by this shell", job.Connector)
-		}
-		if err := removeSocketIfSame(socket, info); err != nil {
-			return "", fmt.Errorf("wallpaper: clear stale %s socket: %w", job.Connector, err)
+		if err := clearDeadSocketIfPresent(job.Connector, socket); err != nil {
+			return "", err
 		}
 	case !os.IsNotExist(socketErr):
 		return "", fmt.Errorf("wallpaper: stat %s: %w", socket, socketErr)
@@ -388,10 +529,17 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 			return "", err
 		}
 	}
-	if err := e.launch(job, set, socket); err != nil {
-		return "", err
+	e.clearActive(job.Connector)
+	if err := e.launch(job.Connector, socket, launchArgs(set, socket, job.Connector, job.Path)); err != nil {
+		return "", e.restorePreviousAfterApplyFailure(job, set, err)
 	}
-	return e.stillFor(job), nil
+	preview := e.stillFor(job)
+	state := StatePlaying
+	if job.Kind == KindImage {
+		state = StateStatic
+	}
+	e.rememberApply(job, preview, EngineGSlapper, state)
+	return preview, nil
 }
 
 // stillFor is the preview a video apply reports back. A still the picker has
@@ -426,23 +574,24 @@ func (e *gslapperEngine) stillFor(job Job) string {
 	return still
 }
 
-// launch starts one gSlapper and waits until it actually answers.
-func (e *gslapperEngine) launch(job Job, set Settings, socket string) error {
+// launch starts one owned process and waits until it actually answers.
+func (e *gslapperEngine) launch(connector, socket string, argv []string) error {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		return fmt.Errorf("wallpaper: mkdir socket dir: %w", err)
 	}
-	// A leftover socket from a previous run is not ours to unlink. Apply has
-	// already dealt with the normal owned case; this second check closes the
-	// race where another process creates the path between that check and spawn.
 	if _, err := os.Lstat(socket); err == nil {
-		return fmt.Errorf("wallpaper: %s socket already exists and is not ours", job.Connector)
+		return fmt.Errorf("wallpaper: %s socket already exists and is not ours", connector)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("wallpaper: stat %s: %w", socket, err)
 	}
 
-	proc, err := e.spawn(launchArgs(set, socket, job.Connector, job.Path))
+	name := "process"
+	if len(argv) > 0 {
+		name = argv[0]
+	}
+	proc, err := e.spawn(argv)
 	if err != nil {
-		return fmt.Errorf("wallpaper: launch gslapper: %w", err)
+		return fmt.Errorf("wallpaper: launch %s: %w", name, err)
 	}
 	tracked := watchProcess(proc)
 	e.mu.Lock()
@@ -454,47 +603,40 @@ func (e *gslapperEngine) launch(job Job, set Settings, socket string) error {
 		_ = removeSocketIfSame(socket, info)
 		return errEngineClosed
 	}
-	e.owned[job.Connector] = tracked
+	e.owned[connector] = tracked
+	if e.sockets == nil {
+		e.sockets = map[string]string{}
+	}
+	// Record the intended socket before readiness so Close can remove the
+	// correct path even if shutdown interrupts the launch handshake.
+	e.sockets[connector] = socket
 	e.mu.Unlock()
 
-	if err := e.waitForQuery(tracked, socket); err != nil {
-		info := e.socketFile(job.Connector)
-		if info == nil {
-			info, _ = socketFileIfOwned(socket, tracked)
-		}
-		_ = forceStop(tracked)
-		_ = waitProcess(tracked, stopWait)
-		_ = removeSocketIfSame(socket, info)
-		e.mu.Lock()
-		if e.owned[job.Connector] == tracked {
-			delete(e.owned, job.Connector)
-			delete(e.socketFiles, job.Connector)
-		}
-		e.mu.Unlock()
+	if err := e.waitForQuery(tracked, socket, name); err != nil {
+		e.abortLaunch(connector, tracked, socket)
 		return err
 	}
-	if err := e.rememberSocket(job.Connector, tracked, socket); err != nil {
-		info := e.socketFile(job.Connector)
-		if info == nil {
-			info, _ = socketFileIfOwned(socket, tracked)
-		}
-		_ = forceStop(tracked)
-		_ = waitProcess(tracked, stopWait)
-		_ = removeSocketIfSame(socket, info)
-		e.mu.Lock()
-		if e.owned[job.Connector] == tracked {
-			delete(e.owned, job.Connector)
-			delete(e.socketFiles, job.Connector)
-		}
-		e.mu.Unlock()
-		return fmt.Errorf("wallpaper: record gslapper socket: %w", err)
+	if err := e.rememberSocket(connector, tracked, socket); err != nil {
+		e.abortLaunch(connector, tracked, socket)
+		return fmt.Errorf("wallpaper: record %s socket: %w", name, err)
 	}
 	return nil
 }
 
+func (e *gslapperEngine) abortLaunch(connector string, proc Process, socket string) {
+	info := e.socketFile(connector)
+	if info == nil {
+		info, _ = socketFileIfOwned(socket, proc)
+	}
+	_ = forceStop(proc)
+	_ = waitProcess(proc, stopWait)
+	_ = removeSocketIfSame(socket, info)
+	e.clearOwned(connector, proc)
+}
+
 // waitForQuery polls until the new instance answers, the child dies, or the
 // budget runs out. The socket file existing is not readiness.
-func (e *gslapperEngine) waitForQuery(proc Process, socket string) error {
+func (e *gslapperEngine) waitForQuery(proc Process, socket, processName string) error {
 	var exited <-chan error
 	if tracked, ok := proc.(*processWatch); ok {
 		exited = tracked.done
@@ -508,16 +650,16 @@ func (e *gslapperEngine) waitForQuery(proc Process, socket string) error {
 		if ctx.Err() != nil {
 			return errEngineClosed
 		}
-		if reply, err := e.requestSocket(proc, socket, "query", ipcTimeout); err == nil && checkOK(reply) == nil {
+		if reply, err := e.requestSocket(proc, socket, "query", ipcTimeout); err == nil && checkQuery(reply) == nil {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
 			return errEngineClosed
 		case <-exited:
-			return errors.New("wallpaper: gslapper exited before it was ready")
+			return fmt.Errorf("wallpaper: %s exited before it was ready", processName)
 		case <-deadline:
-			return fmt.Errorf("wallpaper: gslapper did not answer within %s", e.readyWait)
+			return fmt.Errorf("wallpaper: %s did not answer within %s", processName, e.readyWait)
 		case <-time.After(e.poll):
 		}
 	}
@@ -529,11 +671,11 @@ func (e *gslapperEngine) liveSocket(proc Process, socket string) bool {
 		return false
 	}
 	reply, err := e.requestSocket(proc, socket, "query", ipcTimeout)
-	return err == nil && checkOK(reply) == nil
+	return err == nil && checkQuery(reply) == nil
 }
 
-// stopOwned ends the gSlapper on one output: IPC first, then the handle we
-// hold, then a bounded wait for the socket to disappear.
+// stopOwned ends the wallpaper process on one output: IPC first, then the
+// handle we hold, then a bounded wait for the socket to disappear.
 //
 // There is deliberately no match-by-name step. If the socket outlives both and
 // we hold no handle for it, that is reported rather than resolved by killing
@@ -571,14 +713,14 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 		return nil
 	}
 	if err := forceStop(proc); err != nil {
-		return fmt.Errorf("wallpaper: stop gslapper on %s: %w", connector, err)
+		return fmt.Errorf("wallpaper: stop process on %s: %w", connector, err)
 	}
 	if !waitProcess(proc, stopWait) {
 		if _, err := os.Stat(socket); os.IsNotExist(err) {
 			e.clearOwned(connector, proc)
 			return nil
 		}
-		return fmt.Errorf("wallpaper: gslapper on %s did not exit", connector)
+		return fmt.Errorf("wallpaper: process on %s did not exit", connector)
 	}
 	if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
 		e.clearOwned(connector, proc)
@@ -594,6 +736,7 @@ func (e *gslapperEngine) clearOwned(connector string, proc Process) {
 	if e.owned[connector] == proc {
 		delete(e.owned, connector)
 		delete(e.socketFiles, connector)
+		delete(e.sockets, connector)
 	}
 }
 
@@ -604,6 +747,11 @@ func (e *gslapperEngine) SetPaused(connector string, paused bool) error {
 	if e.isClosed() {
 		return errEngineClosed
 	}
+	return e.setPausedLocked(connector, paused)
+}
+
+// setPausedLocked changes playback while the caller owns the output lock.
+func (e *gslapperEngine) setPausedLocked(connector string, paused bool) error {
 	if e.ownedProcess(connector) == nil {
 		return fmt.Errorf("wallpaper: %s socket is not owned by this shell", connector)
 	}
@@ -611,31 +759,47 @@ func (e *gslapperEngine) SetPaused(connector string, paused bool) error {
 	if paused {
 		command = "pause"
 	}
-	socket := socketPath(e.dir, connector)
+	socket := e.currentSocket(connector)
 	proc := e.ownedProcess(connector)
 	reply, err := e.requestSocket(proc, socket, command, ipcPlaybackTimeout)
 	if err != nil {
 		return err
 	}
-	return checkOK(reply)
+	if err := checkOK(reply); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	active, ok := e.active[connector]
+	if ok {
+		active.state = StatePlaying
+		active.assignment.DesiredPlayback = StatePlaying
+		if paused {
+			active.state = StatePaused
+			active.assignment.DesiredPlayback = StatePaused
+		}
+		e.active[connector] = active
+	}
+	e.mu.Unlock()
+	return nil
 }
 
-// Restore stops our gSlapper on one output and puts the last still on the
-// static fallback. This is the one place gSlapper-first is deliberately given
-// up (D16); with no still the output is simply left empty.
+// Restore stops our wallpaper process on one output and puts the last still on
+// the static fallback. This is the one place gSlapper-first is deliberately
+// given up (D16); with no still the output is simply left empty.
 func (e *gslapperEngine) Restore(connector, still string) error {
 	unlock := e.lockConnector(connector)
 	defer unlock()
 	if e.isClosed() {
 		return errEngineClosed
 	}
-	socket := socketPath(e.dir, connector)
+	socket := e.currentSocket(connector)
 	if err := e.stopOwned(connector, socket); err != nil {
 		return err
 	}
 	if err := e.stopFallback(connector); err != nil {
 		return err
 	}
+	e.clearActive(connector)
 	if still == "" {
 		return nil
 	}
@@ -840,9 +1004,11 @@ func (e *gslapperEngine) Close() {
 	cancel := e.cancel
 	owned := make(map[string]Process, len(e.owned))
 	sockets := make(map[string]os.FileInfo, len(e.socketFiles))
+	socketPaths := make(map[string]string, len(e.sockets))
 	for connector, proc := range e.owned {
 		owned[connector] = proc
 		sockets[connector] = e.socketFiles[connector]
+		socketPaths[connector] = e.sockets[connector]
 	}
 	fallbacks := make([]Process, 0, len(e.fallbacks))
 	for connector, proc := range e.fallbacks {
@@ -861,10 +1027,20 @@ func (e *gslapperEngine) Close() {
 		wg.Add(1)
 		go func(connector string, proc Process) {
 			defer wg.Done()
-			socket := socketPath(e.dir, connector)
+			socket := socketPaths[connector]
+			if socket == "" {
+				socket = socketPath(e.dir, connector)
+			}
+			info := sockets[connector]
+			if info == nil {
+				info, _ = socketFileIfOwned(socket, proc)
+			}
 			_ = forceStop(proc)
 			_ = waitProcess(proc, closeWait)
-			_ = removeSocketIfSame(socket, sockets[connector])
+			if info == nil {
+				info, _ = deadSocketFile(socket)
+			}
+			_ = removeSocketIfSame(socket, info)
 		}(connector, proc)
 	}
 	for _, proc := range fallbacks {

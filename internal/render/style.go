@@ -35,8 +35,9 @@ type Style struct {
 	// AttachEdge is also the edge an attached bar meets the screen along.
 	// EdgeFillet is the radius, in logical pixels, of the concave wedges past
 	// the far edge that curve the surface into the screen's side, one for each
-	// of EdgeLeft and EdgeRight. They take the surface's own fill. A surface
-	// is square at the far corner on each side that carries one.
+	// of EdgeLeft and EdgeRight. Left and Right mean leading and trailing along
+	// AttachEdge (top and bottom for a side surface). A surface is square at the
+	// far corner on each side that carries one.
 	EdgeFillet          int
 	EdgeLeft, EdgeRight bool
 

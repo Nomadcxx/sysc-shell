@@ -120,21 +120,22 @@ func (h *trayMenuHost) harness() *hostHarness { return h.harnessRef }
 // open shows the item's menu on one output as a fresh root. A dead item or an
 // item with no menu refuses; the root chain and the compositor are left alone.
 func (h *trayMenuHost) open(item tray.ItemKey, connector string, output, serial uint32) bool {
-	if !h.prepare(item, connector, output, serial) {
-		return false
-	}
-	h.child = false
-	h.rootGen = h.r.roots.openRoot(trayMenuRoot(output))
-	h.r.roots.onClose(h.rootGen, h.releaseForChainClose)
-	h.publishOpen()
-	return true
+	return h.openAt(item, connector, output, serial, ui.Rect{})
 }
 
 // openAt is open with the bar bounds of the item that triggered it, so the
 // surface lands under its icon rather than at the output origin.
 func (h *trayMenuHost) openAt(item tray.ItemKey, connector string, output, serial uint32, anchor ui.Rect) bool {
-	h.place = trayMenuUnderBar(anchor)
-	return h.open(item, connector, output, serial)
+	if !h.prepare(item, connector, output, serial) {
+		return false
+	}
+	h.child = false
+	w, height := h.size()
+	h.place = h.r.barMenuPlacementLocked(output, anchor, w, height)
+	h.rootGen = h.r.roots.openRoot(trayMenuRoot(output))
+	h.r.roots.onClose(h.rootGen, h.releaseForChainClose)
+	h.publishOpen()
+	return true
 }
 
 // openAsChild attaches the menu to the root that is already open — the drawer
@@ -145,10 +146,11 @@ func (h *trayMenuHost) openAsChild(item tray.ItemKey, connector string, output, 
 	if !ok {
 		return false
 	}
-	h.place = trayMenuBesideDrawer()
 	if !h.prepare(item, connector, output, serial) {
 		return false
 	}
+	w, height := h.size()
+	h.place = h.r.drawerMenuPlacementLocked(output, w, height)
 	if !h.r.roots.attach(generation, trayMenuRoot(output)) {
 		h.open_ = false
 		return false
@@ -220,6 +222,12 @@ func (h *trayMenuHost) spec() *wayland.AuxSpec {
 	if place.anchor == 0 {
 		place = trayMenuUnderBar(ui.Rect{})
 	}
+	if place.width > 0 {
+		width = place.width
+	}
+	if place.height > 0 {
+		height = place.height
+	}
 	// blur-exempt: a menu, not a panel, and one this comment already notes may
 	// become an xdg_popup parented to the bar. D13 does not name it either way;
 	// see docs/plans/2026-09-13-parity-tranche-continuation-handover.md.
@@ -248,6 +256,7 @@ type trayMenuPlacement struct {
 	anchor                  uint32
 	marginTop               int32
 	marginLeft, marginRight int32
+	width, height           int
 }
 
 // trayMenuUnderBar hangs the menu from the bar, left-aligned with the icon
@@ -261,6 +270,36 @@ func trayMenuUnderBar(anchor ui.Rect) trayMenuPlacement {
 	}
 }
 
+func trayMenuOnOutput(edge string, anchor ui.Rect, width, height, outW, outH int) trayMenuPlacement {
+	if outW <= 0 || outH <= 0 {
+		return trayMenuUnderBar(anchor)
+	}
+	width = min(max(width, 0), outW)
+	height = min(max(height, 0), outH)
+	x, y := anchor.X, anchor.Y+anchor.H
+	switch edge {
+	case "bottom":
+		y = anchor.Y - height
+	case "left":
+		x = anchor.X + anchor.W
+		y = anchor.Y
+	case "right":
+		x = anchor.X - width
+		y = anchor.Y
+	}
+	x = max(0, min(x, outW-width))
+	y = max(0, min(y, outH-height))
+	return trayMenuAt(ui.Rect{X: x, Y: y, W: width, H: height})
+}
+
+func trayMenuAt(rect ui.Rect) trayMenuPlacement {
+	return trayMenuPlacement{
+		anchor:    uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft),
+		marginTop: int32(max(rect.Y, 0)), marginLeft: int32(max(rect.X, 0)),
+		width: rect.W, height: rect.H,
+	}
+}
+
 // trayMenuBesideDrawer puts the menu immediately left of the open drawer, on
 // the same top-right corner the drawer anchors to, so the two never overlap.
 func trayMenuBesideDrawer() trayMenuPlacement {
@@ -268,6 +307,39 @@ func trayMenuBesideDrawer() trayMenuPlacement {
 		anchor:      uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight),
 		marginRight: trayDrawerWidth,
 	}
+}
+
+func trayMenuBesideDrawerAt(edge string, drawer ui.Rect, width, height, outW, outH int) trayMenuPlacement {
+	if outW <= 0 || outH <= 0 || drawer.W <= 0 || drawer.H <= 0 {
+		return trayMenuBesideDrawer()
+	}
+	width = min(max(width, 0), outW)
+	height = min(max(height, 0), outH)
+	x := drawer.X - width
+	if edge == "left" {
+		x = drawer.X + drawer.W
+	}
+	y := drawer.Y
+	x = max(0, min(x, outW-width))
+	y = max(0, min(y, outH-height))
+	return trayMenuAt(ui.Rect{X: x, Y: y, W: width, H: height})
+}
+
+func (r *Registry) barMenuPlacementLocked(output uint32, local ui.Rect, width, height int) trayMenuPlacement {
+	edge, anchor, _, out := r.barGeometryOnOutputLocked(output, local)
+	if out.W <= 0 || out.H <= 0 {
+		return trayMenuUnderBar(local)
+	}
+	return trayMenuOnOutput(edge, anchor, width, height, out.W, out.H)
+}
+
+func (r *Registry) drawerMenuPlacementLocked(output uint32, width, height int) trayMenuPlacement {
+	drawer := r.trayDrawer
+	if drawer == nil || drawer.output != output {
+		return trayMenuBesideDrawer()
+	}
+	edge, _, _, out := r.barGeometryOnOutputLocked(output, ui.Rect{})
+	return trayMenuBesideDrawerAt(edge, drawer.bodyRect(), width, height, out.W, out.H)
 }
 
 // size reports the logical surface size.

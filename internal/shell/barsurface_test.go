@@ -4,12 +4,17 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	shellplugin "github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
+	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
 // TestBarStyleResolvesGroundAndPillAlpha is design D1-D3 as a table: style,
@@ -184,7 +189,7 @@ func TestIslandsBlurEachVisibleCapsule(t *testing.T) {
 }
 
 // TestBarBodyMatchesThePlatform: the shell paints its body where the platform
-// declares it, for both shapes on both edges.
+// declares it, for every shape and edge.
 func TestBarBodyMatchesThePlatform(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -192,7 +197,7 @@ func TestBarBodyMatchesThePlatform(t *testing.T) {
 		hc    bool
 	}{{"frosted", false}, {"islands", false}, {"islands", true}} {
 		for _, shape := range config.BarShapes {
-			for _, edge := range []string{"top", "bottom"} {
+			for _, edge := range []string{"top", "bottom", "left", "right"} {
 				checkBarBodyMatchesThePlatform(t, tc.style, tc.hc, shape, edge)
 			}
 		}
@@ -215,10 +220,13 @@ func checkBarBodyMatchesThePlatform(t *testing.T, style string, hc bool, shape, 
 	}
 	t.Cleanup(bar.stopAnimation)
 	name := fmt.Sprintf("%s hc=%v %s %s", style, hc, shape, edge)
-	height := policy.SurfaceExtent()
+	width, height := 1200, policy.SurfaceExtent()
+	if edge == "left" || edge == "right" {
+		width, height = policy.SurfaceExtent(), 800
+	}
 	var want ui.Rect
-	want.X, want.Y, want.W, want.H = policy.BodyIn(1200, height)
-	if got := bar.bodyLocked(1200, height); got != want {
+	want.X, want.Y, want.W, want.H = policy.BodyIn(width, height)
+	if got := bar.bodyLocked(width, height); got != want {
 		t.Errorf("%s: shell body %+v, platform body %+v", name, got, want)
 	}
 	if surface, _, _ := bar.themeSnapshot().Geometry(); surface != policy.Extent() {
@@ -290,6 +298,55 @@ func TestAttachedBarRendersItsEndFillets(t *testing.T) {
 	}
 }
 
+func TestSideAttachedBarRendersItsScreenFillets(t *testing.T) {
+	t.Parallel()
+	for _, edge := range []string{"left", "right"} {
+		for _, scale := range []ui.Scale120{120, 150} {
+			cfg := config.Default()
+			policy := cfg.Bar
+			policy.Edge, policy.Style, policy.Shape = edge, "frosted", "attached"
+			policy.Left, policy.Center, policy.Right = nil, nil, nil
+			bar, err := NewWithTheme(ThemeFrom(cfg, policy).WithCompositor(true), policy, "DP-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			const outH = 160
+			if err := bar.Configure(policy.SurfaceExtent(), outH, int(scale)); err != nil {
+				t.Fatal(err)
+			}
+			w, h := scale.Physical(policy.SurfaceExtent()), scale.Physical(outH)
+			pixels := make([]byte, w*h*4)
+			if err := bar.Render(pixels, w, h, w*4); err != nil {
+				t.Fatal(err)
+			}
+			alpha := func(x, y int) byte { return pixels[(y*w+x)*4+3] }
+			body := scale.PhysicalRect(bar.bodyLocked(policy.SurfaceExtent(), outH))
+			farX := body.X + body.W
+			if edge == "right" {
+				farX = body.X - 1
+			}
+			if got := alpha(farX, body.Y); got == 0 {
+				t.Errorf("%s scale %d: leading screen-edge wedge is empty", edge, scale)
+			}
+			midY := body.Y + body.H/2
+			if got := alpha(farX, midY); got != 0 {
+				t.Errorf("%s scale %d: mid overhang alpha %d", edge, scale, got)
+			}
+			for _, strip := range bar.blurShape() {
+				physical := scale.PhysicalRect(strip)
+				for y := physical.Y; y < physical.Y+physical.H; y++ {
+					for x := physical.X; x < physical.X+physical.W; x++ {
+						if alpha(x, y) == 0 {
+							t.Fatalf("%s scale %d: blurred pixel (%d,%d) is transparent", edge, scale, x, y)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 // TestIslandsPaintNoGround renders an islands bar: the capsules paint, and the
 // bar between them stays transparent whether or not the compositor blurs.
 func TestIslandsPaintNoGround(t *testing.T) {
@@ -326,5 +383,424 @@ func TestIslandsPaintNoGround(t *testing.T) {
 				t.Errorf("blur=%v: ground at (%d,%d) alpha %#x, want transparent", blur, x, cy, a)
 			}
 		}
+	}
+}
+
+func TestSideBarRenderMatrix(t *testing.T) {
+	plugin := matrixPluginFrame(t)
+	for _, edge := range []string{"top", "bottom", "left", "right"} {
+		for _, style := range config.BarStyles {
+			for _, shape := range config.BarShapes {
+				t.Run(fmt.Sprintf("%s/%s/%s", edge, style, shape), func(t *testing.T) {
+					cfg, policy := renderMatrixPolicy(edge, style, shape, "compact")
+					bar := newRenderMatrixBar(t, cfg, policy, plugin, false)
+					for _, output := range []struct {
+						name string
+						w, h int
+					}{{"desktop", 3440, 1440}, {"laptop", 1536, 864}} {
+						for _, scale := range []int{120, 150} {
+							t.Run(fmt.Sprintf("%s/%d", output.name, scale), func(t *testing.T) {
+								w, h := barSurfaceSize(policy, output.w, output.h)
+								renderMatrixSurface(t, bar, policy, w, h, scale, true, true)
+							})
+						}
+					}
+				})
+			}
+		}
+	}
+
+	for _, edge := range []string{"top", "bottom", "left", "right"} {
+		t.Run("wide text/"+edge, func(t *testing.T) {
+			cfg, policy := renderMatrixPolicy(edge, "frosted", "floating", "wide")
+			bar := newRenderMatrixBar(t, cfg, policy, plugin, false)
+			for _, output := range []struct {
+				name string
+				w, h int
+			}{{"desktop", 3440, 1440}, {"laptop", 1536, 864}} {
+				for _, scale := range []int{120, 150} {
+					t.Run(fmt.Sprintf("%s/%d", output.name, scale), func(t *testing.T) {
+						w, h := barSurfaceSize(policy, output.w, output.h)
+						renderMatrixSurface(t, bar, policy, w, h, scale, true, true)
+					})
+				}
+			}
+		})
+	}
+
+	for _, edge := range []string{"top", "bottom", "left", "right"} {
+		for _, scale := range []int{120, 150} {
+			t.Run(fmt.Sprintf("constrained/%s/%d", edge, scale), func(t *testing.T) {
+				cfg, policy := renderMatrixPolicy(edge, "frosted", "attached", "dense")
+				bar := newRenderMatrixBar(t, cfg, policy, plugin, true)
+				fullW, fullH := barSurfaceSize(policy, 1536, 864)
+				renderMatrixSurface(t, bar, policy, fullW, fullH, scale, true, true)
+				bar.mu.Lock()
+				old, ok := matrixActionBounds(bar, "plugin:matrix-view:run")
+				bar.mu.Unlock()
+				if !ok || old.W <= 0 || old.H <= 0 {
+					t.Fatalf("dense plugin bounds = %+v, visible %v before constraint", old, ok)
+				}
+
+				shortOutputW, shortOutputH := 1536, 180
+				if edge == "top" || edge == "bottom" {
+					shortOutputW, shortOutputH = 180, 864
+				}
+				shortW, shortH := barSurfaceSize(policy, shortOutputW, shortOutputH)
+				renderMatrixSurface(t, bar, policy, shortW, shortH, scale, false, false)
+				bar.mu.Lock()
+				got, visible := matrixActionBounds(bar, "plugin:matrix-view:run")
+				hit, hitOK := bar.hitLocked(old.X+old.W/2, old.Y+old.H/2)
+				overflow := bar.overflow
+				bar.mu.Unlock()
+				if !visible || got != (ui.Rect{}) {
+					t.Fatalf("dropped plugin bounds = %+v, visible %v; want cleared bounds", got, visible)
+				}
+				if hitOK {
+					t.Fatalf("old plugin point still hits %q after the item was dropped", hit)
+				}
+				if !overflow.Any() || overflow.Left == 0 {
+					t.Fatalf("constrained overflow = %+v, want a dropped left-lane tail", overflow)
+				}
+			})
+		}
+	}
+}
+
+func TestSideAuxiliarySurfaceRenderUsesSpecBody(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		for _, scale := range []int{120, 150} {
+			t.Run(fmt.Sprintf("%s/%d", edge, scale), func(t *testing.T) {
+				cfg := config.Default()
+				cfg.Bar.Edge = edge
+				cfg.Theme.BlurBehind = false
+				cfg.Accessibility.ReducedMotion = true
+				reg := NewRegistry(cfg)
+				reg.lookPath = func(string) (string, error) { return "", fmt.Errorf("not installed") }
+				t.Cleanup(reg.Close)
+				bar := withTestBar(t, reg, 7, cfg)
+				bar.setOutputSize(1536, 864)
+				if err := bar.Configure(cfg.Bar.SurfaceExtent(), 864, scale); err != nil {
+					t.Fatal(err)
+				}
+				reg.mu.Lock()
+				trigger := reg.triggerLocked(7, "DP-1")
+				reg.mu.Unlock()
+				if err := reg.OpenPanel(PanelClock, 7, trigger); err != nil {
+					t.Fatal(err)
+				}
+				specs := drainAux(t, reg, 2)
+				var spec *wayland.AuxSpec
+				for _, request := range specs {
+					if request.Open != nil && request.Open.ID == panelSurfaceID(PanelClock) {
+						spec = request.Open
+						break
+					}
+				}
+				if spec == nil || spec.Width <= 0 || spec.Height <= 0 {
+					t.Fatalf("side panel spec = %+v, want nonempty actual surface geometry", spec)
+				}
+				w, h := int(spec.Width), int(spec.Height)
+				if err := spec.Callbacks.Configure(w, h, scale); err != nil {
+					t.Fatalf("configure actual auxiliary spec %dx%d: %v", w, h, err)
+				}
+				physicalW, physicalH := ui.Scale120(scale).Physical(w), ui.Scale120(scale).Physical(h)
+				pixels := make([]byte, physicalW*physicalH*4)
+				if err := spec.Callbacks.Render(pixels, physicalW, physicalH, physicalW*4); err != nil {
+					t.Fatalf("render actual auxiliary spec: %v", err)
+				}
+				reg.mu.Lock()
+				host := reg.panelHosts[PanelClock]
+				body := host.surfaceBody(w, h)
+				place := host.place
+				reg.mu.Unlock()
+				if place.BarEdge != edge || body.W <= 0 || body.H <= 0 || body.X < 0 || body.Y < 0 || body.X+body.W > w || body.Y+body.H > h {
+					t.Fatalf("side panel place edge=%s body=%+v surface=%dx%d", place.BarEdge, body, w, h)
+				}
+				if len(spec.InputRects) > 0 && spec.InputRects[0] != body {
+					t.Fatalf("panel input body = %+v, rendered body = %+v", spec.InputRects[0], body)
+				}
+				painted := false
+				for i := 3; i < len(pixels); i += 4 {
+					if pixels[i] != 0 {
+						painted = true
+						break
+					}
+				}
+				if !painted {
+					t.Fatal("actual side panel spec rendered no visible pixels")
+				}
+			})
+		}
+	}
+}
+
+func matrixPluginFrame(t *testing.T) pluginFrame {
+	t.Helper()
+	wire := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{
+		Kind: v1.KindButton, ID: "run", Text: "Scan", Name: "Scan devices", Role: "button",
+		Events: []v1.EventKind{v1.EventActivate},
+	}}}
+	root, err := shellplugin.Convert(wire, v1.ViewBar)
+	if err != nil {
+		t.Fatalf("convert validated bar plugin tree: %v", err)
+	}
+	stampPluginActions(root, "matrix-view")
+	return pluginFrame{Root: root, Revision: 1, ViewID: "matrix-view"}
+}
+
+func renderMatrixPolicy(edge, style, shape, profile string) (config.Config, config.Bar) {
+	cfg := config.Default()
+	policy := cfg.Bar
+	policy.Edge, policy.Style, policy.Shape = edge, style, shape
+	policy.Center = config.Default().Bar.Center
+	plugin := config.Item{ID: "plugin", Plugin: "org.sysc.matrix", Entry: "bar", Instance: "matrix"}
+	switch profile {
+	case "wide":
+		policy.Height = 80
+		policy.Left = []config.Item{
+			{ID: "launcher"}, {ID: "workspace"},
+			{ID: "group", Items: []config.Item{{ID: "cpu", Display: "text"}, {ID: "memory", Display: "text"}}},
+			{ID: "window-title", MaxWidth: 280},
+		}
+		policy.Right = []config.Item{{ID: "running-apps"}, plugin}
+	case "dense":
+		policy.Left = []config.Item{
+			{ID: "launcher"}, {ID: "workspace"}, {ID: "window-title", MaxWidth: 120}, {ID: "volume"}, plugin,
+		}
+		policy.Right = []config.Item{{ID: "running-apps"}}
+	default:
+		policy.Left = []config.Item{{ID: "launcher"}, {ID: "workspace"}, {ID: "window-title", MaxWidth: 160}}
+		policy.Right = []config.Item{{ID: "running-apps"}, plugin}
+	}
+	return cfg, policy
+}
+
+func newRenderMatrixBar(t *testing.T, cfg config.Config, policy config.Bar, plugin pluginFrame, dense bool) *Bar {
+	t.Helper()
+	bar, err := NewWithTheme(ThemeFrom(cfg, policy).WithCompositor(true), policy, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	count := 4
+	if dense {
+		count = 18
+	}
+	items := make([]tray.Item, 0, count)
+	images := make(map[tray.ItemKey]*ui.Image, count)
+	for i := 0; i < count; i++ {
+		item := trayItem(uint64(i+1), fmt.Sprintf("matrix-%d", i))
+		items = append(items, item)
+		images[item.Key] = &ui.Image{Width: 2, Height: 2, Stride: 8,
+			Pix: []byte{0x30, 0x90, 0xf0, 0xff, 0x30, 0x90, 0xf0, 0xff,
+				0x30, 0x90, 0xf0, 0xff, 0x30, 0x90, 0xf0, 0xff}}
+	}
+	bar.setTray(items, config.TrayPreferences{Enabled: true}, images)
+	running := []runningAppSlot{{Key: "firefox"}, {Key: "terminal"}, {Key: "editor"}}
+	if dense {
+		running = append(running, runningAppSlot{Key: "browser"}, runningAppSlot{Key: "music"})
+	}
+	bar.apply(barView{
+		Now: time.Date(2026, time.October, 3, 9, 7, 0, 0, time.UTC), Title: "A long focused window title for side bar geometry",
+		Pills:   []workspacePill{{ID: 11, Index: 1, Name: "one", Focused: true}, {ID: 12, Index: 2, Name: "two", Occupied: true}, {ID: 13, Index: 3, Name: "three"}},
+		Running: running, Plugins: map[string]pluginFrame{"matrix": plugin},
+	})
+	return bar
+}
+
+func barSurfaceSize(policy config.Bar, outputW, outputH int) (int, int) {
+	if policy.Edge == "left" || policy.Edge == "right" {
+		return policy.SurfaceExtent(), outputH
+	}
+	return outputW, policy.SurfaceExtent()
+}
+
+func renderMatrixSurface(t *testing.T, bar *Bar, policy config.Bar, width, height, scale120 int, checkCenter, checkHits bool) []byte {
+	t.Helper()
+	scale := ui.Scale120(scale120)
+	if err := bar.Configure(width, height, scale120); err != nil {
+		t.Fatalf("configure %dx%d scale %d: %v", width, height, scale120, err)
+	}
+	pw, ph := scale.Physical(width), scale.Physical(height)
+	pixels := make([]byte, pw*ph*4)
+	if err := bar.Render(pixels, pw, ph, pw*4); err != nil {
+		t.Fatalf("render %dx%d scale %d: %v", width, height, scale120, err)
+	}
+	painted := false
+	for i := 3; i < len(pixels); i += 4 {
+		if pixels[i] != 0 {
+			painted = true
+			break
+		}
+	}
+	if !painted {
+		t.Fatal("bar render has no surviving pixels")
+	}
+
+	bar.mu.Lock()
+	body := bar.bodyLocked(width, height)
+	content := bar.contentLocked(width, height)
+	axis := bar.barAxis()
+	sections := bar.sections()
+	counts := [3]int{bar.overflow.Left, bar.overflow.Center, bar.overflow.Right}
+	wantBodyX, wantBodyY, wantBodyW, wantBodyH := policy.BodyIn(width, height)
+	if body != (ui.Rect{X: wantBodyX, Y: wantBodyY, W: wantBodyW, H: wantBodyH}) {
+		bar.mu.Unlock()
+		t.Fatalf("rendered body %+v differs from policy geometry %+v", body,
+			ui.Rect{X: wantBodyX, Y: wantBodyY, W: wantBodyW, H: wantBodyH})
+	}
+	for _, section := range sections {
+		var checkCross func(*ui.Node, bool)
+		checkCross = func(n *ui.Node, clipped bool) {
+			if n == nil {
+				return
+			}
+			if !clipped && n.Bounds.W > 0 && n.Bounds.H > 0 {
+				if axis == ui.Vertical && (n.Bounds.X < content.X || n.Bounds.X+n.Bounds.W > content.X+content.W) {
+					t.Errorf("side node kind=%d text=%q action=%q bounds=%+v escape content %+v", n.Kind, n.Text, n.Action, n.Bounds, content)
+				}
+				if axis == ui.Horizontal && (n.Bounds.Y < content.Y || n.Bounds.Y+n.Bounds.H > content.Y+content.H) {
+					t.Errorf("horizontal node cross bounds %+v escape content %+v", n.Bounds, content)
+				}
+			}
+			for _, child := range n.Children {
+				checkCross(child, clipped || n.ClipBounds)
+			}
+		}
+		for _, node := range section {
+			checkCross(node, false)
+		}
+	}
+	center := ui.Rect{}
+	if len(bar.center) > 0 && bar.center[0].node != nil {
+		center = bar.center[0].node.Bounds
+	}
+	if checkCenter {
+		if center.W <= 0 || center.H <= 0 {
+			bar.mu.Unlock()
+			t.Fatal("centre pill has no rendered bounds")
+		}
+		got, want := center.X+center.W/2, content.X+content.W/2
+		if axis == ui.Vertical {
+			got, want = center.Y+center.H/2, content.Y+content.H/2
+		}
+		if abs(got-want) > 1 {
+			bar.mu.Unlock()
+			t.Fatalf("centre anchor = %d, want %d within content %+v", got, want, content)
+		}
+	}
+	wantFades := 0
+	for i, section := range sections {
+		if counts[i] > 0 && lastPlaced(section) != nil {
+			wantFades++
+		}
+	}
+	fades := overflowFades(sections, bar.overflow, bar.theme.Metrics.StandardControl, axis)
+	if len(fades) != wantFades {
+		bar.mu.Unlock()
+		t.Fatalf("overflow counts %v produced %d fades, want %d", counts, len(fades), wantFades)
+	}
+	for _, fade := range fades {
+		if fade.Action != "" || fade.Focusable || fade.Tooltip != "" {
+			bar.mu.Unlock()
+			t.Fatalf("overflow fade is interactive: %+v", fade)
+		}
+	}
+	if checkHits {
+		for _, action := range []string{"workspace:11", panelControlCenterAction, "running-app:firefox", "plugin:matrix-view:run", "tray-item:0"} {
+			bounds, ok := matrixActionBounds(bar, action)
+			if !ok || bounds.W <= 0 || bounds.H <= 0 {
+				if action == "plugin:matrix-view:run" {
+					for i, widget := range bar.left {
+						node := widget.node
+						t.Logf("left[%d]: kind=%d text=%q action=%q bounds=%+v children=%d", i, node.Kind, node.Text, node.Action, node.Bounds, len(node.Children))
+					}
+					t.Logf("overflow=%+v", bar.overflow)
+				}
+				bar.mu.Unlock()
+				t.Fatalf("action %q has no visible bounds: %+v (%v)", action, bounds, ok)
+			}
+			got, hit := bar.hitLocked(bounds.X+bounds.W/2, bounds.Y+bounds.H/2)
+			if !hit || got != action {
+				bar.mu.Unlock()
+				t.Fatalf("hit %q bounds %+v returned %q/%v", action, bounds, got, hit)
+			}
+		}
+	}
+	bar.mu.Unlock()
+
+	assertBlurPaintCoverage(t, bar, scale, pixels, pw, ph)
+	return pixels
+}
+
+func assertBlurPaintCoverage(t *testing.T, bar *Bar, scale ui.Scale120, pixels []byte, width, height int) {
+	t.Helper()
+	// At fractional scale, edge conversion can round one boundary pixel onto
+	// the transparent side; tolerate it only when the adjacent pixel is painted.
+	alpha := func(x, y int) byte {
+		if x < 0 || y < 0 || x >= width || y >= height {
+			return 0
+		}
+		return pixels[(y*width+x)*4+3]
+	}
+	for _, strip := range bar.blurShape() {
+		physical := scale.PhysicalRect(strip)
+		for y := physical.Y; y < physical.Y+physical.H; y++ {
+			for x := physical.X; x < physical.X+physical.W; x++ {
+				if alpha(x, y) > 0 {
+					continue
+				}
+				edge := x == physical.X || x == physical.X+physical.W-1 ||
+					y == physical.Y || y == physical.Y+physical.H-1
+				adjacentPaint := alpha(x-1, y) > 0 || alpha(x+1, y) > 0 || alpha(x, y-1) > 0 || alpha(x, y+1) > 0
+				if edge && adjacentPaint {
+					continue
+				}
+				t.Fatalf("blur strip %+v includes unpainted pixel (%d,%d)", strip, x, y)
+			}
+		}
+	}
+}
+
+func matrixActionBounds(bar *Bar, action string) (ui.Rect, bool) {
+	for _, section := range bar.sections() {
+		for _, node := range section {
+			if bounds, ok := nodeActionBounds(node, action); ok {
+				return bounds, true
+			}
+		}
+	}
+	return ui.Rect{}, false
+}
+
+func TestSidePluginKeepsItsAdvertisedCrossWidth(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Bar.Edge, cfg.Bar.Height = edge, 48
+			cfg.Bar.Left = []config.Item{{ID: "plugin", Plugin: "org.sysc.probe", Entry: "bar", Instance: "probe"}}
+			root, err := shellplugin.Convert(&v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{
+				Kind: v1.KindButton, ID: "open", Name: "Open probe", Role: "button", Height: 32, Padding: 4,
+				Events: []v1.EventKind{v1.EventActivate}, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "cat-run-0", IconSize: 20}},
+			}}}, v1.ViewBar)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "eDP-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			bar.apply(barView{Plugins: map[string]pluginFrame{"probe": {Root: root, Revision: 1}}})
+			if err := bar.Configure(cfg.Bar.SurfaceExtent(), 864, 150); err != nil {
+				t.Fatal(err)
+			}
+			outer := bar.left[0].node
+			control := findKind(outer, ui.KindButton)
+			if control == nil || control.Bounds.X < outer.Bounds.X || control.Bounds.X+control.Bounds.W > outer.Bounds.X+outer.Bounds.W || outer.ClipBounds {
+				t.Fatalf("validated plugin is clipped by host padding: outer=%+v control=%+v clip=%v", outer.Bounds, control.Bounds, outer.ClipBounds)
+			}
+		})
 	}
 }

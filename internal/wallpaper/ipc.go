@@ -157,7 +157,7 @@ func socketPeerPID(socket string) (int, error) {
 // The path is the fourth field and may contain spaces, so the line is split
 // into exactly four parts and the remainder is taken whole.
 func ParseStatus(line string) (Status, error) {
-	if err := checkOK(line); err != nil {
+	if err := checkErrorReply(line); err != nil {
 		return Status{}, err
 	}
 	fields := strings.SplitN(line, " ", 4)
@@ -184,15 +184,43 @@ func ParseStatus(line string) (Status, error) {
 	return st, nil
 }
 
-// checkOK turns an engine reply into an error, and accepts success on the OK
-// prefix: transitions off answer a bare `OK`, transitions on answer
+// checkOK turns an engine error reply into an error and accepts success on the
+// OK prefix: transitions off answer `OK`, transitions on may answer
 // `OK: transition started`.
 func checkOK(reply string) error {
-	if rest, found := strings.CutPrefix(reply, "ERROR:"); found {
-		return fmt.Errorf("wallpaper: gslapper:%s", rest)
+	if err := checkErrorReply(reply); err != nil {
+		return err
+	}
+	if reply == "OK" || strings.HasPrefix(reply, "OK:") {
+		return nil
 	}
 	if reply == "" {
 		return errors.New("wallpaper: empty reply")
+	}
+	return fmt.Errorf("wallpaper: unexpected engine reply %q", reply)
+}
+
+func checkQuery(reply string) error {
+	if err := checkErrorReply(reply); err != nil {
+		return err
+	}
+	fields := strings.Fields(reply)
+	if len(fields) == 6 && fields[0] == "STATUS:" && (fields[1] == "playing" || fields[1] == "paused") &&
+		fields[2] == "effect" && fields[3] != "" && fields[4] == "theme" && fields[5] != "" {
+		return nil
+	}
+	if _, err := ParseStatus(reply); err != nil {
+		return err
+	}
+	return nil
+}
+
+func checkErrorReply(reply string) error {
+	if rest, found := strings.CutPrefix(reply, "ERROR:"); found {
+		return fmt.Errorf("wallpaper: gslapper:%s", rest)
+	}
+	if rest, found := strings.CutPrefix(reply, "ERR "); found {
+		return fmt.Errorf("wallpaper: sysc-terminal:%s", rest)
 	}
 	return nil
 }

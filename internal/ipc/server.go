@@ -30,6 +30,7 @@ var (
 		"launcher":       "",
 		"notifications":  "",
 		"wallpaper":      "",
+		"terminal-art":   "",
 		"audio":          "",
 		"control-center": "",
 		"network":        "",
@@ -62,6 +63,10 @@ type Handlers struct {
 	// once the capture has started; the result reaches the user as a toast,
 	// because a region waits on the user and Call's deadline cannot.
 	Screenshot func(mode string) error
+	// LockState answers session.lock-state: {running, acquired,
+	// respawned, exit_code} for the tracked session locker (sysc-lock
+	// handshake semantics; third-party lockers report running only).
+	LockState func() map[string]any
 	// Plugins answers every plugins.* method.
 	Plugins func(method string, params json.RawMessage) (map[string]any, error)
 	// Theme answers every theme.* method.
@@ -239,6 +244,11 @@ func (s *Server) handleLine(line string) []byte {
 			body = s.h.Status()
 		}
 		return envelope(req.ID, "ok", "", body)
+	case "session.lock-state":
+		if s.h.LockState == nil {
+			return envelope(req.ID, "", "lock state handler unset")
+		}
+		return envelope(req.ID, "ok", "", s.h.LockState())
 	case "panel.toggle", "panel.open", "panel.close":
 		action := strings.TrimPrefix(req.Method, "panel.")
 		var params struct {

@@ -9,8 +9,10 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
 func TestBarConcurrentUpdateAndRender(t *testing.T) {
@@ -69,6 +71,160 @@ func newTestBar(t *testing.T) *Bar {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestSideBarLayoutUsesVerticalAxis(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Edge = "left"
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	left := &ui.Node{Kind: ui.KindText, Text: "L"}
+	center := &ui.Node{Kind: ui.KindText, Text: "C"}
+	right := &ui.Node{Kind: ui.KindText, Text: "R"}
+	bar.left = []textWidget{{node: left}}
+	bar.center = []textWidget{{node: center}}
+	bar.right = []textWidget{{node: right}}
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	content := bar.contentLocked(cfg.Bar.SurfaceExtent(), 800)
+	if left.Bounds.Y != content.Y || right.Bounds.Y+right.Bounds.H != content.Y+content.H {
+		t.Fatalf("side lanes = %+v/%+v, content %+v", left.Bounds, right.Bounds, content)
+	}
+	if got, want := center.Bounds.Y+center.Bounds.H/2, content.Y+content.H/2; got < want-1 || got > want+1 {
+		t.Fatalf("centre Y = %d, want %d", got, want)
+	}
+	for _, node := range []*ui.Node{left, center, right} {
+		if node.Bounds.W <= 0 || node.Bounds.H <= 0 || node.Bounds.X < content.X || node.Bounds.X+node.Bounds.W > content.X+content.W {
+			t.Fatalf("node %+v escaped side content %+v", node.Bounds, content)
+		}
+	}
+}
+
+func TestSideBarTrayBudgetUsesVerticalExtent(t *testing.T) {
+	bar := &Bar{}
+	bar.theme.BarEdge = "right"
+	bar.theme.Metrics.BarSpacing = 6
+	content := ui.Rect{X: 4, Y: 10, W: 40, H: 800}
+	center := []*ui.Node{{Bounds: ui.Rect{Y: 350, H: 40}}}
+	right := []*ui.Node{{Bounds: ui.Rect{Y: 740, H: 20}}}
+	if got := bar.trayAvailableLocked(content, center, right); got != 338 {
+		t.Fatalf("tray available = %d, want 338 along Y", got)
+	}
+}
+
+func TestSideBarComposition(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		edge   string
+		height int
+		wide   bool
+	}{
+		{"left compact", "left", 48, false},
+		{"right compact", "right", 48, false},
+		{"left textual", "left", 96, true},
+		{"right textual", "right", 96, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Bar.Edge, cfg.Bar.Height = tc.edge, tc.height
+			cfg.Bar.Left = []config.Item{{ID: "launcher"}, {ID: "workspace"}}
+			cfg.Bar.Center = []config.Item{{ID: "group", Items: []config.Item{{ID: "wordmark"}}}}
+			if tc.wide {
+				cfg.Bar.Left = append(cfg.Bar.Left,
+					config.Item{ID: "group", Items: []config.Item{{ID: "cpu", Display: "radial"}, {ID: "memory", Display: "radial"}}},
+					config.Item{ID: "window-title", MaxWidth: 80})
+				cfg.Bar.Center = config.Default().Bar.Center[:1]
+			}
+			cfg.Bar.Right = []config.Item{{ID: "running-apps"}}
+			policy := cfg.ForConnector("DP-1")
+			bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy, "DP-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			trayItems := []tray.Item{trayItem(1, "a"), trayItem(2, "b")}
+			bar.setTray(trayItems, config.TrayPreferences{Enabled: true}, nil)
+			view := barView{
+				Now: time.Date(2026, time.October, 3, 9, 7, 0, 0, time.UTC), Title: "A long focused window title",
+				Pills:   []workspacePill{{ID: 11, Index: 1, Focused: true}, {ID: 12, Index: 2, Occupied: true}},
+				Running: []runningAppSlot{{Key: "firefox"}, {Key: "terminal"}},
+			}
+			bar.apply(view)
+			if err := bar.Configure(policy.SurfaceExtent(), 864, 120); err != nil {
+				t.Fatal(err)
+			}
+			content := bar.contentLocked(policy.SurfaceExtent(), 864)
+			workspace := bar.left[1]
+			if workspace.inner == nil || workspace.inner.Kind != ui.KindColumn || len(workspace.inner.Children) != 2 {
+				t.Fatalf("workspace stack = %+v", workspace.inner)
+			}
+			focused := workspace.inner.Children[0]
+			if focused.Width != bar.theme.Metrics.IconLarge || focused.Height != 2*bar.theme.Metrics.IconLarge || focused.Action != "workspace:11" {
+				t.Fatalf("focused side workspace = %+v", focused)
+			}
+			if tc.wide && (bar.left[2].inner == nil || bar.left[2].inner.Kind != ui.KindColumn || len(bar.left[2].inner.Children) != 2 || bar.left[2].inner.Children[0].Kind != ui.KindRadialGauge) {
+				t.Fatalf("metric group = %+v, want column", bar.left[2].inner)
+			}
+			pill := bar.center[0].node
+			if pill.Kind != ui.KindCapsule || pill.Key != "centre" || pill.Action != panelControlCenterAction || pill.Name != "Control centre" || pill.Role != "button" || bar.center[0].inner.Kind != ui.KindColumn {
+				t.Fatalf("centre pill = %+v, inner %+v", pill, bar.center[0].inner)
+			}
+			mark := findKind(pill, ui.KindWordmark)
+			innerWidth := content.W - 2*pill.PaddingX
+			if mark == nil || mark.ImageW <= 0 || mark.ImageW > innerWidth || mark.ImageW != centreMarkHeight || mark.Mark != "sysc-side" || mark.ImageH != render.WordmarkWidth(mark.ImageW) {
+				t.Fatalf("side wordmark = %+v, available width %d", mark, innerWidth)
+			}
+			if tc.wide {
+				children := bar.center[0].inner.Children
+				if len(children) != 4 || children[1].Kind != ui.KindSeparator || children[2].Text != "09:07" || children[3].Text == "" {
+					t.Fatalf("textual centre stack = %+v", children)
+				}
+			}
+			apps := bar.right[0]
+			if apps.inner == nil || apps.inner.Kind != ui.KindColumn || len(apps.inner.Children) != 2 {
+				t.Fatalf("running-app stack = %+v", apps.inner)
+			}
+			if apps.inner.Children[0].Action != "running-app:firefox" || apps.inner.Children[1].Action != "running-app:terminal" {
+				t.Fatalf("running-app order = %+v", apps.inner.Children)
+			}
+			if len(bar.trayNodes) != 2 || bar.trayNodes[0].Bounds.Y >= bar.trayNodes[1].Bounds.Y || apps.node.Bounds.Y+apps.node.Bounds.H > bar.trayNodes[0].Bounds.Y {
+				t.Fatalf("tray/app stack = %+v / %+v", apps.node.Bounds, bar.trayNodes)
+			}
+			if bar.trayActions["tray-item:0"] != trayItems[0].Key || bar.trayActions["tray-item:1"] != trayItems[1].Key {
+				t.Fatalf("tray identity/order = %+v", bar.trayActions)
+			}
+			for _, node := range []*ui.Node{workspace.node, pill, apps.node, bar.trayNodes[0], bar.trayNodes[1]} {
+				if node.Bounds.W <= 0 || node.Bounds.H <= 0 || node.Bounds.X < content.X || node.Bounds.X+node.Bounds.W > content.X+content.W {
+					t.Fatalf("side node %+v escapes content %+v", node.Bounds, content)
+				}
+			}
+			for _, tc := range []struct {
+				node *ui.Node
+				want string
+			}{{focused, "workspace:11"}, {apps.inner.Children[0], "running-app:firefox"}, {bar.trayNodes[0], "tray-item:0"}} {
+				bar.mu.Lock()
+				got, ok := bar.hitLocked(tc.node.Bounds.X+tc.node.Bounds.W/2, tc.node.Bounds.Y+tc.node.Bounds.H/2)
+				bar.mu.Unlock()
+				if !ok || got != tc.want {
+					t.Errorf("hit on %+v = %q/%v, want %q", tc.node.Bounds, got, ok, tc.want)
+				}
+			}
+			view.Now = view.Now.Add(time.Minute)
+			view.Pills[0].Focused, view.Pills[1].Focused = false, true
+			view.Running[0], view.Running[1] = view.Running[1], view.Running[0]
+			bar.apply(view)
+			if err := bar.Configure(policy.SurfaceExtent(), 864, 150); err != nil {
+				t.Fatal(err)
+			}
+			if workspace.inner.Kind != ui.KindColumn || workspace.inner.Children[1].Height != 2*bar.theme.Metrics.IconLarge || bar.center[0].inner.Kind != ui.KindColumn || apps.inner.Kind != ui.KindColumn || apps.inner.Children[0].Action != "running-app:terminal" {
+				t.Fatal("a refresh or scale change lost side composition")
+			}
+		})
+	}
 }
 
 func TestZeroBarStopsAnimationSafely(t *testing.T) {

@@ -56,7 +56,6 @@ func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anch
 	h.open_ = true
 	h.closed = false
 	h.output = output
-	h.place = trayMenuUnderBar(anchor)
 	h.pressed = -1
 	h.pointerRow = -1
 	h.keyed = false
@@ -69,6 +68,8 @@ func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anch
 	h.menu = NewMenu(labels, 0)
 	h.menu.Open()
 	h.rebuild()
+	w, height := h.size()
+	h.place = h.r.barMenuPlacementLocked(output, anchor, w, height)
 	h.rootGen = h.r.roots.openRoot(runningAppsMenuRoot(output))
 	h.r.roots.onClose(h.rootGen, h.releaseForChainClose)
 	h.r.dwell.leave()
@@ -89,6 +90,12 @@ func (h *runningAppMenuHost) spec() *wayland.AuxSpec {
 	place := h.place
 	if place.anchor == 0 {
 		place = trayMenuUnderBar(ui.Rect{})
+	}
+	if place.width > 0 {
+		width = place.width
+	}
+	if place.height > 0 {
+		height = place.height
 	}
 	// blur-exempt: a menu, not a panel. Design D13 scopes the backdrop to panels
 	// and does not name this surface either way, so it keeps today's paint until

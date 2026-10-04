@@ -110,6 +110,8 @@ type trayDrawerHost struct {
 	roving     ui.Roving
 	logicalW   int
 	logicalH   int
+	place      ui.Rect
+	placed     bool
 	scale120   int
 	hoverX     int
 	hoverY     int
@@ -140,11 +142,23 @@ func newTrayDrawerHost(r *Registry, harness *hostHarness) *trayDrawerHost {
 }
 
 func (h *trayDrawerHost) open(output uint32, connector string, arranged trayArrangement, images map[tray.ItemKey]*ui.Image) bool {
+	return h.openAt(output, connector, arranged, images, ui.Rect{})
+}
+
+func (h *trayDrawerHost) openAt(output uint32, connector string, arranged trayArrangement, images map[tray.ItemKey]*ui.Image, anchor ui.Rect) bool {
 	if h.open_ || output == 0 {
 		return false
 	}
 	h.open_, h.closed = true, false
 	h.output, h.connector, h.arranged, h.images = output, connector, arranged, images
+	edge, outputAnchor, body, out := h.r.barGeometryOnOutputLocked(output, anchor)
+	work := barWorkArea(h.r.cfg.ForConnector(connector), out)
+	h.placed = work.W > 0 && work.H > 0 && body.W > 0 && body.H > 0
+	if h.placed {
+		h.place = trayDrawerPlacement(edge, outputAnchor, body, work)
+	} else {
+		h.place = ui.Rect{}
+	}
 	for _, token := range arranged.Collisions {
 		h.diagnostic("sysc-shell: tray preference collision for " + token + "; ignoring its preferences")
 	}
@@ -186,15 +200,58 @@ func (h *trayDrawerHost) rebuild() {
 // blur-exempt: a drawer, not a panel. D13 does not name it either way; see
 // docs/plans/2026-09-13-parity-tranche-continuation-handover.md.
 func (h *trayDrawerHost) spec() *wayland.AuxSpec {
+	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight)
+	width, height := trayDrawerWidth, trayDrawerHeight
+	marginTop, marginLeft := int32(0), int32(0)
+	if h.placed {
+		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+		width, height = h.place.W, h.place.H
+		marginTop, marginLeft = int32(h.place.Y), int32(h.place.X)
+	}
+	// blur-exempt: a drawer, not a panel; see the plan noted above.
 	return &wayland.AuxSpec{
 		ID: trayDrawerSurfaceID, Namespace: "sysc-shell-tray-drawer",
 		Layer:  layershell.ZwlrLayerShellV1LayerOverlay,
-		Anchor: uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight),
-		Width:  trayDrawerWidth, Height: trayDrawerHeight, ExclusiveZone: -1, Keyboard: keyboardOnDemand,
+		Anchor: anchor, MarginTop: marginTop, MarginLeft: marginLeft,
+		Width: int32(width), Height: int32(height), ExclusiveZone: -1, Keyboard: keyboardOnDemand,
 		Callbacks: wayland.HostCallbacks{
 			Configure: h.configureLocking, Render: h.renderLocking, Handle: h.handleLocking,
 		},
 	}
+}
+
+func trayDrawerPlacement(edge string, anchor, body, work ui.Rect) ui.Rect {
+	if work.W <= 0 || work.H <= 0 {
+		return ui.Rect{}
+	}
+	w, h := min(trayDrawerWidth, work.W), min(trayDrawerHeight, work.H)
+	// ponytail: keep horizontal drawers at top-right; side drawers follow the body inward.
+	x, y := work.X+work.W-w, work.Y
+	switch edge {
+	case "left":
+		x = body.X + body.W
+		y = anchor.Y + anchor.H - h
+	case "right":
+		x = body.X - w
+		y = anchor.Y + anchor.H - h
+	}
+	x = max(work.X, min(x, work.X+work.W-w))
+	y = max(work.Y, min(y, work.Y+work.H-h))
+	return ui.Rect{X: x, Y: y, W: w, H: h}
+}
+
+func (h *trayDrawerHost) bodyRect() ui.Rect {
+	if !h.placed {
+		return ui.Rect{}
+	}
+	body := h.place
+	if h.logicalW > 0 {
+		body.W = h.logicalW
+	}
+	if h.logicalH > 0 {
+		body.H = h.logicalH
+	}
+	return body
 }
 
 // The three Wayland callbacks take the registry lock, because the same host

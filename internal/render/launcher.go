@@ -99,6 +99,8 @@ func markMask(name string, w, h int) (*image.Alpha, error) {
 	switch name {
 	case "":
 		return Wordmark(w, h)
+	case "sysc-side":
+		return wordmark(w, h, true)
 	case "launcher":
 		return LauncherMark(w, h)
 	default:

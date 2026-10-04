@@ -43,7 +43,7 @@ var (
 	wordmarkErr    error
 
 	wordmarkMu    sync.Mutex
-	wordmarkCache = map[[2]int]*image.Alpha{}
+	wordmarkCache = map[[3]int]*image.Alpha{}
 )
 
 // wordmarkSource decodes the embedded master once. A broken embed latches its
@@ -73,11 +73,16 @@ func wordmarkSource() (*image.Alpha, error) {
 // cached. The master is larger than any size the shell draws, so this only
 // ever downsamples, which is where CatmullRom looks best -- the same filter
 // and the same reasoning as the icon worker's raster path.
-func Wordmark(w, h int) (*image.Alpha, error) {
+func Wordmark(w, h int) (*image.Alpha, error) { return wordmark(w, h, false) }
+
+func wordmark(w, h int, side bool) (*image.Alpha, error) {
 	if w <= 0 || h <= 0 {
 		return nil, nil
 	}
-	key := [2]int{w, h}
+	key := [3]int{w, h, 0}
+	if side {
+		key[2] = 1
+	}
 	wordmarkMu.Lock()
 	if mask := wordmarkCache[key]; mask != nil {
 		wordmarkMu.Unlock()
@@ -85,12 +90,21 @@ func Wordmark(w, h int) (*image.Alpha, error) {
 	}
 	wordmarkMu.Unlock()
 
-	master, err := wordmarkSource()
-	if err != nil {
-		return nil, err
+	var scaled *image.Alpha
+	if side {
+		source, err := Wordmark(h, w)
+		if err != nil {
+			return nil, err
+		}
+		scaled = rotateAlphaClockwise(source)
+	} else {
+		master, err := wordmarkSource()
+		if err != nil {
+			return nil, err
+		}
+		scaled = image.NewAlpha(image.Rect(0, 0, w, h))
+		xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), master, master.Bounds(), xdraw.Src, nil)
 	}
-	scaled := image.NewAlpha(image.Rect(0, 0, w, h))
-	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), master, master.Bounds(), xdraw.Src, nil)
 
 	wordmarkMu.Lock()
 	wordmarkCache[key] = scaled
@@ -101,3 +115,15 @@ func Wordmark(w, h int) (*image.Alpha, error) {
 // colorAlpha narrows a 16-bit channel from RGBA() to the 8-bit coverage an
 // image.Alpha stores.
 func colorAlpha(v uint32) uint8 { return uint8(v >> 8) }
+
+// rotateAlphaClockwise turns named side artwork without changing its coverage.
+func rotateAlphaClockwise(source *image.Alpha) *image.Alpha {
+	b := source.Bounds()
+	out := image.NewAlpha(image.Rect(0, 0, b.Dy(), b.Dx()))
+	for y := 0; y < b.Dy(); y++ {
+		for x := 0; x < b.Dx(); x++ {
+			out.SetAlpha(b.Dy()-1-y, x, source.AlphaAt(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}

@@ -27,6 +27,7 @@ var widgetNames = map[string]string{
 	"notifications": "Notifications",
 	"running-apps":  "Running apps",
 	"temperature":   "Temperature",
+	"terminal-art":  "Terminal Art",
 	"volume":        "Volume",
 	"wallpaper":     "Wallpaper",
 	"weather":       "Weather",

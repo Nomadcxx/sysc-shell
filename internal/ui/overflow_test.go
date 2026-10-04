@@ -9,7 +9,7 @@ func TestASectionThatFitsDropsNothing(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 200, H: 40}
 	a, b := text("aaa"), text("bbb") // 30 each, 6 spacing
-	dropped, err := placeSection([]*Node{a, b}, 0, content, 200, 0, 6, fixed)
+	dropped, err := placeSection([]*Node{a, b}, Horizontal, 0, content, 200, 0, 6, fixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestAnItemThatDoesNotFitIsDroppedWholeNotTruncated(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 50, H: 40}
 	a, b := text("aaa"), text("bbbbb") // 30 and 50, spacing 6: b needs 86 total
-	dropped, err := placeSection([]*Node{a, b}, 0, content, 50, 0, 6, fixed)
+	dropped, err := placeSection([]*Node{a, b}, Horizontal, 0, content, 50, 0, 6, fixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestCollapseTakesTheLastDeclaredItemFirst(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 80, H: 40}
 	a, b, c := text("aaa"), text("bbb"), text("ccc") // 30 each, spacing 6
-	dropped, err := placeSection([]*Node{a, b, c}, 0, content, 70, 0, 6, fixed)
+	dropped, err := placeSection([]*Node{a, b, c}, Horizontal, 0, content, 70, 0, 6, fixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestASectionWithNoRoomDropsEverything(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 100, H: 40}
 	a, b := text("aaa"), text("bbb")
-	dropped, err := placeSection([]*Node{a, b}, 0, content, 0, 0, 6, fixed)
+	dropped, err := placeSection([]*Node{a, b}, Horizontal, 0, content, 0, 0, 6, fixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestSpacingIsNotChargedForADroppedItem(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 100, H: 40}
 	a, b := text("aaa"), text("bbbbbbbbbb") // 30 and 100
-	if _, err := placeSection([]*Node{a, b}, 0, content, 36, 0, 6, fixed); err != nil {
+	if _, err := placeSection([]*Node{a, b}, Horizontal, 0, content, 36, 0, 6, fixed); err != nil {
 		t.Fatal(err)
 	}
 	if a.Bounds.W != 30 {
@@ -100,14 +100,14 @@ func TestAReserveIsTakenBeforeSelection(t *testing.T) {
 	a, b, c := text("aaa"), text("bbb"), text("ccc") // 30 each, spacing 6
 
 	// Without a reserve two of the three fit in 70: 30 + 6 + 30 = 66.
-	if dropped, err := placeSection([]*Node{a, b, c}, 0, content, 70, 0, 6, fixed); err != nil {
+	if dropped, err := placeSection([]*Node{a, b, c}, Horizontal, 0, content, 70, 0, 6, fixed); err != nil {
 		t.Fatal(err)
 	} else if dropped != 1 {
 		t.Fatalf("dropped without a reserve = %d, want 1", dropped)
 	}
 
 	// Reserving 20 leaves 50, which fits only the first.
-	dropped, err := placeSection([]*Node{a, b, c}, 0, content, 70, 20, 6, fixed)
+	dropped, err := placeSection([]*Node{a, b, c}, Horizontal, 0, content, 70, 20, 6, fixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestAReserveIsNotChargedWhenEverythingFits(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 200, H: 40}
 	a, b := text("aaa"), text("bbb")
-	dropped, err := placeSection([]*Node{a, b}, 0, content, 66, 20, 6, fixed)
+	dropped, err := placeSection([]*Node{a, b}, Horizontal, 0, content, 66, 20, 6, fixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestAZeroReserveChangesNothing(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 100, H: 40}
 	a, b := text("aaa"), text("bbb")
-	dropped, err := placeSection([]*Node{a, b}, 0, content, 66, 0, 6, fixed)
+	dropped, err := placeSection([]*Node{a, b}, Horizontal, 0, content, 66, 0, 6, fixed)
 	if err != nil {
 		t.Fatal(err)
 	}

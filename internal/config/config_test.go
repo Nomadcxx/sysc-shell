@@ -183,8 +183,6 @@ func TestValidationReportsTheFieldPath(t *testing.T) {
 	}{
 		{"height below the gap", `{"bar":{"height":7,"gap":4}}`, "bar.height"},
 		{"negative gap", `{"bar":{"gap":-1}}`, "bar.gap"},
-		// bottom is implemented as of sysc-321; the vertical axis is not.
-		{"unsupported edge", `{"bar":{"edge":"left"}}`, "bar.edge"},
 		{"unknown edge", `{"bar":{"edge":"sideways"}}`, "bar.edge"},
 		{"negative reserve", `{"bar":{"reserve":-1}}`, "bar.reserve"},
 		{"negative padding", `{"bar":{"padding":-3}}`, "bar.padding"},
@@ -1377,5 +1375,57 @@ func TestThemeGenAcceptsACustomSourceWithASlugSeed(t *testing.T) {
 	}
 	if _, err := write("nonsense", "x"); err == nil || !strings.Contains(err.Error(), "custom") {
 		t.Errorf("unknown source error should list the valid sources including custom: %v", err)
+	}
+}
+
+func TestWriteKeepsIdleLock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	cfg := Default()
+	cfg.Idle.Lock = 10 * time.Minute
+	cfg.Idle.BlankAc = 15 * time.Minute
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Idle.Lock != 10*time.Minute || got.Idle.BlankAc != 15*time.Minute {
+		t.Fatalf("idle after write: %+v", got.Idle)
+	}
+}
+
+func TestTerminalArtPaletteRoundTrips(t *testing.T) {
+	cfg := Default()
+	cfg.TerminalArt.Palette = "dracula"
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if back.TerminalArt.Palette != "dracula" {
+		t.Fatalf("palette = %q, want dracula", back.TerminalArt.Palette)
+	}
+	if bare, err := Parse([]byte(`{}`)); err != nil || bare.TerminalArt.Palette != "" {
+		t.Fatalf("missing key: palette %q, err %v", bare.TerminalArt.Palette, err)
+	}
+	if _, err := Parse([]byte(`{"terminal-art":{"palette":"../x"}}`)); err == nil {
+		t.Fatal("a palette name with a path in it loaded")
+	}
+}
+
+func TestApplyIdleLock(t *testing.T) {
+	ok, bad := "10m", "nope"
+	base := Default().Idle
+	got, err := applyIdle(base, wireIdle{Lock: &ok})
+	if err != nil || got.Lock != 10*time.Minute {
+		t.Fatalf("lock idle parse: %v %+v", got.Lock, err)
+	}
+	if _, err := applyIdle(base, wireIdle{Lock: &bad}); err == nil {
+		t.Fatal("want error on non-duration")
 	}
 }

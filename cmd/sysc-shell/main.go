@@ -26,6 +26,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
+	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
 
 func pumpNiri(
@@ -88,6 +89,7 @@ func run(ctx context.Context) (err error) {
 	}
 
 	registry := shell.NewRegistry(cfg)
+	registry.SetWallsService(walls.NewService())
 	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
 	// the socket that was just required; Suspend goes straight to logind.
 	monitorPower := func(action any, what string) {
@@ -100,6 +102,11 @@ func run(ctx context.Context) (err error) {
 	idleSvc := services.NewIdleService(services.IdleOptions{Execs: services.IdleExecutors{
 		Blank:   func() { monitorPower(niri.PowerOffMonitors{}, "blank") },
 		Unblank: func() { monitorPower(niri.PowerOnMonitors{}, "unblank") },
+		Lock: func() {
+			if err := registry.LockTracked(); err != nil {
+				log.Printf("shell: idle lock: %v", err)
+			}
+		},
 		Suspend: func() {
 			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -354,6 +361,7 @@ func run(ctx context.Context) (err error) {
 			Screenshot: registry.Screenshot,
 			Switcher:   registry.ShowWindowSwitcher,
 			Theme:      registry.ThemeCall,
+			LockState:  registry.LockStateMap,
 		})
 		ipcErr <- srv.Serve(ipcCtx)
 	}()

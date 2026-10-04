@@ -39,11 +39,11 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setBool("bar.enabled", func(c *config.Config, b bool) { c.Bar.Enabled = b }),
 		},
 		{
-			Path: "bar.edge", Label: "Edge", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum,
+			Path: "bar.edge", Label: "Edge", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentMenu,
 			Describe: "Which screen edge the bar anchors to.",
-			Options:  barEdges,
-			Get:      func(c config.Config) string { return c.Bar.Edge },
-			Set:      setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
+			Options:  barEdges, OptionLabels: []string{"Top", "Bottom", "Left", "Right"},
+			Get: func(c config.Config) string { return c.Bar.Edge },
+			Set: setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
 		},
 		{
 			Path: "bar.style", Label: "Style", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentCards,
@@ -76,11 +76,11 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				func(c *config.Config, n int) { c.Bar.PillOpacity = n }),
 		},
 		{
-			Path: "bar.height", Present: PresentSlider, Unit: "px", Label: "Height", Section: "Bar", Page: "Appearance", Group: "Geometry",
-			Describe: "Bar height in logical pixels. It follows the density ladder unless set here.",
-			Kind:     KindInt, Min: 24, Max: 64,
+			Path: "bar.height", Present: PresentSlider, Unit: "px", Label: "Thickness", Section: "Bar", Page: "Appearance", Group: "Geometry",
+			Describe: "Bar thickness in logical pixels: height on top/bottom, width on left/right. Wider side bars leave room for text.",
+			Kind:     KindInt, Min: 24, Max: 128,
 			Get: getInt(func(c config.Config) int { return c.Bar.Height }),
-			Set: setInt("bar.height", 24, 64, func(c *config.Config, n int) { c.Bar.Height = n }),
+			Set: setInt("bar.height", 24, 128, func(c *config.Config, n int) { c.Bar.Height = n }),
 		},
 		{
 			Path: "bar.gap", Present: PresentSlider, Unit: "px", Label: "Gap", Section: "Bar", Page: "Appearance", Group: "Geometry",
@@ -382,6 +382,73 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setString(func(c *config.Config, v string) { c.Session.Locker = v }),
 		},
 		{
+			Path: "idle.after", Label: "After idle", Section: "Session", Group: "When idle",
+			Describe: "One action after idle. Screensaver and lock cannot run from the same timer.",
+			Kind:     KindEnum, Options: []string{"nothing", "screensaver", "lock"},
+			Get: func(c config.Config) string { return WhenIdleMode(c.Idle.Lock, false) },
+			Set: setEnum("idle.after", []string{"nothing", "screensaver", "lock"}, func(*config.Config, string) {}),
+		},
+		{
+			Path: "idle.delay", Label: "Delay", Section: "Session", Group: "When idle",
+			Describe: "How long to wait after idle. Used by screensaver or lock, not by Display Power.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.Lock > 0 {
+					return c.Idle.Lock.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.delay", func(c *config.Config, d time.Duration) { c.Idle.Lock = d }),
+		},
+		{
+			Path: "idle.blank_ac", Label: "Blank on AC", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to blank the display on AC power. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.BlankAc > 0 {
+					return c.Idle.BlankAc.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.blank_ac", func(c *config.Config, d time.Duration) { c.Idle.BlankAc = d }),
+		},
+		{
+			Path: "idle.blank_battery", Label: "Blank on battery", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to blank the display on battery. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.BlankBattery > 0 {
+					return c.Idle.BlankBattery.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.blank_battery", func(c *config.Config, d time.Duration) { c.Idle.BlankBattery = d }),
+		},
+		{
+			Path: "idle.suspend_ac", Label: "Suspend on AC", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to suspend on AC power. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.SuspendAc > 0 {
+					return c.Idle.SuspendAc.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.suspend_ac", func(c *config.Config, d time.Duration) { c.Idle.SuspendAc = d }),
+		},
+		{
+			Path: "idle.suspend_battery", Label: "Suspend on battery", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to suspend on battery. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.SuspendBattery > 0 {
+					return c.Idle.SuspendBattery.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.suspend_battery", func(c *config.Config, d time.Duration) { c.Idle.SuspendBattery = d }),
+		},
+		{
 			Path: "accessibility.reduced-motion", Label: "Reduced motion", Section: "Accessibility", Group: "Assistance",
 			Describe: "Shorten or remove animation.",
 			Kind:     KindBool,
@@ -525,6 +592,19 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Get:      func(c config.Config) string { return c.Wallpaper.Hidden },
 			Set:      setEnum("wallpaper.hidden", wallpaperHidden, func(c *config.Config, v string) { c.Wallpaper.Hidden = v }),
 		},
+		{
+			Path: "terminal-art.palette", Label: "Default palette", Section: "Terminal Art", Group: "Effects",
+			Describe: "The sysc-Go palette Terminal Art starts on.",
+			Kind:     KindString,
+			Get:      func(c config.Config) string { return c.TerminalArt.Palette },
+			Set: write(func(c *config.Config, v string) error {
+				if !config.ValidPaletteName(v) {
+					return fmt.Errorf("settings: terminal-art.palette: %q is not a palette name", v)
+				}
+				c.TerminalArt.Palette = v
+				return nil
+			}),
+		},
 	}}
 	r.addWidgetEntries(cfg)
 	r.addTemplateEntries()
@@ -630,7 +710,7 @@ func SectionClusters() []Cluster {
 		// Captions name the group, never one of its items (owner decision,
 		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
 		// duplicates, and Plugins is not a panel.
-		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper"}},
+		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver"}},
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
@@ -665,11 +745,7 @@ func SectionPages(section string) []string {
 // a value the surface offers and the setter rejects is unreachable, and one
 // the setter accepts and the surface hides is undiscoverable.
 var (
-	// The loader accepts one edge today and names the rest unsupported, so
-	// offering them would hand the user a control that writes a file the shell
-	// then declines to start from. The remaining edges arrive with the bar
-	// geometry work, which is what makes them real.
-	barEdges     = []string{"top"}
+	barEdges     = []string{"top", "bottom", "left", "right"}
 	themeSources = []string{"wallpaper", "hex", "stock", "palette"}
 	themeModes   = []string{"dark", "light"}
 	presetNames  = []string{
@@ -1198,10 +1274,10 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 				}),
 			},
 			Entry{
-				Path: "outputs." + conn + ".height", Label: "Height", Section: "Bar", Page: "Displays", Group: conn,
-				Describe: "Bar height on this output.", Kind: KindInt, Min: 24, Max: 64,
+				Path: "outputs." + conn + ".height", Label: "Thickness", Section: "Bar", Page: "Displays", Group: conn,
+				Describe: "Bar thickness on this output: height on top/bottom, width on left/right.", Kind: KindInt, Min: 24, Max: 128,
 				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.Height }) }),
-				Set: setInt("outputs."+conn+".height", 24, 64, func(c *config.Config, n int) {
+				Set: setInt("outputs."+conn+".height", 24, 128, func(c *config.Config, n int) {
 					if b := override(c); b != nil {
 						b.Height = n
 					}
@@ -1288,6 +1364,25 @@ func setDuration(path string, assign func(*config.Config, time.Duration)) Setter
 		}
 		if d <= 0 {
 			return fmt.Errorf("settings: %s: %v is not positive", path, d)
+		}
+		assign(c, d)
+		return nil
+	})
+}
+
+func setNonNegDuration(path string, assign func(*config.Config, time.Duration)) Setter {
+	return write(func(c *config.Config, v string) error {
+		v = strings.TrimSpace(v)
+		if v == "" || v == "0" || v == "0s" {
+			assign(c, 0)
+			return nil
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("settings: %s: %q is not a duration such as 15m", path, v)
+		}
+		if d < 0 {
+			return fmt.Errorf("settings: %s: %v is negative", path, d)
 		}
 		assign(c, d)
 		return nil

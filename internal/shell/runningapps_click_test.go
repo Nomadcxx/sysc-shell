@@ -186,6 +186,42 @@ func TestRunningAppsMenuIsPlacedUnderItsIcon(t *testing.T) {
 	}
 }
 
+func TestRunningAppSideMenuOpensInwardAndClamps(t *testing.T) {
+	const outW, outH = 1536, 864
+	cfg := config.Default()
+	cfg.Bar.Edge = "right"
+	cfg.Bar.Left, cfg.Bar.Center = nil, nil
+	cfg.Bar.Right = []config.Item{{ID: "running-apps"}}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.runningIndex = []runningAppEntry{{ID: "steam"}}
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+	bar := reg.bars[1]
+	bar.setOutputSize(outW, outH)
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), outH, 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{{ID: 80, AppID: "steam", Focused: true}}})
+	reg.runningMenu = newRunningAppMenuHost(reg)
+	reg.runningMenu.request = func(wayland.AuxRequest) {}
+	tile := findAction(bar.right[0].node, "running-app:steam")
+	if tile == nil {
+		t.Fatal("steam tile missing")
+	}
+	tile.Bounds = ui.Rect{X: 12, Y: 850, W: 24, H: 20}
+	if !bar.onAction("running-app:steam", buttonRight) {
+		t.Fatal("right click ignored")
+	}
+	w, h := reg.runningMenu.size()
+	barW, _ := bar.configuredSize()
+	wantX := max(0, min(outW-w, outW-barW+tile.Bounds.X-w))
+	wantY := max(0, min(outH-h, tile.Bounds.Y))
+	spec := reg.runningMenu.spec()
+	if int(spec.MarginLeft) != wantX || int(spec.MarginTop) != wantY {
+		t.Fatalf("side app menu origin = (%d,%d), want (%d,%d)", spec.MarginLeft, spec.MarginTop, wantX, wantY)
+	}
+}
+
 func TestRunningAppsMenuTakesExclusiveKeyboard(t *testing.T) {
 	t.Parallel()
 	reg, bar := steamMenuReg(t)
@@ -441,6 +477,36 @@ func runningAppsWorkspaceMenuRegistry(t *testing.T) (*Registry, *Bar) {
 	reg.runningMenu = newRunningAppMenuHost(reg)
 	reg.runningMenu.request = func(wayland.AuxRequest) {}
 	return reg, reg.bars[1]
+}
+
+func TestEdgeReloadClosesRunningAppsMenu(t *testing.T) {
+	reg, bar := runningAppsWorkspaceMenuRegistry(t)
+	bar.setOutputSize(1536, 864)
+	if !bar.onAction("running-app:steam", buttonRight) {
+		t.Fatal("right click did not open the running-app menu")
+	}
+	if !reg.runningMenu.open_ {
+		t.Fatal("running-app menu did not open")
+	}
+
+	candidate := config.Default()
+	candidate.Bar.Edge = "left"
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 1, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[1]
+	callbacks.OutputSize(1536, 864)
+	if err := callbacks.Configure(candidate.Bar.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatalf("candidate Configure: %v", err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.runningMenu.open_ || reg.roots.owns(runningAppsMenuRoot(1)) {
+		t.Fatal("edge reload left the running-app menu on its old bar anchor")
+	}
 }
 
 func findWorkspaceMoveRow(rows []runningAppMenuRow, workspaceID uint64) int {

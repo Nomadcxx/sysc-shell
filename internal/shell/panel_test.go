@@ -121,3 +121,81 @@ func TestFittedSizeUsesTheReportedOutputHeight(t *testing.T) {
 		t.Fatalf("fitted height %d is taller than the %d output", h, p.Output.H)
 	}
 }
+
+func TestSidePanelPlacement(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			p := Placement{
+				BarEdge: edge, BarZone: 60, Padding: 8,
+				Output: ui.Rect{W: 1536, H: 864},
+				Panel:  ui.Rect{W: 400, H: 200}, Align: "center",
+			}
+			wantX := 60
+			if edge == "right" {
+				wantX = 1536 - 60 - 400
+			}
+			want := ui.Rect{X: wantX, Y: (864 - 200) / 2, W: 400, H: 200}
+			if got := p.Rect(); got != want {
+				t.Fatalf("attached rect = %+v, want %+v", got, want)
+			}
+			if got := p.panelRect(); got != want {
+				t.Fatalf("panelRect = %+v, want the shared body rect %+v", got, want)
+			}
+
+			p.Detached, p.Gap = true, 8
+			want.X = 68
+			if edge == "right" {
+				want.X = 1536 - 68 - 400
+			}
+			if got := p.Rect(); got != want {
+				t.Fatalf("detached rect = %+v, want %+v", got, want)
+			}
+
+			p.Detached, p.CenterY = false, true
+			want.X = 68 + (1536-68-8-400)/2
+			if edge == "right" {
+				want.X = 8 + (1536-68-8-400)/2
+			}
+			if got := p.Rect(); got != want {
+				t.Fatalf("floating centre = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestSidePanelFittedSizeUsesBothOutputAxes(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		p := Placement{
+			BarEdge: edge, BarZone: 60, Padding: 8,
+			Output: ui.Rect{W: 1536, H: 864},
+			Panel:  ui.Rect{W: 2000, H: 2000},
+		}
+		w, h := p.FittedSize()
+		if w != 1536-60-8 || h != 864-2*8 {
+			t.Errorf("%s fitted size = %dx%d, want %dx%d", edge, w, h, 1536-60-8, 864-2*8)
+		}
+	}
+}
+
+func TestSidePanelPlacementFollowsTriggerAlongOutputHeight(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		for _, tc := range []struct {
+			name   string
+			anchor int
+			wantY  int
+		}{
+			{"near start", 8, 8},
+			{"middle", 432, 332},
+			{"near end", 856, 656},
+		} {
+			p := Placement{
+				BarEdge: edge, BarZone: 60, Padding: 8, AnchorY: tc.anchor,
+				Output: ui.Rect{W: 1536, H: 864},
+				Panel:  ui.Rect{W: 400, H: 200}, Align: "center",
+			}
+			if got := p.Rect().Y; got != tc.wantY {
+				t.Errorf("%s %s y = %d, want %d", edge, tc.name, got, tc.wantY)
+			}
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
@@ -102,8 +103,15 @@ func toWire(c Config) wireConfig {
 		v := c.Session.Locker
 		w.Session = &wireSession{Locker: &v}
 	}
+	if idle := idleDiff(c.Idle, d.Idle); idle != nil {
+		w.Idle = idle
+	}
 	if p := wallpaperDiff(c.Wallpaper, d.Wallpaper); p != nil {
 		w.Wallpaper = p
+	}
+	if c.TerminalArt.Palette != "" {
+		palette := c.TerminalArt.Palette
+		w.TerminalArt = &wireTerminalArt{Palette: &palette}
 	}
 	if p := panelsDiff(c.Panels, d.Panels); p != nil {
 		w.Panels = p
@@ -143,6 +151,34 @@ func toWire(c Config) wireConfig {
 	}
 	w.Plugins = pluginsDiff(c.Plugins)
 	return w
+}
+
+func idleDiff(got, base Idle) *wireIdle {
+	if got == base {
+		return nil
+	}
+	var w wireIdle
+	for _, f := range []struct {
+		got  time.Duration
+		dest **string
+	}{
+		{got.BlankAc, &w.BlankAc},
+		{got.BlankBattery, &w.BlankBattery},
+		{got.SuspendAc, &w.SuspendAc},
+		{got.SuspendBattery, &w.SuspendBattery},
+		{got.Lock, &w.Lock},
+	} {
+		if f.got == 0 {
+			continue
+		}
+		v := f.got.String()
+		*f.dest = &v
+	}
+	if got.MediaExempt != base.MediaExempt {
+		v := got.MediaExempt
+		w.MediaExempt = &v
+	}
+	return &w
 }
 
 func barDiff(got, base Bar) *wireBar {

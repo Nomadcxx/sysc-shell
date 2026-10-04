@@ -56,6 +56,28 @@ func TestSetRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestBarEdgeSettingCanSelectEveryEdge(t *testing.T) {
+	t.Parallel()
+	entry := Default().ByPath("bar.edge")
+	if entry == nil {
+		t.Fatal("missing bar.edge")
+	}
+	want := []string{"top", "bottom", "left", "right"}
+	if !slices.Equal(entry.Options, want) {
+		t.Fatalf("bar.edge options = %v, want %v", entry.Options, want)
+	}
+	for _, edge := range want {
+		cfg := config.Default()
+		if err := entry.Set(&cfg, edge); err != nil {
+			t.Errorf("select %s: %v", edge, err)
+			continue
+		}
+		if got := entry.Get(cfg); got != edge || cfg.Bar.Edge != edge {
+			t.Errorf("select %s = getter %q config %q", edge, got, cfg.Bar.Edge)
+		}
+	}
+}
+
 func TestSearchMatchesLabels(t *testing.T) {
 	t.Parallel()
 	// Motion is three settings now: the composition axis, its speed, and the
@@ -281,6 +303,7 @@ func TestEveryConfigDomainHasAnEntry(t *testing.T) {
 	for _, prefix := range []string{
 		"bar.", "appearance.", "theme.templates.", "panels.", "session.",
 		"accessibility.", "weather.", "wallpaper.", "tray.", "outputs.",
+		"terminal-art.",
 	} {
 		found := false
 		for _, section := range SectionNames() {
@@ -307,10 +330,10 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Thirteen: Displays became Bar's Displays page (settings redesign D5),
-	// and Palettes joined the Look cluster (custom palettes P11).
-	if len(names) != 13 {
-		t.Fatalf("SectionNames = %d sections, want the thirteen of the information architecture", len(names))
+	// Fifteen: Displays became Bar's Displays page, Palettes and Terminal Art
+	// joined Look, and Screensaver now joins Look as well.
+	if len(names) != 15 {
+		t.Fatalf("SectionNames = %d sections, want the fifteen of the information architecture", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
@@ -1001,5 +1024,119 @@ func TestCustomPaletteOptionsCarryDisplayNames(t *testing.T) {
 		if !ok || !slices.Equal(e.OptionLabels, []string{"My Nord", "Work"}) {
 			t.Errorf("%s labels = %v, want the display names", path, e.OptionLabels)
 		}
+	}
+}
+
+func TestTerminalArtPaletteSetterRejectsJunk(t *testing.T) {
+	t.Parallel()
+	e := Default().ByPath("terminal-art.palette")
+	if e == nil || e.Section != "Terminal Art" {
+		t.Fatalf("entry = %+v, want one in Terminal Art", e)
+	}
+	for _, ok := range []string{"dracula", "tokyo-night"} {
+		cfg := config.Default()
+		if err := e.Set(&cfg, ok); err != nil || cfg.TerminalArt.Palette != ok {
+			t.Errorf("%q: err %v, palette %q", ok, err, cfg.TerminalArt.Palette)
+		}
+	}
+	for _, bad := range []string{"", "a b", "../x", "x\n"} {
+		cfg := config.Default()
+		if err := e.Set(&cfg, bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestIdleAfterEntries(t *testing.T) {
+	cfg := config.Default()
+	r := DefaultFor(cfg)
+
+	after, ok := r.Lookup("idle.after")
+	if !ok {
+		t.Fatal("Lookup idle.after: false")
+	}
+	if after.Kind != KindEnum {
+		t.Fatalf("idle.after Kind = %v, want KindEnum", after.Kind)
+	}
+	if !slices.Equal(after.Options, []string{"nothing", "screensaver", "lock"}) {
+		t.Fatalf("idle.after options = %v, want nothing/screensaver/lock", after.Options)
+	}
+	if after.Section != "Session" || after.Group != "When idle" {
+		t.Fatalf("idle.after is in %s › %s, want Session › When idle", after.Section, after.Group)
+	}
+
+	delay, ok := r.Lookup("idle.delay")
+	if !ok {
+		t.Fatal("Lookup idle.delay: false")
+	}
+	if delay.Section != "Session" || delay.Group != "When idle" {
+		t.Fatalf("idle.delay is in %s › %s, want Session › When idle", delay.Section, delay.Group)
+	}
+
+	for _, path := range []string{"idle.blank_ac", "idle.blank_battery", "idle.suspend_ac", "idle.suspend_battery"} {
+		e, ok := r.Lookup(path)
+		if !ok {
+			t.Fatalf("Lookup %s: false", path)
+		}
+		if e.Section != "Session" || e.Group != "Display Power" {
+			t.Fatalf("%s is in %s › %s, want Session › Display Power", path, e.Section, e.Group)
+		}
+	}
+
+	cfg.Idle.Lock = 10 * time.Minute
+	if got := after.Get(cfg); got != "lock" {
+		t.Fatalf("idle.after Get with Lock=10m = %q, want lock", got)
+	}
+	cfg.Idle.Lock = 0
+	if got := after.Get(cfg); got != "nothing" {
+		t.Fatalf("idle.after Get with Lock=0 = %q, want nothing", got)
+	}
+
+	if err := delay.Set(&cfg, "10m"); err != nil {
+		t.Fatalf("idle.delay Set 10m: %v", err)
+	}
+	if cfg.Idle.Lock != 10*time.Minute {
+		t.Fatalf("idle.delay Set 10m wrote %v", cfg.Idle.Lock)
+	}
+	for _, z := range []string{"", "0", "0s"} {
+		if err := delay.Set(&cfg, z); err != nil {
+			t.Fatalf("idle.delay Set %q: %v", z, err)
+		}
+		if cfg.Idle.Lock != 0 {
+			t.Fatalf("idle.delay Set %q left Lock=%v", z, cfg.Idle.Lock)
+		}
+	}
+	if err := delay.Set(&cfg, "-1s"); err == nil {
+		t.Fatal("setNonNegDuration accepted a negative duration")
+	}
+
+	interval, ok := r.Lookup("weather.interval")
+	if !ok {
+		t.Fatal("Lookup weather.interval: false")
+	}
+	if err := interval.Set(&cfg, "0s"); err == nil {
+		t.Fatal("setDuration accepted 0s")
+	}
+}
+
+func TestBarThicknessAllowsReadableSideText(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Edge = "left"
+	cfg.Outputs = []config.OutputOverride{{Connector: "eDP-1", Bar: cfg.Bar}}
+	r := DefaultFor(cfg)
+	for _, path := range []string{"bar.height", "outputs.eDP-1.height"} {
+		e, ok := r.Lookup(path)
+		if !ok {
+			t.Fatalf("missing %s", path)
+		}
+		if e.Label != "Thickness" {
+			t.Errorf("%s label = %q, want Thickness", path, e.Label)
+		}
+		if err := e.Set(&cfg, "96"); err != nil {
+			t.Fatalf("%s cannot set a readable side thickness: %v", path, err)
+		}
+	}
+	if cfg.Bar.Height != 96 || cfg.ForConnector("eDP-1").Height != 96 {
+		t.Fatalf("thickness was not retained: shared=%d output=%d", cfg.Bar.Height, cfg.ForConnector("eDP-1").Height)
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
@@ -89,6 +90,54 @@ func TestTrayDrawerOwnsOneRootAndClosesExactlyOnce(t *testing.T) {
 	h.close()
 	if len(hh.closes) != 1 {
 		t.Fatalf("close requests = %d, want one", len(hh.closes))
+	}
+}
+
+func TestSideTrayDrawerUsesTheBarBodyOrigin(t *testing.T) {
+	const outW, outH = 1536, 864
+	zero, custom := 0, 72
+	for _, tc := range []struct {
+		name    string
+		reserve *int
+		workX   int
+	}{
+		{name: "default reserve", workX: config.Default().Bar.Extent()},
+		{name: "zero reserve", reserve: &zero},
+		{name: "custom reserve", reserve: &custom, workX: custom},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Bar.Edge, cfg.Bar.Reserve = "left", tc.reserve
+			r := NewRegistry(cfg)
+			t.Cleanup(r.Close)
+			newHosts(t, r, map[uint32]string{7: "DP-1"})
+			bar := r.bars[7]
+			bar.setOutputSize(outW, outH)
+			if err := bar.Configure(cfg.Bar.SurfaceExtent(), outH, 120); err != nil {
+				t.Fatal(err)
+			}
+			hh := &hostHarness{}
+			r.trayDrawer = newTrayDrawerHost(r, hh)
+			anchor := ui.Rect{X: 18, Y: 840, W: 24, H: 20}
+			if !r.handleTrayBar(7, "DP-1", tray.ItemKey{}, trayArrangement{}, anchor,
+				wayland.Event{Kind: wayland.EventPointerRelease}) {
+				t.Fatal("overflow click did not open the drawer")
+			}
+			if len(hh.opens) != 1 {
+				t.Fatalf("opens = %d, want one drawer", len(hh.opens))
+			}
+			spec := hh.opens[0]
+			wantX := max(cfg.Bar.Extent(), tc.workX)
+			wantY := anchor.Y + anchor.H - trayDrawerHeight
+			wantW, wantH := min(trayDrawerWidth, outW-wantX), min(trayDrawerHeight, outH)
+			wantAnchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+			if spec.Anchor != wantAnchor || int(spec.MarginLeft) != wantX || int(spec.MarginTop) != wantY ||
+				int(spec.Width) != wantW || int(spec.Height) != wantH {
+				t.Fatalf("drawer spec = anchor %d at (%d,%d) size %dx%d, want anchor %d at (%d,%d) size %dx%d",
+					spec.Anchor, spec.MarginLeft, spec.MarginTop, spec.Width, spec.Height,
+					wantAnchor, wantX, wantY, wantW, wantH)
+			}
+		})
 	}
 }
 

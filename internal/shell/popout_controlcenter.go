@@ -88,6 +88,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 		h.pageDirection = -1
 	}
 	h.section = section
+	if section == "home" {
+		r.refreshWallsLocked()
+	}
 	if h.anim != nil {
 		if !h.anim.has(controlCentrePageKey, animVisible) || h.anim.Value(controlCentrePageKey, animVisible) >= 1 {
 			h.anim.Reset(controlCentrePageKey, animVisible)
@@ -250,6 +253,18 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	if strings.HasPrefix(n.Action, "media:") {
 		return h.activateMedia(r, n)
 	}
+	if n.Action == "cc:walls-preview" {
+		if !r.lockerAcquired && r.wallsService != nil && r.wallsSnapshot.CanPreview && !r.wallsSnapshot.ActionPending {
+			r.wallsService.Preview()
+		}
+		return true
+	}
+	if n.Action == "cc:walls-stop" {
+		if !r.lockerAcquired && r.wallsService != nil {
+			r.wallsService.StopPreview()
+		}
+		return true
+	}
 	if id, ok := strings.CutPrefix(n.Action, "cc:brightness:"); ok {
 		brightness := r.brightness
 		if brightness == nil {
@@ -267,6 +282,8 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		target = PanelSession
 	case "cc:wallpaper":
 		target = PanelWallpaper
+	case "cc:terminal-art":
+		target = PanelTerminalArt
 	case panelMonitorAction:
 		target = PanelMonitor
 	case "cc:close":
@@ -275,6 +292,10 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	case "cc:caffeine":
 		r.setCaffeine(h, !r.inhibitWanted)
 		r.rebuildPanel(h)
+		if settings := r.panelHosts[PanelSettings]; settings != nil && settings.section == "Screensaver" {
+			r.rebuildPanel(settings)
+			r.publishSurface(settings.output, panelSurfaceID(settings.id))
+		}
 		return true
 	case "cc:dnd":
 		_, on := r.notify.dndState(r.now)
@@ -314,6 +335,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		argv := sessionArgv(n.Action, r.cfg.Session.Locker)
 		run := r.runArgv
+		if n.Action == "session-lock" {
+			run = func([]string) error { return r.LockTracked() }
+		}
 		r.scheduleControl(h, func() error { return run(argv) })
 		return true
 	default:
@@ -335,15 +359,23 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		})
 		return true
 	}
+	r.switchPanelLocked(h, target)
+	return true
+}
+
+// switchPanelLocked retires h and opens target where h was, leaving any other
+// open members of the panel group in place. It returns the new host, or nil.
+func (r *Registry) switchPanelLocked(h *PanelHost, target PanelID) *PanelHost {
 	trig := Trigger{
 		BarEdge: h.place.BarEdge, BarZone: h.place.BarZone,
 		OutW: h.place.Output.W, OutH: h.place.Output.H,
 	}
-	// These controls navigate to a different panel; retire the chooser while
-	// leaving any other open members of the panel group in place.
+	output := h.output
 	r.closePanelLocked(h.id)
-	_ = r.openPanelRootLocked(target, h.output, trig)
-	return true
+	if r.openPanelRootLocked(target, output, trig) != nil {
+		return nil
+	}
+	return r.panelHosts[target]
 }
 
 // setCaffeine changes the one process-wide idle inhibit. Caller holds r.mu;
@@ -368,6 +400,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 				r.inhibitWanted = false
 				r.pushIdleInputsLocked()
 				r.mu.Unlock()
+				r.refreshScreensaverSettingsPanel()
 				return err
 			}
 			stopped := false
@@ -381,6 +414,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 				r.inhibit = hold
 			}
 			r.mu.Unlock()
+			r.refreshScreensaverSettingsPanel()
 			if !keep {
 				return hold.Close()
 			}
@@ -397,4 +431,17 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 	hold := r.inhibit
 	r.inhibit = nil
 	r.scheduleControl(h, hold.Close)
+}
+
+func (r *Registry) refreshScreensaverSettingsPanel() {
+	r.mu.Lock()
+	h := r.panelHosts[PanelSettings]
+	if h == nil || h.section != "Screensaver" {
+		r.mu.Unlock()
+		return
+	}
+	output := h.output
+	r.rebuildPanel(h)
+	r.mu.Unlock()
+	r.publishSurface(output, panelSurfaceID(h.id))
 }

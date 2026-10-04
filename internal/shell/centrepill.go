@@ -45,12 +45,20 @@ func groupHoldsWordmark(items []config.Item) bool {
 // the clocks after it are subtle, so the time reads before the date. Clocks get
 // no width floor: tabular figures already hold the time still, and the floor
 // was the slack that left "15:04" in a pill sized for a date.
-func buildCentrePill(items []config.Item, pad int, m theme.Metrics) textWidget {
-	built := buildWidgetsWithClockFloor(items, noCapsule, m, "")
-	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM}
+func buildCentrePill(items []config.Item, pad int, m theme.Metrics, side bool, contentWidth int) textWidget {
+	built := buildWidgetsWithAxis(items, noCapsule, m, "", side, contentWidth)
+	kind := ui.KindRow
+	if side {
+		kind = ui.KindColumn
+	}
+	stack := &ui.Node{Kind: kind, Gap: theme.MarginM}
 	// The hairlines are members too: the bar rebuilds a group's row from its
 	// members on every layout, so a node that is not one disappears.
 	members := make([]textWidget, 0, len(built)+2)
+	padX := centrePadX
+	if side {
+		padX = pad
+	}
 	clocks := 0
 	for i, member := range built {
 		n := member.node
@@ -65,31 +73,40 @@ func buildCentrePill(items []config.Item, pad int, m theme.Metrics) textWidget {
 			}
 			clocks++
 		}
-		isMark := n.Kind == ui.KindWordmark && n.Mark == ""
+		isMark := n.Kind == ui.KindWordmark && (n.Mark == "" || n.Mark == "sysc-side")
 		if isMark {
 			n.ImageH, n.ImageW = centreMarkHeight, render.WordmarkWidth(centreMarkHeight)
+			if side {
+				n.Mark, n.CenterX = "sysc-side", true
+				n.ImageW = min(centreMarkHeight, max(1, contentWidth-2*padX))
+				n.ImageH = render.WordmarkWidth(n.ImageW)
+			}
 			n.Action, n.Name, n.Role = "", "", ""
 		}
 		// A hairline separates the mark from whatever sits beside it.
-		prevMark := len(row.Children) > 0 && row.Children[len(row.Children)-1].Kind == ui.KindWordmark
-		if len(row.Children) > 0 && (isMark || prevMark) {
-			rule := &ui.Node{Kind: ui.KindSeparator, Height: centreRuleHeight}
-			row.Children = append(row.Children, rule)
+		prevMark := len(stack.Children) > 0 && stack.Children[len(stack.Children)-1].Kind == ui.KindWordmark
+		if len(stack.Children) > 0 && (isMark || prevMark) {
+			ruleHeight := centreRuleHeight
+			if side {
+				ruleHeight = 1
+			}
+			rule := &ui.Node{Kind: ui.KindSeparator, Height: ruleHeight}
+			stack.Children = append(stack.Children, rule)
 			members = append(members, textWidget{node: rule, refresh: func(barView) bool { return false }})
 		}
-		row.Children = append(row.Children, n)
+		stack.Children = append(stack.Children, n)
 		members = append(members, member)
 	}
 
 	pill := &ui.Node{
 		Kind: ui.KindCapsule, Key: "centre", Shape: ui.ShapeMedium,
-		Padding: pad, PaddingX: centrePadX,
+		Padding: pad, PaddingX: padX,
 		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
 		Action: panelControlCenterAction, Name: "Control centre", Role: "button",
-		Children: []*ui.Node{row},
+		Children: []*ui.Node{stack},
 	}
 	return textWidget{
-		node: pill, inner: row, members: members,
+		node: pill, inner: stack, members: members,
 		refresh: func(v barView) bool {
 			if !v.Now.IsZero() {
 				pill.Tooltip = v.Now.Format(centreTooltipFormat)

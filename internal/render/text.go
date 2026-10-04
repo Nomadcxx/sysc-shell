@@ -101,9 +101,10 @@ type TextRenderer struct {
 // tabular alters digit advances alone, so it has to be part of the key or a
 // tabular clock and a proportional one would share a mask.
 type rasterKey struct {
-	text    string
-	spec    TextSpec
-	tabular bool
+	projectIcon bool
+	text        string
+	spec        TextSpec
+	tabular     bool
 }
 
 // rasterCacheMax bounds one renderer's cached runs.

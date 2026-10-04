@@ -966,3 +966,25 @@ func TestMoonbitGlyphIsInProjectFace(t *testing.T) {
 		t.Fatalf("first dimple has alpha %d, want transparent", got)
 	}
 }
+
+func TestSideCatRotatesEveryAnimationFrame(t *testing.T) {
+	tr := NewTextRenderer(newIconFace())
+	for _, act := range catActs {
+		for i := 0; i < act.poses; i++ {
+			name := fmt.Sprintf("cat-%s-%d", act.name, i)
+			source, err := tr.RasterProjectIconIn(name, 28)
+			if err != nil {
+				t.Fatal(err)
+			}
+			side, err := tr.RasterProjectIconIn(name+"-side", 28)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertClockwiseMask(t, source.Alpha, side.Alpha)
+			again, err := tr.RasterProjectIconIn(name+"-side", 28)
+			if err != nil || again.Alpha != side.Alpha {
+				t.Fatalf("%s side frame is not cached", name)
+			}
+		}
+	}
+}

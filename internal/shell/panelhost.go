@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,6 +67,7 @@ type Trigger struct {
 	Align      string
 	OutW, OutH int
 	AnchorX    int
+	AnchorY    int
 }
 
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
@@ -87,9 +89,9 @@ type PanelHost struct {
 	filesClicks   int
 	// openOrder selects the newest panel for outside dismissal.
 	openOrder uint64
-	// preferredX is the panel's original anchor before collision reflow.
-	preferredX int
-	place      Placement
+	// preferredMain is the panel's original bar-axis anchor before reflow.
+	preferredMain int
+	place         Placement
 	// rect is the placed panel body in output coordinates, excluding joints.
 	rect   ui.Rect
 	root   *ui.Node
@@ -250,6 +252,8 @@ type PanelHost struct {
 	wallpaperOutput  string
 	wallpaperSel     int
 	wallpaperFocused bool
+	// wallpaperEffectTheme is the last sysc-Go palette picked on Terminal Art.
+	wallpaperEffectTheme string
 	// wallpaperMenu names the open chrome dropdown ("folder" or "palette"),
 	// or is empty when none is. One field rather than a flag each keeps them
 	// mutually exclusive: two lists open at once would each claim a slice of
@@ -262,6 +266,11 @@ type PanelHost struct {
 	wallpaperPaletteSeed   string
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
+	// wallsDraft is a local Settings edit buffer. It is never written to the
+	// shell config; Apply sends only its dirty values to sysc-walls.
+	wallsDraft      map[string]string
+	wallsDirty      map[string]bool
+	wallsDraftReady bool
 
 	pluginManagerTab string
 	// palettes is the Palettes page state (custom palettes P12). Registry.mu.
@@ -342,6 +351,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelNotifications, nil
 	case "wallpaper":
 		return PanelWallpaper, nil
+	case "terminal-art":
+		return PanelTerminalArt, nil
 	case "audio":
 		return PanelAudio, nil
 	case "control-center":
@@ -561,24 +572,91 @@ func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Extent(), Align: "center"}
 	if bar, ok := r.bars[global]; ok {
 		w, h := bar.configuredSize()
-		if w > 0 {
+		// BarZone is the painted cross extent; an attached bar's overhang lies
+		// past its body and must not move panel contact inward.
+		cross := h
+		if policy.Edge == "left" || policy.Edge == "right" {
+			cross = w
+		}
+		if cross > 0 {
+			trig.BarZone = max(0, cross-policy.Overhang())
+		}
+		// Keep the output's dimensions separate from a narrow side strip.
+		ow, oh := bar.outputSize()
+		if ow > 0 {
+			trig.OutW = ow
+		}
+		if oh > 0 {
+			trig.OutH = oh
+		}
+		// Before the first output-size notification, a horizontal strip's
+		// configured width still identifies the output width, and a side
+		// strip's configured height identifies the output height.
+		if trig.OutW <= 0 && policy.Edge != "left" && policy.Edge != "right" && w > 0 {
 			trig.OutW = w
 		}
-		// Panels meet the body; an attached bar's overhang lies past it.
-		if h -= policy.Overhang(); h > 0 {
-			trig.BarZone = h
-		}
-		// The screen, not the bar. Without it every panel was placed as if the
-		// output were 1080 logical tall, and a taller panel than the output
-		// could hold overran the bottom edge on a scaled laptop.
-		if ow, oh := bar.outputSize(); oh > 0 {
-			trig.OutW, trig.OutH = ow, oh
-			if w > 0 {
-				trig.OutW = w
-			}
+		if trig.OutH <= 0 && (policy.Edge == "left" || policy.Edge == "right") && h > 0 {
+			trig.OutH = h
 		}
 	}
 	return trig
+}
+
+// barRectOnOutput converts one bar-local widget rectangle to output
+// coordinates, accounting for the strip's actual configured dimensions once.
+func barRectOnOutput(local ui.Rect, edge string, outW, outH, barW, barH int) ui.Rect {
+	switch edge {
+	case "bottom":
+		if outH > 0 && barH > 0 {
+			local.Y += outH - barH
+		}
+	case "right":
+		if outW > 0 && barW > 0 {
+			local.X += outW - barW
+		}
+	}
+	return local
+}
+
+// barGeometryOnOutputLocked resolves a bar-local trigger and its painted body
+// into output coordinates. The caller holds Registry.mu; BodyIn remains the
+// source of the body origin, including attached overhang and floating gaps.
+func (r *Registry) barGeometryOnOutputLocked(global uint32, local ui.Rect) (edge string, anchor, body, output ui.Rect) {
+	edge = r.cfg.Bar.Edge
+	bar := r.bars[global]
+	if bar == nil {
+		return edge, local, ui.Rect{}, ui.Rect{}
+	}
+	policy := r.cfg.ForConnector(bar.connector())
+	edge = policy.Edge
+	barW, barH := bar.configuredSize()
+	outW, outH := bar.outputSize()
+	output = ui.Rect{W: outW, H: outH}
+	if barW <= 0 || barH <= 0 {
+		return edge, local, ui.Rect{}, output
+	}
+	anchor = barRectOnOutput(local, edge, outW, outH, barW, barH)
+	x, y, w, h := policy.BodyIn(barW, barH)
+	body = barRectOnOutput(ui.Rect{X: x, Y: y, W: w, H: h}, edge, outW, outH, barW, barH)
+	return edge, anchor, body, output
+}
+
+func barWorkArea(policy config.Bar, output ui.Rect) ui.Rect {
+	work := ui.Rect{W: max(output.W, 0), H: max(output.H, 0)}
+	zone := max(policy.ExclusiveZone(), 0)
+	switch policy.Edge {
+	case "bottom":
+		work.H = max(0, work.H-min(zone, work.H))
+	case "left":
+		zone = min(zone, work.W)
+		work.X, work.W = zone, work.W-zone
+	case "right":
+		work.W = max(0, work.W-min(zone, work.W))
+	case "top":
+		zone = min(zone, work.H)
+		work.Y, work.H = zone, work.H-zone
+	}
+	return work
 }
 
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
@@ -638,6 +716,9 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 				fmt.Fprintf(os.Stderr, "sysc-shell: mark notifications seen: %v\n", err)
 			}
 		}
+	}
+	if id == PanelControlCenter {
+		r.refreshWallsLocked()
 	}
 	return nil
 }
@@ -885,6 +966,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelNotifications, true
 	case "wallpaper":
 		return PanelWallpaper, true
+	case "terminal-art":
+		return PanelTerminalArt, true
 	case "audio":
 		return PanelAudio, true
 	case "control-center":
@@ -932,10 +1015,14 @@ func (r *Registry) restorePanelPositionsLocked(output uint32) {
 	placedRects := make([]ui.Rect, 0, len(hosts))
 	for _, h := range hosts {
 		anchor := h.rect
-		anchor.X = h.preferredX
+		if h.place.sideAxis() {
+			anchor.Y = h.preferredMain
+		} else {
+			anchor.X = h.preferredMain
+		}
 		work := panelWorkArea(anchor, h.place, placedHosts)
 		rect, nextRects := panelArrangement(anchor, work, placedRects,
-			ui.Size{W: h.rect.W, H: h.rect.H})
+			ui.Size{W: h.rect.W, H: h.rect.H}, h.place.sideAxis())
 		for i, placed := range placedHosts {
 			r.updatePanelPlacementLocked(placed, nextRects[i])
 		}
@@ -946,16 +1033,80 @@ func (r *Registry) restorePanelPositionsLocked(output uint32) {
 }
 
 func panelWorkArea(base ui.Rect, place Placement, open []*PanelHost) ui.Rect {
-	work := place.workArea(base)
-	conflict, safeEdge := false, 0
-	for _, h := range open {
-		if base.Y >= h.rect.Y+h.rect.H || h.rect.Y >= base.Y+base.H {
-			continue
-		}
-		conflict = true
+	openRects := make([]ui.Rect, len(open))
+	safeEdge := 0
+	for i, h := range open {
+		openRects[i] = h.rect
 		if h.place.Attached() && h.place.BarShape == "attached" {
 			safeEdge = max(safeEdge, h.place.Fillet)
 		}
+	}
+	if place.sideAxis() {
+		for i, rect := range openRects {
+			openRects[i] = transposeRect(rect)
+		}
+		return transposeRect(panelWorkAreaRects(transposeRect(base), place.horizontalAxis(), openRects, safeEdge))
+	}
+	return panelWorkAreaRects(base, place, openRects, safeEdge)
+}
+
+func barGeometryChanged(a, b config.Bar) bool {
+	if a.Enabled != b.Enabled || a.Edge != b.Edge || a.Attached() != b.Attached() ||
+		(a.Style == "islands") != (b.Style == "islands") ||
+		a.Body() != b.Body() || a.Extent() != b.Extent() || a.SurfaceExtent() != b.SurfaceExtent() ||
+		a.Radius != b.Radius || a.ExclusiveZone() != b.ExclusiveZone() {
+		return true
+	}
+	return (!a.Attached() || !b.Attached()) && a.Gap != b.Gap
+}
+
+func (r *Registry) repositionSettingsLocked(h *PanelHost) {
+	if h == nil {
+		return
+	}
+	connector := ""
+	if bar := r.bars[h.output]; bar != nil {
+		connector = bar.connector()
+	}
+	trigger := r.triggerLocked(h.output, connector)
+	if trigger.OutW <= 0 {
+		trigger.OutW = h.place.Output.W
+	}
+	if trigger.OutH <= 0 {
+		trigger.OutH = h.place.Output.H
+	}
+	trigger.Align = "center"
+	place := r.panelPlacementLocked(PanelSettings, h.output, trigger,
+		settingsPanelSize(trigger.OutW, trigger.OutH))
+	place.Panel.W, place.Panel.H = place.FittedSize()
+	rect := place.Rect()
+	if place == h.place && rect == h.rect {
+		return
+	}
+	h.place, h.rect = place, rect
+	h.preferredMain = place.mainStart(rect)
+	r.sendPanelPlacementLocked(h)
+}
+
+func (r *Registry) refreshSettingsPlacement(global uint32, bar *Bar) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bars[global] != bar {
+		return
+	}
+	if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
+		r.repositionSettingsLocked(h)
+	}
+}
+
+func panelWorkAreaRects(base ui.Rect, place Placement, openRects []ui.Rect, safeEdge int) ui.Rect {
+	work := place.workArea(base)
+	conflict := false
+	for _, rect := range openRects {
+		if base.Y >= rect.Y+rect.H || rect.Y >= base.Y+base.H {
+			continue
+		}
+		conflict = true
 	}
 	if !conflict {
 		return work
@@ -979,8 +1130,19 @@ func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
 		return
 	}
 	h.rect = rect
-	h.place.AnchorX = rect.X + rect.W/2
-	spec := r.panelSpec(h, marginsFor(rect, h.place))
+	center := rect.X + rect.W/2
+	if h.place.sideAxis() {
+		center = rect.Y + rect.H/2
+	}
+	h.place.setMainAnchor(center)
+	r.sendPanelPlacementLocked(h)
+}
+
+func (r *Registry) sendPanelPlacementLocked(h *PanelHost) {
+	if h == nil {
+		return
+	}
+	spec := r.panelSpec(h, marginsFor(h.rect, h.place))
 	width, height := uint32(max(spec.Width, 0)), uint32(max(spec.Height, 0))
 	inputRects := spec.InputRects
 	if inputRects == nil {
@@ -1041,57 +1203,8 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelSettings {
 		size = settingsPanelSize(outW, outH)
 	}
-	gap := r.cfg.Panels.Gap
-	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter || id == PanelPluginStore {
-		gap = 0
-	}
-	place := Placement{
-		BarEdge: trig.BarEdge,
-		Output:  ui.Rect{W: outW, H: outH},
-		BarZone: trig.BarZone,
-		Gap:     gap,
-		Padding: r.cfg.Panels.Padding,
-		Panel:   size,
-		Align:   trig.Align,
-		AnchorX: trig.AnchorX,
-	}
-	if id == PanelSettings && place.Align == "" {
-		place.Align = "center"
-	}
-	if id == PanelSession || id == PanelNotifications {
-		place.Align = "right"
-	}
-	if bar, ok := r.bars[output]; ok {
-		bt := bar.themeSnapshot()
-		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
-	}
-	// Settings, the launcher, the clipboard and the plugin store float over the desktop; every
-	// other panel attaches to the bar.
-	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore || id == PanelFiles {
-		place.CenterY = true
-	}
-	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
-		place.Detached = true
-		place.Gap = theme.MarginS
-		if !hasBar {
-			place.BarZone = 0
-		}
-	}
-	if id == PanelPluginStore {
-		// The store is large enough to reach the bar, so it centres in the
-		// space the bar leaves rather than across it.
-		place.Gap = 0
-		place.CenterY = true
-		place.Align = "center"
-	}
-	if id == PanelClipboard {
-		// Clipboard history is a true modal: centre it against the whole output,
-		// not the bar-free region used by attached/floating pickers.
-		place.BarZone = 0
-		place.Gap = 0
-		place.CenterY = true
-		place.Align = "center"
-	}
+	trig.OutW, trig.OutH = outW, outH
+	place := r.panelPlacementLocked(id, output, trig, size)
 	if id == PanelPluginStore {
 		w, hgt := place.FittedSize()
 		place.Panel.W, place.Panel.H = w, hgt
@@ -1099,9 +1212,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 
 	// Tuck an attached panel one pixel under an opaque bar. Over a
 	// translucent one the doubled row would paint a darker line instead.
-	if place.Attached() && r.panelThemeFor(output).Surfaces.Bar == 0xff {
-		place.Overlap = 1
-	}
+	r.panelOverlapLocked(output, &place)
 
 	openShield := !r.hasPanelOnOutputLocked(output)
 	r.panelOrder++
@@ -1156,6 +1267,15 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 			h.wallpaperDir = firstRoot(h.wallpaperSnap)
 		}
 	}
+	if id == PanelTerminalArt {
+		h.wallpaperOutput = wallpaper.AllOutputs
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
+		}
+		if p := r.cfg.TerminalArt.Palette; slices.Contains(h.wallpaperSnap.Caps.Catalog.Themes, p) {
+			h.wallpaperEffectTheme = p
+		}
+	}
 	if id == PanelAudio {
 		h.audioTab = "volumes"
 	}
@@ -1202,6 +1322,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.focusByName("Search")
 		h.wallpaperFocused = true
 	}
+	if id == PanelTerminalArt {
+		// The cards own Enter, so focus starts on them rather than on the
+		// output select that happens to come first.
+		if effects := artEffects(h); len(effects) > 0 {
+			h.focusByName(effects[0].ID)
+		}
+	}
 	if id == PanelAudio {
 		h.focusByName("Volumes")
 	}
@@ -1214,7 +1341,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
 	baseRect := h.place.panelRect()
-	h.preferredX = baseRect.X
+	h.preferredMain = h.place.mainStart(baseRect)
 	openHosts := r.openPanelHostsLocked(output, &id)
 	openRects := make([]ui.Rect, len(openHosts))
 	for i, open := range openHosts {
@@ -1222,9 +1349,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	var placedRects []ui.Rect
 	h.rect, placedRects = panelArrangement(baseRect, panelWorkArea(baseRect, h.place, openHosts),
-		openRects, ui.Size{W: w, H: hgt})
-	if h.rect.X != baseRect.X {
-		h.place.AnchorX = h.rect.X + h.rect.W/2
+		openRects, ui.Size{W: w, H: hgt}, h.place.sideAxis())
+	if h.place.mainStart(h.rect) != h.place.mainStart(baseRect) {
+		center := h.rect.X + h.rect.W/2
+		if h.place.sideAxis() {
+			center = h.rect.Y + h.rect.H/2
+		}
+		h.place.setMainAnchor(center)
 	}
 	margins := marginsFor(h.rect, h.place)
 	if err := r.acquirePanelLeases(h); err != nil {
@@ -1258,6 +1389,70 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 
 	r.scheduleSurfaceFrames(h)
 	return nil
+}
+
+// panelPlacementLocked is the single source of axis, edge, detached and
+// surface-join placement policy for a panel body on one output.
+// Registry.mu is held by the caller.
+func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger, size ui.Rect) Placement {
+	outW, outH := trig.OutW, trig.OutH
+	if outW <= 0 {
+		outW = 1920
+	}
+	if outH <= 0 {
+		outH = 1080
+	}
+	gap := r.cfg.Panels.Gap
+	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter || id == PanelPluginStore {
+		gap = 0
+	}
+	place := Placement{
+		BarEdge: trig.BarEdge, Output: ui.Rect{W: outW, H: outH}, BarZone: trig.BarZone,
+		Gap: gap, Padding: r.cfg.Panels.Padding, Panel: size,
+		Align: trig.Align, AnchorX: trig.AnchorX, AnchorY: trig.AnchorY,
+	}
+	if id == PanelSettings && place.Align == "" {
+		place.Align = "center"
+	}
+	if id == PanelSession || id == PanelNotifications {
+		place.Align = "right"
+	}
+	if bar, ok := r.bars[output]; ok {
+		bt := bar.themeSnapshot()
+		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
+	}
+	// Settings, the launcher, the clipboard, the plugin store and the file
+	// browser float; other panels attach to the bar.
+	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore || id == PanelFiles {
+		place.CenterY = true
+	}
+	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
+		place.Detached = true
+		place.Gap = theme.MarginS
+		if !hasBar {
+			place.BarZone = 0
+		}
+	}
+	if id == PanelPluginStore {
+		// The store centres in the space the bar leaves.
+		place.Gap = 0
+		place.CenterY = true
+		place.Align = "center"
+	}
+	if id == PanelClipboard {
+		// Clipboard is a true modal centred on the whole output.
+		place.BarZone = 0
+		place.Gap = 0
+		place.CenterY = true
+		place.Align = "center"
+	}
+	return place
+}
+
+func (r *Registry) panelOverlapLocked(output uint32, place *Placement) {
+	if place.Attached() && r.panelThemeFor(output).Surfaces.Bar == 0xff {
+		place.Overlap = 1
+	}
 }
 
 func (r *Registry) acquirePanelLeases(h *PanelHost) error {
@@ -1492,19 +1687,22 @@ const settingsOpacityFloor uint8 = 0xf0
 
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
-	if h.place.BarEdge == "bottom" {
+	switch h.place.BarEdge {
+	case "bottom":
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+	case "right":
+		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight)
 	}
-	// Where the panel's body will land on the output, in the same logical
-	// coordinates the capture takes. It is computed before the fillet shifts
-	// the surface left, because the body sits inset by exactly that much inside
-	// the surface, so the two cancel.
-	region := ui.Rect{X: m.Left, Y: m.Top, W: h.place.Panel.W, H: h.place.Panel.H}
-	if h.place.BarEdge == "bottom" {
-		region.Y = h.place.Output.H - m.Bottom - h.place.Panel.H
+	// Body is the one output-space rectangle shared by placement and capture.
+	region := h.place.Rect()
+	if h.place.CenterY {
+		// Floating roots keep one output anchor as the bar moves between
+		// edges; their margins already describe an output-space body.
+		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+		m = Margins{Top: region.Y, Left: region.X}
 	}
 	joints := h.place.Joints()
-	m.Left -= joints.Left
+	m = panelSurfaceMargins(h.place, m)
 	width, height := h.surfaceSize()
 	opaque := h.theme.BackgroundOpaque()
 	var input []ui.Rect
@@ -1591,7 +1789,7 @@ func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
 	}
 	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.theme.Radius}
 	if h.place.Attached() {
-		opacity, _ := h.panelReveal()
+		opacity, _, _ := h.panelReveal()
 		j := h.place.Joints()
 		shape.AttachEdge = h.place.BarEdge
 		shape.JointLeft, shape.JointRight, shape.EdgeFillet = h.revealJoints(opacity)
@@ -1613,6 +1811,9 @@ func (h *PanelHost) edgeExtent(j Joints) int {
 // joints and lengthened by any screen-edge wedge.
 func (h *PanelHost) surfaceSize() (w, hgt int) {
 	j := h.place.Joints()
+	if h.place.sideAxis() {
+		return h.place.Panel.W + h.edgeExtent(j), h.place.Panel.H + j.Left + j.Right
+	}
 	return h.place.Panel.W + j.Left + j.Right, h.place.Panel.H + h.edgeExtent(j)
 }
 
@@ -1662,11 +1863,30 @@ func tooltipAt(root *ui.Node, x, y int) (string, ui.Rect) {
 func (h *PanelHost) surfaceBody(w, hgt int) ui.Rect {
 	j := h.place.Joints()
 	edge := h.edgeExtent(j)
+	if h.place.sideAxis() {
+		body := ui.Rect{Y: j.Left, W: max(0, w-edge), H: max(0, hgt-j.Left-j.Right)}
+		if h.place.BarEdge == "right" {
+			body.X = edge
+		}
+		return body
+	}
 	body := ui.Rect{X: j.Left, W: max(0, w-j.Left-j.Right), H: max(0, hgt-edge)}
 	if h.place.BarEdge == "bottom" {
 		body.Y = edge
 	}
 	return body
+}
+
+func panelSurfaceMargins(place Placement, margins Margins) Margins {
+	joints := place.Joints()
+	if place.sideAxis() {
+		margins.Top -= joints.Left
+		margins.Bottom -= joints.Right
+	} else {
+		margins.Left -= joints.Left
+		margins.Right -= joints.Right
+	}
+	return margins
 }
 
 // panelFontFamily resolves the font of the output the panel opens on. A panel
@@ -1787,17 +2007,24 @@ func (h *PanelHost) measureText() ui.MeasureText {
 }
 
 // panelReveal is the surface's reveal: its opacity and slide.
-func (h *PanelHost) panelReveal() (opacity float64, offsetY int) {
+func (h *PanelHost) panelReveal() (opacity float64, offsetX, offsetY int) {
 	if h == nil || h.anim == nil || !h.anim.has(panelSurfaceID(h.id), animVisible) {
-		return 1, 0
+		return 1, 0, 0
 	}
 	key := panelSurfaceID(h.id)
 	opacity = h.anim.PanelOpacity(key)
-	offsetY = h.anim.PanelSlide(key)
-	if h.place.BarEdge == "top" {
-		offsetY = -offsetY
+	slide := h.anim.PanelSlide(key)
+	switch h.place.BarEdge {
+	case "top":
+		offsetY = -slide
+	case "bottom":
+		offsetY = slide
+	case "left":
+		offsetX = -slide
+	case "right":
+		offsetX = slide
 	}
-	return opacity, offsetY
+	return opacity, offsetX, offsetY
 }
 
 // revealJoints scales each joint and the screen-edge wedge by the reveal's
@@ -1875,7 +2102,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	style := h.rootStyle(paintTheme).WithPaper(h.paper)
 	style.Scale120 = scale
 	style.Body = body
-	opacity, offsetY := h.panelReveal()
+	opacity, offsetX, offsetY := h.panelReveal()
 	if h.place.Attached() {
 		style.AttachEdge = h.place.BarEdge
 		j := h.place.Joints()
@@ -1909,7 +2136,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
 	}
-	c.ApplySurfaceTransform(opacity, scale.Physical(offsetY))
+	c.ApplySurfaceTransform(opacity, scale.Physical(offsetX), scale.Physical(offsetY))
 	return nil
 }
 
@@ -2198,6 +2425,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		return true
 	}
 	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
+		return true
+	}
+	if h.id == PanelTerminalArt && h.artKeyPress(r, key) {
 		return true
 	}
 	if h.id == PanelClipboard && h.clipboardKeyPress(r, key) {
@@ -2821,6 +3051,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if h.id == PanelPluginStore {
 		return h.activatePluginStore(r, n)
 	}
+	if strings.HasPrefix(n.Action, "walls:") {
+		return activateWallsAction(r, h, n)
+	}
 	switch n.Action {
 	case "plugin-close", "plugin-retry", "plugin-disable":
 		if r.plugins != nil {
@@ -2832,7 +3065,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if n.Kind == ui.KindTextField {
 			return r.deliverPluginText(n.Action, n.Text, v1.EventSubmit)
 		}
-		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272}, 0)
+		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272}, ui.Rect{})
 	}
 	if strings.HasPrefix(n.Action, "plugin-set:") {
 		switch n.Kind {
@@ -2916,6 +3149,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return false
 	}
 	if strings.HasPrefix(n.Action, "wallpaper") && h.wallpaperAction(r, n) {
+		return true
+	}
+	if strings.HasPrefix(n.Action, "art-") && h.artAction(r, n) {
 		return true
 	}
 	if strings.HasPrefix(n.Action, "audio-") && h.applyAudioControl(r, n) {
@@ -3373,6 +3609,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return launcherTree(r, h)
 	case PanelWallpaper:
 		return wallpaperTree(r, h)
+	case PanelTerminalArt:
+		return terminalArtTree(r, h)
 	case PanelPluginStore:
 		return pluginStoreTree(r, h)
 	case PanelPlugin:
@@ -3427,6 +3665,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// The plugin picker's size, not native Noctalia's 980x700. A short
 		// output clamps it through Placement.FittedSize (D2).
 		return ui.Rect{W: 980, H: 1100}
+	case PanelTerminalArt:
+		return ui.Rect{W: 640, H: 640}
 	case PanelAudio:
 		return audioPanelSize(1920, 1080)
 	case PanelControlCenter:
@@ -3534,11 +3774,22 @@ func (r *Registry) syncNotificationsSize(h *PanelHost) {
 }
 
 func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
-	if h.set == nil || n == nil {
+	if n == nil {
 		return
 	}
 	path, ok := strings.CutPrefix(n.Action, "set:")
 	if !ok {
+		return
+	}
+	if key, ok := strings.CutPrefix(path, "walls."); ok {
+		setWallsDraft(r, h, key, settingNodeValue(n))
+		return
+	}
+	if path == "idle.after" || path == "idle.delay" {
+		h.applyIdleSetting(r, path, settingNodeValue(n))
+		return
+	}
+	if h.set == nil {
 		return
 	}
 	e := h.set.ByPath(path)
@@ -3567,12 +3818,33 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 	}
 }
 
+func settingNodeValue(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Kind {
+	case ui.KindToggle:
+		if n.Value != 0 {
+			return "true"
+		}
+		return "false"
+	case ui.KindTextField, ui.KindMenu:
+		return n.Text
+	default:
+		return ""
+	}
+}
+
 // commitSetting applies one value to the draft, rebuilds the registry from it,
 // and writes. The rebuild is what lets an entry's options depend on another
 // setting: the seed picker follows the theme source, and a registry built once
 // at open would keep offering the previous source's vocabulary for as long as
 // the panel stayed up.
 func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
+	if e != nil && (e.Path == "idle.after" || e.Path == "idle.delay") {
+		h.applyIdleSetting(r, e.Path, v)
+		return
+	}
 	if err := e.Set(&h.draft, v); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
@@ -3634,7 +3906,19 @@ func (h *PanelHost) flushDraft(r *Registry) {
 }
 
 func (h *PanelHost) applyMenu(r *Registry, path string) {
-	if h.set == nil || path == "" {
+	if path == "" {
+		return
+	}
+	if key, ok := strings.CutPrefix(path, "walls."); ok {
+		if r.lockerAcquired {
+			return
+		}
+		if m := h.menus[path]; m != nil {
+			setWallsDraft(r, h, key, m.Value())
+		}
+		return
+	}
+	if h.set == nil {
 		return
 	}
 	e := h.set.ByPath(path)
@@ -3940,6 +4224,11 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
 	argv := sessionArgv(action, r.cfg.Session.Locker)
 	run := r.runArgv
+	if action == "session-lock" {
+		// Tracked spawn: handshake, wallpaper pause, respawn policy
+		// (docs/plans/2026-10-03-sysc-lock.md T16).
+		run = func([]string) error { return r.LockTracked() }
+	}
 	// loginctl actions run under a 5-second timeout; holding Registry.mu
 	// across them stalls every relay and the Wayland owner (GH #5). Launch
 	// off the lock and commit the panel result after re-acquiring it, the

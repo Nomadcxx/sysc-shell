@@ -550,3 +550,17 @@ func TestCallTimeouts(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionLockStateRoutesToHandler(t *testing.T) {
+	s := NewServer("", Handlers{LockState: func() map[string]any {
+		return map[string]any{"running": true, "acquired": true, "exit_code": 0}
+	}})
+	out := string(s.handleLine(`{"id":1,"method":"session.lock-state"}`))
+	if !strings.Contains(out, `"ok"`) || !strings.Contains(out, `"acquired":true`) {
+		t.Fatalf("reply: %s", out)
+	}
+	out = string(NewServer("", Handlers{}).handleLine(`{"id":2,"method":"session.lock-state"}`))
+	if !strings.Contains(out, "lock state handler unset") {
+		t.Fatalf("reply without a handler: %s", out)
+	}
+}

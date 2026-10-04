@@ -147,7 +147,7 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 			h.anim = newAnimator(func() time.Time { return now }, tc.reduced, h.theme.Motion)
 			h.anim.Target(panelSurfaceID(h.id), animVisible, 1)
 
-			opacity, offsetY := h.panelReveal()
+			opacity, _, offsetY := h.panelReveal()
 			fillet, _, _ := h.revealJoints(opacity)
 			if opacity != 0 || offsetY != tc.wantY || fillet != 0 {
 				t.Fatalf("initial reveal = opacity %v offset %d joint %d, want 0, %d, 0", opacity, offsetY, fillet, tc.wantY)
@@ -157,7 +157,7 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 				settle = reducedPanelCap
 			}
 			now = now.Add(settle)
-			opacity, offsetY = h.panelReveal()
+			opacity, _, offsetY = h.panelReveal()
 			fillet, _, _ = h.revealJoints(opacity)
 			if opacity != 1 || offsetY != 0 || fillet != 12 {
 				t.Fatalf("settled reveal = opacity %v offset %d joint %d, want 1, 0, 12", opacity, offsetY, fillet)
@@ -408,10 +408,10 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 		t.Fatalf("body height = %d, want 480", body.Height)
 	}
 	home := body.Children[0]
-	if home.Gap != theme.MarginL || len(home.Children) != 4 {
-		t.Fatalf("Home composition = %+v, want four blocks separated by one MarginL", home)
+	if home.Gap != theme.MarginL || len(home.Children) != 5 {
+		t.Fatalf("Home composition = %+v, want five blocks separated by one MarginL", home)
 	}
-	want := []int{ccIdentityCardH, ccTogglePillH, ccSplitH, ccSlidersH}
+	want := []int{ccIdentityCardH, ccTogglePillH, ccWallsRowH, ccSplitH, ccSlidersH}
 	for i, child := range home.Children {
 		if child.Height != want[i] {
 			t.Errorf("Home block %d height = %d, want %d", i, child.Height, want[i])
@@ -419,11 +419,47 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 	}
 }
 
+func TestControlCentreHomeShowsScreensaverAndPreviewActions(t *testing.T) {
+	t.Parallel()
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	root := ccHome(&Registry{}, h)
+	var settings, preview bool
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		settings = settings || n.Action == "settings-section:Screensaver"
+		preview = preview || n.Action == "cc:walls-preview"
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	if !settings || !preview {
+		t.Fatalf("Home screensaver actions: settings=%v preview=%v", settings, preview)
+	}
+}
+
+func TestControlCentreDisablesPreviewWhileLocked(t *testing.T) {
+	t.Parallel()
+	r := &Registry{lockerAcquired: true}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	root := ccHome(r, h)
+	preview := findNode(root, func(n *ui.Node) bool { return n.Action == "cc:walls-preview" })
+	if preview == nil {
+		t.Fatal("Home has no Preview action")
+	}
+	if !preview.State.Has(ui.StateDisabled) || !preview.AriaDisabled {
+		t.Fatalf("Preview remains available while locked: %+v", preview)
+	}
+}
+
 func TestControlCentreHomeChildrenFitItsViewport(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	home := ccHome(&Registry{}, h)
 	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
-	if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccPageH}, measure); err != nil {
+	if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccHomePageH}, measure); err != nil {
 		t.Fatal(err)
 	}
 	bottom := home.Bounds.Y + home.Bounds.H
@@ -472,10 +508,10 @@ func TestHomeWeatherSummaryFollowsNightAndFailureStates(t *testing.T) {
 func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	quick := ccHome(&Registry{}, h).Children[1]
-	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 2 {
-		t.Fatalf("quick access = %+v, want two controls in a MarginM-gap row", quick)
+	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 3 {
+		t.Fatalf("quick access = %+v, want three controls in a MarginM-gap row", quick)
 	}
-	for _, name := range []string{"Caffeine", "Wallpaper"} {
+	for _, name := range []string{"Caffeine", "Wallpaper", "Terminal Art"} {
 		n := findByName(quick, name)
 		if n == nil || n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium || !n.Focusable {
 			t.Errorf("%s = %+v, want independent capsule button", name, n)
@@ -577,11 +613,11 @@ func TestControlCentreHomeSystemGaugesFitInsideCardBounds(t *testing.T) {
 				height := (base*scale + 99) / 100
 				return len([]rune(s)) * 8 * scale / 100, height
 			}
-			if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccPageH}, measure); err != nil {
+			if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccHomePageH}, measure); err != nil {
 				t.Fatal(err)
 			}
 
-			system := home.Children[2].Children[0].Children[1]
+			system := home.Children[3].Children[0].Children[1]
 			if system.Kind != ui.KindCapsule || system.Bounds.H != ccCardH || system.Name != "System" || system.Role != "group" {
 				t.Fatalf("system card = %+v, want fixed accessible %dpx card", system, ccCardH)
 			}
@@ -783,6 +819,70 @@ func TestHomeWallpaperControlOpensTheExistingPanel(t *testing.T) {
 	r.mu.Unlock()
 	if controlOpen || !wallpaperOpen {
 		t.Fatalf("after Wallpaper: control open=%v wallpaper open=%v", controlOpen, wallpaperOpen)
+	}
+}
+
+func TestHomeTerminalArtControlOpensItsPanel(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	n := findByName(h.root, "Terminal Art")
+	if n == nil || n.Action != "cc:terminal-art" {
+		r.mu.Unlock()
+		t.Fatalf("Terminal Art control = %+v", n)
+	}
+	if !h.activateControlCentre(r, n) {
+		r.mu.Unlock()
+		t.Fatal("Terminal Art control was not handled")
+	}
+	_, controlOpen := r.panelHosts[PanelControlCenter]
+	_, artOpen := r.panelHosts[PanelTerminalArt]
+	_, wallpaperOpen := r.panelHosts[PanelWallpaper]
+	r.mu.Unlock()
+	if controlOpen || !artOpen || wallpaperOpen {
+		t.Fatalf("after Terminal Art: control=%v art=%v wallpaper=%v", controlOpen, artOpen, wallpaperOpen)
+	}
+}
+
+// The quick row holds three stadium buttons. The idle-held list used to share
+// the row as a fourth child and ran past the body; it now rides on the
+// Caffeine button's tooltip, because the page height is fixed.
+func TestHomeQuickRowFitsThreeButtons(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.SetExternalInhibitors([]services.ScreenSaverInhibitor{{App: "mpv", Cookie: 1}})
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelControlCenter]
+	caffeine := findByName(h.root, "Caffeine")
+	if caffeine == nil {
+		t.Fatal("no Caffeine control")
+	}
+	var row *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		for _, c := range n.Children {
+			if c == caffeine {
+				row = n
+			}
+		}
+	})
+	if row == nil || len(row.Children) != 3 {
+		t.Fatalf("quick row = %+v, want exactly three buttons", row)
+	}
+	width := 2 * theme.MarginM
+	for _, c := range row.Children {
+		width += c.Width
+	}
+	if body := ccBodyWidth(h); width > body {
+		t.Fatalf("quick row is %d wide, body is %d", width, body)
+	}
+	if !strings.Contains(caffeine.Tooltip, "Idle held: mpv") {
+		t.Fatalf("Caffeine tooltip = %q, want the idle-held list", caffeine.Tooltip)
 	}
 }
 
@@ -1454,7 +1554,14 @@ func TestControlCentreMeasuredRowsFitTheirContainers(t *testing.T) {
 	body := ccBodyWidth(h)
 
 	home := ccHome(&Registry{}, h)
-	split := home.Children[2]
+	wallsRow := home.Children[2]
+	if len(wallsRow.Children) != 2 {
+		t.Fatalf("screensaver row holds %d tiles, want 2", len(wallsRow.Children))
+	}
+	if used := wallsRow.Children[0].Width + wallsRow.Gap + wallsRow.Children[1].Width; used > body {
+		t.Errorf("screensaver row uses %dpx across a %dpx body", used, body)
+	}
+	split := home.Children[3]
 	left, right := split.Children[0], split.Children[1]
 	if used := left.Width + split.Gap + right.Width; used > body {
 		t.Errorf("Home split uses %dpx across a %dpx body", used, body)
