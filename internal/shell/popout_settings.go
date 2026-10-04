@@ -323,6 +323,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	body := func(content *ui.Node) *ui.Node {
+		settingsDimIdle(r, h, content)
 		if content.Kind == ui.KindScroll {
 			content.Height = settingsContentHeight(h, head)
 		}
@@ -335,7 +336,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if searching {
 		var hits []settings.Entry
 		if h.set != nil {
-			hits = h.set.Search(h.query)
+			hits = overlayIdleGets(r, h.set.Search(h.query))
 		}
 		return body(settingsSearchColumn(h, hits))
 	}
@@ -361,7 +362,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	var entries []settings.Entry
 	if h.set != nil {
-		entries = h.set.Section(section)
+		entries = overlayIdleGets(r, h.set.Section(section))
 	}
 	if section == "Tray" {
 		entries = settingsTrayTitles(r, entries)
@@ -1335,6 +1336,101 @@ func settingsBrowseOptions(current string) []string {
 		}
 	}
 	return out
+}
+
+func overlayIdleGets(r *Registry, entries []settings.Entry) []settings.Entry {
+	if r == nil {
+		return entries
+	}
+	snap := r.wallsSnapshot
+	for i := range entries {
+		switch entries[i].Path {
+		case "idle.after":
+			entries[i].Get = func(c config.Config) string {
+				return settings.WhenIdleMode(c.Idle.Lock, snap.EnabledAtLogin())
+			}
+		case "idle.delay":
+			entries[i].Get = func(c config.Config) string {
+				if settings.WhenIdleMode(c.Idle.Lock, snap.EnabledAtLogin()) == "nothing" {
+					return ""
+				}
+				return settings.WhenIdleDelay(c.Idle.Lock, snap.Timeout).String()
+			}
+		}
+	}
+	return entries
+}
+
+func settingsDimIdle(r *Registry, h *PanelHost, root *ui.Node) {
+	if r == nil || h == nil || root == nil {
+		return
+	}
+	locker := strings.TrimSpace(h.draft.Session.Locker)
+	mode := settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin())
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		switch n.Action {
+		case "pick:idle.after=lock":
+			if locker == "" {
+				n.State |= ui.StateDisabled
+				n.Focusable = false
+			}
+		case "pick:idle.after=screensaver":
+			if !r.wallsSnapshot.ServiceAvailable {
+				n.State |= ui.StateDisabled
+				n.Focusable = false
+			}
+		case "set:idle.delay":
+			if mode == "nothing" {
+				n.State |= ui.StateDisabled
+				n.Focusable = false
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+}
+
+func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
+	if r == nil || h == nil {
+		return
+	}
+	mode := settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin())
+	delay := settings.WhenIdleDelay(h.draft.Idle.Lock, r.wallsSnapshot.Timeout)
+	switch path {
+	case "idle.after":
+		mode = value
+	case "idle.delay":
+		tmp := h.draft
+		e := h.set.ByPath("idle.delay")
+		if e == nil || e.Set == nil {
+			return
+		}
+		if err := e.Set(&tmp, value); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return
+		}
+		delay = tmp.Idle.Lock
+	default:
+		return
+	}
+	if err := settings.ApplyWhenIdle(mode, delay, &h.draft, idleWallsFor(r)); err != nil {
+		h.errLabel = err.Error()
+		r.rebuildPanel(h)
+		return
+	}
+	h.errLabel = ""
+	h.set = r.settingsForLocked(h.draft)
+	h.persistDraft(r)
+	if path == "idle.after" {
+		r.rebuildPanel(h)
+	}
 }
 
 func (h *PanelHost) persistDraft(r *Registry) {
