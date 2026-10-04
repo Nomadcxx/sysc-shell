@@ -1376,16 +1376,19 @@ func settingsDimIdle(r *Registry, h *PanelHost, root *ui.Node) {
 		case "pick:idle.after=lock":
 			if locker == "" {
 				n.State |= ui.StateDisabled
+				n.AriaDisabled = true
 				n.Focusable = false
 			}
 		case "pick:idle.after=screensaver":
 			if !r.wallsSnapshot.ServiceAvailable {
 				n.State |= ui.StateDisabled
+				n.AriaDisabled = true
 				n.Focusable = false
 			}
 		case "set:idle.delay":
 			if mode == "nothing" {
 				n.State |= ui.StateDisabled
+				n.AriaDisabled = true
 				n.Focusable = false
 			}
 		}
@@ -1428,7 +1431,7 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 	switch mode {
 	case "screensaver":
 		r.wallsSnapshot.UnitFileState = "enabled"
-		r.wallsSnapshot.Timeout = delay.String()
+		r.wallsSnapshot.Timeout = wallsIdleTimeout(delay)
 	default:
 		r.wallsSnapshot.UnitFileState = "disabled"
 	}

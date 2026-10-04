@@ -111,30 +111,32 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 		fake.mu.Lock()
 		patches = slices.Clone(fake.patches)
 		fake.mu.Unlock()
-		wantTimeout := (3 * time.Minute).String()
 		found := false
 		for _, batch := range patches {
 			for _, s := range batch {
-				if s.Key == "timeout" && s.Value == wantTimeout {
+				if s.Key == "timeout" && s.Value == "3m" {
 					found = true
 				}
 			}
 		}
 		if !found {
-			t.Fatalf("delay while screensaver patches = %v, want timeout %q", patches, wantTimeout)
+			t.Fatalf("delay while screensaver patches = %v, want timeout %q", patches, "3m")
+		}
+		if r.wallsSnapshot.Timeout != "3m" {
+			t.Fatalf("optimistic timeout = %q, want 3m", r.wallsSnapshot.Timeout)
 		}
 
 		h.draft.Session.Locker = ""
 		r.rebuildPanel(h)
 		lock := findNode(h.root, func(n *ui.Node) bool { return n.Action == "pick:idle.after=lock" })
-		if lock == nil || lock.State&ui.StateDisabled == 0 {
+		if lock == nil || lock.State&ui.StateDisabled == 0 || !lock.AriaDisabled {
 			t.Fatalf("Lock option with empty locker = %+v, want disabled", lock)
 		}
 
 		r.wallsSnapshot.ServiceAvailable = false
 		r.rebuildPanel(h)
 		ss = findNode(h.root, func(n *ui.Node) bool { return n.Action == "pick:idle.after=screensaver" })
-		if ss == nil || ss.State&ui.StateDisabled == 0 {
+		if ss == nil || ss.State&ui.StateDisabled == 0 || !ss.AriaDisabled {
 			t.Fatalf("Screensaver option without service = %+v, want disabled", ss)
 		}
 
@@ -142,7 +144,7 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 		r.wallsSnapshot.UnitFileState = "disabled"
 		r.rebuildPanel(h)
 		delay := findNode(h.root, func(n *ui.Node) bool { return n.Action == "set:idle.delay" })
-		if delay == nil || delay.State&ui.StateDisabled == 0 {
+		if delay == nil || delay.State&ui.StateDisabled == 0 || !delay.AriaDisabled {
 			t.Fatalf("delay while nothing = %+v, want StateDisabled", delay)
 		}
 	})
