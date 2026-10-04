@@ -684,6 +684,14 @@ func (h *pluginHost) reconcileBarViews(desired []hostedView, registryHeld bool) 
 	for _, d := range desired {
 		key := barKey(d.Plugin, d.Instance, d.Output)
 		want[key] = d
+		if v := haveBar[key]; v != nil && (v.Width != d.Width || v.Height != d.Height || v.Entry != d.Entry || v.Generation != d.Generation) {
+			h.closeView(v.ID)
+			delete(haveBar, key)
+		}
+		if v := haveTip[key]; v != nil && (v.Entry != d.Entry || v.Generation != d.Generation) {
+			h.closeView(v.ID)
+			delete(haveTip, key)
+		}
 		if _, ok := haveBar[key]; !ok {
 			h.openView(d, registryHeld)
 		}

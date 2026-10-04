@@ -2362,3 +2362,34 @@ func TestSidePluginViewportAccountsForGroupChrome(t *testing.T) {
 		}
 	}
 }
+
+func TestBarPluginReopensWhenItsViewportChanges(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	h := reg.plugins
+	reg.mu.Lock()
+	desired := h.desiredBarViewsLocked()
+	reg.mu.Unlock()
+	if len(desired) != 1 {
+		t.Fatalf("desired views = %+v", desired)
+	}
+	old := h.barViewIDs("DP-1")[0]
+	for _, width := range []int{28, 240} {
+		desired[0].Width = width
+		h.reconcileBarViews(desired, false)
+		ids := h.barViewIDs("DP-1")
+		h.mu.Lock()
+		v := *h.views[ids[0]]
+		_, stale := h.views[old]
+		h.mu.Unlock()
+		if len(ids) != 1 || ids[0] == old || stale || v.Width != width {
+			t.Fatalf("viewport %d kept stale view %s: %+v", width, old, v)
+		}
+		h.reconcileBarViews(desired, false)
+		if next := h.barViewIDs("DP-1"); len(next) != 1 || next[0] != ids[0] {
+			t.Fatalf("unchanged viewport reopened: %v", next)
+		}
+		old = ids[0]
+	}
+}
