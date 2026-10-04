@@ -193,15 +193,28 @@ func (b Bar) SurfaceExtent() int { return b.Extent() + b.Overhang() }
 // ground to attach, so it lays out as floating whatever the shape says.
 func (b Bar) Attached() bool { return b.Shape == "attached" && b.Style != "islands" }
 
-// BodyIn places the painted body inside a surface of the given size. A
-// floating body is inset by the gap; an attached one spans the width against
-// the screen edge, with the overhang on its far side.
+// BodyIn places the painted body inside a surface of the given size. The gap
+// meets the configured screen edge; an attached body's overhang is on the far
+// side and carries its fillets.
 func (b Bar) BodyIn(surfaceW, surfaceH int) (x, y, w, h int) {
 	if b.Attached() {
-		if b.Edge == "bottom" {
-			y = b.Overhang()
+		switch b.Edge {
+		case "bottom":
+			return 0, b.Overhang(), max(0, surfaceW), max(0, surfaceH-b.Overhang())
+		case "left":
+			return 0, 0, max(0, surfaceW-b.Overhang()), max(0, surfaceH)
+		case "right":
+			return b.Overhang(), 0, max(0, surfaceW-b.Overhang()), max(0, surfaceH)
 		}
-		return 0, y, surfaceW, max(0, surfaceH-b.Overhang())
+		return 0, 0, max(0, surfaceW), max(0, surfaceH-b.Overhang())
+	}
+	switch b.Edge {
+	case "bottom":
+		return b.Gap, 0, max(0, surfaceW-2*b.Gap), max(0, surfaceH-b.Gap)
+	case "left":
+		return b.Gap, b.Gap, max(0, surfaceW-b.Gap), max(0, surfaceH-2*b.Gap)
+	case "right":
+		return 0, b.Gap, max(0, surfaceW-b.Gap), max(0, surfaceH-2*b.Gap)
 	}
 	return b.Gap, b.Gap, max(0, surfaceW-2*b.Gap), max(0, surfaceH-b.Gap)
 }
@@ -512,11 +525,10 @@ var batteryLabels = map[string]bool{
 	"percent": true, "time": true, "rate": true, "none": true,
 }
 
-// supportedEdges names every edge the model understands and whether this
-// milestone implements it. An unimplemented edge is rejected with a named
-// error rather than silently mis-rendering.
+// supportedEdges is the set of bar edges implemented by the geometry pipeline.
+// Unknown values are rejected with bar.edge field context.
 var supportedEdges = map[string]bool{
-	"top": true, "bottom": true, "left": false, "right": false,
+	"top": true, "bottom": true, "left": true, "right": true,
 }
 
 // Default is the built-in configuration, used when no file exists.

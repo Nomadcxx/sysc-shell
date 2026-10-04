@@ -21,7 +21,7 @@ func placed(rects ...ui.Rect) []*ui.Node {
 // the trailing edge of the run that survived.
 func TestOverflowFadeSitsAtTheTrailingEdgeOfWhatSurvived(t *testing.T) {
 	right := placed(ui.Rect{X: 900, Y: 7, W: 120, H: 30}, ui.Rect{X: 1028, Y: 7, W: 92, H: 30})
-	fades := overflowFades([][]*ui.Node{nil, nil, right}, ui.BarOverflow{Right: 3}, 40)
+	fades := overflowFades([][]*ui.Node{nil, nil, right}, ui.BarOverflow{Right: 3}, 40, ui.Horizontal)
 
 	if len(fades) != 1 {
 		t.Fatalf("fades = %d, want one for the one section that dropped", len(fades))
@@ -41,7 +41,7 @@ func TestOverflowFadeSitsAtTheTrailingEdgeOfWhatSurvived(t *testing.T) {
 // reached by keyboard, because there is nothing to activate.
 func TestOverflowFadeIsInert(t *testing.T) {
 	right := placed(ui.Rect{X: 900, Y: 7, W: 120, H: 30})
-	fades := overflowFades([][]*ui.Node{nil, nil, right}, ui.BarOverflow{Right: 1}, 40)
+	fades := overflowFades([][]*ui.Node{nil, nil, right}, ui.BarOverflow{Right: 1}, 40, ui.Horizontal)
 	if len(fades) != 1 {
 		t.Fatalf("fades = %d, want one", len(fades))
 	}
@@ -59,7 +59,7 @@ func TestNoOverflowDrawsNoFade(t *testing.T) {
 		placed(ui.Rect{X: 500, Y: 7, W: 100, H: 30}),
 		placed(ui.Rect{X: 900, Y: 7, W: 100, H: 30}),
 	}
-	if fades := overflowFades(sections, ui.BarOverflow{}, 40); len(fades) != 0 {
+	if fades := overflowFades(sections, ui.BarOverflow{}, 40, ui.Horizontal); len(fades) != 0 {
 		t.Fatalf("fades = %d on a bar that fits, want none", len(fades))
 	}
 }
@@ -72,7 +72,7 @@ func TestEachOverflowingSectionFadesOnItsOwnEdge(t *testing.T) {
 		placed(ui.Rect{X: 500, Y: 7, W: 100, H: 30}),
 		placed(ui.Rect{X: 900, Y: 7, W: 100, H: 30}),
 	}
-	fades := overflowFades(sections, ui.BarOverflow{Left: 1, Right: 2}, 40)
+	fades := overflowFades(sections, ui.BarOverflow{Left: 1, Right: 2}, 40, ui.Horizontal)
 	if len(fades) != 2 {
 		t.Fatalf("fades = %d, want one per overflowing section", len(fades))
 	}
@@ -85,7 +85,7 @@ func TestEachOverflowingSectionFadesOnItsOwnEdge(t *testing.T) {
 // There is no edge to soften then, and inventing a box over bare bar would
 // report the overflow in a place no content ever occupied.
 func TestASectionThatPlacedNothingFadesNothing(t *testing.T) {
-	if fades := overflowFades([][]*ui.Node{nil, nil, nil}, ui.BarOverflow{Right: 4}, 40); len(fades) != 0 {
+	if fades := overflowFades([][]*ui.Node{nil, nil, nil}, ui.BarOverflow{Right: 4}, 40, ui.Horizontal); len(fades) != 0 {
 		t.Fatalf("fades = %d with nothing placed, want none", len(fades))
 	}
 }
@@ -94,11 +94,47 @@ func TestASectionThatPlacedNothingFadesNothing(t *testing.T) {
 // at the item's own left edge rather than reaching back over its neighbour.
 func TestFadeNeverReachesPastTheItemItCovers(t *testing.T) {
 	right := placed(ui.Rect{X: 1000, Y: 7, W: 24, H: 30})
-	fades := overflowFades([][]*ui.Node{nil, nil, right}, ui.BarOverflow{Right: 1}, 40)
+	fades := overflowFades([][]*ui.Node{nil, nil, right}, ui.BarOverflow{Right: 1}, 40, ui.Horizontal)
 	if len(fades) != 1 {
 		t.Fatalf("fades = %d, want one", len(fades))
 	}
 	if got, want := fades[0].Bounds, (ui.Rect{X: 1000, Y: 7, W: 24, H: 30}); got != want {
 		t.Fatalf("fade bounds = %+v, want %+v clamped to the item", got, want)
+	}
+}
+
+func TestSideBarOverflowFade(t *testing.T) {
+	bar := newTestBar(t)
+	t.Cleanup(bar.stopAnimation)
+	bar.theme.BarEdge = "left"
+	bar.theme.Metrics.StandardControl = 16
+	bar.left = []textWidget{{node: &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 8, Y: 30, W: 24, H: 12}}}, {node: &ui.Node{Kind: ui.KindCapsule}}}
+	bar.center = []textWidget{{node: &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 8, Y: 90, W: 24, H: 30}}}, {node: &ui.Node{Kind: ui.KindCapsule}}}
+	bar.right = []textWidget{{node: &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 8, Y: 170, W: 24, H: 40}}}, {node: &ui.Node{Kind: ui.KindCapsule}}}
+	bar.overflow = ui.BarOverflow{Left: 1, Center: 2, Right: 3}
+	root, _ := bar.renderViewLocked()
+	var fades []*ui.Node
+	for _, n := range root.Children {
+		if n.Kind == ui.KindEdgeFade {
+			fades = append(fades, n)
+		}
+	}
+	want := []ui.Rect{{X: 8, Y: 30, W: 24, H: 12}, {X: 8, Y: 104, W: 24, H: 16}, {X: 8, Y: 194, W: 24, H: 16}}
+	if len(fades) != len(want) {
+		t.Fatalf("side fades = %d, want %d", len(fades), len(want))
+	}
+	for i, fade := range fades {
+		if fade.Bounds != want[i] || fade.Action != "" || fade.Focusable || fade.Tooltip != "" {
+			t.Errorf("fade %d bounds = %+v, want inert %+v", i, fade.Bounds, want[i])
+		}
+		if _, hit := ui.Hit(fade, fade.Bounds.X+1, fade.Bounds.Y+1); hit {
+			t.Errorf("fade %d has a hit target", i)
+		}
+		if height, err := ui.ContentHeight(fade, fade.Bounds.W, func(string, ui.TextAttrs) (int, int) { return 0, 0 }); err != nil || height != 0 {
+			t.Errorf("fade %d contributes height %d, error %v", i, height, err)
+		}
+	}
+	if got := overflowFades([][]*ui.Node{nil, nil, nil}, ui.BarOverflow{Right: 1}, 16, ui.Vertical); len(got) != 0 {
+		t.Fatalf("all-dropped side section has %d fades", len(got))
 	}
 }

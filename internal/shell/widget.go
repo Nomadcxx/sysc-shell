@@ -127,7 +127,11 @@ func capsuled(w textWidget, pad int) textWidget {
 // buildWidgets turns validated items into widget instances. Ids and options
 // are validated at load, so an unknown id cannot reach here.
 func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
-	return buildWidgetsWithClockFloor(items, pad, m, clockFloorFor(items))
+	return buildWidgetsAxis(items, pad, m, false, 0)
+}
+
+func buildWidgetsAxis(items []config.Item, pad int, m theme.Metrics, side bool, contentWidth int) []textWidget {
+	return buildWidgetsWithAxis(items, pad, m, clockFloorFor(items), side, contentWidth)
 }
 
 func clockFloorFor(items []config.Item) string {
@@ -156,7 +160,7 @@ func clockFloorFor(items []config.Item) string {
 	return ""
 }
 
-func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, clockFloor string) []textWidget {
+func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFloor string, side bool, contentWidth int) []textWidget {
 	out := make([]textWidget, 0, len(items))
 	for _, item := range items {
 		switch item.ID {
@@ -183,19 +187,26 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 				},
 			})
 		case "wordmark":
-			out = append(out, textWidget{
-				node: &ui.Node{
-					Kind: ui.KindWordmark, Key: "wordmark",
-					ImageH: launcherMarkHeight, ImageW: render.WordmarkWidth(launcherMarkHeight),
-					Gradient: wordmarkGradient(), Action: panelControlCenterAction,
-					Name: "Control centre", Role: "button",
-				},
-				refresh: func(barView) bool { return false },
-			})
+			n := &ui.Node{
+				Kind: ui.KindWordmark, Key: "wordmark",
+				ImageH: launcherMarkHeight, ImageW: render.WordmarkWidth(launcherMarkHeight),
+				Gradient: wordmarkGradient(), Action: panelControlCenterAction,
+				Name: "Control centre", Role: "button",
+			}
+			if side {
+				n.Mark, n.CenterX = "sysc-side", true
+				n.ImageW = min(launcherMarkHeight, max(1, contentWidth-2*max(pad, 0)))
+				n.ImageH = render.WordmarkWidth(n.ImageW)
+			}
+			out = append(out, textWidget{node: n, refresh: func(barView) bool { return false }})
 		case "workspace":
-			row := &ui.Node{Kind: ui.KindRow, Gap: workspacePillGap}
-			w := textWidget{node: row}
-			w.refresh = func(v barView) bool { return refreshWorkspacePills(row, v, m) }
+			kind := ui.KindRow
+			if side {
+				kind = ui.KindColumn
+			}
+			stack := &ui.Node{Kind: kind, Gap: workspacePillGap}
+			w := textWidget{node: stack}
+			w.refresh = func(v barView) bool { return refreshWorkspacePills(stack, v, m, side) }
 			out = append(out, w)
 		case "window-title":
 			out = append(out, textWidget{
@@ -209,23 +220,27 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 			out = append(out, buildWeatherWidget(item, m))
 		case "group":
 			if groupHoldsWordmark(item.Items) {
-				out = append(out, buildCentrePill(item.Items, pad, m))
+				out = append(out, buildCentrePill(item.Items, pad, m, side, contentWidth))
 				continue
 			}
-			// One capsule holding its members as a flat row. Members are not
+			// One capsule holding its members in the bar's direction. Members are not
 			// individually capsuled: two nested surfaces read as one blob at
 			// the palette contrast a bar uses.
-			row := &ui.Node{Kind: ui.KindRow, Gap: groupGap}
-			members := buildWidgetsWithClockFloor(item.Items, noCapsule, m, clockFloor)
-			g := textWidget{node: row, members: members}
+			kind := ui.KindRow
+			if side {
+				kind = ui.KindColumn
+			}
+			stack := &ui.Node{Kind: kind, Gap: groupGap}
+			members := buildWidgetsWithAxis(item.Items, noCapsule, m, clockFloor, side, contentWidth)
+			g := textWidget{node: stack, members: members}
 			for _, m := range members {
-				row.Children = append(row.Children, m.node)
+				stack.Children = append(stack.Children, m.node)
 			}
 			if len(members) > 0 && members[0].node != nil {
-				row.Action = members[0].node.Action
+				stack.Action = members[0].node.Action
 				for _, m := range members[1:] {
-					if m.node == nil || m.node.Action != row.Action {
-						row.Action = ""
+					if m.node == nil || m.node.Action != stack.Action {
+						stack.Action = ""
 						break
 					}
 				}
@@ -260,13 +275,26 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 		case "bluetooth":
 			out = append(out, buildBluetoothWidget())
 		case "running-apps":
-			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
+			kind := ui.KindRow
+			if side {
+				kind = ui.KindColumn
+			}
+			stack := &ui.Node{Kind: kind, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}
-			w := textWidget{node: cap, inner: row}
-			w.refresh = func(v barView) bool { return refreshRunningApps(cap, row, v) }
+			w := textWidget{node: cap, inner: stack}
+			appPad := runningAppPad
+			if side {
+				appPad = min(appPad, max(0, (contentWidth-runningAppTile)/2))
+			}
+			w.refresh = func(v barView) bool { return refreshRunningApps(cap, stack, v, appPad) }
 			out = append(out, w)
 		case "plugin":
-			out = append(out, buildPluginWidget(item))
+			w := buildPluginWidget(item)
+			if side && pad >= 0 {
+				// The plugin already owns padding inside its advertised viewport.
+				w = capsuled(w, 0)
+			}
+			out = append(out, w)
 		}
 	}
 	for i := range out {

@@ -39,11 +39,11 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setBool("bar.enabled", func(c *config.Config, b bool) { c.Bar.Enabled = b }),
 		},
 		{
-			Path: "bar.edge", Label: "Edge", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum,
+			Path: "bar.edge", Label: "Edge", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentMenu,
 			Describe: "Which screen edge the bar anchors to.",
-			Options:  barEdges,
-			Get:      func(c config.Config) string { return c.Bar.Edge },
-			Set:      setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
+			Options:  barEdges, OptionLabels: []string{"Top", "Bottom", "Left", "Right"},
+			Get: func(c config.Config) string { return c.Bar.Edge },
+			Set: setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
 		},
 		{
 			Path: "bar.style", Label: "Style", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentCards,
@@ -76,11 +76,11 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				func(c *config.Config, n int) { c.Bar.PillOpacity = n }),
 		},
 		{
-			Path: "bar.height", Present: PresentSlider, Unit: "px", Label: "Height", Section: "Bar", Page: "Appearance", Group: "Geometry",
-			Describe: "Bar height in logical pixels. It follows the density ladder unless set here.",
-			Kind:     KindInt, Min: 24, Max: 64,
+			Path: "bar.height", Present: PresentSlider, Unit: "px", Label: "Thickness", Section: "Bar", Page: "Appearance", Group: "Geometry",
+			Describe: "Bar thickness in logical pixels: height on top/bottom, width on left/right. Wider side bars leave room for text.",
+			Kind:     KindInt, Min: 24, Max: 128,
 			Get: getInt(func(c config.Config) int { return c.Bar.Height }),
-			Set: setInt("bar.height", 24, 64, func(c *config.Config, n int) { c.Bar.Height = n }),
+			Set: setInt("bar.height", 24, 128, func(c *config.Config, n int) { c.Bar.Height = n }),
 		},
 		{
 			Path: "bar.gap", Present: PresentSlider, Unit: "px", Label: "Gap", Section: "Bar", Page: "Appearance", Group: "Geometry",
@@ -745,11 +745,7 @@ func SectionPages(section string) []string {
 // a value the surface offers and the setter rejects is unreachable, and one
 // the setter accepts and the surface hides is undiscoverable.
 var (
-	// The loader accepts one edge today and names the rest unsupported, so
-	// offering them would hand the user a control that writes a file the shell
-	// then declines to start from. The remaining edges arrive with the bar
-	// geometry work, which is what makes them real.
-	barEdges     = []string{"top"}
+	barEdges     = []string{"top", "bottom", "left", "right"}
 	themeSources = []string{"wallpaper", "hex", "stock", "palette"}
 	themeModes   = []string{"dark", "light"}
 	presetNames  = []string{
@@ -1278,10 +1274,10 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 				}),
 			},
 			Entry{
-				Path: "outputs." + conn + ".height", Label: "Height", Section: "Bar", Page: "Displays", Group: conn,
-				Describe: "Bar height on this output.", Kind: KindInt, Min: 24, Max: 64,
+				Path: "outputs." + conn + ".height", Label: "Thickness", Section: "Bar", Page: "Displays", Group: conn,
+				Describe: "Bar thickness on this output: height on top/bottom, width on left/right.", Kind: KindInt, Min: 24, Max: 128,
 				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.Height }) }),
-				Set: setInt("outputs."+conn+".height", 24, 64, func(c *config.Config, n int) {
+				Set: setInt("outputs."+conn+".height", 24, 128, func(c *config.Config, n int) {
 					if b := override(c); b != nil {
 						b.Height = n
 					}

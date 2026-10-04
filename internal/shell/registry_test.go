@@ -1084,3 +1084,15 @@ drain:
 		t.Fatal("adopted bar invalidation never reached the registry")
 	}
 }
+
+func TestInitialBarViewHasClockBeforeFirstTick(t *testing.T) {
+	before := time.Now()
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.mu.Lock()
+	now := r.viewLocked("eDP-1").Now
+	r.mu.Unlock()
+	if now.Before(before) || now.After(time.Now()) {
+		t.Fatalf("initial clock snapshot = %v, want the current time", now)
+	}
+}

@@ -6,7 +6,11 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	waylandclient "github.com/Nomadcxx/sysc-wayland/client"
 )
 
 // advertiseAll fills a registry with everything the proof requires, using the
@@ -250,6 +254,93 @@ func TestConfigureScaleOnlyEventReconfigures(t *testing.T) {
 	}
 	if !s.eligible() {
 		t.Fatal("a scale-only change invalidated the acknowledged configure")
+	}
+}
+
+func TestPendingGeometryChangeWaitsForEqualSizeConfigure(t *testing.T) {
+	t.Parallel()
+
+	h := newHost(7, nil)
+	h.alive = true
+	unit := h.bar
+	unit.surface = &waylandclient.Surface{}
+	unit.ss.configure(100, 100)
+	unit.ss.acknowledge()
+	unit.current = &generation{}
+	unit.sched.Configure(100, 100)
+	unit.sched.Invalidate()
+	unit.awaitingConfigure = true
+
+	hosts := newHostSet()
+	hosts.hosts[h.global] = h
+	hosts.arrival = append(hosts.arrival, h.global)
+	o := owner{hosts: hosts}
+	if _, _, decision, _ := o.nextJob(); decision != render.DecisionWait {
+		t.Fatal("candidate rendered into the old same-size buffer before configure")
+	}
+	if !unit.acceptConfigure(100, 100) {
+		t.Fatal("equal-size configure did not request a replacement generation")
+	}
+	if !unit.awaitingConfigure {
+		t.Fatal("geometry transition unlocked rendering before replacement buffers were allocated")
+	}
+	unit.sched.Configure(100, 100)
+	unit.awaitingConfigure = false
+	_, _, decision, job := o.nextJob()
+	if decision != render.DecisionRender || job.Width != 100 || job.Height != 100 || job.Generation != 2 {
+		t.Fatalf("accepted configure job = %+v, decision %v; want a fresh 100x100 generation", job, decision)
+	}
+}
+
+func TestPreferredScaleDuringPendingGeometryDefersBufferReplacement(t *testing.T) {
+	t.Parallel()
+
+	h := newHost(7, nil)
+	unit := h.bar
+	unit.ss.configure(100, 100)
+	unit.ss.acknowledge()
+	unit.current = &generation{}
+	unit.awaitingConfigure = true
+	o := owner{}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("scale event reconfigured against stale geometry: %v", recovered)
+		}
+	}()
+	o.onPreferredScale(h, unit, fractionalscale.WpFractionalScaleV1PreferredScaleEvent{Scale: 150})
+	if unit.ss.scale120 != 150 || !unit.awaitingConfigure {
+		t.Fatalf("scale transition = %d, awaiting configure %v; want scale 150 and pending geometry", unit.ss.scale120, unit.awaitingConfigure)
+	}
+}
+
+func TestBarReloadWaitsOnlyForRequestedSizeChange(t *testing.T) {
+	t.Parallel()
+
+	current := config.Default().Bar
+	for _, edge := range []string{"left", "right", "bottom", "top"} {
+		next := current
+		next.Edge = edge
+		want := sideBarEdge(current.Edge) != sideBarEdge(next.Edge)
+		if got := barConfigureTransition(current, next); got != want {
+			t.Errorf("%s to %s waits for configure = %v, want %v", current.Edge, next.Edge, got, want)
+		}
+		current = next
+	}
+	thickness := current
+	thickness.Height += 8
+	if !barConfigureTransition(current, thickness) {
+		t.Error("thickness change did not wait for configure")
+	}
+	reserve := current
+	zero := 0
+	reserve.Reserve = &zero
+	if barConfigureTransition(current, reserve) {
+		t.Error("unchanged requested size unnecessarily waited after reserve edit")
+	}
+	unrelated := current
+	unrelated.FontSize++
+	if barConfigureTransition(current, unrelated) {
+		t.Error("unrelated typography edit unnecessarily waited for configure")
 	}
 }
 

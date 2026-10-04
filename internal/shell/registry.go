@@ -357,6 +357,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r := &Registry{
 		cfg:     cfg,
+		now:     time.Now(),
 		outputs: make(map[string]outputState),
 		bars:    make(map[uint32]*Bar),
 		leases:  make(map[uint32][]*services.Lease),
@@ -1472,11 +1473,21 @@ func (r *Registry) bindBarTrayLocked(global uint32, connector string, bar *Bar) 
 
 func (r *Registry) bindBarPluginLocked(bar *Bar) {
 	bar.setPluginHandler(func(action string, event wayland.Event) bool {
-		// The handler runs without the bar lock, so reading the action's
-		// centre here is safe and gives the plugin's panel an anchor under
-		// the widget that was clicked.
-		return r.handlePluginBar(action, event, bar.actionCenterX(action))
+		// The handler runs without the bar lock, so the action bounds can be
+		// copied here for the plugin panel's output-space anchor.
+		return r.handlePluginBar(action, event, bar.actionBounds(action))
 	})
+}
+
+func triggerAtAction(bar *Bar, trig Trigger, action string) Trigger {
+	w, h := bar.configuredSize()
+	anchor := barRectOnOutput(bar.actionBounds(action), trig.BarEdge, trig.OutW, trig.OutH, w, h)
+	if anchor.W <= 0 || anchor.H <= 0 {
+		return trig
+	}
+	trig.AnchorX = anchor.X + anchor.W/2
+	trig.AnchorY = anchor.Y + anchor.H/2
+	return trig
 }
 
 // bindBarPanelActionsLocked gives one bar its panel-toggle seam. The handler
@@ -1503,7 +1514,7 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelTerminalArtAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelTerminalArt, out, trig) == nil
 		case action == panelControlCenterAction && button == buttonRight:
-			trig.AnchorX = bar.actionCenterX(panelControlCenterAction)
+			trig = triggerAtAction(bar, trig, panelControlCenterAction)
 			return r.TogglePanel(PanelControlCenter, out, trig) == nil
 		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelNotifications, out, trig) == nil
@@ -1524,22 +1535,22 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			r.mu.Unlock()
 			return true
 		case action == panelAudioAction && (button == 0 || button == buttonLeft):
-			trig.AnchorX = bar.actionCenterX(panelAudioAction)
+			trig = triggerAtAction(bar, trig, panelAudioAction)
 			return r.TogglePanel(PanelAudio, out, trig) == nil
 		case action == panelWifiAction && (button == 0 || button == buttonLeft):
-			trig.AnchorX = bar.actionCenterX(panelWifiAction)
+			trig = triggerAtAction(bar, trig, panelWifiAction)
 			return r.TogglePanel(PanelNetwork, out, trig) == nil
 		case action == panelWifiAction && button == buttonRight:
 			r.toggleWirelessAsync()
 			return true
 		case action == panelBluetoothAction && (button == 0 || button == buttonLeft):
-			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
+			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			return r.TogglePanel(PanelBluetooth, out, trig) == nil
 		case action == panelWeatherAction && (button == 0 || button == buttonLeft || button == buttonRight):
-			trig.AnchorX = bar.actionCenterX(panelWeatherAction)
+			trig = triggerAtAction(bar, trig, panelWeatherAction)
 			return r.TogglePanel(PanelWeather, out, trig) == nil
 		case action == panelBluetoothAction && button == buttonRight:
-			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
+			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
 			}
@@ -1553,7 +1564,7 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelMediaAction && (button == 0 || button == buttonLeft):
 			// The control centre is the one player picker (D7): the widget
 			// routes there and the spine lands on the Media section.
-			trig.AnchorX = bar.actionCenterX(panelMediaAction)
+			trig = triggerAtAction(bar, trig, panelMediaAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
 			}
@@ -1684,6 +1695,21 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Lock()
 				outgoing := r.leases
 				outgoingBars := r.bars
+				geometryOutputs := make(map[uint32]bool)
+				for global, oldBar := range outgoingBars {
+					oldPolicy := r.cfg.ForConnector(oldBar.connector())
+					nextPolicy := cfg.ForConnector(oldBar.connector())
+					if barGeometryChanged(oldPolicy, nextPolicy) {
+						geometryOutputs[global] = true
+					}
+				}
+				for global, nextBar := range bars {
+					oldPolicy := r.cfg.ForConnector(nextBar.connector())
+					nextPolicy := cfg.ForConnector(nextBar.connector())
+					if barGeometryChanged(oldPolicy, nextPolicy) {
+						geometryOutputs[global] = true
+					}
+				}
 				depthClockFontChanged := r.cfg.Bar.FontFamily != cfg.Bar.FontFamily
 				depthClockVisualChanged := r.cfg.Wallpaper.Scale != cfg.Wallpaper.Scale ||
 					r.tokens != tok || depthClockFontChanged ||
@@ -1699,10 +1725,20 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.weather.Reconfigure(
 					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
 				r.weather.SetCity(cfg.Weather.City)
-				r.dwell.leave()
-				// The open menu and drawer were placed against the outgoing
-				// geometry and hold a root; a candidate replaces both.
-				r.closeTrayLocked()
+				if len(geometryOutputs) > 0 {
+					r.dwell.leave()
+					for global := range geometryOutputs {
+						r.closeTrayOutputLocked(global)
+						if h := r.runningMenu; h != nil && h.open_ && h.output == global {
+							h.closeLocked()
+						}
+						for _, id := range r.panelIDsOnOutputLocked(global) {
+							if id != PanelSettings {
+								r.closePanelLocked(id)
+							}
+						}
+					}
+				}
 				for _, bar := range bars {
 					bar.apply(r.viewLocked(bar.connector()))
 				}
@@ -1734,6 +1770,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				r.bars = bars
 				r.leases = leases
+				for global := range geometryOutputs {
+					if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
+						r.repositionSettingsLocked(h)
+					}
+				}
 				for global, bar := range r.bars {
 					r.bindBarTrayLocked(global, bar.connector(), bar)
 					r.bindBarPluginLocked(bar)
@@ -2384,11 +2425,11 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		if err := innerConfigure(width, height, scale120); err != nil {
 			return err
 		}
-		if bar.scale120() == prev {
-			return nil
+		r.refreshSettingsPlacement(global, bar)
+		if bar.scale120() != prev {
+			r.reprojectTray()
+			r.reprojectRunningApps()
 		}
-		r.reprojectTray()
-		r.reprojectRunningApps()
 		return nil
 	}
 	return hooks

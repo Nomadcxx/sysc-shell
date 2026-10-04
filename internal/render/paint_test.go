@@ -143,6 +143,21 @@ func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
 	}
 }
 
+func TestClippedNodeKeepsDescendantPaintInsideItsBounds(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 50, 50)
+	root := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 2, Y: 2, W: 20, H: 20}, ClipBounds: true,
+		Children: []*ui.Node{{Kind: ui.KindCapsule, Fill: ui.FillAccent, Bounds: ui.Rect{X: 2, Y: 12, W: 20, H: 20}}}}
+	if err := paintNode(c, root, nil, testStyle, 16); err != nil {
+		t.Fatal(err)
+	}
+	inside := (16*c.Stride + 10*4) + 3
+	outside := (28*c.Stride + 10*4) + 3
+	if c.Pix[inside] == 0 || c.Pix[outside] != 0 {
+		t.Fatalf("clipped subtree alpha inside/outside = %d/%d, want paint only inside", c.Pix[inside], c.Pix[outside])
+	}
+}
+
 // An attached panel squares the bar edge so its rounded top does not punch a
 // wallpaper seam between the bar and the body.
 func TestPaintSquaresTheAttachedEdge(t *testing.T) {
@@ -2910,5 +2925,55 @@ func TestFieldRadiusKeepsMultilineCornersOffTheStadium(t *testing.T) {
 	body := &ui.Node{Kind: ui.KindTextField, Multiline: true}
 	if got := FieldRadius(body, ui.Rect{W: 432, H: 420}, scale); got != multilineFieldRadius {
 		t.Errorf("multiline radius = %d, want %d", got, multilineFieldRadius)
+	}
+}
+
+func TestSideSurfaceShapeMatchesBlurCoverage(t *testing.T) {
+	text := NewTextRenderer(mustTestFace(t))
+	for _, edge := range []string{"left", "right"} {
+		for _, scale := range []ui.Scale120{120, 150} {
+			for _, fillets := range []bool{false, true} {
+				body := ui.Rect{X: 20, Y: 20, W: 40, H: 100}
+				style := Style{
+					Size: 12, Scale120: scale, Body: body, AttachEdge: edge,
+					Background: Color{R: 20, G: 30, B: 40, A: 255},
+					FilletFill: Color{R: 20, G: 30, B: 40, A: 255},
+				}
+				if fillets {
+					style.JointLeft, style.JointRight = 8, 5
+					style.EdgeFillet, style.EdgeLeft, style.EdgeRight = 10, true, true
+				} else {
+					style.Radius = 12
+				}
+				w, h := scale.Physical(80), scale.Physical(140)
+				canvas := newTestCanvas(t, w, h)
+				if err := Paint(canvas, &ui.Node{Kind: ui.KindRow}, text, style); err != nil {
+					t.Fatal(err)
+				}
+				physical := scale.PhysicalRect(body)
+				blur := ui.BlurStrips(ui.SurfaceShape{
+					Body: physical, Radius: scale.Physical(style.Radius), AttachEdge: edge,
+					JointLeft: scale.Physical(style.JointLeft), JointRight: scale.Physical(style.JointRight),
+					EdgeFillet: scale.Physical(style.EdgeFillet), EdgeLeft: style.EdgeLeft, EdgeRight: style.EdgeRight,
+				})
+				alpha := func(x, y int) byte { return canvas.Pix[y*canvas.Stride+x*4+3] }
+				for _, strip := range blur {
+					for y := strip.Y; y < strip.Y+strip.H; y++ {
+						for x := strip.X; x < strip.X+strip.W; x++ {
+							if alpha(x, y) == 0 {
+								t.Fatalf("%s scale %d fillets=%v: blurred pixel (%d,%d) is transparent", edge, scale, fillets, x, y)
+							}
+						}
+					}
+				}
+				far := physical.X + physical.W + 1
+				if edge == "right" {
+					far = physical.X - 2
+				}
+				if got := alpha(far, physical.Y+physical.H/2); got != 0 {
+					t.Errorf("%s scale %d fillets=%v: mid-overhang alpha %d", edge, scale, fillets, got)
+				}
+			}
+		}
 	}
 }

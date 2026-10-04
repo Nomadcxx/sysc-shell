@@ -1,6 +1,7 @@
 package render
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -20,7 +21,7 @@ func TestEdgeFadeRampsTowardTheTrailingEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 	surface := Color{R: 0x1d, G: 0x20, B: 0x25, A: 0xff}
-	fillEdgeFade(c, ui.Rect{X: 0, Y: 0, W: w, H: h}, surface)
+	fillEdgeFade(c, ui.Rect{X: 0, Y: 0, W: w, H: h}, surface, ui.Horizontal)
 
 	// The canvas is xrgb8888: byte 0 of a pixel is blue, not red.
 	blue := func(x int) int { return int(pix[(h/2)*w*4+x*4]) }
@@ -45,11 +46,38 @@ func TestEdgeFadeIgnoresAnEmptyBox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fillEdgeFade(c, ui.Rect{X: 0, Y: 0, W: 0, H: h}, Color{A: 0xff})
-	fillEdgeFade(c, ui.Rect{X: 0, Y: 0, W: w, H: h}, Color{})
+	fillEdgeFade(c, ui.Rect{X: 0, Y: 0, W: 0, H: h}, Color{A: 0xff}, ui.Horizontal)
+	fillEdgeFade(c, ui.Rect{X: 0, Y: 0, W: w, H: h}, Color{}, ui.Horizontal)
 	for i, b := range pix {
 		if b != 0 {
 			t.Fatalf("pixel %d = %d, want the canvas untouched", i, b)
 		}
+	}
+}
+
+func TestSideEdgeFadeRampsDownAtFractionalScales(t *testing.T) {
+	for _, scale := range []ui.Scale120{120, 150} {
+		t.Run(strconv.Itoa(int(scale)), func(t *testing.T) {
+			logical := ui.Rect{W: 12, H: 20}
+			box := scale.PhysicalRect(logical)
+			pix := make([]byte, box.W*box.H*4)
+			for i := range pix {
+				pix[i] = 0xff
+			}
+			c, err := NewCanvas(pix, box.W, box.H, box.W*4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			surface := Color{R: 0x1d, G: 0x20, B: 0x25, A: 0xff}
+			node := &ui.Node{Kind: ui.KindEdgeFade, FadeAxis: ui.Vertical, Bounds: logical}
+			if err := paintNode(c, node, nil, Style{Scale120: scale, Background: surface}, 0); err != nil {
+				t.Fatal(err)
+			}
+			blue := func(y int) int { return int(pix[y*box.W*4+(box.W/2)*4]) }
+			first, middle, last := blue(0), blue(box.H/2), blue(box.H-1)
+			if first <= middle || middle <= last || last != int(surface.B) {
+				t.Fatalf("scale %d vertical fade blue = %d/%d/%d, want a downward ramp ending at %d", scale, first, middle, last, surface.B)
+			}
+		})
 	}
 }

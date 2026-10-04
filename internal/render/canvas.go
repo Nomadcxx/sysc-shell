@@ -49,33 +49,65 @@ type Canvas struct {
 	restrict      ui.Rect
 }
 
-// ApplySurfaceTransform applies the final opacity and vertical translation to
-// an already-premultiplied frame. copy handles overlapping slices, so the
-// translation reuses the compositor buffer and only clears the rows it exposes.
-func (c *Canvas) ApplySurfaceTransform(opacity float64, translateY int) {
+// ApplySurfaceTransform applies the final opacity and X/Y translation to an
+// already-premultiplied frame. copy handles overlap, so translation reuses the
+// compositor buffer and clears only the pixels it exposes.
+func (c *Canvas) ApplySurfaceTransform(opacity float64, translateX, translateY int) {
 	if c == nil || c.Width <= 0 || c.Height <= 0 || c.Stride <= 0 {
 		return
 	}
 	pix := c.Pix[:c.Stride*c.Height]
+	rowBytes := c.Width * 4
+	clearPixels := func() {
+		for y := 0; y < c.Height; y++ {
+			clear(pix[y*c.Stride : y*c.Stride+rowBytes])
+		}
+	}
 	if translateY >= c.Height || translateY <= -c.Height {
-		clear(pix)
+		clearPixels()
 	} else if translateY > 0 {
-		copy(pix[translateY*c.Stride:], pix[:(c.Height-translateY)*c.Stride])
-		clear(pix[:translateY*c.Stride])
+		for y := c.Height - 1; y >= translateY; y-- {
+			copy(pix[y*c.Stride:y*c.Stride+rowBytes], pix[(y-translateY)*c.Stride:(y-translateY)*c.Stride+rowBytes])
+		}
+		for y := 0; y < translateY; y++ {
+			clear(pix[y*c.Stride : y*c.Stride+rowBytes])
+		}
 	} else if translateY < 0 {
 		rows := -translateY
-		copy(pix[:(c.Height-rows)*c.Stride], pix[rows*c.Stride:])
-		clear(pix[(c.Height-rows)*c.Stride:])
+		for y := 0; y < c.Height-rows; y++ {
+			copy(pix[y*c.Stride:y*c.Stride+rowBytes], pix[(y+rows)*c.Stride:(y+rows)*c.Stride+rowBytes])
+		}
+		for y := c.Height - rows; y < c.Height; y++ {
+			clear(pix[y*c.Stride : y*c.Stride+rowBytes])
+		}
+	}
+	if translateX >= c.Width || translateX <= -c.Width {
+		clearPixels()
+	} else if translateX > 0 {
+		offset := translateX * 4
+		for y := 0; y < c.Height; y++ {
+			row := pix[y*c.Stride : y*c.Stride+rowBytes]
+			copy(row[offset:], row[:rowBytes-offset])
+			clear(row[:offset])
+		}
+	} else if translateX < 0 {
+		shift := -translateX
+		offset := shift * 4
+		for y := 0; y < c.Height; y++ {
+			row := pix[y*c.Stride : y*c.Stride+rowBytes]
+			copy(row[:rowBytes-offset], row[offset:])
+			clear(row[rowBytes-offset:])
+		}
 	}
 	if opacity >= 1 {
 		return
 	}
 	if opacity <= 0 || math.IsNaN(opacity) {
-		clear(pix)
+		clearPixels()
 		return
 	}
 	for y := 0; y < c.Height; y++ {
-		row := pix[y*c.Stride : y*c.Stride+c.Width*4]
+		row := pix[y*c.Stride : y*c.Stride+rowBytes]
 		for i := range row {
 			row[i] = byte(math.Round(float64(row[i]) * opacity))
 		}
@@ -172,6 +204,44 @@ func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
 // body are emptied.
 func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, jointL, jointR int, attachEdge string) {
 	radius = min(radius, min(r.W, r.H)/2)
+	if attachEdge == "left" || attachEdge == "right" {
+		for x := 0; x < c.Width; x++ {
+			col := c.Pix[x*4:]
+			if x < r.X || x >= r.X+r.W || r.W <= 0 || r.H <= 0 {
+				for y := 0; y < c.Height; y++ {
+					clear(col[y*c.Stride : y*c.Stride+4])
+				}
+				continue
+			}
+			local, near := x-r.X, x-r.X
+			if attachEdge == "right" {
+				near = r.X + r.W - 1 - x
+			}
+			topCorner, bottomCorner := SquareTL, SquareBL
+			if local > r.W-1-local {
+				topCorner, bottomCorner = SquareTR, SquareBR
+			}
+			insetTop, insetBottom := 0, 0
+			if radius > 0 {
+				if square&topCorner == 0 {
+					insetTop = ui.RoundedInset(local, r.W, radius)
+				}
+				if square&bottomCorner == 0 {
+					insetBottom = ui.RoundedInset(local, r.W, radius)
+				}
+			}
+			extTop, extBottom := ui.FilletExtent(near, jointL), ui.FilletExtent(near, jointR)
+			y0 := max(0, r.Y+insetTop-extTop)
+			y1 := min(c.Height, r.Y+r.H-insetBottom+extBottom)
+			for y := 0; y < y0; y++ {
+				clear(col[y*c.Stride : y*c.Stride+4])
+			}
+			for y := y1; y < c.Height; y++ {
+				clear(col[y*c.Stride : y*c.Stride+4])
+			}
+		}
+		return
+	}
 	for y := 0; y < c.Height; y++ {
 		row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
 		if y < r.Y || y >= r.Y+r.H || r.W <= 0 || r.H <= 0 {
@@ -215,6 +285,39 @@ func fillAttachFillets(c *Canvas, r ui.Rect, left, right int, attachEdge string,
 	if col.A == 0 || r.W <= 0 || r.H <= 0 {
 		return
 	}
+	if attachEdge == "left" || attachEdge == "right" {
+		for depth := 0; depth < left && depth < r.W; depth++ {
+			x := r.X + depth
+			if attachEdge == "right" {
+				x = r.X + r.W - 1 - depth
+			}
+			for out := 0; out < left; out++ {
+				y := r.Y - 1 - out
+				if x >= 0 && x < c.Width && y >= 0 && y < c.Height {
+					coverage := ui.FilletCoverage(out, depth, left)
+					if coverage > 0 {
+						blendCoverage(c, x, y, col, float64(coverage)/255)
+					}
+				}
+			}
+		}
+		for depth := 0; depth < right && depth < r.W; depth++ {
+			x := r.X + depth
+			if attachEdge == "right" {
+				x = r.X + r.W - 1 - depth
+			}
+			for out := 0; out < right; out++ {
+				y := r.Y + r.H + out
+				if x >= 0 && x < c.Width && y >= 0 && y < c.Height {
+					coverage := ui.FilletCoverage(out, depth, right)
+					if coverage > 0 {
+						blendCoverage(c, x, y, col, float64(coverage)/255)
+					}
+				}
+			}
+		}
+		return
+	}
 	if attachEdge != "top" && attachEdge != "bottom" {
 		return
 	}
@@ -248,6 +351,37 @@ func fillAttachFillets(c *Canvas, r ui.Rect, left, right int, attachEdge string,
 // body's side and y out from its far edge.
 func fillEdgeFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, left, right bool, col Color) {
 	if fillet <= 0 || col.A == 0 || r.W <= 0 || r.H <= 0 {
+		return
+	}
+	if attachEdge == "left" || attachEdge == "right" {
+		for out := 0; out < fillet; out++ {
+			x := r.X + r.W + out
+			if attachEdge == "right" {
+				x = r.X - 1 - out
+			}
+			if x < 0 || x >= c.Width {
+				continue
+			}
+			for along := 0; along < fillet && along < r.H; along++ {
+				coverage := ui.FilletCoverage(along, out, fillet)
+				if coverage == 0 {
+					continue
+				}
+				alpha := float64(coverage) / 255
+				if left {
+					y := r.Y + along
+					if y >= 0 && y < c.Height {
+						blendCoverage(c, x, y, col, alpha)
+					}
+				}
+				if right {
+					y := r.Y + r.H - 1 - along
+					if y >= 0 && y < c.Height {
+						blendCoverage(c, x, y, col, alpha)
+					}
+				}
+			}
+		}
 		return
 	}
 	if attachEdge != "top" && attachEdge != "bottom" {

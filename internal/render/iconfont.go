@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/go-text/typesetting/font"
 )
@@ -236,6 +237,13 @@ func (r *TextRenderer) projectFace() (*font.Face, error) {
 }
 
 func (r *TextRenderer) RasterProjectIcon(name string, size int) (Mask, error) {
+	if r == nil {
+		return Mask{}, fmt.Errorf("render: nil renderer")
+	}
+	key := rasterKey{text: name, spec: TextSpec{Size: size}, projectIcon: true}
+	if cached, ok := r.cachedRaster(key); ok {
+		return cached, nil
+	}
 	glyph, ok := IconByName(name)
 	if !ok {
 		return Mask{}, fmt.Errorf("render: %q is not in the project icon set", name)
@@ -248,7 +256,16 @@ func (r *TextRenderer) RasterProjectIcon(name string, size int) (Mask, error) {
 	if err != nil {
 		return Mask{}, err
 	}
-	return rasterRuns([]shapedFaceRun{{face: face, text: string(glyph), output: out}}, size)
+	mask, err := rasterRuns([]shapedFaceRun{{face: face, text: string(glyph), output: out}}, size)
+	if err != nil {
+		return Mask{}, err
+	}
+	if strings.HasSuffix(name, "-side") {
+		mask.Alpha = rotateAlphaClockwise(mask.Alpha)
+		mask.Advance, mask.Baseline = mask.Alpha.Bounds().Dx(), 0
+	}
+	r.storeRaster(key, mask)
+	return mask, nil
 }
 
 // RasterProjectIconIn rasterises a project glyph so its whole design box
@@ -537,7 +554,8 @@ func init() {
 	r := catRuneFirst
 	for _, act := range catActs {
 		for i := 0; i < act.poses; i++ {
-			iconNames[fmt.Sprintf("cat-%s-%d", act.name, i)] = r
+			name := fmt.Sprintf("cat-%s-%d", act.name, i)
+			iconNames[name], iconNames[name+"-side"] = r, r
 			r++
 		}
 	}

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -24,6 +25,44 @@ func covered(t *testing.T, strips []Rect) map[[2]int]bool {
 		}
 	}
 	return out
+}
+
+func TestSideBlurShape(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		for _, scale := range []Scale120{120, 150} {
+			t.Run(fmt.Sprintf("%s_%d", edge, scale), func(t *testing.T) {
+				body := scale.PhysicalRect(Rect{X: 20, Y: 20, W: 40, H: 100})
+				near, far := body.X, body.X+body.W-1
+				if edge == "right" {
+					near, far = far, near
+				}
+				rounded := covered(t, BlurStrips(SurfaceShape{Body: body, Radius: scale.Physical(12), AttachEdge: edge}))
+				for _, y := range []int{body.Y, body.Y + body.H - 1} {
+					if !rounded[[2]int{near, y}] || rounded[[2]int{far, y}] {
+						t.Errorf("%s scale %d: near/far corners at y=%d have wrong coverage", edge, scale, y)
+					}
+				}
+				joints := covered(t, BlurStrips(SurfaceShape{
+					Body: body, AttachEdge: edge,
+					JointLeft: scale.Physical(8), JointRight: scale.Physical(5),
+					EdgeFillet: scale.Physical(10), EdgeLeft: true, EdgeRight: true,
+				}))
+				if !joints[[2]int{near, body.Y - 1}] || !joints[[2]int{near, body.Y + body.H}] {
+					t.Error("asymmetric leading/trailing joints are missing")
+				}
+				farOutside := far + 1
+				if edge == "right" {
+					farOutside = far - 1
+				}
+				if !joints[[2]int{farOutside, body.Y}] || !joints[[2]int{farOutside, body.Y + body.H - 1}] {
+					t.Error("screen-edge fillets are missing")
+				}
+				if joints[[2]int{near, body.Y - scale.Physical(8) - 1}] || joints[[2]int{near, body.Y + body.H + scale.Physical(5)}] {
+					t.Error("a joint exceeds its own radius")
+				}
+			})
+		}
+	}
 }
 
 func TestBlurStripsOfASquareBodyIsTheBody(t *testing.T) {

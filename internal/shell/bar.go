@@ -47,7 +47,7 @@ type Bar struct {
 	trayImages          map[tray.ItemKey]*ui.Image
 	trayActions         map[string]tray.ItemKey
 	trayArranged        trayArrangement
-	// trayAvailable is the logical width the last layout granted tray icons,
+	// trayAvailable is the logical main-axis extent the last layout granted tray icons,
 	// after any reserve for the overflow control. The drawer re-derives the
 	// same arrangement from it without waiting for the next frame.
 	trayAvailable int
@@ -141,9 +141,11 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		stopAnim:      make(chan struct{}),
 	}
 
-	b.left = buildWidgets(policy.Left, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
-	b.center = buildWidgets(policy.Center, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
-	b.right = buildWidgets(policy.Right, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
+	side := b.barAxis() == ui.Vertical
+	contentWidth := max(0, b.theme.barGeometry().Body()-2*b.theme.Metrics.BarPadding)
+	b.left = buildWidgetsAxis(policy.Left, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
+	b.center = buildWidgetsAxis(policy.Center, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
+	b.right = buildWidgetsAxis(policy.Right, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
 	return b, nil
 }
 
@@ -485,9 +487,10 @@ func (b *Bar) layoutLocked(width, height int) error {
 	b.trayNodes = nil
 	sections := b.sections()
 	content := b.contentLocked(width, height)
+	axis := b.barAxis()
 	// The first pass only sizes the tray's available width; the authoritative
 	// overflow is the second, after the tray nodes are rebuilt.
-	if _, err := ui.ArrangeBar(content,
+	if _, err := ui.ArrangeBar(content, axis,
 		sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure); err != nil {
 		return err
 	}
@@ -504,7 +507,7 @@ func (b *Bar) layoutLocked(width, height int) error {
 	b.trayArranged, b.trayAvailable = arranged, available
 	b.rebuildTrayNodesLocked()
 	sections = b.sections()
-	over, err := ui.ArrangeBar(content, sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
+	over, err := ui.ArrangeBar(content, axis, sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
 	if err != nil {
 		return err
 	}
@@ -521,21 +524,36 @@ func (b *Bar) Overflow() ui.BarOverflow {
 	return b.overflow
 }
 
+func (b *Bar) barAxis() ui.Axis {
+	if b.theme.BarEdge == "left" || b.theme.BarEdge == "right" {
+		return ui.Vertical
+	}
+	return ui.Horizontal
+}
+
 func (b *Bar) trayAvailableLocked(content ui.Rect, center, right []*ui.Node) int {
-	start := content.X + content.W/2
+	mainStart, mainEnd := content.X, content.X+content.W
+	position := func(r ui.Rect) (int, int) { return r.X, r.W }
+	if b.barAxis() == ui.Vertical {
+		mainStart, mainEnd = content.Y, content.Y+content.H
+		position = func(r ui.Rect) (int, int) { return r.Y, r.H }
+	}
+	start := mainStart + (mainEnd-mainStart)/2
 	if len(center) > 0 {
 		last := center[len(center)-1].Bounds
-		start = last.X + last.W
+		p, extent := position(last)
+		start = p + extent
 	}
 	if len(center) > 0 || len(right) > 0 {
 		start += b.theme.Metrics.BarSpacing
 	}
 	used := 0
 	if len(right) > 0 {
-		used = content.X + content.W - right[0].Bounds.X
+		p, _ := position(right[0].Bounds)
+		used = mainEnd - p
 		used += b.theme.Metrics.BarSpacing
 	}
-	return max(0, content.X+content.W-start-used)
+	return max(0, mainEnd-start-used)
 }
 
 func (b *Bar) rebuildTrayNodesLocked() {
@@ -624,7 +642,7 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// from the control ladder rather than a literal, like every other measured
 	// piece of this bar.
 	root.Children = append(root.Children,
-		overflowFades(sections, b.overflow, b.theme.Metrics.StandardControl)...)
+		overflowFades(sections, b.overflow, b.theme.Metrics.StandardControl, b.barAxis())...)
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)

@@ -13,8 +13,12 @@ import (
 // newTooltipFixture is a registry with one bar on a 1536x960 logical output,
 // the laptop's, and a tooltip host whose requests are captured.
 func newTooltipFixture(t *testing.T, blur bool) (*Registry, *tooltipHost, *hostHarness) {
-	t.Helper()
 	cfg := config.Default()
+	return newTooltipFixtureWithConfig(t, blur, cfg)
+}
+
+func newTooltipFixtureWithConfig(t *testing.T, blur bool, cfg config.Config) (*Registry, *tooltipHost, *hostHarness) {
+	t.Helper()
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Theme.BlurBehind = true
 	cfg.Theme.PanelOpacity = 65
@@ -305,5 +309,48 @@ func assertInsetClear(t *testing.T, pix []byte, w, hgt int, s ui.Scale120) {
 				t.Fatalf("inset pixel (%d,%d) = %v, want the ground %v", x, y, got, ground)
 			}
 		}
+	}
+}
+
+func TestBarAnchorOutputCoordinates(t *testing.T) {
+	for _, edge := range []string{"top", "bottom", "left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			r, h, _ := newTooltipFixture(t, false)
+			cfg := r.cfg
+			cfg.Bar.Edge = edge
+			r.mu.Lock()
+			r.cfg = cfg
+			r.mu.Unlock()
+			bar := r.bars[1]
+			barW, barH := 1536, cfg.Bar.SurfaceExtent()
+			local := ui.Rect{X: 18, Y: 300, W: 24, H: 24}
+			wantAnchor := local
+			switch edge {
+			case "bottom":
+				wantAnchor.Y += 960 - barH
+			case "left":
+				barW, barH = cfg.Bar.SurfaceExtent(), 960
+			case "right":
+				barW, barH = cfg.Bar.SurfaceExtent(), 960
+				wantAnchor.X += 1536 - barW
+			}
+			bar.setOutputSize(1536, 960)
+			if err := bar.Configure(barW, barH, 150); err != nil {
+				t.Fatal(err)
+			}
+			h.show(tooltipRequest{Global: 1, Anchor: local, Text: "Volume"})
+			want := tooltipPlacement(edge, wantAnchor, h.open.place.W, h.open.place.H, 1536, 960)
+			if h.open.place != want {
+				t.Fatalf("bar-local placement = %+v, want %+v from output anchor %+v", h.open.place, want, wantAnchor)
+			}
+
+			// Panel tooltip anchors already use output coordinates. Passing the
+			// same rectangle through that path must not apply the bar offset again.
+			h.hide()
+			h.show(tooltipRequest{Global: 1, Anchor: wantAnchor, Text: "Volume", OnOutput: true})
+			if got := h.open.place; got != want {
+				t.Fatalf("output-local placement = %+v, want %+v", got, want)
+			}
+		})
 	}
 }

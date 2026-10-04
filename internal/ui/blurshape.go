@@ -11,15 +11,16 @@ import (
 type SurfaceShape struct {
 	Body   Rect
 	Radius int
-	// AttachEdge is "top" or "bottom" when that edge meets the bar or the
+	// AttachEdge is the edge that meets the bar or the
 	// screen. Its corners are square. Empty rounds all four.
 	AttachEdge string
-	// JointLeft and JointRight are concave wedges outside the body beside
-	// the attached edge, joining it to the bar. Zero draws none on that side.
+	// JointLeft and JointRight are the leading and trailing concave wedges
+	// along the attached edge (top/bottom on a side surface). Zero draws none.
 	JointLeft, JointRight int
 	// EdgeFillet is the radius of the wedges on the far edge that curve into
 	// the screen's side: an attached bar carries them at both ends, and a
-	// panel flush against the screen edge carries one on that side. The far
+	// panel flush against the screen edge carries one on that side. Left and
+	// Right mean leading/trailing along the attached edge. The far
 	// corner on a side that carries one is square.
 	EdgeFillet          int
 	EdgeLeft, EdgeRight bool
@@ -33,6 +34,21 @@ func BlurStrips(s SurfaceShape) []Rect {
 	b := s.Body
 	if b.W <= 0 || b.H <= 0 {
 		return nil
+	}
+	if s.AttachEdge == "left" || s.AttachEdge == "right" {
+		// Transpose geometry only; the same coverage math owns every edge.
+		s.Body = Rect{X: b.Y, Y: b.X, W: b.H, H: b.W}
+		if s.AttachEdge == "left" {
+			s.AttachEdge = "top"
+		} else {
+			s.AttachEdge = "bottom"
+		}
+		strips := BlurStrips(s)
+		for i := range strips {
+			r := strips[i]
+			strips[i] = Rect{X: r.Y, Y: r.X, W: r.H, H: r.W}
+		}
+		return strips
 	}
 	radius := min(max(s.Radius, 0), min(b.W, b.H)/2)
 	top, bottom := s.AttachEdge == "top", s.AttachEdge == "bottom"

@@ -6,6 +6,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
@@ -50,6 +51,108 @@ func TestTrayMenuOpenSavesCorrelation(t *testing.T) {
 	}
 	if !r.roots.owns(trayMenuRoot(7)) {
 		t.Fatal("the chain owner is not the menu root")
+	}
+}
+
+func TestSideMenuPlacement(t *testing.T) {
+	const outW, outH = 1536, 864
+	r, h, key := menuHostHarness(t)
+	cfg := r.cfg
+	cfg.Bar.Edge = "right"
+	r.mu.Lock()
+	r.cfg = cfg
+	r.mu.Unlock()
+	newHosts(t, r, map[uint32]string{7: "DP-1"})
+	bar := r.bars[7]
+	bar.setOutputSize(outW, outH)
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), outH, 120); err != nil {
+		t.Fatal(err)
+	}
+	anchor := ui.Rect{X: 12, Y: 850, W: 24, H: 20}
+	if !h.openAt(key, "DP-1", 7, 9, anchor) {
+		t.Fatal("open refused a live item with a menu")
+	}
+	w, ht := h.size()
+	barW, _ := bar.configuredSize()
+	wantX := max(0, min(outW-w, outW-barW+anchor.X-w))
+	wantY := max(0, min(outH-ht, anchor.Y))
+	spec := h.spec()
+	if int(spec.Width) != w || int(spec.Height) != ht {
+		t.Fatalf("measured menu size = %dx%d, want %dx%d", spec.Width, spec.Height, w, ht)
+	}
+	if int(spec.MarginLeft) != wantX || int(spec.MarginTop) != wantY {
+		t.Fatalf("side menu origin = (%d,%d), want inward/clamped (%d,%d)", spec.MarginLeft, spec.MarginTop, wantX, wantY)
+	}
+	if wantX < 0 || wantX+w > outW || wantY < 0 || wantY+ht > outH {
+		t.Fatalf("expected placement (%d,%d %dx%d) leaves output", wantX, wantY, w, ht)
+	}
+}
+
+func TestTrayMenuPlacementClampsMeasuredSizeInBothDimensions(t *testing.T) {
+	const outW, outH = 250, 60
+	r, h, key := menuHostHarness(t)
+	cfg := r.cfg
+	cfg.Bar.Edge = "right"
+	r.mu.Lock()
+	r.cfg = cfg
+	r.mu.Unlock()
+	newHosts(t, r, map[uint32]string{7: "DP-1"})
+	bar := r.bars[7]
+	bar.setOutputSize(outW, outH)
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), outH, 120); err != nil {
+		t.Fatal(err)
+	}
+	if !h.openAt(key, "DP-1", 7, 9, ui.Rect{X: 12, Y: 20, W: 20, H: 20}) {
+		t.Fatal("open refused a live item with a menu")
+	}
+	spec := h.spec()
+	if spec.Width != outW || spec.Height != outH || spec.MarginLeft != 0 || spec.MarginTop != 0 {
+		t.Fatalf("oversized menu spec = %dx%d at (%d,%d), want output-fit 250x60 at origin",
+			spec.Width, spec.Height, spec.MarginLeft, spec.MarginTop)
+	}
+}
+
+func TestDrawerChildMenuUsesTheDrawerBodyAndClamps(t *testing.T) {
+	const outW, outH = 1536, 864
+	r, menu, key := menuHostHarness(t)
+	cfg := r.cfg
+	cfg.Bar.Edge = "left"
+	r.mu.Lock()
+	r.cfg = cfg
+	r.mu.Unlock()
+	newHosts(t, r, map[uint32]string{7: "DP-1"})
+	bar := r.bars[7]
+	bar.setOutputSize(outW, outH)
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), outH, 120); err != nil {
+		t.Fatal(err)
+	}
+	drawerHarness := &hostHarness{}
+	drawer := newTrayDrawerHost(r, drawerHarness)
+	r.trayDrawer = drawer
+	trigger := ui.Rect{X: 18, Y: 840, W: 24, H: 20}
+	if !r.handleTrayBar(7, "DP-1", tray.ItemKey{}, trayArrangement{}, trigger,
+		wayland.Event{Kind: wayland.EventPointerRelease}) {
+		t.Fatal("overflow click did not open the drawer")
+	}
+	drawerSpec := drawerHarness.opens[0]
+	drawerRect := ui.Rect{X: int(drawerSpec.MarginLeft), Y: int(drawerSpec.MarginTop),
+		W: int(drawerSpec.Width), H: int(drawerSpec.Height)}
+	if !menu.openAsChild(key, "DP-1", 7, 9) {
+		t.Fatal("menu did not attach to the open drawer")
+	}
+	w, h := menu.size()
+	wantX := drawerRect.X + drawerRect.W
+	if wantX+w > outW {
+		wantX = max(0, drawerRect.X-w)
+	}
+	wantY := max(0, min(outH-h, drawerRect.Y))
+	spec := menu.spec()
+	if int(spec.MarginLeft) != wantX || int(spec.MarginTop) != wantY {
+		t.Fatalf("child menu origin = (%d,%d), want (%d,%d) beside drawer body %+v",
+			spec.MarginLeft, spec.MarginTop, wantX, wantY, drawerRect)
+	}
+	if wantX+w > outW || wantY+h > outH {
+		t.Fatalf("child menu (%d,%d %dx%d) leaves output", wantX, wantY, w, h)
 	}
 }
 

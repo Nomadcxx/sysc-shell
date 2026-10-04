@@ -94,3 +94,34 @@ func TestWordmarkRejectsAnEmptyBox(t *testing.T) {
 		}
 	}
 }
+
+func assertClockwiseMask(t *testing.T, source, got *image.Alpha) {
+	t.Helper()
+	b := source.Bounds()
+	if got == nil || got.Bounds().Dx() != b.Dy() || got.Bounds().Dy() != b.Dx() {
+		t.Fatalf("rotated bounds = %v, source %v", got, b)
+	}
+	for y := 0; y < b.Dy(); y++ {
+		for x := 0; x < b.Dx(); x++ {
+			if got.AlphaAt(b.Dy()-1-y, x) != source.AlphaAt(b.Min.X+x, b.Min.Y+y) {
+				t.Fatalf("rotation differs at source (%d,%d)", x, y)
+			}
+		}
+	}
+}
+
+func TestSideWordmarkRotatesExistingArtwork(t *testing.T) {
+	source, err := Wordmark(80, 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	side, err := markMask("sysc-side", 11, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertClockwiseMask(t, source, side)
+	again, err := markMask("sysc-side", 11, 80)
+	if err != nil || again != side {
+		t.Fatal("side wordmark is not cached")
+	}
+}
