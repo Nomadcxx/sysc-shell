@@ -2,6 +2,7 @@ package wallpaper
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"slices"
 	"sync"
@@ -29,10 +30,13 @@ const (
 // Command is one queued request. It is a value, so nothing the panel holds is
 // shared with the service after the send.
 type Command struct {
-	Op    Op
-	Token string
-	Path  string
-	Kind  Kind
+	Op      Op
+	Token   string
+	Path    string
+	Kind    Kind
+	Effect  string
+	Theme   string
+	Artwork string
 }
 
 // Capabilities is what is installed, probed once at start and projected into
@@ -40,6 +44,11 @@ type Command struct {
 // a static engine Restore has nowhere to go.
 type Capabilities struct {
 	GSlapper bool
+	// Terminal is true when sysc-terminal answers --list. KindEffect uses it
+	// and nothing else does.
+	Terminal bool
+	// Catalog is the --list registry, filled only when Terminal is true.
+	Catalog Catalog
 	// Statics are the installed static fallback binaries in preference order.
 	// The picker names every one; Restore uses the first.
 	Statics []string
@@ -57,16 +66,23 @@ func (c Capabilities) Static() string {
 // static engines are recorded under their binary name, which is what Statics
 // already holds.
 const EngineGSlapper = "gslapper"
+const EngineTerminal = "sysc-terminal"
 
 // EngineFor names the engine an apply of kind will use, or "" when nothing
-// installed can paint it -- a video without gSlapper, or anything at all with
-// no engine installed.
+// installed can paint it -- a video without gSlapper, an effect without
+// sysc-terminal, or anything at all with no engine installed.
 //
 // This is the one statement of that policy: the engine branches on it, and the
 // picker reports it. An earlier version had the picker infer the engine from
 // Runtime.Socket and Runtime.FallbackPID, which nothing outside the engine's
 // own private handles ever writes, so no engine was ever named.
 func (c Capabilities) EngineFor(kind Kind) string {
+	if kind == KindEffect {
+		if c.Terminal {
+			return EngineTerminal
+		}
+		return ""
+	}
 	if c.GSlapper {
 		return EngineGSlapper
 	}
@@ -79,6 +95,9 @@ func (c Capabilities) EngineFor(kind Kind) string {
 // Engine is the side of the service that runs processes. It is an interface so
 // the service can be tested without exec, a socket, or a compositor.
 type Engine interface {
+	// AdvanceGeneration announces the newest requested state for connector.
+	// Pending older applies must not paint after it.
+	AdvanceGeneration(connector string, generation uint64)
 	// Apply puts one path on one output and returns a still for a video, which
 	// may be empty when none could be extracted.
 	Apply(job Job, set Settings) (preview string, err error)
@@ -165,10 +184,11 @@ type Service struct {
 	stopWork context.CancelFunc
 
 	// store, lib, caps, and covered are touched only by the loop goroutine.
-	store   Store
-	lib     *Library
-	caps    Capabilities
-	covered map[string]string
+	store     Store
+	lib       *Library
+	caps      Capabilities
+	covered   map[string]string
+	restarted map[string]bool
 
 	mu   sync.Mutex
 	snap Snapshot
@@ -186,6 +206,7 @@ type Service struct {
 func NewService(cfg ServiceConfig) *Service {
 	s := &Service{
 		engine:      cfg.Engine,
+		restarted:   make(map[string]bool),
 		set:         cfg.Settings,
 		roots:       slices.Clone(cfg.Roots),
 		persistPath: cfg.PersistPath,
@@ -239,7 +260,7 @@ func (s *Service) reconcile() {
 		if !slices.Contains(s.store.Connectors(), connector) {
 			continue
 		}
-		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind})
+		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme, Artwork: a.Artwork})
 	}
 }
 
@@ -293,6 +314,9 @@ func (s *Service) Close() {
 
 func (s *Service) run() {
 	defer close(s.done)
+	// Reuse the process watchers; no IPC or extra goroutine is needed to check exits.
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-s.quit:
@@ -301,11 +325,38 @@ func (s *Service) run() {
 			s.handle(c)
 		case r := <-s.results:
 			s.finish(r)
+		case <-ticker.C:
+			s.supervise()
 		case <-s.thumbProgress():
 			// A preview landed on disk; the picker only picks it up on a
 			// snapshot, so publish one.
 			s.publish()
 		}
+	}
+}
+
+// supervise replays a committed assignment when its current owned child exits.
+func (s *Service) supervise() {
+	watcher, ok := s.engine.(interface{ OwnedExited(string, uint64) bool })
+	if !ok {
+		return
+	}
+	for _, connector := range s.store.Connectors() {
+		rt := s.store.Runtime(connector)
+		if rt.State == StateStarting || rt.State == StateError ||
+			(rt.Engine != EngineTerminal && rt.Engine != EngineGSlapper) ||
+			!watcher.OwnedExited(connector, s.store.gen[connector]) {
+			continue
+		}
+		// ponytail: one automatic restart per selection avoids crash loops;
+		// sustained recovery would need a backoff policy. Apply explicitly retries.
+		if s.restarted[connector] {
+			s.store.noteRuntimeErr(connector, errors.New("wallpaper: process exited again after automatic restart; apply to retry"))
+			s.publish()
+			continue
+		}
+		s.restarted[connector] = true
+		s.dispatch(s.store.Reconnect(connector))
 	}
 }
 
@@ -329,17 +380,33 @@ func (s *Service) enqueueThumbs() {
 func (s *Service) handle(c Command) {
 	switch c.Op {
 	case OpApply:
-		s.dispatch(s.store.Apply(c.Token, c.Path, c.Kind))
+		if c.Token == AllOutputs {
+			clear(s.restarted)
+		} else {
+			delete(s.restarted, c.Token)
+		}
+		jobs := s.store.Apply(c.Token, c.Path, c.Kind)
+		for i := range jobs {
+			jobs[i].Effect = c.Effect
+			jobs[i].Theme = c.Theme
+			jobs[i].Artwork = c.Artwork
+		}
+		s.dispatch(jobs)
 		return
 	case OpPause, OpResume:
 		s.setPaused(c.Token, c.Op == OpPause)
 	case OpRestore:
 		s.restore(c.Token)
 	case OpConnect:
+		delete(s.restarted, c.Token)
 		s.dispatch(s.store.Reconnect(c.Token))
 		return
 	case OpDisconnect:
-		s.store.Disconnect(c.Token)
+		delete(s.restarted, c.Token)
+		generation := s.store.Disconnect(c.Token)
+		if s.engine != nil {
+			s.engine.AdvanceGeneration(c.Token, generation)
+		}
 		s.publish()
 		if s.engine != nil {
 			_ = s.engine.Restore(c.Token, "")
@@ -356,6 +423,11 @@ func (s *Service) handle(c Command) {
 // dispatch runs each job on its own goroutine and publishes the starting
 // state at once, so the picker shows work in flight rather than nothing.
 func (s *Service) dispatch(jobs []Job) {
+	if s.engine != nil {
+		for _, job := range jobs {
+			s.engine.AdvanceGeneration(job.Connector, job.Gen)
+		}
+	}
 	s.publish()
 	for _, job := range jobs {
 		s.work.Add(1)
@@ -372,14 +444,35 @@ func (s *Service) dispatch(jobs []Job) {
 
 func (s *Service) finish(r engineResult) {
 	if r.err != nil {
-		s.store.Fail(r.job, r.err)
+		before, hadBefore := s.store.Assignment(r.job.Connector)
+		assignmentChanged := false
+		if s.store.Fail(r.job, r.err) {
+			after, hasAfter := s.store.Assignment(r.job.Connector)
+			assignmentChanged = hadBefore != hasAfter || (hadBefore && before != after)
+			if assignmentChanged {
+				// A failed replacement may have restored an apply that finished
+				// after this job was queued; keep that actual assignment on disk.
+				s.persist()
+				s.refreshCoverage()
+			}
+		}
 		s.publish()
+		// An adopted assignment may be the only available theme seed, even
+		// when rollback leaves its value unchanged. notifySeed deduplicates it.
+		s.notifySeed(s.store.SeedPath())
 		return
 	}
 	if !s.store.Commit(r.job, r.preview, s.caps.EngineFor(r.job.Kind)) {
 		// A stale generation: a newer apply already owns this output, so the
 		// work is discarded rather than committed over it.
 		return
+	}
+	if a, ok := s.store.Assignment(r.job.Connector); ok && a.DesiredPlayback == StatePaused {
+		// Some engines replace their process when an assignment changes. Restore
+		// the persisted playback request before publishing the successful apply.
+		if err := s.engine.SetPaused(r.job.Connector, true); err != nil {
+			s.store.noteRuntimeErr(r.job.Connector, err)
+		}
 	}
 	s.persist()
 	s.refreshCoverage()
@@ -416,23 +509,24 @@ func (s *Service) notifySeed(seed string) {
 	}
 }
 
-func (s *Service) setPaused(connector string, paused bool) {
-	targets := []string{connector}
-	if connector == AllOutputs {
-		// Same fan-out restore uses: the locker pauses every output.
+func (s *Service) setPaused(token string, paused bool) {
+	targets := []string{token}
+	if token == AllOutputs {
 		targets = s.store.Connectors()
 	}
-	for _, c := range targets {
-		a, ok := s.store.Assignment(c)
-		if !ok || a.Kind != KindVideo {
-			// Pause is video-only; an image has no pipeline to hold.
+	for _, connector := range targets {
+		a, ok := s.store.Assignment(connector)
+		if !ok || (a.Kind != KindVideo && a.Kind != KindEffect) ||
+			s.store.Runtime(connector).State == StateStatic {
+			// Pause is for pipelines that play; an image, or a player restored
+			// to its still, has nothing to hold.
 			continue
 		}
-		if err := s.engine.SetPaused(c, paused); err != nil {
-			s.store.noteRuntimeErr(c, err)
+		if err := s.engine.SetPaused(connector, paused); err != nil {
+			s.store.noteRuntimeErr(connector, err)
 			continue
 		}
-		s.store.SetPlayback(c, paused)
+		s.store.SetPlayback(connector, paused)
 	}
 	s.persist()
 }
@@ -443,6 +537,8 @@ func (s *Service) restore(token string) {
 		targets = s.store.Connectors()
 	}
 	for _, connector := range targets {
+		generation := s.store.Invalidate(connector)
+		s.engine.AdvanceGeneration(connector, generation)
 		a, _ := s.store.Assignment(connector)
 		if err := s.engine.Restore(connector, stillFor(a)); err != nil {
 			s.store.noteRuntimeErr(connector, err)
@@ -454,8 +550,8 @@ func (s *Service) restore(token string) {
 }
 
 // stillFor is the image Restore hands to the static fallback: the image
-// itself, or the extracted still for a video. Empty leaves the output blank,
-// which is the design's one intentional exception to gSlapper-first (D16).
+// itself, or the saved still for a video or effect. Empty leaves the output
+// blank, which is the design's one intentional exception to gSlapper-first (D16).
 func stillFor(a Assignment) string {
 	if a.Kind == KindImage {
 		return a.Path

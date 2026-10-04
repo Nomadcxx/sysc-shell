@@ -38,6 +38,9 @@ func TestSocketPath(t *testing.T) {
 	if got != "/run/user/1000/sysc-shell/gslapper-DP-1.sock" {
 		t.Fatalf("got %q", got)
 	}
+	if got := terminalSocketPath("/run/user/1000/sysc-shell", "DP-1"); got != "/run/user/1000/sysc-shell/terminal-DP-1.sock" {
+		t.Fatalf("terminal socket = %q", got)
+	}
 	if socketPath("/run/user/1000/sysc-shell", "HDMI-A-1") == got {
 		t.Fatal("connectors must not share a socket")
 	}

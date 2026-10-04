@@ -261,6 +261,7 @@ func assertWallpaperMaskCleared(t *testing.T, r *Registry) {
 
 type wallpaperMaskTestEngine struct{ gate <-chan struct{} }
 
+func (wallpaperMaskTestEngine) AdvanceGeneration(string, uint64) {}
 func (e wallpaperMaskTestEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, error) {
 	if e.gate != nil {
 		<-e.gate

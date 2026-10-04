@@ -281,6 +281,7 @@ func TestEveryConfigDomainHasAnEntry(t *testing.T) {
 	for _, prefix := range []string{
 		"bar.", "appearance.", "theme.templates.", "panels.", "session.",
 		"accessibility.", "weather.", "wallpaper.", "tray.", "outputs.",
+		"terminal-art.",
 	} {
 		found := false
 		for _, section := range SectionNames() {
@@ -307,10 +308,11 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Thirteen: Displays became Bar's Displays page (settings redesign D5),
-	// and Palettes joined the Look cluster (custom palettes P11).
-	if len(names) != 13 {
-		t.Fatalf("SectionNames = %d sections, want the thirteen of the information architecture", len(names))
+	// Fourteen: Displays became Bar's Displays page (settings redesign D5),
+	// Palettes joined the Look cluster (custom palettes P11), and so did
+	// Terminal Art (wallpaper section redesign).
+	if len(names) != 14 {
+		t.Fatalf("SectionNames = %d sections, want the fourteen of the information architecture", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
@@ -1000,6 +1002,26 @@ func TestCustomPaletteOptionsCarryDisplayNames(t *testing.T) {
 		e, ok := reg.Lookup(path)
 		if !ok || !slices.Equal(e.OptionLabels, []string{"My Nord", "Work"}) {
 			t.Errorf("%s labels = %v, want the display names", path, e.OptionLabels)
+		}
+	}
+}
+
+func TestTerminalArtPaletteSetterRejectsJunk(t *testing.T) {
+	t.Parallel()
+	e := Default().ByPath("terminal-art.palette")
+	if e == nil || e.Section != "Terminal Art" {
+		t.Fatalf("entry = %+v, want one in Terminal Art", e)
+	}
+	for _, ok := range []string{"dracula", "tokyo-night"} {
+		cfg := config.Default()
+		if err := e.Set(&cfg, ok); err != nil || cfg.TerminalArt.Palette != ok {
+			t.Errorf("%q: err %v, palette %q", ok, err, cfg.TerminalArt.Palette)
+		}
+	}
+	for _, bad := range []string{"", "a b", "../x", "x\n"} {
+		cfg := config.Default()
+		if err := e.Set(&cfg, bad); err == nil {
+			t.Errorf("%q accepted", bad)
 		}
 	}
 }

@@ -67,6 +67,8 @@ var materialIcons = map[string]struct{}{
 	"calculate": {}, "mood": {},
 	// The Notes plugin's bar, favourite, sticky and pin glyphs.
 	"sticky_note_2": {}, "push_pin": {}, "star": {}, "note_add": {},
+	// The Terminal Art Control Centre button and Settings rail entry.
+	"terminal": {},
 }
 
 // The pinned Material Symbols source no longer carries the older

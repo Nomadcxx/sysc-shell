@@ -20,6 +20,7 @@ const (
 	KindUnknown Kind = iota
 	KindImage
 	KindVideo
+	KindEffect
 )
 
 // extensionKinds is the whole vocabulary. Anything absent is KindUnknown.
@@ -104,4 +105,8 @@ func SanitizeConnector(name string) string {
 // the only handle we use to stop an instance, so it must never be shared.
 func socketPath(dir, connector string) string {
 	return filepath.Join(dir, "gslapper-"+SanitizeConnector(connector)+".sock")
+}
+
+func terminalSocketPath(dir, connector string) string {
+	return filepath.Join(dir, "terminal-"+SanitizeConnector(connector)+".sock")
 }

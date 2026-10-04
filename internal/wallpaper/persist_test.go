@@ -84,3 +84,25 @@ func TestPersistRejectsUnknownKind(t *testing.T) {
 		t.Fatal("an unknown kind must fail the load rather than default to image")
 	}
 }
+
+func TestPersistEffectRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	want := map[string]Assignment{
+		"DP-1": {
+			Kind:            KindEffect,
+			Effect:          "fire",
+			Theme:           "nord",
+			DesiredPlayback: StatePlaying,
+		},
+	}
+	if err := SaveAssignments(path, want); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got["DP-1"] != want["DP-1"] {
+		t.Fatalf("got %+v, want %+v", got["DP-1"], want["DP-1"])
+	}
+}

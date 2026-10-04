@@ -180,6 +180,7 @@ ICONS = [
     "push_pin",
     "star",
     "note_add",
+    "terminal",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

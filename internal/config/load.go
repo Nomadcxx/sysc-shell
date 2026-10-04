@@ -192,6 +192,10 @@ type wireWallpaper struct {
 	Hidden         *string  `json:"hidden,omitempty"`
 }
 
+type wireTerminalArt struct {
+	Palette *string `json:"palette,omitempty"`
+}
+
 type wireConfig struct {
 	Bar           *wireBar             `json:"bar,omitempty"`
 	Theme         *wireTheme           `json:"theme,omitempty"`
@@ -205,6 +209,7 @@ type wireConfig struct {
 	Media         *wireMedia           `json:"media,omitempty"`
 	Monitor       *wireMonitor         `json:"monitor,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
+	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
 	Templates     map[string]bool      `json:"templates,omitempty"`
 	Plugins       *wirePlugins         `json:"plugins,omitempty"`
@@ -354,6 +359,12 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Wallpaper = paper
+	}
+	if wire.TerminalArt != nil && wire.TerminalArt.Palette != nil {
+		if p := *wire.TerminalArt.Palette; p != "" && !ValidPaletteName(p) {
+			return Config{}, pathErr("terminal-art.palette", "%q is not a palette name", p)
+		}
+		cfg.TerminalArt.Palette = *wire.TerminalArt.Palette
 	}
 	// The base bar's geometry derives from the resolved composition before any
 	// explicit bar block is applied, so the precedence is preset, then theme

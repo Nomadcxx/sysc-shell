@@ -267,6 +267,8 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		target = PanelSession
 	case "cc:wallpaper":
 		target = PanelWallpaper
+	case "cc:terminal-art":
+		target = PanelTerminalArt
 	case panelMonitorAction:
 		target = PanelMonitor
 	case "cc:close":
@@ -338,15 +340,23 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		})
 		return true
 	}
+	r.switchPanelLocked(h, target)
+	return true
+}
+
+// switchPanelLocked retires h and opens target where h was, leaving any other
+// open members of the panel group in place. It returns the new host, or nil.
+func (r *Registry) switchPanelLocked(h *PanelHost, target PanelID) *PanelHost {
 	trig := Trigger{
 		BarEdge: h.place.BarEdge, BarZone: h.place.BarZone,
 		OutW: h.place.Output.W, OutH: h.place.Output.H,
 	}
-	// These controls navigate to a different panel; retire the chooser while
-	// leaving any other open members of the panel group in place.
+	output := h.output
 	r.closePanelLocked(h.id)
-	_ = r.openPanelRootLocked(target, h.output, trig)
-	return true
+	if r.openPanelRootLocked(target, output, trig) != nil {
+		return nil
+	}
+	return r.panelHosts[target]
 }
 
 // setCaffeine changes the one process-wide idle inhibit. Caller holds r.mu;
