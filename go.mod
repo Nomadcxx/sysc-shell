@@ -15,6 +15,7 @@ require (
 	github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf
 	github.com/Nomadcxx/sysc-metrics v0.7.0
 	github.com/Nomadcxx/sysc-notify v0.1.0-rc.4.0.20260928141411-254ec5732728
+	github.com/Nomadcxx/sysc-terminal v0.0.0-20261004174459-4e522749ac8b
 	github.com/Nomadcxx/sysc-tray v0.1.0-rc.3
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
@@ -25,10 +26,25 @@ require (
 )
 
 require (
+	github.com/Nomadcxx/sysc-Go v1.0.4-0.20261004042739-c80d48f1f38e // indirect
+	github.com/charmbracelet/colorprofile v0.3.2 // indirect
+	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.3.0.20250917201909-41ff0bf215ea // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20250915111650-81d4262876ef // indirect
+	github.com/charmbracelet/x/ansi v0.10.1 // indirect
+	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
+	github.com/charmbracelet/x/term v0.2.1 // indirect
+	github.com/charmbracelet/x/termios v0.1.1 // indirect
+	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
+	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/muesli/cancelreader v0.2.2 // indirect
+	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/net v0.0.0-20211118161319-6a13c67c3ce4 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
+	gonum.org/v1/gonum v0.16.0 // indirect
 )
 
 require (
