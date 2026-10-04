@@ -1490,7 +1490,7 @@ func TestScreensaverSettingsExplainsAvailabilityAndOffersAccessibleActions(t *te
 	h.section = "Screensaver"
 	h.root = settingsTree(nil, h)
 	text := renderText(h.root)
-	for _, want := range []string{"Service state unavailable", "Effect", "Theme", "Artwork", "Idle timeout", "Preview", "Reset", "Apply"} {
+	for _, want := range []string{"Service state unavailable", "Effect", "Theme", "Artwork", "Preview", "Reset", "Apply"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("Screensaver settings omit %q: %s", want, text)
 		}

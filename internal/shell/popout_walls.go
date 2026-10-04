@@ -39,7 +39,7 @@ func screensaverSettingsBody(r *Registry, h *PanelHost) *ui.Node {
 	lead := []*ui.Node{
 		{Kind: ui.KindText, Text: wallsServiceStatus(snapshot), Name: "Screensaver service status", TextRole: theme.RoleBody},
 		{Kind: ui.KindText, Text: wallsConfigStatus(snapshot), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
-		{Kind: ui.KindText, Text: "The screensaver runs on its own idle timeout. Shell blank and suspend timers still apply.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		{Kind: ui.KindText, Text: "The delay lives under Session → When idle (After idle on Session). Shell blank and suspend timers still apply.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 		{Kind: ui.KindText, Text: "Display coverage is unknown until sysc-walls reports it.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 	}
 	if locked {
@@ -116,7 +116,6 @@ func screensaverEntries(h *PanelHost) []settings.Entry {
 		{Path: "walls.file", Label: "Artwork", Describe: "Enter a readable image path under ~/.local/share, ~/.config, /usr/share, or /usr/local/share. Leave empty to use built-in artwork.", Section: "Screensaver", Group: "Appearance", Kind: settings.KindString, Get: get("file")},
 		screensaverBooleanEntry(h, get),
 		screensaverChoiceEntry(h, get, "datetime-position", "Date and time position", "Choose where date and time appears.", "Appearance", screensaverPositions),
-		{Path: "walls.timeout", Label: "Idle timeout", Describe: "Whole seconds, minutes, or hours; maximum 24 hours (for example, 5m).", Section: "Screensaver", Group: "Timing", Kind: settings.KindString, Get: get("timeout")},
 	}
 }
 

@@ -348,7 +348,7 @@ func TestScreensaverLockMakesSettingsAndPreviewUnavailable(t *testing.T) {
 	for _, action := range []string{
 		"set:walls.effect", "set:walls.theme", "set:walls.file", "set:walls.datetime",
 		"pick:walls.datetime-position=top", "pick:walls.datetime-position=center",
-		"pick:walls.datetime-position=bottom", "set:walls.timeout",
+		"pick:walls.datetime-position=bottom",
 	} {
 		node := findNode(root, func(n *ui.Node) bool { return n.Action == action })
 		if node == nil || !node.State.Has(ui.StateDisabled) || !node.AriaDisabled {
@@ -582,7 +582,7 @@ func TestScreensaverSettingsFocusOrderAndAccessibleNames(t *testing.T) {
 			positions[node.Name] = i
 		}
 	}
-	want := []string{"Enable screensaver", "Effect", "Theme", "Artwork", "Show date and time", "Top", "Bottom", "Idle timeout", "Preview", "Reset", "Apply"}
+	want := []string{"Enable screensaver", "Effect", "Theme", "Artwork", "Show date and time", "Top", "Bottom", "Preview", "Reset", "Apply"}
 	previous := -1
 	for _, name := range want {
 		position, ok := positions[name]
@@ -599,6 +599,32 @@ func TestScreensaverSettingsFocusOrderAndAccessibleNames(t *testing.T) {
 	}
 	if h.section != "Screensaver" || !slices.Contains(settings.SectionNames(), "Screensaver") {
 		t.Fatal("Screensaver section is unreachable from the Settings information architecture")
+	}
+}
+
+func TestScreensaverSettingsOmitsTimeout(t *testing.T) {
+	r, h, _ := newOpenWallsSettings(t, readyWallsSnapshot())
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	body := screensaverSettingsBody(r, h)
+	timeout := findNode(body, func(n *ui.Node) bool {
+		return n.Action == "set:walls.timeout" || n.Action == "pick:walls.timeout" ||
+			strings.HasPrefix(n.Action, "set:walls.timeout=") || strings.HasPrefix(n.Action, "pick:walls.timeout=")
+	})
+	if timeout != nil {
+		t.Fatalf("Screensaver body still has walls.timeout control %+v", timeout)
+	}
+	for _, e := range screensaverEntries(h) {
+		if e.Path == "walls.timeout" {
+			t.Fatal("screensaverEntries still registers walls.timeout")
+		}
+	}
+	text := renderText(body)
+	if !strings.Contains(text, "After idle") || !strings.Contains(text, "Session") {
+		t.Fatalf("caption must mention After idle on Session: %s", text)
+	}
+	if strings.Contains(text, "own idle timeout") {
+		t.Fatalf("caption still treats Screensaver as the idle timeout place: %s", text)
 	}
 }
 
