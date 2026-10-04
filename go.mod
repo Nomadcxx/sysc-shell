@@ -27,6 +27,7 @@ require (
 require (
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/sblinch/kdl-go v0.0.0-20260121213736-8b7053306ca6 // indirect
 	golang.org/x/net v0.0.0-20211118161319-6a13c67c3ce4 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )
