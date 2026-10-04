@@ -2,7 +2,9 @@ package shell
 
 import (
 	"strings"
+	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
@@ -17,6 +19,21 @@ type wallsController interface {
 	Preview() bool
 	StopPreview() bool
 	Close() error
+}
+
+type idleWallsAdapter struct{ c wallsController }
+
+func (a idleWallsAdapter) SetEnabled(on bool) bool { return a.c.SetEnabled(on) }
+
+func (a idleWallsAdapter) SetTimeout(d time.Duration) bool {
+	return a.c.Apply([]walls.Setting{{Key: "timeout", Value: d.String()}})
+}
+
+func idleWallsFor(r *Registry) settings.IdleWalls {
+	if r == nil || r.wallsService == nil {
+		return nil
+	}
+	return idleWallsAdapter{r.wallsService}
 }
 
 var wallsSettingOrder = []string{"effect", "theme", "timeout", "file", "datetime", "datetime-position"}

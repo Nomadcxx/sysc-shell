@@ -385,17 +385,8 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Path: "idle.after", Label: "After idle", Section: "Session", Group: "When idle",
 			Describe: "One action after idle. Screensaver and lock cannot run from the same timer.",
 			Kind:     KindEnum, Options: []string{"nothing", "screensaver", "lock"},
-			Get:      func(c config.Config) string { return WhenIdleMode(c.Idle.Lock, false) },
-			Set: setEnum("idle.after", []string{"nothing", "screensaver", "lock"}, func(c *config.Config, v string) {
-				switch v {
-				case "nothing", "screensaver":
-					c.Idle.Lock = 0
-				case "lock":
-					if c.Idle.Lock == 0 {
-						c.Idle.Lock = DefaultIdleDelay
-					}
-				}
-			}),
+			Get: func(c config.Config) string { return WhenIdleMode(c.Idle.Lock, false) },
+			Set: setEnum("idle.after", []string{"nothing", "screensaver", "lock"}, func(*config.Config, string) {}),
 		},
 		{
 			Path: "idle.delay", Label: "Delay", Section: "Session", Group: "When idle",

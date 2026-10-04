@@ -3658,6 +3658,10 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 		setWallsDraft(r, h, key, settingNodeValue(n))
 		return
 	}
+	if path == "idle.after" || path == "idle.delay" {
+		h.applyIdleSetting(r, path, settingNodeValue(n))
+		return
+	}
 	if h.set == nil {
 		return
 	}
@@ -3710,6 +3714,10 @@ func settingNodeValue(n *ui.Node) string {
 // at open would keep offering the previous source's vocabulary for as long as
 // the panel stayed up.
 func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
+	if e != nil && (e.Path == "idle.after" || e.Path == "idle.delay") {
+		h.applyIdleSetting(r, e.Path, v)
+		return
+	}
 	if err := e.Set(&h.draft, v); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
