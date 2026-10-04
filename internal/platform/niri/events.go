@@ -1,10 +1,11 @@
-// Package niri streams typed workspace state from the compositor's JSON IPC
-// socket. It connects to $NIRI_SOCKET directly and never shells out to
-// `niri msg`.
+// Package niri reads typed state from the compositor's JSON IPC socket. It
+// connects to $NIRI_SOCKET directly and never shells out to `niri msg`.
 //
-// Niri emits no output event. Workspaces carry an output name only; output
-// existence, identity, scale, mode, transform and hotplug all come from
-// Wayland, so this package never projects output state.
+// Workspaces arrive on the event stream. Outputs do not: niri emits no output
+// event, so output identity, mode, scale and transform come from the Outputs
+// query in outputs.go. The query result is a point-in-time answer rather than a
+// stream, so the compositor stays the authority on geometry and the shell
+// re-queries after the Wayland identities it projects change.
 package niri
 
 import (

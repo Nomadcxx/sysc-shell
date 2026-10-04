@@ -1,15 +1,22 @@
 package niri
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
+	"path/filepath"
 )
 
 // ToggleOverview toggles Niri's compositor-rendered overview.
 type ToggleOverview struct{}
+
+// LoadConfigFile asks the compositor to reload its configuration, which is how
+// a published native root takes effect without waiting for the file watcher.
+// An empty Path reloads the current root; a set Path must be absolute, because
+// a relative one would resolve against whatever cwd niri happened to have.
+type LoadConfigFile struct {
+	Path string
+}
 
 // CloseOverview closes Niri's compositor-rendered overview.
 type CloseOverview struct{}
@@ -76,36 +83,15 @@ func Action(ctx context.Context, socketPath string, body any) error {
 	if err != nil {
 		return err
 	}
-
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", socketPath)
+	ok, err := call(ctx, socketPath, payload)
 	if err != nil {
-		return fmt.Errorf("niri: connect to %s: %w", socketPath, err)
+		return err
 	}
-	defer conn.Close()
-	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stopCancel()
-
-	if _, err := conn.Write(append(payload, '\n')); err != nil {
-		return fmt.Errorf("niri: send action: %w", err)
-	}
-	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 0, 4096), maxLine)
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("niri: read action reply: %w", err)
-		}
-		return fmt.Errorf("niri: no action reply")
-	}
-	var reply wireReply
-	if err := json.Unmarshal(scanner.Bytes(), &reply); err != nil {
+	// An Action acknowledges with a string. An object means the reply belongs
+	// to a different request kind, so it is not read as a handled Action.
+	var handled *string
+	if err := json.Unmarshal(ok, &handled); err != nil {
 		return fmt.Errorf("niri: decode action reply: %w", err)
-	}
-	if reply.Err != nil {
-		return fmt.Errorf("niri: action: %s", *reply.Err)
-	}
-	if reply.Ok == nil {
-		return fmt.Errorf("niri: action reply carried no result")
 	}
 	return nil
 }
@@ -134,6 +120,17 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"PowerOnMonitors": map[string]any{}}
 	case ToggleOverview:
 		inner = map[string]any{"ToggleOverview": map[string]any{}}
+	case LoadConfigFile:
+		if v.Path != "" && !filepath.IsAbs(v.Path) {
+			return nil, fmt.Errorf("niri: config path %q is not absolute", v.Path)
+		}
+		// An unset path reloads the current root, which niri represents as
+		// null rather than as an empty string.
+		var path any
+		if v.Path != "" {
+			path = v.Path
+		}
+		inner = map[string]any{"LoadConfigFile": map[string]any{"path": path}}
 	case CloseOverview:
 		inner = map[string]any{"CloseOverview": map[string]any{}}
 	case MoveWindowToWorkspace:
