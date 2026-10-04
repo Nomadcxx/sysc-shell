@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/walls"
@@ -332,5 +333,35 @@ func TestSettingsAfterIdleConfigFailureRestoresUnit(t *testing.T) {
 	}
 	if !fake.Snapshot().EnabledAtLogin() || h.errLabel == "" {
 		t.Fatalf("unit rollback failed: %+v, %q", fake.Snapshot(), h.errLabel)
+	}
+}
+
+func TestSettingsAfterIdleKeepsReopenedDraft(t *testing.T) {
+	r, h, fake := newOpenIdleSettings(t, enabledAtLoginSnapshot(), "sysc-lock")
+	result := make(chan error, 1)
+	fake.idleResult = result
+	r.mu.Lock()
+	r.configPath = filepath.Join(t.TempDir(), "config.json")
+	h.applyIdleSetting(r, "idle.after", "nothing")
+	r.mu.Unlock()
+	r.ClosePanel(PanelSettings)
+	if err := r.OpenPanel(PanelSettings, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	current := r.panelHosts[PanelSettings]
+	current.draft.Session.Locker = "new-locker-command"
+	current.persistDraft(r)
+	r.mu.Unlock()
+	result <- nil
+	waitFor(t, func() bool { r.mu.Lock(); defer r.mu.Unlock(); return !r.idleApplying })
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	saved, err := config.Load(r.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Session.Locker != "new-locker-command" {
+		t.Fatalf("old Settings overwrote reopened draft: %q", saved.Session.Locker)
 	}
 }

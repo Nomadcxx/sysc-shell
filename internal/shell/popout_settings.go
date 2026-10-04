@@ -1468,6 +1468,12 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 			return
 		default:
 		}
+		// A reopened Settings owns the current draft; the old window must not overwrite it.
+		if current := r.panelHosts[PanelSettings]; current != nil {
+			h = current
+		} else {
+			h.draft = r.cfg
+		}
 		r.idleApplying = false
 		if service != nil {
 			r.wallsSnapshot = service.Snapshot()
@@ -1491,6 +1497,11 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 					case <-r.closed:
 						return
 					default:
+					}
+					if current := r.panelHosts[PanelSettings]; current != nil {
+						h = current
+					} else {
+						h.draft = r.cfg
 					}
 					r.idleApplying = false
 					r.wallsSnapshot = service.Snapshot()
