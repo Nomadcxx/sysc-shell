@@ -55,6 +55,10 @@ func buildCentrePill(items []config.Item, pad int, m theme.Metrics, side bool, c
 	// The hairlines are members too: the bar rebuilds a group's row from its
 	// members on every layout, so a node that is not one disappears.
 	members := make([]textWidget, 0, len(built)+2)
+	padX := centrePadX
+	if side {
+		padX = pad
+	}
 	clocks := 0
 	for i, member := range built {
 		n := member.node
@@ -69,15 +73,13 @@ func buildCentrePill(items []config.Item, pad int, m theme.Metrics, side bool, c
 			}
 			clocks++
 		}
-		isMark := n.Kind == ui.KindWordmark && n.Mark == ""
+		isMark := n.Kind == ui.KindWordmark && (n.Mark == "" || n.Mark == "sysc-side")
 		if isMark {
 			n.ImageH, n.ImageW = centreMarkHeight, render.WordmarkWidth(centreMarkHeight)
 			if side {
-				// ponytail: a default-width strip has room only for a small mark;
-				// a wider existing bar thickness is the path to readable text.
-				available := max(1, contentWidth-2*centrePadX)
-				n.ImageH = max(1, int(float64(available)/render.WordmarkAspect+0.5))
-				n.ImageW = min(available, render.WordmarkWidth(n.ImageH))
+				n.Mark, n.CenterX = "sysc-side", true
+				n.ImageW = min(centreMarkHeight, max(1, contentWidth-2*padX))
+				n.ImageH = render.WordmarkWidth(n.ImageW)
 			}
 			n.Action, n.Name, n.Role = "", "", ""
 		}
@@ -98,7 +100,7 @@ func buildCentrePill(items []config.Item, pad int, m theme.Metrics, side bool, c
 
 	pill := &ui.Node{
 		Kind: ui.KindCapsule, Key: "centre", Shape: ui.ShapeMedium,
-		Padding: pad, PaddingX: centrePadX,
+		Padding: pad, PaddingX: padX,
 		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
 		Action: panelControlCenterAction, Name: "Control centre", Role: "button",
 		Children: []*ui.Node{stack},

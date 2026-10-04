@@ -187,15 +187,18 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 				},
 			})
 		case "wordmark":
-			out = append(out, textWidget{
-				node: &ui.Node{
-					Kind: ui.KindWordmark, Key: "wordmark",
-					ImageH: launcherMarkHeight, ImageW: render.WordmarkWidth(launcherMarkHeight),
-					Gradient: wordmarkGradient(), Action: panelControlCenterAction,
-					Name: "Control centre", Role: "button",
-				},
-				refresh: func(barView) bool { return false },
-			})
+			n := &ui.Node{
+				Kind: ui.KindWordmark, Key: "wordmark",
+				ImageH: launcherMarkHeight, ImageW: render.WordmarkWidth(launcherMarkHeight),
+				Gradient: wordmarkGradient(), Action: panelControlCenterAction,
+				Name: "Control centre", Role: "button",
+			}
+			if side {
+				n.Mark, n.CenterX = "sysc-side", true
+				n.ImageW = min(launcherMarkHeight, max(1, contentWidth-2*max(pad, 0)))
+				n.ImageH = render.WordmarkWidth(n.ImageW)
+			}
+			out = append(out, textWidget{node: n, refresh: func(barView) bool { return false }})
 		case "workspace":
 			kind := ui.KindRow
 			if side {

@@ -174,8 +174,8 @@ func TestSideBarComposition(t *testing.T) {
 				t.Fatalf("centre pill = %+v, inner %+v", pill, bar.center[0].inner)
 			}
 			mark := findKind(pill, ui.KindWordmark)
-			innerWidth := content.W - 2*centrePadX
-			if mark == nil || mark.ImageW <= 0 || mark.ImageW > innerWidth || mark.ImageH <= 0 || abs(mark.ImageW-render.WordmarkWidth(mark.ImageH)) > 1 {
+			innerWidth := content.W - 2*pill.PaddingX
+			if mark == nil || mark.ImageW <= 0 || mark.ImageW > innerWidth || mark.ImageW != centreMarkHeight || mark.Mark != "sysc-side" || mark.ImageH != render.WordmarkWidth(mark.ImageW) {
 				t.Fatalf("side wordmark = %+v, available width %d", mark, innerWidth)
 			}
 			if tc.wide {
