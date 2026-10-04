@@ -254,6 +254,11 @@ type PanelHost struct {
 	wallpaperPaletteSeed   string
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
+	// wallsDraft is a local Settings edit buffer. It is never written to the
+	// shell config; Apply sends only its dirty values to sysc-walls.
+	wallsDraft      map[string]string
+	wallsDirty      map[string]bool
+	wallsDraftReady bool
 
 	pluginManagerTab string
 	// palettes is the Palettes page state (custom palettes P12). Registry.mu.
@@ -625,6 +630,9 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 				fmt.Fprintf(os.Stderr, "sysc-shell: mark notifications seen: %v\n", err)
 			}
 		}
+	}
+	if id == PanelControlCenter {
+		r.refreshWallsLocked()
 	}
 	return nil
 }
@@ -2789,6 +2797,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if h.id == PanelPluginStore {
 		return h.activatePluginStore(r, n)
 	}
+	if strings.HasPrefix(n.Action, "walls:") {
+		return activateWallsAction(r, h, n)
+	}
 	switch n.Action {
 	case "plugin-close", "plugin-retry", "plugin-disable":
 		if r.plugins != nil {
@@ -3446,11 +3457,22 @@ func (r *Registry) syncNotificationsSize(h *PanelHost) {
 }
 
 func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
-	if h.set == nil || n == nil {
+	if n == nil {
 		return
 	}
 	path, ok := strings.CutPrefix(n.Action, "set:")
 	if !ok {
+		return
+	}
+	if key, ok := strings.CutPrefix(path, "walls."); ok {
+		setWallsDraft(r, h, key, settingNodeValue(n))
+		return
+	}
+	if path == "idle.after" || path == "idle.delay" {
+		h.applyIdleSetting(r, path, settingNodeValue(n))
+		return
+	}
+	if h.set == nil {
 		return
 	}
 	e := h.set.ByPath(path)
@@ -3479,12 +3501,33 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 	}
 }
 
+func settingNodeValue(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Kind {
+	case ui.KindToggle:
+		if n.Value != 0 {
+			return "true"
+		}
+		return "false"
+	case ui.KindTextField, ui.KindMenu:
+		return n.Text
+	default:
+		return ""
+	}
+}
+
 // commitSetting applies one value to the draft, rebuilds the registry from it,
 // and writes. The rebuild is what lets an entry's options depend on another
 // setting: the seed picker follows the theme source, and a registry built once
 // at open would keep offering the previous source's vocabulary for as long as
 // the panel stayed up.
 func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
+	if e != nil && (e.Path == "idle.after" || e.Path == "idle.delay") {
+		h.applyIdleSetting(r, e.Path, v)
+		return
+	}
 	if err := e.Set(&h.draft, v); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
@@ -3546,7 +3589,19 @@ func (h *PanelHost) flushDraft(r *Registry) {
 }
 
 func (h *PanelHost) applyMenu(r *Registry, path string) {
-	if h.set == nil || path == "" {
+	if path == "" {
+		return
+	}
+	if key, ok := strings.CutPrefix(path, "walls."); ok {
+		if r.lockerAcquired {
+			return
+		}
+		if m := h.menus[path]; m != nil {
+			setWallsDraft(r, h, key, m.Value())
+		}
+		return
+	}
+	if h.set == nil {
 		return
 	}
 	e := h.set.ByPath(path)

@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -46,6 +48,7 @@ var settingsSectionIcons = map[string]string{
 	"Monitor":       "memory",
 	"Wallpaper":     "wallpaper",
 	"Terminal Art":  "terminal",
+	"Screensaver":   "schedule",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
 	"Tray":          "apps",
@@ -234,9 +237,8 @@ func settingsFieldInset(h *PanelHost, n *ui.Node) {
 // settingsRailItemHeight is a section tab's height and inset: the density's
 // standard control, or less when the tabs, the cluster captions and search
 // would not fit the pane. At spacious density on a 1280x720 output they ran
-// 150 px past its bottom edge. When even an icon with its usual inset does not
-// fit, the inset narrows rather than the rail running off the pane: thirteen
-// sections at spacious density overran it by 27 px.
+// 150 px past its bottom edge. The inset narrows in two steps before an icon
+// row is allowed to force the rail past the pane.
 func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 	m := h.metrics()
 	if m.StandardControl <= 0 {
@@ -262,6 +264,9 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 		if per < m.IconNormal+2*pad {
 			pad = tighter
 		}
+	}
+	if per < m.IconNormal+2*pad {
+		pad = theme.MarginXXS
 	}
 	// Never shorter than the icon and its padding, which the tab has to hold.
 	return max(min(m.StandardControl, per), captionH, m.IconNormal+2*pad), pad
@@ -320,6 +325,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	body := func(content *ui.Node) *ui.Node {
+		settingsDimIdle(r, h, content)
 		if content.Kind == ui.KindScroll {
 			content.Height = settingsContentHeight(h, head)
 		}
@@ -332,7 +338,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if searching {
 		var hits []settings.Entry
 		if h.set != nil {
-			hits = h.set.Search(h.query)
+			hits = overlayIdleGets(r, h.set.Search(h.query))
 		}
 		return body(settingsSearchColumn(h, hits))
 	}
@@ -353,9 +359,12 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if section == "Bar" {
 		return body(settingsBarPage(r, h, page))
 	}
+	if section == "Screensaver" {
+		return body(screensaverSettingsBody(r, h))
+	}
 	var entries []settings.Entry
 	if h.set != nil {
-		entries = h.set.Section(section)
+		entries = overlayIdleGets(r, h.set.Section(section))
 	}
 	if section == "Tray" {
 		entries = settingsTrayTitles(r, entries)
@@ -960,7 +969,7 @@ func settingsResetButton(h *PanelHost, e settings.Entry) *ui.Node {
 
 func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	raw := ""
-	if h.set != nil {
+	if e.Get != nil {
 		raw = e.Get(h.draft)
 	}
 	action := "set:" + e.Path
@@ -1329,6 +1338,219 @@ func settingsBrowseOptions(current string) []string {
 		}
 	}
 	return out
+}
+
+func overlayIdleGets(r *Registry, entries []settings.Entry) []settings.Entry {
+	if r == nil {
+		return entries
+	}
+	snap := r.wallsSnapshot
+	for i := range entries {
+		switch entries[i].Path {
+		case "idle.after":
+			entries[i].Get = func(c config.Config) string {
+				return settings.WhenIdleMode(c.Idle.Lock, snap.EnabledAtLogin())
+			}
+		case "idle.delay":
+			entries[i].Get = func(c config.Config) string {
+				if settings.WhenIdleMode(c.Idle.Lock, snap.EnabledAtLogin()) == "nothing" {
+					return ""
+				}
+				return settings.WhenIdleDelay(c.Idle.Lock, snap.Timeout).String()
+			}
+		}
+	}
+	return entries
+}
+
+func settingsDimIdle(r *Registry, h *PanelHost, root *ui.Node) {
+	if r == nil || h == nil || root == nil {
+		return
+	}
+	locker := strings.TrimSpace(h.draft.Session.Locker)
+	mode := settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin())
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if r.idleApplying && (strings.HasPrefix(n.Action, "pick:idle.after=") || n.Action == "set:idle.delay") {
+			n.State |= ui.StateDisabled
+			n.AriaDisabled = true
+			n.Focusable = false
+		}
+		switch n.Action {
+		case "pick:idle.after=lock":
+			if locker == "" {
+				n.State |= ui.StateDisabled
+				n.AriaDisabled = true
+				n.Focusable = false
+			}
+		case "pick:idle.after=screensaver":
+			if !r.wallsSnapshot.ServiceAvailable {
+				n.State |= ui.StateDisabled
+				n.AriaDisabled = true
+				n.Focusable = false
+			}
+		case "set:idle.delay":
+			if mode == "nothing" {
+				n.State |= ui.StateDisabled
+				n.AriaDisabled = true
+				n.Focusable = false
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+}
+
+func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
+	if r == nil || h == nil {
+		return
+	}
+	mode := settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin())
+	delay := settings.WhenIdleDelay(h.draft.Idle.Lock, r.wallsSnapshot.Timeout)
+	switch path {
+	case "idle.after":
+		mode = value
+	case "idle.delay":
+		tmp := h.draft
+		e := h.set.ByPath("idle.delay")
+		if e == nil || e.Set == nil {
+			return
+		}
+		if err := e.Set(&tmp, value); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return
+		}
+		delay = tmp.Idle.Lock
+	default:
+		return
+	}
+	if r.idleApplying || r.lockerAcquired || r.wallsSnapshot.ActionPending {
+		h.errLabel = "Wait for the current screensaver action to finish."
+		r.rebuildPanel(h)
+		return
+	}
+	service := r.wallsService
+	var controller settings.IdleWalls
+	if service != nil && !(r.wallsSnapshot.UnitKnown && !r.wallsSnapshot.UnitStale && r.wallsSnapshot.LoadState == "not-found") {
+		controller = idleWallsAdapter{service: service}
+	}
+	before := h.draft
+	previous := r.wallsSnapshot
+	candidate := before
+	staged := mode == "screensaver" && before.Idle.Lock > 0
+	if staged {
+		// Disarm and persist the lock before the screensaver can start.
+		safe := before
+		safe.Idle.Lock = 0
+		if err := r.writeConfig(safe); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return
+		}
+		r.cfg.Idle.Lock = 0
+		h.draft.Idle.Lock = 0
+		r.pushIdleInputsLocked()
+	}
+	r.idleApplying = true
+	r.rebuildPanel(h)
+	go func() {
+		err := settings.ApplyWhenIdle(mode, delay, &candidate, controller)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		select {
+		case <-r.closed:
+			return
+		default:
+		}
+		// A reopened Settings owns the current draft; the old window must not overwrite it.
+		if current := r.panelHosts[PanelSettings]; current != nil {
+			h = current
+		} else {
+			h.draft = r.cfg
+		}
+		r.idleApplying = false
+		if service != nil {
+			r.wallsSnapshot = service.Snapshot()
+		}
+		if err == nil {
+			current := h.draft
+			current.Idle.Lock = candidate.Idle.Lock
+			err = r.writeConfig(current)
+			if err == nil {
+				h.draft = current
+				r.cfg.Idle.Lock = candidate.Idle.Lock
+				r.pushIdleInputsLocked()
+			} else if service != nil {
+				// Restore the previous unit policy after a failed config write, off the owner.
+				r.idleApplying = true
+				go func(cause error) {
+					rollback := service.ConfigureIdle(previous.EnabledAtLogin(), previous.Timeout)
+					r.mu.Lock()
+					defer r.mu.Unlock()
+					select {
+					case <-r.closed:
+						return
+					default:
+					}
+					if current := r.panelHosts[PanelSettings]; current != nil {
+						h = current
+					} else {
+						h.draft = r.cfg
+					}
+					r.idleApplying = false
+					r.wallsSnapshot = service.Snapshot()
+					if rollback == nil && staged {
+						current := h.draft
+						current.Idle.Lock = before.Idle.Lock
+						rollback = r.writeConfig(current)
+						if rollback == nil {
+							h.draft = current
+							r.cfg.Idle.Lock = before.Idle.Lock
+							r.pushIdleInputsLocked()
+						}
+					}
+					h.errLabel = errors.Join(cause, rollback).Error()
+					if r.panelHosts[h.id] == h {
+						r.rebuildPanel(h)
+						r.publishSurface(h.output, panelSurfaceID(h.id))
+					}
+				}(err)
+			}
+		} else if staged {
+			// Rearm the old lock only when the screensaver is confirmed disabled.
+			snap := r.wallsSnapshot
+			if controller == nil || (snap.UnitKnown && !snap.UnitStale && snap.UnitFileState == "disabled" && !snap.Running()) {
+				current := h.draft
+				current.Idle.Lock = before.Idle.Lock
+				rollback := r.writeConfig(current)
+				err = errors.Join(err, rollback)
+				if rollback == nil {
+					h.draft = current
+					r.cfg.Idle.Lock = before.Idle.Lock
+					r.pushIdleInputsLocked()
+				}
+			} else {
+				err = errors.Join(err, fmt.Errorf("lock remains disabled until screensaver shutdown is confirmed"))
+			}
+		}
+		if err != nil {
+			h.errLabel = err.Error()
+		} else {
+			h.errLabel = ""
+			delete(h.fields, "idle.delay")
+		}
+		h.set = r.settingsForLocked(h.draft)
+		if r.panelHosts[h.id] == h {
+			r.rebuildPanel(h)
+			r.publishSurface(h.output, panelSurfaceID(h.id))
+		}
+	}()
 }
 
 func (h *PanelHost) persistDraft(r *Registry) {

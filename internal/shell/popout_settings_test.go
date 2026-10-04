@@ -1473,6 +1473,30 @@ func TestEmptySectionSaysWhy(t *testing.T) {
 	}
 }
 
+func TestScreensaverSectionHasRouteAndGlyph(t *testing.T) {
+	t.Parallel()
+	section, page, ok := settingsAddress("Screensaver")
+	if !ok || section != "Screensaver" || page != "" {
+		t.Fatalf("Screensaver address = (%q, %q, %v)", section, page, ok)
+	}
+	if got := settingsSectionIcons["Screensaver"]; got != "schedule" {
+		t.Fatalf("Screensaver glyph = %q, want schedule", got)
+	}
+}
+
+func TestScreensaverSettingsExplainsAvailabilityAndOffersAccessibleActions(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Screensaver"
+	h.root = settingsTree(nil, h)
+	text := renderText(h.root)
+	for _, want := range []string{"Service state unavailable", "Effect", "Theme", "Artwork", "Preview", "Reset", "Apply"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Screensaver settings omit %q: %s", want, text)
+		}
+	}
+}
+
 // A control that has a natural size should wear it and sit at the end of the
 // row, not stretch across the column or float at its left. Reported by the
 // owner: toggles and dropdowns read as taking the full panel width.

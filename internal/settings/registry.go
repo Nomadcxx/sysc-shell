@@ -382,6 +382,73 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setString(func(c *config.Config, v string) { c.Session.Locker = v }),
 		},
 		{
+			Path: "idle.after", Label: "After idle", Section: "Session", Group: "When idle",
+			Describe: "One action after idle. Screensaver and lock cannot run from the same timer.",
+			Kind:     KindEnum, Options: []string{"nothing", "screensaver", "lock"},
+			Get: func(c config.Config) string { return WhenIdleMode(c.Idle.Lock, false) },
+			Set: setEnum("idle.after", []string{"nothing", "screensaver", "lock"}, func(*config.Config, string) {}),
+		},
+		{
+			Path: "idle.delay", Label: "Delay", Section: "Session", Group: "When idle",
+			Describe: "How long to wait after idle. Used by screensaver or lock, not by Display Power.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.Lock > 0 {
+					return c.Idle.Lock.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.delay", func(c *config.Config, d time.Duration) { c.Idle.Lock = d }),
+		},
+		{
+			Path: "idle.blank_ac", Label: "Blank on AC", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to blank the display on AC power. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.BlankAc > 0 {
+					return c.Idle.BlankAc.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.blank_ac", func(c *config.Config, d time.Duration) { c.Idle.BlankAc = d }),
+		},
+		{
+			Path: "idle.blank_battery", Label: "Blank on battery", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to blank the display on battery. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.BlankBattery > 0 {
+					return c.Idle.BlankBattery.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.blank_battery", func(c *config.Config, d time.Duration) { c.Idle.BlankBattery = d }),
+		},
+		{
+			Path: "idle.suspend_ac", Label: "Suspend on AC", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to suspend on AC power. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.SuspendAc > 0 {
+					return c.Idle.SuspendAc.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.suspend_ac", func(c *config.Config, d time.Duration) { c.Idle.SuspendAc = d }),
+		},
+		{
+			Path: "idle.suspend_battery", Label: "Suspend on battery", Section: "Session", Group: "Display Power",
+			Describe: "How long after idle to suspend on battery. Empty or 0 disables.",
+			Kind:     KindString,
+			Get: func(c config.Config) string {
+				if c.Idle.SuspendBattery > 0 {
+					return c.Idle.SuspendBattery.String()
+				}
+				return ""
+			},
+			Set: setNonNegDuration("idle.suspend_battery", func(c *config.Config, d time.Duration) { c.Idle.SuspendBattery = d }),
+		},
+		{
 			Path: "accessibility.reduced-motion", Label: "Reduced motion", Section: "Accessibility", Group: "Assistance",
 			Describe: "Shorten or remove animation.",
 			Kind:     KindBool,
@@ -643,7 +710,7 @@ func SectionClusters() []Cluster {
 		// Captions name the group, never one of its items (owner decision,
 		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
 		// duplicates, and Plugins is not a panel.
-		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art"}},
+		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver"}},
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
@@ -1301,6 +1368,25 @@ func setDuration(path string, assign func(*config.Config, time.Duration)) Setter
 		}
 		if d <= 0 {
 			return fmt.Errorf("settings: %s: %v is not positive", path, d)
+		}
+		assign(c, d)
+		return nil
+	})
+}
+
+func setNonNegDuration(path string, assign func(*config.Config, time.Duration)) Setter {
+	return write(func(c *config.Config, v string) error {
+		v = strings.TrimSpace(v)
+		if v == "" || v == "0" || v == "0s" {
+			assign(c, 0)
+			return nil
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("settings: %s: %q is not a duration such as 15m", path, v)
+		}
+		if d < 0 {
+			return fmt.Errorf("settings: %s: %v is negative", path, d)
 		}
 		assign(c, d)
 		return nil

@@ -81,8 +81,14 @@ func TestLockerHandshakePauseResume(t *testing.T) {
 	f := newFakeLock([]int{0}, []string{"sysc-lock: locked"})
 	var pauses []bool
 	var pmu sync.Mutex
+	locked := make(chan struct{}, 1)
 	m := &lockerManager{
 		spawn: f.spawn,
+		stateCB: func(running, acquired bool) {
+			if acquired {
+				locked <- struct{}{}
+			}
+		},
 		paused: func(p bool) {
 			pmu.Lock()
 			pauses = append(pauses, p)
@@ -93,11 +99,15 @@ func TestLockerHandshakePauseResume(t *testing.T) {
 	if err := m.request([]string{"sysc-lock"}); err != nil {
 		t.Fatal(err)
 	}
-	waitWhile(t, func() bool { return m.State().Acquired == false }, "handshake not seen")
+	select {
+	case <-locked:
+	case <-time.After(time.Second):
+		t.Fatal("handshake not seen")
+	}
 	waitWhile(t, func() bool { return m.State().Running }, "still running")
 	st := m.State()
-	if st.Running || st.ExitCode != 0 {
-		t.Fatalf("st=%+v", st)
+	if st.Running || st.Acquired || st.ExitCode != 0 {
+		t.Fatalf("st=%+v, unlocked exit must clear acquired state", st)
 	}
 	pmu.Lock()
 	defer pmu.Unlock()
