@@ -30,6 +30,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
+	"github.com/Nomadcxx/sysc-shell/internal/walls"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
@@ -237,6 +238,8 @@ type Registry struct {
 	trayCloses           *trayCloseTracker
 	trayIcons            *icons.Worker
 	wallpaperSvc         *wallpaper.Service
+	wallsService         wallsController
+	wallsSnapshot        walls.Snapshot
 	wallpaperThumbs      *icons.Worker
 	wallpaperThumbCancel context.CancelFunc
 	mediaArt             *mediaArtWorker
@@ -1894,6 +1897,7 @@ func (r *Registry) Close() {
 	var bluetooth *services.Bluetooth
 	var inhibit io.Closer
 	var wallpaperSvc *wallpaper.Service
+	var wallsSvc wallsController
 	var wallpaperThumbCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
 	var depthEffects depthClockEffects
@@ -1930,6 +1934,8 @@ func (r *Registry) Close() {
 		r.networkLease = nil
 		wallpaperSvc = r.wallpaperSvc
 		r.wallpaperSvc = nil
+		wallsSvc = r.wallsService
+		r.wallsService = nil
 		wallpaperThumbCancel = r.wallpaperThumbCancel
 		r.wallpaperThumbCancel = nil
 		mediaArt = r.mediaArt
@@ -1986,6 +1992,11 @@ func (r *Registry) Close() {
 	}
 	if wallpaperSvc != nil {
 		wallpaperSvc.Close()
+	}
+	if wallsSvc != nil {
+		if err := wallsSvc.Close(); err != nil {
+			log.Printf("shell: close sysc-walls service: %v", err)
+		}
 	}
 	r.dwell.stop()
 	r.clock.Close()

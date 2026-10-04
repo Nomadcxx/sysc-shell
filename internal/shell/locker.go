@@ -124,6 +124,7 @@ func (m *lockerManager) pump(out io.Reader, exits <-chan int, argv []string) {
 		m.mu.Unlock()
 	} else {
 		m.running = false
+		m.acquired = false
 		m.notifyLocked()
 		m.mu.Unlock()
 	}
@@ -215,6 +216,15 @@ func (r *Registry) lockerLocked() *lockerManager {
 				if h := r.panelHosts[PanelControlCenter]; h != nil {
 					r.rebuildPanel(h)
 					r.publishSurface(h.output, panelSurfaceID(h.id))
+				}
+				if h := r.panelHosts[PanelSettings]; h != nil && h.section == "Screensaver" {
+					r.rebuildPanel(h)
+					r.publishSurface(h.output, panelSurfaceID(h.id))
+				}
+				if !running && !acquired {
+					// A completed or refused lock leaves the current service state
+					// to systemd; refresh the surfaces without starting anything.
+					r.refreshWallsLocked()
 				}
 				r.mu.Unlock()
 			},
