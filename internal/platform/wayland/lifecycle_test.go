@@ -313,15 +313,16 @@ func TestPreferredScaleDuringPendingGeometryDefersBufferReplacement(t *testing.T
 	}
 }
 
-func TestBarEdgeReloadSequenceRequiresConfigure(t *testing.T) {
+func TestBarReloadWaitsOnlyForRequestedSizeChange(t *testing.T) {
 	t.Parallel()
 
 	current := config.Default().Bar
 	for _, edge := range []string{"left", "right", "bottom", "top"} {
 		next := current
 		next.Edge = edge
-		if !barConfigureTransition(current, next) {
-			t.Errorf("%s to %s did not wait for configure", current.Edge, next.Edge)
+		want := sideBarEdge(current.Edge) != sideBarEdge(next.Edge)
+		if got := barConfigureTransition(current, next); got != want {
+			t.Errorf("%s to %s waits for configure = %v, want %v", current.Edge, next.Edge, got, want)
 		}
 		current = next
 	}
@@ -333,8 +334,8 @@ func TestBarEdgeReloadSequenceRequiresConfigure(t *testing.T) {
 	reserve := current
 	zero := 0
 	reserve.Reserve = &zero
-	if !barConfigureTransition(current, reserve) {
-		t.Error("reserve change did not wait for configure")
+	if barConfigureTransition(current, reserve) {
+		t.Error("unchanged requested size unnecessarily waited after reserve edit")
 	}
 	unrelated := current
 	unrelated.FontSize++

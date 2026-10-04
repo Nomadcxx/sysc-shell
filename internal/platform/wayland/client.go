@@ -1129,8 +1129,9 @@ func prospectiveBarSize(current config.Bar, transitionPending bool, next config.
 }
 
 func barConfigureTransition(current, next config.Bar) bool {
-	return current.Edge != next.Edge || current.SurfaceExtent() != next.SurfaceExtent() ||
-		current.ExclusiveZone() != next.ExclusiveZone()
+	// Niri need not configure an anchor or reserve edit with unchanged size.
+	// Keep painting in the accepted buffer; a later configure still updates it.
+	return sideBarEdge(current.Edge) != sideBarEdge(next.Edge) || current.SurfaceExtent() != next.SurfaceExtent()
 }
 
 // abandon releases what a prepared candidate acquired, for an owner-side
