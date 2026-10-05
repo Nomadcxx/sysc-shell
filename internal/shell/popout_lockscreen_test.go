@@ -186,3 +186,35 @@ func TestLockSettingsExplainsHeldBackground(t *testing.T) {
 		t.Fatal("held background was not explained in the Lock Screen section")
 	}
 }
+
+func TestLockSettingsReducedMotionIsASplitRowToggle(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	row := findNode(h.root, func(n *ui.Node) bool {
+		if n.Kind != ui.KindRow {
+			return false
+		}
+		for _, c := range n.Children {
+			if c.Kind == ui.KindToggle && c.Action == "lockscreen-reduced" {
+				return true
+			}
+		}
+		return false
+	})
+	r.mu.Unlock()
+	if row == nil {
+		t.Fatal("reduced motion is a full-width button, not a toggle in a split row")
+	}
+	labelled := false
+	for _, c := range row.Children {
+		if c.Kind == ui.KindText && c.Text == "Reduced motion" {
+			labelled = true
+		}
+	}
+	if !labelled {
+		t.Fatal("split row has no Reduced motion label beside the toggle")
+	}
+	if findNode(h.root, func(n *ui.Node) bool { return n.Text == "Reduced motion: Off" }) != nil {
+		t.Fatal("baked value text still present")
+	}
+}

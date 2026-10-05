@@ -63,16 +63,18 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 			rows = append(rows, wallpaperOptionList(h, opts))
 		}
 	}
-	reduced := "Off"
-	if s.config.ReducedMotion {
-		reduced = "On"
+	motion := &ui.Node{
+		Kind: ui.KindToggle, Action: "lockscreen-reduced",
+		Focusable: true, Name: "Reduced motion", Role: "switch",
 	}
-	motion := wallpaperButton(h, "lockscreen-reduced", "Reduced motion: "+reduced, s.config.ReducedMotion)
+	if s.config.ReducedMotion {
+		motion.Value = 1
+	}
 	if saving {
 		motion.State |= ui.StateDisabled
 		motion.AriaDisabled, motion.Focusable = true, false
 	}
-	rows = append(rows, motion)
+	rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{{Kind: ui.KindText, Text: "Reduced motion"}, motion}})
 	protected := "Unavailable"
 	if r != nil && r.managedState.Known && r.managedState.SleepProtected {
 		protected = "Protected"
