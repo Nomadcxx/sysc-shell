@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Nomadcxx/sysc-shell/internal/files"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -46,6 +47,7 @@ type CallEnv struct {
 	ClipboardWrite      func(context.Context, v1.ClipboardWriteParams) error
 	Screenshot          func(context.Context, string) error
 	ScreenshotDirectory func(context.Context) (string, error)
+	BrowseFiles         func(context.Context, v1.FilesBrowseParams) (v1.FilesBrowseResult, error)
 	MaxPending          int
 	CallTimeout         time.Duration
 }
@@ -91,6 +93,14 @@ func NewDispatcher(env CallEnv) *Dispatcher {
 	return &Dispatcher{env: env}
 }
 
+func (d *Dispatcher) timeoutFor(kind v1.CallKind) time.Duration {
+	// pick-* waits on the user. The session context still cancels on Stop.
+	if kind == v1.CallFilesBrowse {
+		return 0
+	}
+	return d.env.CallTimeout
+}
+
 // Handle answers one call. It always produces a reply so the plugin can pair
 // it with the id it sent; a missing service or a denied grant is an error
 // reply, not a dropped line.
@@ -98,9 +108,9 @@ func (d *Dispatcher) Handle(ctx context.Context, call *v1.HostCall) v1.HostReply
 	if call == nil {
 		return failReply("", "empty call")
 	}
-	if d.env.CallTimeout > 0 {
+	if timeout := d.timeoutFor(call.Call); timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, d.env.CallTimeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	if err := ctx.Err(); err != nil {
@@ -216,6 +226,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 			return failReply(call.ID, "capability screenshot is not granted")
 		}
 		return d.screenshot(ctx, call)
+	case v1.CallFilesBrowse:
+		if !d.env.allows(CapFiles) {
+			return failReply(call.ID, "capability files is not granted")
+		}
+		return d.filesBrowse(ctx, call)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}
@@ -370,6 +385,39 @@ func (d *Dispatcher) screenshot(ctx context.Context, call *v1.HostCall) v1.HostR
 		}
 		return okReply(call.ID, v1.ScreenshotDirectoryResult{Directory: dir})
 	}
+}
+
+func (d *Dispatcher) filesBrowse(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	var p v1.FilesBrowseParams
+	if err := decodeStrictParams(call.Params, &p); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	switch p.Mode {
+	case files.ModeOpen, files.ModePickFile, files.ModePickDir:
+	default:
+		return failReply(call.ID, "files mode must be open, pick-file or pick-directory")
+	}
+	if len(p.Title) > v1.MaxIdentBytes {
+		return failReply(call.ID, "files title is too long")
+	}
+	start := p.Path
+	if start == "" {
+		start = p.Root
+	}
+	if _, err := files.Contain(p.Root, start); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	if d.env.BrowseFiles == nil {
+		return failReply(call.ID, "file browser is not available")
+	}
+	result, err := d.env.BrowseFiles(ctx, p)
+	if err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	if p.Mode == files.ModeOpen {
+		return okReply(call.ID, nil)
+	}
+	return okReply(call.ID, result)
 }
 
 func (d *Dispatcher) clipboardWrite(ctx context.Context, call *v1.HostCall) v1.HostReply {

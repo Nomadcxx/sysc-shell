@@ -232,6 +232,32 @@ func TestPanelParamValidation(t *testing.T) {
 	}
 }
 
+func TestPanelOpenFilesDispatches(t *testing.T) {
+	t.Parallel()
+	var action, panel string
+	sock, cancel := startServer(t, Handlers{
+		Panel: func(a, p, _ string) error { action, panel = a, p; return nil },
+	})
+	defer cancel()
+	out, err := Call(context.Background(), sock, "panel.open", map[string]string{"panel": "files"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error != "" || !env.OK {
+		t.Fatalf("files open got %s", out)
+	}
+	if action != "open" || panel != "files" {
+		t.Fatalf("handler got %q %q", action, panel)
+	}
+}
+
 func TestPanelToggleLauncherDispatches(t *testing.T) {
 	t.Parallel()
 	var action, panel string

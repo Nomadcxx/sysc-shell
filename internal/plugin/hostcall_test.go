@@ -780,3 +780,69 @@ func TestHostCallScreenshotDirectory(t *testing.T) {
 		t.Fatalf("ungranted directory reply = %+v", r)
 	}
 }
+
+func TestHostCallFilesBrowseGrantDenyAndJail(t *testing.T) {
+	root := t.TempDir()
+	var got v1.FilesBrowseParams
+	d := NewDispatcher(CallEnv{Granted: []Capability{CapFiles}, BrowseFiles: func(_ context.Context, p v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
+		got = p
+		if p.Mode == "pick-file" {
+			return v1.FilesBrowseResult{Path: filepath.Join(p.Root, "a.txt")}, nil
+		}
+		return v1.FilesBrowseResult{}, nil
+	}})
+	open := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: root, Mode: "open", Title: "Phone"})})
+	if !open.OK {
+		t.Fatalf("open: %+v", open)
+	}
+	if got.Root != root || got.Mode != "open" || got.Title != "Phone" {
+		t.Fatalf("hook params = %+v", got)
+	}
+	pick := d.Handle(context.Background(), &v1.HostCall{ID: "2", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: root, Mode: "pick-file"})})
+	if !pick.OK {
+		t.Fatalf("pick: %+v", pick)
+	}
+	var result v1.FilesBrowseResult
+	if err := json.Unmarshal(pick.Result, &result); err != nil || result.Path != filepath.Join(root, "a.txt") {
+		t.Fatalf("pick result = %s (%v)", pick.Result, err)
+	}
+	denied := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "d", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: root, Mode: "open"})})
+	if denied.OK || !strings.Contains(denied.Error, "capability") {
+		t.Fatalf("ungranted = %+v", denied)
+	}
+	unwired := NewDispatcher(CallEnv{Granted: []Capability{CapFiles}}).Handle(context.Background(), &v1.HostCall{ID: "u", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: root, Mode: "open"})})
+	if unwired.OK || !strings.Contains(unwired.Error, "not available") {
+		t.Fatalf("unwired = %+v", unwired)
+	}
+	for _, p := range []v1.FilesBrowseParams{
+		{Root: root, Mode: "search"},
+		{Root: "relative", Mode: "open"},
+		{Root: root, Path: filepath.Join(t.TempDir(), "out"), Mode: "open"},
+		{Root: "", Mode: "open"},
+	} {
+		reply := d.Handle(context.Background(), &v1.HostCall{ID: "bad", Call: v1.CallFilesBrowse, Params: jsonOf(t, p)})
+		if reply.OK {
+			t.Fatalf("accepted %+v", p)
+		}
+	}
+}
+
+func TestHostCallFilesBrowseDoesNotUseCallTimeout(t *testing.T) {
+	root := t.TempDir()
+	d := NewDispatcher(CallEnv{
+		Granted:     []Capability{CapFiles},
+		CallTimeout: 30 * time.Millisecond,
+		BrowseFiles: func(ctx context.Context, p v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
+			select {
+			case <-time.After(80 * time.Millisecond):
+				return v1.FilesBrowseResult{Path: filepath.Join(p.Root, "a.txt")}, nil
+			case <-ctx.Done():
+				return v1.FilesBrowseResult{}, ctx.Err()
+			}
+		},
+	})
+	reply := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: root, Mode: "pick-file"})})
+	if !reply.OK {
+		t.Fatalf("pick timed out: %+v", reply)
+	}
+}

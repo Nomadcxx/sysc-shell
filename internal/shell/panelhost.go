@@ -19,6 +19,7 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/files"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -49,6 +50,7 @@ const (
 	keyDown      = 108
 	keyPageDown  = 109
 	keyDelete    = 111
+	keyF2        = 60
 
 	btnLeft  = 272
 	btnRight = 273
@@ -76,6 +78,15 @@ type PanelHost struct {
 	writeTimer *time.Timer
 	id         PanelID
 	output     uint32
+	// filesOwner is the files session whose tree this host currently renders
+	// (PanelFiles only, set at spawn and on rebuild). Teardown cancels a
+	// pending pick only while the host belongs to the current session, so
+	// reopening the panel on another output cannot cancel the session that
+	// reopen just published.
+	filesOwner    *filesSession
+	filesClickKey string
+	filesClickAt  time.Time
+	filesClicks   int
 	// openOrder selects the newest panel for outside dismissal.
 	openOrder uint64
 	// preferredMain is the panel's original bar-axis anchor before reflow.
@@ -356,6 +367,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelClipboard, nil
 	case "plugin-store":
 		return PanelPluginStore, nil
+	case "files":
+		return PanelFiles, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -656,6 +669,11 @@ func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
 	if id == PanelMonitor {
 		r.machineFacts = facts
 	}
+	return r.openPanelLocked(id, output, trig)
+}
+
+// openPanelLocked is OpenPanel's body. Caller holds r.mu.
+func (r *Registry) openPanelLocked(id PanelID, output uint32, trig Trigger) error {
 	if where, ok := r.panels.Output(id); ok && where == output && r.panelOpenLocked(id) {
 		return nil
 	}
@@ -962,6 +980,10 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelWeather, true
 	case "clipboard":
 		return PanelClipboard, true
+	case "plugin-store":
+		return PanelPluginStore, true
+	case "files":
+		return PanelFiles, true
 	default:
 		return 0, false
 	}
@@ -1205,6 +1227,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		theme:       r.panelThemeFor(output),
 		fontFamily:  r.panelFontFamily(output),
 	}
+	if id == PanelFiles {
+		h.filesOwner = r.files
+	}
 	// Resolve the surface clock before the first tree is built. Effect phases
 	// are keyed by the tree's stable nodes, so the first frame must target the
 	// same animator entries as every later rebuild.
@@ -1270,6 +1295,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
 	h.root = r.panelTree(h)
+	r.queueFilesPanelImages(h)
 	if id == PanelSession {
 		_ = h.ensureText()
 		h.place.Panel.H = r.sessionSurfaceHeight(h)
@@ -1395,9 +1421,9 @@ func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger,
 		bt := bar.themeSnapshot()
 		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
 	}
-	// Settings, the launcher, the clipboard and the plugin store float; other
-	// panels attach to the bar.
-	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore {
+	// Settings, the launcher, the clipboard, the plugin store and the file
+	// browser float; other panels attach to the bar.
+	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore || id == PanelFiles {
 		place.CenterY = true
 	}
 	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
@@ -2273,6 +2299,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			// A press in a text field placed its caret; releasing it is not an
 			// activation. Enter submits a field, never the pointer.
 			if n != nil && pressed != "" && n.StableKey() == pressed && n.Kind != ui.KindTextField {
+				if h.id == PanelFiles && h.filesPointerRelease(r, n) {
+					return true
+				}
 				return h.activate(r)
 			}
 			return cleared
@@ -2383,6 +2412,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	// so a launcher still runs its selection and a form still activates.
 	// The launcher is type-to-search: its well always has focus, and the list
 	// keys (Up, Down, Page, Home, End, Enter) drive the results, not the caret.
+	if h.id == PanelFiles && h.filesKeyPress(r, key, k) {
+		return true
+	}
 	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
 		return true
 	}
@@ -2430,6 +2462,23 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	}
 	switch key {
 	case keyEsc:
+		if h.id == PanelFiles && r.files != nil {
+			if len(r.files.pendingDelete) > 0 {
+				r.files.pendingDelete = nil
+				r.rebuildPanel(h)
+				return true
+			}
+			if r.files.renameFrom != "" {
+				r.files.renameFrom, r.files.renameDraft = "", ""
+				r.rebuildPanel(h)
+				return true
+			}
+			if len(r.files.selected) > 0 {
+				r.files.clearSelected()
+				r.rebuildPanel(h)
+				return true
+			}
+		}
 		if h.id == PanelMonitor && h.processSelected != (services.ProcessIdentity{}) {
 			h.processSelected = services.ProcessIdentity{}
 			r.rebuildPanel(h)
@@ -2769,6 +2818,12 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 		r.rebuildPanel(h)
 		return true
 	}
+	if h.id == PanelFiles && n.Action == files.ActionRename {
+		if r.files != nil {
+			r.files.renameDraft = f.Text
+		}
+		return true
+	}
 	if n.Name == "Search" {
 		h.query = f.Text
 		if h.id == PanelPluginStore {
@@ -2989,6 +3044,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if h.id == PanelClipboard {
 		return h.activateClipboard(r, n)
+	}
+	if h.id == PanelFiles {
+		return h.activateFiles(r, n)
 	}
 	if h.id == PanelPluginStore {
 		return h.activatePluginStore(r, n)
@@ -3357,6 +3415,59 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 		h.clipboardSelectionFromFocus()
 		r.rebuildPanel(h)
 	}
+	if h.id == PanelFiles {
+		h.revealFocusedRow()
+	}
+}
+
+// focusFilesEntry moves roving focus onto a files list row and scrolls it into
+// view, so a selection the host made itself (a newly created folder) is also
+// the keyboard focus and F2 renames it.
+func (h *PanelHost) focusFilesEntry(i int) {
+	want := files.EntryAction(i)
+	for idx, f := range h.focus {
+		if f != nil && f.Action == want {
+			h.roving.Set(idx)
+			break
+		}
+	}
+	h.revealFocusedRow()
+}
+
+// revealFocusedRow scrolls the files list so the focused row is visible.
+func (h *PanelHost) revealFocusedRow() {
+	if h.roving.Count == 0 {
+		return
+	}
+	n := h.focused()
+	if n == nil || n.Bounds.H <= 0 {
+		return
+	}
+	s := findScroll(h.root)
+	if s == nil || s.Bounds.H <= 0 {
+		return
+	}
+	top, bottom := n.Bounds.Y, n.Bounds.Y+n.Bounds.H
+	viewTop, viewBottom := s.Bounds.Y, s.Bounds.Y+s.Bounds.H
+	off := s.ScrollOffset
+	switch {
+	case top < viewTop:
+		off -= viewTop - top
+	case bottom > viewBottom:
+		off += bottom - viewBottom
+	default:
+		return
+	}
+	h.scrollTo(off)
+}
+
+// queueFilesPanelImages fills the files panel's image nodes from the plugin
+// image worker. The files tree names image files with KindImage nodes; the
+// worker decodes them and stamps back via applyPluginImage.
+func (r *Registry) queueFilesPanelImages(h *PanelHost) {
+	if h.id == PanelFiles && r.plugins != nil {
+		queuePluginImages(r.plugins, h.root)
+	}
 }
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
@@ -3378,6 +3489,10 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		}
 	}
 	h.root = r.panelTree(h)
+	if h.id == PanelFiles {
+		h.filesOwner = r.files
+	}
+	r.queueFilesPanelImages(h)
 	if h.id == PanelPlugin {
 		if h.editors == nil {
 			h.editors = map[string]*retainedEditor{}
@@ -3517,6 +3632,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return weatherTree(r, h)
 	case PanelClipboard:
 		return clipboardTree(r, h)
+	case PanelFiles:
+		return r.filesTree(h)
 	default:
 		return placeholderTree()
 	}
@@ -3568,6 +3685,10 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 720, H: 560}
 	case PanelPluginStore:
 		return ui.Rect{W: 1280, H: 820}
+	case PanelFiles:
+		// Same box as the system monitor: a file list needs name, size, date
+		// and a preview pane, not the compact network-list width.
+		return ui.Rect{W: 800, H: 650}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -4028,6 +4149,13 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 		h.clipboardSelectedID = ""
 		h.clipboardConfirmScope = ""
 		h.clipboardDeleteConfirmID = ""
+	}
+	if id == PanelFiles && h.filesOwner == r.files {
+		// Only the current session's panel cancels its pick; a panel being
+		// replaced by a cross-output reopen belongs to an older session, and
+		// cancelling here would kill the session the reopen just published.
+		r.cancelFilesPickLocked(errFilesCancelled)
+		r.files = nil
 	}
 	delete(r.panelHosts, id)
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})

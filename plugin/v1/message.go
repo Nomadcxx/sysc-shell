@@ -12,7 +12,8 @@ const (
 	// Minor 13 adds the spinner kind, an activity indicator the host turns.
 	// Minor 14 adds the moonbit icon, the Moonbit orb for its bar pill.
 	// Minor 15 adds masked text inputs, for a password the plugin needs.
-	ProtocolMinor = 15
+	// Minor 16 adds files.browse, the host-owned file browser.
+	ProtocolMinor = 16
 )
 
 // The version-one message names. Every line on the wire carries one of these
@@ -275,6 +276,7 @@ const (
 
 	CallScreenshotStart     CallKind = "screenshot.start"
 	CallScreenshotDirectory CallKind = "screenshot.directory"
+	CallFilesBrowse         CallKind = "files.browse"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -455,6 +457,21 @@ type ScreenshotStartParams struct {
 // ScreenshotDirectoryResult is the directory captures are saved to.
 type ScreenshotDirectoryResult struct {
 	Directory string `json:"directory"`
+}
+
+// FilesBrowseParams opens the host-owned file browser jailed under Root.
+// Mode is "open", "pick-file" or "pick-directory". Path, if set, is the
+// starting directory and must stay under Root.
+type FilesBrowseParams struct {
+	Root  string `json:"root"`
+	Path  string `json:"path,omitempty"`
+	Mode  string `json:"mode"`
+	Title string `json:"title,omitempty"`
+}
+
+// FilesBrowseResult is the path the user picked. Open mode returns an empty result.
+type FilesBrowseResult struct {
+	Path string `json:"path,omitempty"`
 }
 
 // PanelResult names the view the host opened, so the plugin can close it.

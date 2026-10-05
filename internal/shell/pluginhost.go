@@ -113,6 +113,7 @@ var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
 	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
 	plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapScreenshot,
+	plugin.CapFiles,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -190,13 +191,17 @@ func (h *pluginHost) Close() {
 		}(s)
 	}
 	wg.Wait()
-	h.stop()
+	if h.stop != nil {
+		h.stop()
+	}
 	for _, s := range slots {
 		if h.r.depthClocks != nil {
 			h.r.depthClocks.clearOwner(s.rt.Manifest().ID)
 		}
 	}
-	h.prep.Close()
+	if h.prep != nil {
+		h.prep.Close()
+	}
 }
 
 func (h *pluginHost) syncEnabled() error {
@@ -573,6 +578,13 @@ func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
 		storeOutput = storePanel.output
 		h.r.rebuildPanel(storePanel)
 	}
+	filesPanel := h.r.panelHosts[PanelFiles]
+	filesImage := filesPanel != nil && fillPluginImages(filesPanel.root, key, image)
+	var filesOutput uint32
+	if filesImage {
+		filesOutput = filesPanel.output
+		h.r.rebuildPanel(filesPanel)
+	}
 	h.mu.Lock()
 	panels, bars := false, false
 	for _, v := range h.views {
@@ -597,6 +609,9 @@ func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
 	}
 	if storeImage {
 		h.r.publishSurface(storeOutput, panelSurfaceID(PanelPluginStore))
+	}
+	if filesImage {
+		h.r.publishSurface(filesOutput, panelSurfaceID(PanelFiles))
 	}
 }
 
@@ -935,7 +950,15 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 
 		Screenshot:          h.screenshotStart,
 		ScreenshotDirectory: h.screenshotDirectory,
+		BrowseFiles:         h.browseFiles,
 	}
+}
+
+func (h *pluginHost) browseFiles(ctx context.Context, p v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
+	if err := ctx.Err(); err != nil {
+		return v1.FilesBrowseResult{}, err
+	}
+	return h.r.openFilesBrowser(ctx, p)
 }
 
 // screenshotStart hands a capture to the registry. It runs in the dispatcher's

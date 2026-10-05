@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-30.
+Last updated: 2026-10-05.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -601,6 +601,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 | `2026-09-29-window-management-design.md` | design | Approved 2026-09-29. Reuses exact Niri window IDs; defers the foreign-toplevel binding; adds a focused-output MRU switcher, persistent overview state and verified overview/workspace actions. |
 | `2026-09-29-window-management.md` | plan | Six test-first tasks for overview events/actions, focused-output switcher ordering and overlay/IPC, and exact-ID moves from the running-app menu, followed by package/full gates and a one-output live check. |
 | `2026-09-30-window-management-completion-handover.md` | completion-handover | Snapshot on `5f45a7c`: gate output, read-only DP-1 layers, deferred live focus/move/multi-output acceptance and Beads state. |
+| `2026-10-03-sysc-shell-file-browser-design.md` | design | Host-owned `PanelFiles` + capability `files` + `files.browse` (protocol minor 16). Jail is a caller-named absolute root with EvalSymlinks + `filepath.IsLocal`; plugins do not ship a list. Pick waits without the 10s host.call deadline. sysc-plugins validate-manifests patch deferred. |
+| `2026-10-03-sysc-shell-file-browser-handover.md` | completion-handover | Post-implementation audit of uncommitted `feature/file-browser` (HEAD `d5060893`): as-built acceptance, protocol/jail/panel/timeout seams with line citations, scoped tests, ponytail ceilings, kdeconnect consume notes. Gitignored under `docs/plans/`; `git add -f`. |
+| `2026-10-04-sysc-shell-file-browser-selection-design.md` | design | Explorer selection as the foundation for mutating actions: click selects, Ctrl toggles, Shift ranges from an anchor, double-click activates, Space toggles the focused row, Ctrl+A selects the listed cap, Esc clears selection before it dismisses. `filesSession.selected` keyed by contained path; the host stamps `StateSelected` after `plugin.Convert` because wire `Selected` means segmented control. No protocol change; `pick-file` still returns one path. Executed. |
+| `2026-10-04-sysc-shell-file-browser-manager-design.md` | design | Manager chrome over the selection: breadcrumbs replacing the path caption, a hidden-files toggle, name/size/date rows, new folder, rename, delete with confirm, and the in-process copy/cut/paste clip. No protocol change. Executed; its ceilings are listed in the commission below. |
+| `2026-10-04-file-browser-chrome-uiux.md` | plan | The chrome pass intent and method: UI/UX Pro Max searches plus the system monitor, Phone Connect and battery widget as sibling source, tokens only, no emoji. Sized the panel to the monitor sibling, moved the title out of the header chips, gave every toolbar control icon+text, and replaced the full-width preview strip with a 280px side pane. Executed. |
+| `2026-10-04-file-browser-chrome-commission.md` | audit-report | Commission and audit of the chrome pass as built: the 800×650 reskin, the interaction set already present, and a 28-item ranked UI/UX gap list with the smallest closing change for each. Two of its items were corrected against the code (`KindList` takes no `Gap` in `plugin.Convert`; `FittedSize` clamps height rather than width, and the widest chrome now measures clean). It also surfaced that the preview read ran under `Registry.mu` on every click. The gap list is **not** the status source: it was harvested into bd as epic `sysc-938`, whose eight high-priority items are closed and whose description carries the remaining twenty. Live checklist unrun. |
 
 ## Sibling repositories
 

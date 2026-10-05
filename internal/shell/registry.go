@@ -135,6 +135,7 @@ type Registry struct {
 	selections chan wayland.SelectionRequest
 	panels     PanelSet
 	panelHosts map[PanelID]*PanelHost
+	files      *filesSession
 	// panelShields records which panel host opened each output's shared shield,
 	// even if that host closes while another panel keeps the shield alive.
 	panelShields map[uint32]*PanelHost

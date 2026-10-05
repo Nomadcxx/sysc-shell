@@ -14,3 +14,14 @@ const (
 func HostSupports(v v1.Version) bool {
 	return v.Major == HostProtocolMajor && v.Minor >= 0 && v.Minor <= HostProtocolMinor
 }
+
+// hostSupportedVersions is host.hello's Supported list, best first. Every
+// 1.x minor this host still speaks is named so a plugin compiled against an
+// older plugin/v1 can pick its own minor instead of falling back to 7.
+func hostSupportedVersions() []v1.Version {
+	out := make([]v1.Version, 0, HostProtocolMinor+1)
+	for m := HostProtocolMinor; m >= 0; m-- {
+		out = append(out, v1.Version{Major: HostProtocolMajor, Minor: m})
+	}
+	return out
+}

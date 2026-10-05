@@ -83,6 +83,13 @@ func TestClientHandshakeSelectsHighestSupportedVersion(t *testing.T) {
 	}
 }
 
+func TestNegotiateProtocolPicksFifteenWhenSixteenIsAbsent(t *testing.T) {
+	got, ok := NegotiateProtocol([]Version{{Major: 1, Minor: 15}, {Major: 1, Minor: 7}})
+	if !ok || got != (Version{Major: 1, Minor: 15}) {
+		t.Fatalf("got %+v ok=%v, want 1.15", got, ok)
+	}
+}
+
 func TestClientCallPairsReplyAndHonoursCancel(t *testing.T) {
 	t.Parallel()
 	pluginIn, hostWrites := io.Pipe()
