@@ -1391,7 +1391,7 @@ func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResul
 // polls. Dispatch blocks when no message is pending, so it is only called after
 // poll reports the socket readable.
 func (o *owner) dispatchAll(wakeFD int) error {
-	if err := o.display.Context().Dispatch(); err != nil {
+	if err := o.dispatchOnce(); err != nil {
 		return err
 	}
 	for o.fatal == nil && !o.closed {
@@ -1402,11 +1402,21 @@ func (o *owner) dispatchAll(wakeFD int) error {
 		if !ready {
 			return nil
 		}
-		if err := o.display.Context().Dispatch(); err != nil {
+		if err := o.dispatchOnce(); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// dispatchOnce ignores only an idle read timeout at a frame boundary. Partial
+// frame timeouts remain errors because the connection has already failed.
+func (o *owner) dispatchOnce() error {
+	err := o.display.Context().Dispatch()
+	if errors.Is(err, client.ErrReadTimeout) {
+		return nil
+	}
+	return err
 }
 
 // poll waits on the Wayland socket and the wake pipe. The Wayland descriptor is
