@@ -136,4 +136,143 @@ func TestToastInputRegionIsTheUnionOfCards(t *testing.T) {
 	}
 }
 
+func TestToastLayoutClearsEveryBarEdge(t *testing.T) {
+	const (
+		outW = 1920
+		outH = 1080
+		zone = 48
+	)
+	cases := []struct {
+		edge   string
+		corner toastCorner
+	}{
+		{edge: "top", corner: toastTopRight},
+		{edge: "right", corner: toastTopRight},
+		{edge: "bottom", corner: toastBottomRight},
+		{edge: "left", corner: toastTopRight},
+	}
+	for _, tc := range cases {
+		t.Run(tc.edge, func(t *testing.T) {
+			geom := toastGeometry{
+				OutputW: outW, OutputH: outH,
+				Corner: tc.corner, BarZone: zone, BarEdge: tc.edge,
+			}
+			rects, queued := toastLayout(geom, cardHeights(2, 100))
+			if len(queued) != 0 || len(rects) != 2 {
+				t.Fatalf("placed %d queued %v", len(rects), queued)
+			}
+			anchor, next := rects[0], rects[1]
+			if anchor.W != toastCardWidth {
+				t.Fatalf("width = %d, want %d", anchor.W, toastCardWidth)
+			}
+			switch tc.edge {
+			case "top", "left":
+				// Top-right stack, clear of a top bar. A left bar does not meet
+				// that corner, so the same anchor stays.
+				if anchor.Y != zone+toastMargin {
+					t.Fatalf("Y = %d, want %d", anchor.Y, zone+toastMargin)
+				}
+				if anchor.X+anchor.W != outW-toastMargin {
+					t.Fatalf("right edge = %d, want %d", anchor.X+anchor.W, outW-toastMargin)
+				}
+				if next.Y <= anchor.Y {
+					t.Fatalf("stack grew upward: %+v", rects)
+				}
+			case "right":
+				if anchor.X+anchor.W != outW-toastMargin-zone {
+					t.Fatalf("right edge = %d, want %d (clear of the bar)", anchor.X+anchor.W, outW-toastMargin-zone)
+				}
+				if anchor.Y != toastMargin {
+					t.Fatalf("Y = %d, want %d (a right bar is not a top inset)", anchor.Y, toastMargin)
+				}
+				if next.Y <= anchor.Y {
+					t.Fatalf("stack grew upward: %+v", rects)
+				}
+			case "bottom":
+				if anchor.Y+anchor.H != outH-toastMargin-zone {
+					t.Fatalf("bottom edge = %d, want %d", anchor.Y+anchor.H, outH-toastMargin-zone)
+				}
+				if anchor.Y == zone+toastMargin {
+					t.Fatal("bar thickness was reserved at the top")
+				}
+				if next.Y >= anchor.Y {
+					t.Fatalf("bottom stack grew downward: %+v", rects)
+				}
+			}
+			if overlapsBarStrip(anchor, tc.edge, outW, outH, zone) || overlapsBarStrip(next, tc.edge, outW, outH, zone) {
+				t.Fatalf("cards %+v overlap the %s bar", rects, tc.edge)
+			}
+		})
+	}
+}
+
+// A right bar must not spend its thickness on the vertical limit: two cards
+// that fit beside the bar are queued when that thickness is taken off the top.
+func TestToastLayoutRightBarDoesNotShrinkTheStack(t *testing.T) {
+	geom := toastGeometry{OutputW: 800, OutputH: 250, Corner: toastTopRight, BarZone: 48, BarEdge: "right"}
+	rects, queued := toastLayout(geom, cardHeights(2, 100))
+	if len(rects) != 2 || len(queued) != 0 {
+		t.Fatalf("rects=%d queued=%v, want both cards beside a right bar", len(rects), queued)
+	}
+	for _, r := range rects {
+		if r.X+r.W > 800-48 {
+			t.Fatalf("card %+v crosses the right bar", r)
+		}
+	}
+}
+
+// A full stack on a bottom bar stops above the bar. The thickness is not a
+// top inset, so the anchor card sits on the bar and later cards grow upward.
+func TestToastLayoutBottomStackStopsAboveTheBar(t *testing.T) {
+	const zone = 48
+	geom := toastGeometry{OutputW: 800, OutputH: 400, Corner: toastBottomRight, BarZone: zone, BarEdge: "bottom"}
+	rects, queued := toastLayout(geom, cardHeights(6, 100))
+	if len(rects) == 0 || len(queued) == 0 {
+		t.Fatalf("rects=%d queued=%d, want a partial stack", len(rects), len(queued))
+	}
+	if rects[0].Y+rects[0].H != 400-toastMargin-zone {
+		t.Fatalf("anchor bottom = %d, want %d", rects[0].Y+rects[0].H, 400-toastMargin-zone)
+	}
+	if rects[0].Y == zone+toastMargin {
+		t.Fatal("bar thickness was reserved at the top")
+	}
+	for i, r := range rects {
+		if r.Y < toastMargin || r.Y+r.H > 400-zone {
+			t.Fatalf("card %d %+v overlaps the bottom bar or the top margin", i, r)
+		}
+		if i > 0 && r.Y >= rects[i-1].Y {
+			t.Fatalf("card %d did not stack upward", i)
+		}
+	}
+}
+
+// A narrow output still has to clear a right bar: the card shrinks rather
+// than running across the strip.
+func TestToastLayoutNarrowOutputClearsARightBar(t *testing.T) {
+	const zone = 40
+	geom := toastGeometry{OutputW: 300, OutputH: 800, Corner: toastTopRight, BarZone: zone, BarEdge: "right"}
+	rects, _ := toastLayout(geom, cardHeights(1, 100))
+	if len(rects) != 1 {
+		t.Fatal("no card")
+	}
+	if rects[0].X < 0 || rects[0].X+rects[0].W > 300-zone {
+		t.Fatalf("card %+v crosses the right bar", rects[0])
+	}
+}
+
+func overlapsBarStrip(r ui.Rect, edge string, outW, outH, zone int) bool {
+	switch edge {
+	case "top":
+		return r.Y < zone && r.Y+r.H > 0
+	case "bottom":
+		return r.Y+r.H > outH-zone && r.Y < outH
+	case "left":
+		return r.X < zone && r.X+r.W > 0
+	case "right":
+		return r.X+r.W > outW-zone && r.X < outW
+	default:
+		return false
+	}
+}
+
 var _ = ui.Rect{} // keep the import honest while layout returns ui.Rect

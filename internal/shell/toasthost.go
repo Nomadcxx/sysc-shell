@@ -259,11 +259,42 @@ func (h *toastHost) configure(connector string, width, height, scale120 int) err
 
 func (h *toastHost) configureLocked(connector string, width, height, scale120 int) error {
 	if width > 0 && height > 0 {
-		h.geometry[connector] = toastGeometry{OutputW: width, OutputH: height, Corner: toastTopRight}
+		h.geometry[connector] = h.applyBarEdge(connector, toastGeometry{OutputW: width, OutputH: height})
 	}
 	h.scale120[connector] = scale120
 	h.recompute()
 	return nil
+}
+
+// toastCornerForEdge anchors a bottom bar's stack above the bar. Every other
+// edge keeps the top-right stack.
+func toastCornerForEdge(edge string) toastCorner {
+	if edge == "bottom" {
+		return toastBottomRight
+	}
+	return toastTopRight
+}
+
+// applyBarEdge stores the open bar's thickness and edge on g and picks the
+// corner from that edge. No bar leaves the top-right stack with no inset.
+func (h *toastHost) applyBarEdge(connector string, g toastGeometry) toastGeometry {
+	g.BarEdge = ""
+	g.BarZone = 0
+	g.Corner = toastTopRight
+	global, ok := h.outputs[connector]
+	if !ok {
+		return g
+	}
+	bar, ok := h.r.bars[global]
+	if !ok {
+		return g
+	}
+	g.BarZone = exclusiveBarZone(bar)
+	if bar != nil {
+		g.BarEdge = bar.themeSnapshot().BarEdge
+	}
+	g.Corner = toastCornerForEdge(g.BarEdge)
+	return g
 }
 
 func (h *toastHost) render(connector string, pixels []byte, width, height, stride int) error {
@@ -805,7 +836,7 @@ func (h *toastHost) cardOf(n protocol.Notification) *ui.Node {
 func (h *toastHost) cardWidth() int {
 	width := toastCardWidth
 	for _, g := range h.geometry {
-		if w := g.OutputW - 2*toastMargin; w > 0 && w < width {
+		if w := toastFitWidth(g); w > 0 && w < width {
 			width = w
 		}
 	}
@@ -850,11 +881,7 @@ func (h *toastHost) recompute() {
 			continue
 		}
 		geom, known := h.geometryFor(connector)
-		if bar, ok := h.r.bars[global]; ok {
-			geom.BarZone = exclusiveBarZone(bar)
-		} else {
-			geom.BarZone = 0
-		}
+		geom = h.applyBarEdge(connector, geom)
 		// An unmeasured output keeps no geometry: writing one back would make
 		// the placeholder indistinguishable from a real measurement.
 		if known {
