@@ -62,10 +62,10 @@ func (o *owner) bindOptionalInput(ctx *client.Context) error {
 
 func (o *owner) wireTextInput(ti *textinput.ZwpTextInputV3) {
 	ti.SetPreeditStringHandler(func(e textinput.ZwpTextInputV3PreeditStringEvent) {
-		o.ime.preedit = e.Text
+		o.ime.preedit = textOrEmpty(e.Text)
 	})
 	ti.SetCommitStringHandler(func(e textinput.ZwpTextInputV3CommitStringEvent) {
-		o.ime.commit = e.Text
+		o.ime.commit = textOrEmpty(e.Text)
 	})
 	ti.SetDeleteSurroundingTextHandler(func(e textinput.ZwpTextInputV3DeleteSurroundingTextEvent) {
 		o.ime.delBefore = e.BeforeLength
@@ -114,4 +114,17 @@ func (o *owner) syncCursor(u *surfaceUnit, x, y float64, serial uint32) {
 		app = &u.app
 	}
 	o.fail(applyCursorShape(o.cursorDevice, serial, cursorShapeFor(app, x, y)))
+}
+
+// textOrEmpty resolves zwp_text_input_v3's allow-null text field. The protocol marks
+// text allow-null, so a NULL decodes to nil and must stay distinguishable from an
+// empty string on the wire. The IME buffers here keep plain strings, and the decoder
+// this replaced also produced "" for a NULL, so a nil is read as empty and the
+// distinction is not acted on yet. Distinguishing them is an input-method behaviour
+// decision, not a binding concern.
+func textOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

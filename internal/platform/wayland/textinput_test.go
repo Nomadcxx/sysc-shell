@@ -39,3 +39,30 @@ func TestCursorShapeSetOnFocus(t *testing.T) {
 		t.Fatalf("crosshair = serial %d shape %d", rec.serial, rec.shape)
 	}
 }
+
+// zwp_text_input_v3 marks text allow-null, so the binding hands the owner a *string and
+// a NULL arrives as nil. The IME buffers hold plain strings, and the decoder this
+// replaced produced "" for a NULL too, so nil and empty resolve alike. This pins that
+// reading: the two are deliberately not distinguished yet, which is an input-method
+// behaviour decision rather than a binding one.
+func TestTextOrEmptyReadsNullAsEmpty(t *testing.T) {
+	t.Parallel()
+	empty := ""
+	embedded := "a\x00b"
+	for _, tt := range []struct {
+		name string
+		in   *string
+		want string
+	}{
+		{"null is empty", nil, ""},
+		{"empty stays empty", &empty, ""},
+		{"embedded nul is preserved", &embedded, "a\x00b"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := textOrEmpty(tt.in); got != tt.want {
+				t.Fatalf("textOrEmpty(%v) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
