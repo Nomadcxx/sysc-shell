@@ -88,13 +88,18 @@ type toastReply struct {
 const toastNamespace = "sysc-shell-toast"
 
 // hostHarness captures the aux requests a toast host emits in a test.
+// A slide publishes input regions from its own goroutine, so appends are
+// serialized with each other.
 type hostHarness struct {
+	mu      sync.Mutex
 	opens   []*wayland.AuxSpec
 	updates []*wayland.AuxUpdate
 	closes  []string
 }
 
 func (h *hostHarness) request(r wayland.AuxRequest) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	switch {
 	case r.Open != nil:
 		h.opens = append(h.opens, r.Open)
@@ -239,11 +244,7 @@ func (h *toastHost) blurShape(connector string) []ui.Rect {
 	}
 	var out []ui.Rect
 	for _, card := range h.cards[connector] {
-		body := card.rect
-		if id, ok := cardID(card.root); ok {
-			body = h.displayRect(connector, id, card.rect)
-		}
-		out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: body, Radius: h.style.Radius})...)
+		out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: h.drawnRect(connector, card), Radius: h.style.Radius})...)
 	}
 	return out
 }
@@ -288,7 +289,7 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 				ID:     toastSurfaceID(connector),
 				Update: &wayland.AuxUpdate{
 					SetInputRegion: true,
-					InputRects:     toastInputRegion(h.cardRects(connector, h.visible[connector])),
+					InputRects:     toastInputRegion(h.interactiveRects(connector)),
 				},
 			})
 		}
@@ -308,9 +309,7 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 	clear(pixels)
 	for _, card := range h.cards[connector] {
 		drawn := card
-		if id, ok := cardID(card.root); ok {
-			drawn.rect = h.displayRect(connector, id, card.rect)
-		}
+		drawn.rect = h.drawnRect(connector, card)
 		if err := h.paintCard(canvas, drawn, style); err != nil {
 			return err
 		}
@@ -583,13 +582,30 @@ func (h *toastHost) replyingOn(connector string, id uint32) bool {
 	return h.editing != nil && h.editing.connector == connector && h.resolver.replyID == id
 }
 
+// cardAt returns the card drawn under the point. The stored rectangle is the
+// slot the card is heading for, so the hit uses the rectangle paint and blur
+// use this frame. The returned rectangle is that one, and a press maps into
+// the card the pointer is actually on. Later cards are painted over earlier
+// ones, and the last one under the point is the one on screen.
 func (h *toastHost) cardAt(connector string, x, y int) (toastCard, bool) {
-	for _, card := range h.cards[connector] {
-		if card.rect.Contains(x, y) {
+	cards := h.cards[connector]
+	for i := len(cards) - 1; i >= 0; i-- {
+		card := cards[i]
+		hit := h.drawnRect(connector, card)
+		if hit.Contains(x, y) {
+			card.rect = hit
 			return card, true
 		}
 	}
 	return toastCard{}, false
+}
+
+// drawnRect is where one card is painted this frame. Caller holds r.mu.
+func (h *toastHost) drawnRect(connector string, card toastCard) ui.Rect {
+	if id, ok := cardID(card.root); ok {
+		return h.displayRect(connector, id, card.rect)
+	}
+	return card.rect
 }
 
 func (h *toastHost) invoke(id uint32, key string) {
@@ -671,21 +687,7 @@ func (h *toastHost) rebuild(connector string) {
 				h.stopSlide = nil
 			}
 			return settled
-		}, func() {
-			h.r.mu.Lock()
-			type surface struct {
-				output uint32
-				id     string
-			}
-			pubs := make([]surface, 0, len(h.outputs))
-			for connector, output := range h.outputs {
-				pubs = append(pubs, surface{output: output, id: toastSurfaceID(connector)})
-			}
-			h.r.mu.Unlock()
-			for _, pub := range pubs {
-				h.r.publishSurface(pub.output, pub.id)
-			}
-		}, func() time.Duration { return frameCap })
+		}, h.publishSlideFrame, func() time.Duration { return frameCap })
 	}
 	measure := h.measureText()
 	cards := make([]toastCard, 0, len(ids))
@@ -707,6 +709,41 @@ func (h *toastHost) rebuild(connector string) {
 		cards = append(cards, toastCard{root: root, rect: rects[i], critical: n.Urgency == protocol.UrgencyCritical})
 	}
 	h.cards[connector] = cards
+}
+
+// publishSlideFrame repaints every toast surface and moves its input region
+// onto the rectangles drawn this frame. The slide continues after recompute,
+// and the compositor delivers clicks to the region it was last given.
+func (h *toastHost) publishSlideFrame() {
+	if h == nil || h.r == nil {
+		return
+	}
+	h.r.mu.Lock()
+	type slideFrame struct {
+		output uint32
+		id     string
+		rects  []ui.Rect
+	}
+	frames := make([]slideFrame, 0, len(h.outputs))
+	for connector, output := range h.outputs {
+		frames = append(frames, slideFrame{
+			output: output,
+			id:     toastSurfaceID(connector),
+			rects:  toastInputRegion(h.interactiveRects(connector)),
+		})
+	}
+	h.r.mu.Unlock()
+	for _, frame := range frames {
+		h.request(wayland.AuxRequest{
+			Output: frame.output,
+			ID:     frame.id,
+			Update: &wayland.AuxUpdate{
+				SetInputRegion: true,
+				InputRects:     frame.rects,
+			},
+		})
+		h.r.publishSurface(frame.output, frame.id)
+	}
 }
 
 // displayRect is where one output draws a card this frame: on its way from
@@ -884,7 +921,7 @@ func (h *toastHost) recompute() {
 			ID:     toastSurfaceID(connector),
 			Update: &wayland.AuxUpdate{
 				SetInputRegion: true,
-				InputRects:     toastInputRegion(h.cardRects(connector, visible)),
+				InputRects:     toastInputRegion(h.interactiveRects(connector)),
 			},
 		})
 		h.r.publishSurface(global, toastSurfaceID(connector))
@@ -1022,6 +1059,18 @@ func (h *toastHost) measureText() ui.MeasureText {
 		}
 		return len([]rune(text)) * 8, 16
 	}
+}
+
+// interactiveRects are the rectangles that take clicks this frame: each
+// placed card where it is drawn, including one still sliding into its slot.
+// Caller holds r.mu.
+func (h *toastHost) interactiveRects(connector string) []ui.Rect {
+	cards := h.cards[connector]
+	out := make([]ui.Rect, 0, len(cards))
+	for _, card := range cards {
+		out = append(out, h.drawnRect(connector, card))
+	}
+	return out
 }
 
 // cardRects lays out the visible ids for one output and returns their rects.
