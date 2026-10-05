@@ -337,6 +337,8 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		run := r.runArgv
 		if n.Action == "session-lock" {
 			run = func([]string) error { return r.LockTracked() }
+		} else if n.Action == "session-suspend" {
+			run = func([]string) error { return r.SuspendTracked() }
 		}
 		r.scheduleControl(h, func() error { return run(argv) })
 		return true

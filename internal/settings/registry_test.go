@@ -330,10 +330,9 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Fifteen: Displays became Bar's Displays page, Palettes and Terminal Art
-	// joined Look, and Screensaver now joins Look as well.
-	if len(names) != 15 {
-		t.Fatalf("SectionNames = %d sections, want the fifteen of the information architecture", len(names))
+	// Sixteen sections include locker presentation alongside Session policy.
+	if len(names) != 16 {
+		t.Fatalf("SectionNames = %d sections, want sixteen", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {

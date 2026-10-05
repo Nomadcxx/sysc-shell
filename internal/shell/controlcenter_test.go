@@ -1082,7 +1082,7 @@ func TestControlCentreSessionActionRunsWithoutRegistryLock(t *testing.T) {
 		return nil
 	}
 	r.mu.Lock()
-	if !h.activateControlCentre(r, &ui.Node{Action: "session-suspend"}) {
+	if !h.activateControlCentre(r, &ui.Node{Action: "session-display-off"}) {
 		r.mu.Unlock()
 		t.Fatal("control centre did not handle the session action")
 	}

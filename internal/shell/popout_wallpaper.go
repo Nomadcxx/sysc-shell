@@ -1170,6 +1170,9 @@ func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
 // wallpaper has to come back at login whether or not anyone opens the picker
 // (D20).
 func (r *Registry) wallpaperStartLocked() *wallpaper.Service {
+	if r.backgroundHeld {
+		return r.wallpaperSvc
+	}
 	if r.wallpaperSvc != nil {
 		return r.wallpaperSvc
 	}

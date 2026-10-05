@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
@@ -91,7 +90,7 @@ func run(ctx context.Context) (err error) {
 	registry := shell.NewRegistry(cfg)
 	registry.SetWallsService(walls.NewService())
 	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
-	// the socket that was just required; Suspend goes straight to logind.
+	// the socket that was just required; Suspend waits for the lock owner.
 	monitorPower := func(action any, what string) {
 		pctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -108,9 +107,7 @@ func run(ctx context.Context) (err error) {
 			}
 		},
 		Suspend: func() {
-			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := exec.CommandContext(sctx, "loginctl", "suspend").Run(); err != nil {
+			if err := registry.SuspendTracked(); err != nil {
 				log.Printf("sysc-shell: idle suspend: %v", err)
 			}
 		},

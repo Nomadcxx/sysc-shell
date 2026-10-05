@@ -72,3 +72,12 @@ func TestClustersCoverTheRailOnce(t *testing.T) {
 		t.Fatalf("clusters flatten to %v, rail is %v", flat, SectionNames())
 	}
 }
+
+func TestLockScreenInSystemCluster(t *testing.T) {
+	for _, c := range SectionClusters() {
+		if c.Name == "System" && slices.Contains(c.Sections, "Lock Screen") {
+			return
+		}
+	}
+	t.Fatal("Lock Screen is missing from System")
+}

@@ -54,6 +54,7 @@ var settingsSectionIcons = map[string]string{
 	"Tray":          "apps",
 	"Plugins":       "extension",
 	"Session":       "power_settings_new",
+	"Lock Screen":   "lock",
 	"Accessibility": "accessibility_new",
 }
 
@@ -192,7 +193,7 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 	search.Width = settingsRailWidth
 	settingsFieldInset(h, search)
 	search.Placeholder = "Search settings…"
-	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginXXS, Children: []*ui.Node{search}}
+	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: settingsRailGap(), Children: []*ui.Node{search}}
 	item, itemPad := settingsRailItemHeight(h, search)
 	for _, c := range settings.SectionClusters() {
 		rail.Children = append(rail.Children, &ui.Node{
@@ -234,6 +235,9 @@ func settingsFieldInset(h *PanelHost, n *ui.Node) {
 	n.Padding = h.metrics().ButtonPadding
 }
 
+// ponytail: keep all sections visible on short outputs; each tab keeps its full icon and padding.
+func settingsRailGap() int { return max(theme.MarginXXS/2, 1) }
+
 // settingsRailItemHeight is a section tab's height and inset: the density's
 // standard control, or less when the tabs, the cluster captions and search
 // would not fit the pane. At spacious density on a 1280x720 output they ran
@@ -257,7 +261,7 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 	_, lineH := measure(" ", ui.TextAttrsOf(search))
 	searchH := max(search.Height, lineH+2*search.Padding)
 	children := 1 + len(clusters) + len(settingsSections)
-	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*theme.MarginXXS
+	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*settingsRailGap()
 	per := room / max(len(settingsSections), 1)
 	pad = theme.MarginS
 	for _, tighter := range []int{theme.MarginXS, theme.MarginXXS} {
@@ -345,6 +349,10 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 
 	if section == "Palettes" {
 		return body(settingsBody(h, theme.MarginM, palettesTree(r, h)))
+	}
+
+	if section == "Lock Screen" {
+		return body(lockScreenSettingsTree(r, h))
 	}
 
 	if section == "Terminal Art" {

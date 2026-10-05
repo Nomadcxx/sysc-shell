@@ -78,6 +78,7 @@ func (r *Registry) attachWallsService(svc wallsController) {
 	r.wallsSnapshot = svc.Snapshot()
 	r.mu.Unlock()
 	go r.relayWalls(svc)
+	r.queueBackground()
 }
 
 func (r *Registry) relayWalls(svc wallsController) {
@@ -122,6 +123,7 @@ func (r *Registry) applyWallsSnapshot(svc wallsController, snapshot walls.Snapsh
 	for _, surface := range publish {
 		r.publishSurface(surface.output, surface.id)
 	}
+	r.queueBackground()
 }
 
 // waylandSurface is the small publish list collected while Registry.mu is
