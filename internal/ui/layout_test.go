@@ -879,3 +879,27 @@ func TestRowSeparatorKeepsANamedHeight(t *testing.T) {
 		t.Fatalf("full rule = %+v, want the row's 19", full.Bounds)
 	}
 }
+
+// A control whose label overruns its granted box by a couple of pixels must
+// ellipsize the label, not refuse the button. Refusing costs the user the whole
+// panel, and a system sans-serif a little wider than the design font is enough
+// to trigger it (CI failed on DejaVu/Inter 3.19 with "button content 118x18 does
+// not fit in 116x36").
+func TestButtonLabelEllipsizesInsteadOfRefusingTheButton(t *testing.T) {
+	measure := fakeMeasure
+	icon := &Node{Kind: KindIcon, Icon: "balance", IconSize: 20}
+	text := &Node{Kind: KindText, Text: "Performance"} // 11 runes, 88px
+	seg := &Node{Kind: KindButton, Padding: 4, Gap: 4, Height: 36, Width: 116,
+		Children: []*Node{icon, text}}
+
+	root := &Node{Kind: KindRow, Children: []*Node{seg}}
+	if err := Layout(root, Rect{W: 116, H: 36}, measure); err != nil {
+		t.Fatalf("layout refused a label 8px too wide: %v", err)
+	}
+	if text.Bounds.W > 88 {
+		t.Fatalf("label kept its full %dpx inside an 88px share of the box", text.Bounds.W)
+	}
+	if icon.Bounds.W != 20 {
+		t.Fatalf("icon was squeezed to %dpx", icon.Bounds.W)
+	}
+}

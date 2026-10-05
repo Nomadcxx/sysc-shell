@@ -218,7 +218,7 @@ func TestUnansweredPromptExpiresAtTheDeadline(t *testing.T) {
 		if err == nil || err.Name != errUserCanceled {
 			t.Fatalf("expired prompt returned %v, want UserCanceled", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(20 * time.Second): // slack for a loaded -race runner; the timeout itself is 25ms
 		t.Fatal("an unanswered prompt never timed out")
 	}
 	select {

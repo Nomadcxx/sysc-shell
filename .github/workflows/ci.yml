@@ -26,11 +26,6 @@ jobs:
       # sans-serif, which is wider, and the fit assertions fail.
       - name: install test fonts
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-inter
-      - name: font diagnostics
-        run: |
-          echo "fc-match Inter: $(fc-match Inter 2>&1 || true)"
-          echo "inter files: $(fc-list 2>/dev/null | grep -ci inter || echo 0)"
-          ls -d /usr/share/fonts/* 2>/dev/null | head -20
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet

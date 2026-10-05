@@ -9,6 +9,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -32,8 +33,11 @@ func TestAcceptSettingsConfiguresBarLive(t *testing.T) {
 	// carries the lane editor above its geometry rows, so the slider sits well
 	// past any fixed tab budget; what this gate is about is the slider reaching
 	// the file live, not how far into the focus order it happens to be.
-	h.focusByName("Height")
-	if h.focused() == nil || h.focused().Kind != ui.KindSlider || h.focused().Name != "Height" {
+	// The slider takes the registry label as its focus name, so resolve it
+	// from the registry: a rename must not turn this gate into a stale search.
+	height := settings.Default().ByPath("bar.height").Label
+	h.focusByName(height)
+	if h.focused() == nil || h.focused().Kind != ui.KindSlider || h.focused().Name != height {
 		t.Fatal("did not reach the bar height slider")
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyRight})

@@ -288,20 +288,38 @@ func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
 	if err != nil {
 		return err
 	}
-	if w > inner.W || h > inner.H {
-		return fmt.Errorf("button content %dx%d does not fit in %dx%d (text %q)", w, h, inner.W, inner.H, n.Text)
+	if h > inner.H {
+		return fmt.Errorf("button content %dx%d does not fit in %dx%d", w, h, inner.W, inner.H)
 	}
-	x := inner.X + (inner.W-w)/2
+	widths := make([]int, len(n.Children))
+	heights := make([]int, len(n.Children))
+	consumed := 0
 	for i, child := range n.Children {
-		if i > 0 {
-			x += n.Gap
-		}
 		cw, ch, err := measureNode(child, inner.H, measure)
 		if err != nil {
 			return err
 		}
-		child.Bounds = Rect{X: x, Y: inner.Y + (inner.H-ch)/2, W: cw, H: ch}
-		x += cw
+		if i > 0 {
+			consumed += n.Gap
+		}
+		// A label that overruns the button is ellipsized by the painter, which
+		// truncates text to the node's bounds. Refusing the button instead
+		// costs the user the panel it sits in, and a system sans-serif a
+		// couple of pixels wider than the design font reaches this.
+		if (child.Kind == KindText || child.Kind == KindTab) && consumed+cw > inner.W {
+			cw = max(inner.W-consumed, 0)
+		}
+		widths[i], heights[i] = cw, ch
+		consumed += cw
+	}
+	x := inner.X + max(inner.W-consumed, 0)/2
+	for i, child := range n.Children {
+		if i > 0 {
+			x += n.Gap
+		}
+		child.Bounds = Rect{X: x, Y: inner.Y + (inner.H-heights[i])/2,
+			W: widths[i], H: heights[i]}
+		x += widths[i]
 	}
 	return nil
 }
