@@ -302,8 +302,12 @@ func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
 			if bold.MatchString(code) {
 				t.Errorf("%s:%d asks for synthetic bold; name a text role instead", name, i+1)
 			}
-			if m := aliases.FindString(code); m != "" && !strings.Contains(code, "Metrics."+strings.TrimPrefix(m, ".")) &&
-				!strings.Contains(code, "Shapes.") && !strings.Contains(code, "st.Muted") {
+			// The exemption is case-insensitive on purpose: a local named
+			// `metrics := theme.Metrics` reads the same row as `theme.Metrics`,
+			// and a case-sensitive match flagged pluginhost.go for that.
+			lower := strings.ToLower(code)
+			if m := aliases.FindString(code); m != "" && !strings.Contains(lower, strings.ToLower("Metrics."+strings.TrimPrefix(m, "."))) &&
+				!strings.Contains(lower, "shapes.") && !strings.Contains(lower, "st.muted") {
 				t.Errorf("%s:%d reads the legacy alias %s; read the metrics row", name, i+1, m)
 			}
 			// The comment half of the split is kept so an exemption can be read
