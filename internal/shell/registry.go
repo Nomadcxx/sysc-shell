@@ -19,6 +19,7 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -175,10 +176,19 @@ type Registry struct {
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
 	// locker tracks the session-lock process; lockerSpawn is the test seam.
-	locker         *lockerManager
-	lockerSpawn    lockerSpawnFn
-	lockerRunning  bool // state cache for lock-held readers; guarded by mu
-	lockerAcquired bool
+	locker              *lockerManager
+	lockerSpawn         lockerSpawnFn
+	lockerRunning       bool // state cache for lock-held readers; guarded by mu
+	lockerAcquired      bool
+	managedLock         *locksession.Client
+	lockSettingsSaving  bool
+	managedState        locksession.State
+	lockCancel          context.CancelFunc
+	backgroundHeld      bool
+	backgroundLeasePath string
+	backgroundMu        sync.Mutex
+	backgroundRequests  chan struct{}
+	backgroundError     string
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
 	lookPath func(string) (string, error)
 	// animClock is the clock a panel animator samples. Tests freeze it to
@@ -444,6 +454,10 @@ func NewRegistry(cfg config.Config) *Registry {
 	// the developer's real assignment file and launch real engines; those
 	// tests install their own service.
 	if !runningAsTest() {
+		// Before the mutex: initManagedLock answers the lock owner on the bus
+		// with a two second timeout, and nothing can observe the registry yet,
+		// so holding the lock for it would stall every first frame.
+		r.initManagedLock()
 		r.mu.Lock()
 		r.wallpaperStartLocked()
 		// The launcher scans XDG for .desktop files. Doing that when the panel
@@ -2003,6 +2017,9 @@ func (r *Registry) Close() {
 	}
 	if mediaArt != nil {
 		mediaArt.Close()
+	}
+	if r.lockCancel != nil {
+		r.lockCancel()
 	}
 	if wallpaperSvc != nil {
 		wallpaperSvc.Close()

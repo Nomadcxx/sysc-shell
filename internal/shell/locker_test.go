@@ -231,7 +231,7 @@ func TestLockerUserRequestResetsBudget(t *testing.T) {
 	}
 }
 
-func TestLockActionLabel(t *testing.T) {
+func TestCustomLockerRemainsUnverified(t *testing.T) {
 	t.Parallel()
 	reg, _ := newSessionHost(t, "swaylock")
 	pr, pw := io.Pipe()
@@ -249,11 +249,15 @@ func TestLockActionLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for lockedLabel(reg) != "Locked" {
+	for lockedLabel(reg) != "Lock running (unverified)" {
 		if time.Now().After(deadline) {
 			t.Fatalf("never reached Locked, got %q", lockedLabel(reg))
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	st, verified := reg.LockState()
+	if verified || st.Acquired || !st.Running {
+		t.Fatal("custom command reported secure", st, verified)
 	}
 	pw.Close()
 	exits <- 0
@@ -306,7 +310,7 @@ func TestControlCentreLockRowFollowsHandshake(t *testing.T) {
 			}
 		}
 		reg.mu.Unlock()
-		if name == "Locked" {
+		if name == "Lock running (unverified)" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -323,4 +327,26 @@ func lockedLabel(reg *Registry) string {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	return reg.lockActionLabel()
+}
+
+func TestManagedLockerAcceptsSessionForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"sysc-lock"}, true},
+		{[]string{"/usr/local/bin/sysc-lock"}, true},
+		{[]string{"sysc-lock", "--session"}, true},
+		{[]string{"/opt/sysc/bin/sysc-lock", "--session"}, true},
+		{[]string{"swaylock"}, false},
+		{[]string{"swaylock", "--session"}, false},
+		{[]string{"sysc-lock", "--ambient"}, false},
+		{[]string{"sysc-lock", "--session", "--extra"}, false},
+		{nil, false},
+	} {
+		if got := isManagedLocker(tc.argv); got != tc.want {
+			t.Errorf("isManagedLocker(%q) = %v, want %v", tc.argv, got, tc.want)
+		}
+	}
 }

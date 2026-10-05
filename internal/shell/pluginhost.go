@@ -648,11 +648,11 @@ func (h *pluginHost) desiredBarViewsLocked() []hostedView {
 	for global, bar := range h.r.bars {
 		conn := bar.connector()
 		policy := cfg.ForConnector(conn)
-		metrics := bar.themeSnapshot().Metrics
+		snapshot := bar.themeSnapshot()
 		side := policy.Edge == "left" || policy.Edge == "right"
 		width := pluginBarViewWidth
 		if side {
-			width = max(0, policy.Body()-2*metrics.BarPadding)
+			width = max(0, policy.Body()-2*snapshot.Metrics.BarPadding)
 		}
 		var appendItems func([]config.Item, int)
 		appendItems = func(items []config.Item, width int) {
@@ -660,7 +660,7 @@ func (h *pluginHost) desiredBarViewsLocked() []hostedView {
 				if item.ID == "group" {
 					groupWidth := width
 					if side {
-						groupWidth = max(0, width-2*metrics.CapsulePadding)
+						groupWidth = max(0, width-2*snapshot.Metrics.CapsulePadding)
 					}
 					appendItems(item.Items, groupWidth)
 					continue

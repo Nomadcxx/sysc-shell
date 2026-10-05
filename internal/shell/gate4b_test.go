@@ -9,7 +9,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
-	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -29,15 +28,15 @@ func TestAcceptSettingsConfiguresBarLive(t *testing.T) {
 	reqs := drainAux(t, reg, 2)
 	handle := reqs[1].Open.Callbacks.Handle
 	h := reg.panelHosts[PanelSettings]
-	// Focus the slider by name rather than counting tabs. The Bar section now
-	// carries the lane editor above its geometry rows, so the slider sits well
-	// past any fixed tab budget; what this gate is about is the slider reaching
-	// the file live, not how far into the focus order it happens to be.
-	// The slider takes the registry label as its focus name, so resolve it
-	// from the registry: a rename must not turn this gate into a stale search.
-	height := settings.Default().ByPath("bar.height").Label
-	h.focusByName(height)
-	if h.focused() == nil || h.focused().Kind != ui.KindSlider || h.focused().Name != height {
+	// Settings opens on Appearance. Select Bar through its rail before focusing
+	// the control this persistence gate covers.
+	h.focusByName("Bar")
+	if h.focused() == nil || h.focused().Action != "section:Bar" {
+		t.Fatal("did not reach the Bar section")
+	}
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEnter})
+	h.focusByName("Thickness")
+	if h.focused() == nil || h.focused().Kind != ui.KindSlider || h.focused().Name != "Thickness" {
 		t.Fatal("did not reach the bar height slider")
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyRight})
