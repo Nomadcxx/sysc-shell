@@ -228,7 +228,13 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 	if home == "" {
 		applyErr = errors.New("HOME is unset")
 	} else {
-		outcomes, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, r.Tokens(), nil)
+		// Render from the config just written, not the live palette: the
+		// reload poked by writeConfig may not have published it yet, and a
+		// queued apply would then overwrite the new palette with the old
+		// one. A generation failure falls back like the reload path, which
+		// reports it.
+		tok, _ := r.tokensFor(cfg)
+		outcomes, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok, nil)
 	}
 	if outcomes != nil {
 		r.recordTemplateOutcomes(outcomes, false)
