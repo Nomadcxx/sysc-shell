@@ -21,9 +21,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # The panel layout tests measure text with the configured family
-      # (config.Default() names Inter). Without it the runner falls back to
-      # sans-serif, which is wider, and the fit assertions fail.
+      # Panel layout tests measure text with the configured family
+      # (config.Default() names Inter). Installing it keeps runner metrics
+      # close to the maintainer's machine instead of the fallback face.
       - name: install test fonts
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-inter
       - name: gofmt
