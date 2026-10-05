@@ -895,6 +895,107 @@ func TestToastBlurLostAtRuntimeDropsGroundAndRegionTogether(t *testing.T) {
 	}
 }
 
+// Cards follow the bar's edge. A right bar shifts the stack sideways by the
+// bar thickness; a bottom bar anchors the stack above the bar. Top and left
+// bars keep the top-right stack.
+func TestToastHostPlacesCardsClearOfEveryBarEdge(t *testing.T) {
+	const outW, outH = 1920, 1080
+	for _, edge := range []string{"top", "right", "bottom", "left"} {
+		t.Run(edge, func(t *testing.T) {
+			r, h, _ := wiredToast(t)
+			theme := DefaultTheme()
+			theme.BarEdge = edge
+			bar := &Bar{theme: theme}
+			zone := exclusiveBarZone(bar)
+			if zone <= toastMargin {
+				t.Fatalf("bar zone %d does not extend past the toast margin", zone)
+			}
+			r.mu.Lock()
+			r.bars[h.outputs["eDP-1"]] = bar
+			h.recompute()
+			r.mu.Unlock()
+
+			r.applyNotify(snap(1, note(1, "older"), note(2, "newer")))
+
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			geom := h.geometry["eDP-1"]
+			if geom.BarEdge != edge {
+				t.Fatalf("geometry edge = %q, want %q", geom.BarEdge, edge)
+			}
+			if geom.BarZone != zone {
+				t.Fatalf("geometry zone = %d, want %d", geom.BarZone, zone)
+			}
+			wantCorner := toastTopRight
+			if edge == "bottom" {
+				wantCorner = toastBottomRight
+			}
+			if geom.Corner != wantCorner {
+				t.Fatalf("corner = %d, want %d", geom.Corner, wantCorner)
+			}
+			rects := append([]ui.Rect(nil), h.cardRects("eDP-1", h.visible["eDP-1"])...)
+			if len(rects) != 2 {
+				t.Fatalf("cards = %d, want 2", len(rects))
+			}
+			anchor, next := rects[0], rects[1]
+			switch edge {
+			case "top", "left":
+				if anchor.Y != zone+toastMargin {
+					t.Fatalf("Y = %d, want %d", anchor.Y, zone+toastMargin)
+				}
+				if anchor.X+anchor.W != outW-toastMargin {
+					t.Fatalf("right edge = %d, want %d", anchor.X+anchor.W, outW-toastMargin)
+				}
+				if next.Y <= anchor.Y {
+					t.Fatalf("stack grew upward: %+v", rects)
+				}
+			case "right":
+				if anchor.X+anchor.W != outW-toastMargin-zone {
+					t.Fatalf("right edge = %d, want %d", anchor.X+anchor.W, outW-toastMargin-zone)
+				}
+				if anchor.Y != toastMargin {
+					t.Fatalf("Y = %d, want %d", anchor.Y, toastMargin)
+				}
+				if next.Y <= anchor.Y {
+					t.Fatalf("stack grew upward: %+v", rects)
+				}
+			case "bottom":
+				if anchor.Y+anchor.H != outH-toastMargin-zone {
+					t.Fatalf("bottom edge = %d, want %d", anchor.Y+anchor.H, outH-toastMargin-zone)
+				}
+				if anchor.Y <= zone+toastMargin {
+					t.Fatalf("Y = %d, bar thickness still reserved at the top", anchor.Y)
+				}
+				if next.Y >= anchor.Y {
+					t.Fatalf("bottom stack grew downward: %+v", rects)
+				}
+			}
+			inputs := lastToastInput(h)
+			if len(inputs) != len(rects) {
+				t.Fatalf("input region = %+v, want the cards %+v", inputs, rects)
+			}
+			for i, rect := range rects {
+				if inputs[i] != rect {
+					t.Fatalf("input[%d] = %+v, want card %+v", i, inputs[i], rect)
+				}
+				if overlapsBarStrip(rect, edge, outW, outH, zone) {
+					t.Fatalf("card %+v overlaps the %s bar", rect, edge)
+				}
+			}
+		})
+	}
+}
+
+func lastToastInput(h *toastHost) []ui.Rect {
+	updates := h.harness().updates
+	for i := len(updates) - 1; i >= 0; i-- {
+		if updates[i].SetInputRegion {
+			return updates[i].InputRects
+		}
+	}
+	return nil
+}
+
 // The last card closing empties the blur region, or a blurred patch would
 // stay in the corner.
 func TestToastBlurClearsWhenTheLastCardCloses(t *testing.T) {

@@ -22,34 +22,75 @@ type toastGeometry struct {
 	OutputW, OutputH int
 	Corner           toastCorner
 	BarZone          int
+	// BarEdge is the screen edge the bar occupies (top, right, bottom, left).
+	// Empty keeps the older reading: BarZone is a vertical inset on the anchor side.
+	BarEdge string
+}
+
+// toastSideInsets is the horizontal thickness a side bar occupies. A top or
+// bottom bar has none; an unset edge does too, so older geometry is unchanged.
+func toastSideInsets(g toastGeometry) (left, right int) {
+	zone := g.BarZone
+	if zone < 0 {
+		zone = 0
+	}
+	switch g.BarEdge {
+	case "left":
+		return zone, 0
+	case "right":
+		return 0, zone
+	default:
+		return 0, 0
+	}
+}
+
+// toastVerticalInset is the thickness reserved on the anchor edge. A right
+// bar spends that thickness horizontally, so it is not also a top inset.
+// A left bar keeps the reservation: the top-right stack already clears it,
+// and that placement stays.
+func toastVerticalInset(g toastGeometry) int {
+	if g.BarEdge == "right" || g.BarZone < 0 {
+		return 0
+	}
+	return g.BarZone
+}
+
+// toastFitWidth is the card width for this output: the design width, or
+// narrower once the margins and a side bar are taken out.
+func toastFitWidth(g toastGeometry) int {
+	left, right := toastSideInsets(g)
+	width := toastCardWidth
+	if maxW := g.OutputW - 2*toastMargin - left - right; maxW < width {
+		width = maxW
+	}
+	return width
 }
 
 // toastLayout places as many cards as the geometry holds, stacking away from
 // the configured edge, and returns the visible rectangles plus the indexes
 // that did not fit. Geometry, not a fixed count, decides overflow.
 func toastLayout(g toastGeometry, heights []int) (rects []ui.Rect, queued []int) {
-	width := toastCardWidth
-	if max := g.OutputW - 2*toastMargin; max < width {
-		width = max
-	}
+	width := toastFitWidth(g)
 	if width < 1 {
 		return nil, allIndexes(heights)
 	}
+	leftInset, rightInset := toastSideInsets(g)
 
 	var x int
 	switch g.Corner {
 	case toastTopRight, toastBottomRight:
-		x = g.OutputW - toastMargin - width
+		x = g.OutputW - toastMargin - rightInset - width
 	default:
-		x = toastMargin
+		x = toastMargin + leftInset
 	}
 
+	vertical := toastVerticalInset(g)
 	top := g.Corner == toastTopRight || g.Corner == toastTopLeft
-	y := g.BarZone + toastMargin
+	y := vertical + toastMargin
 	if !top {
-		y = g.OutputH - g.BarZone - toastMargin
+		y = g.OutputH - vertical - toastMargin
 	}
-	limit := g.OutputH - 2*toastMargin - g.BarZone
+	limit := g.OutputH - 2*toastMargin - vertical
 	used := 0
 
 	for i, h := range heights {
