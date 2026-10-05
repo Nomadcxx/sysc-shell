@@ -1,84 +1,14 @@
-<p align="center"><img src="assets/wordmark.png" alt="sysc-shell" height="120"></p>
+![sysc-shell](assets/wordmark.png)
 
-<p align="center"><strong>A Wayland desktop shell for Niri, written in Go.</strong></p>
+A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate daemons for
+notifications, clipboard history and the system tray.
 
-<p align="center">Bars, panels, a launcher, notifications, a system tray, clipboard history and plugins — drawn straight to Wayland with no Qt, QML, GTK or Quickshell underneath.</p>
+## Quick Links
 
-## What it is
+- [Documentation](#documentation)
+- [The sysc ecosystem](https://github.com/Nomadcxx/sysc-shell/blob/main/docs/ecosystem.md)
 
-sysc-shell is the centre of the sysc ecosystem. It draws the bar, panels and OSD itself with a
-`wl_shm` renderer, talks to Niri over its IPC socket, and treats everything else — notifications,
-clipboard history, the tray, the locker, wallpapers — as a separate process it connects to or
-spawns. A crash in one companion daemon doesn't take the bar with it. Those daemons keep their
-state when you restart the shell.
-
-Only Niri is supported.
-
-## How it fits together
-
-```mermaid
-flowchart LR
-    greet["sysc-greet<br/>graphical greeter"] -->|starts configured session| shell["sysc-shell<br/>desktop shell"]
-
-    subgraph session["Session"]
-        lock["sysc-lock<br/>session locker"]
-    end
-
-    subgraph daemons["Companion daemons"]
-        notify["sysc-notify<br/>notifications"]
-        clipboard["sysc-clipboard<br/>clipboard history"]
-        tray["sysc-tray<br/>system tray"]
-    end
-
-    subgraph wallpaper["Wallpaper and idle"]
-        gslapper["gSlapper<br/>video wallpaper"]
-        terminal["sysc-terminal<br/>terminal effects"]
-        walls["sysc-walls<br/>idle screensaver"]
-    end
-
-    subgraph libs["Shared Go libraries"]
-        wayland["sysc-wayland<br/>Wayland transport"]
-        launch["sysc-launch<br/>app launcher"]
-        metrics["sysc-metrics<br/>system telemetry"]
-    end
-
-    plugins["sysc-plugins<br/>plugin source"]
-
-    shell -->|spawns| session
-    shell -->|connects to| daemons
-    shell -->|drives| wallpaper
-    shell -->|links| libs
-    shell -->|installs from| plugins
-
-    classDef current fill:#7aa2f7,stroke:#1a1b26,color:#1a1b26,stroke-width:2px
-    class shell current
-```
-
-[The sysc ecosystem](docs/ecosystem.md) explains each connection, socket and version pin.
-
-## Features
-
-- **Bars**: one per output, with workspaces, window title, clock, weather, CPU, memory, temperature,
-  GPU, disk, network, battery and the system tray
-- **Launcher**: fuzzy app search that learns what you open, desktop actions, a calculator and emoji
-- **Control centre**: network, Bluetooth, audio, media players, weather and a calendar (via the calendar plugin) in one panel
-- **Notifications**: popups and a history centre, fed by [sysc-notify](https://github.com/Nomadcxx/sysc-notify)
-- **Clipboard**: browse, restore and pin history kept by [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard)
-- **System monitor**: live gauges, and a process view grouped by application
-- **Session panel**: log out, suspend, reboot and power off, with battery status and power profiles
-- **Session lock**: hands the screen to [sysc-lock](https://github.com/Nomadcxx/sysc-lock) and tracks
-  it through the lock, including one respawn if it dies while locked
-- **OSD**: volume and brightness
-- **Theming**: Material 3 colours from your wallpaper through matugen, applied to the shell and, with
-  templates, to your other apps
-- **Wallpaper**: set it from the shell with awww, swaybg or gSlapper, or paint live terminal effects
-  with [sysc-terminal](https://github.com/Nomadcxx/sysc-terminal)
-- **Idle screensaver**: [sysc-walls](https://github.com/Nomadcxx/sysc-walls), controlled from Settings
-- **Frosted glass**: blurred bars and panels on Niri 26.04 and later
-- **Plugins**: a plugin manager and store. The official plugins live in
-  [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins)
-
-## Install
+## Installation
 
 ### Requirements
 
@@ -114,9 +44,9 @@ Notifications, the tray and clipboard history each run as their own small daemon
 doesn't take the bar with it. Their state survives a shell restart. The shell works without them;
 you just don't get that feature.
 
-- **Notifications** — [sysc-notify](https://github.com/Nomadcxx/sysc-notify#install). Stop mako,
+- **Notifications** — [sysc-notify](https://github.com/Nomadcxx/sysc-notify#installation). Stop mako,
   dunst or swaync first.
-- **Clipboard history** — [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard#install).
+- **Clipboard history** — [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard#installation).
 - **System tray** — [sysc-tray](https://github.com/Nomadcxx/sysc-tray) `v0.1.0-rc.3`.
 - **Session lock** — [sysc-lock](https://github.com/Nomadcxx/sysc-lock), then point the shell at it:
 
@@ -167,6 +97,72 @@ sysc-shell ipc panel.toggle '{"panel":"control-center"}'
 Settings are in the settings panel and saved to `$XDG_CONFIG_HOME/sysc-shell/config.json`
 (default: `~/.config/sysc-shell/config.json`). Logs go to
 `journalctl --user -u sysc-shell`.
+
+## Panels and integrations
+
+The shell draws through `wl_shm` and talks to Niri over its IPC socket.
+
+- **Bars**: one per output, with workspaces, window title, clock, weather, CPU, memory, temperature,
+  GPU, disk, network, battery and the system tray
+- **Launcher**: fuzzy app search that learns what you open, desktop actions, a calculator and emoji
+- **Control centre**: network, Bluetooth, audio, media players, weather and a calendar (via the calendar plugin) in one panel
+- **Notifications**: popups and a history centre, fed by [sysc-notify](https://github.com/Nomadcxx/sysc-notify)
+- **Clipboard**: browse, restore and pin history kept by [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard)
+- **System monitor**: live gauges, and a process view grouped by application
+- **Session panel**: log out, suspend, reboot and power off, with battery status and power profiles
+- **Session lock**: hands the screen to [sysc-lock](https://github.com/Nomadcxx/sysc-lock) and tracks
+  it through the lock, including one respawn if it dies while locked
+- **OSD**: volume and brightness
+- **Theming**: Material 3 colours from your wallpaper through matugen, applied to the shell and, with
+  templates, to your other apps
+- **Wallpaper**: set it from the shell with awww, swaybg or gSlapper, or paint live terminal effects
+  with [sysc-terminal](https://github.com/Nomadcxx/sysc-terminal)
+- **Idle screensaver**: [sysc-walls](https://github.com/Nomadcxx/sysc-walls), controlled from Settings
+- **Frosted glass**: blurred bars and panels on Niri 26.04 and later
+- **Plugins**: a plugin manager and store. The official plugins live in
+  [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins)
+
+## Ecosystem
+
+```mermaid
+flowchart LR
+    greet["sysc-greet<br/>graphical greeter"] -->|starts configured session| shell["sysc-shell<br/>desktop shell"]
+
+    subgraph session["Session"]
+        lock["sysc-lock<br/>session locker"]
+    end
+
+    subgraph daemons["Companion daemons"]
+        notify["sysc-notify<br/>notifications"]
+        clipboard["sysc-clipboard<br/>clipboard history"]
+        tray["sysc-tray<br/>system tray"]
+    end
+
+    subgraph wallpaper["Wallpaper and idle"]
+        gslapper["gSlapper<br/>video wallpaper"]
+        terminal["sysc-terminal<br/>terminal effects"]
+        walls["sysc-walls<br/>idle screensaver"]
+    end
+
+    subgraph libs["Shared Go libraries"]
+        wayland["sysc-wayland<br/>Wayland transport"]
+        launch["sysc-launch<br/>app launcher"]
+        metrics["sysc-metrics<br/>system telemetry"]
+    end
+
+    plugins["sysc-plugins<br/>plugin source"]
+
+    shell -->|spawns| session
+    shell -->|connects to| daemons
+    shell -->|drives| wallpaper
+    shell -->|links| libs
+    shell -->|installs from| plugins
+
+    classDef current fill:#7aa2f7,stroke:#1a1b26,color:#1a1b26,stroke-width:2px
+    class shell current
+```
+
+[The sysc ecosystem](docs/ecosystem.md) explains each connection, socket and version pin.
 
 ## Documentation
 
