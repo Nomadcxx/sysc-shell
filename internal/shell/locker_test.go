@@ -328,3 +328,25 @@ func lockedLabel(reg *Registry) string {
 	defer reg.mu.Unlock()
 	return reg.lockActionLabel()
 }
+
+func TestManagedLockerAcceptsSessionForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"sysc-lock"}, true},
+		{[]string{"/usr/local/bin/sysc-lock"}, true},
+		{[]string{"sysc-lock", "--session"}, true},
+		{[]string{"/opt/sysc/bin/sysc-lock", "--session"}, true},
+		{[]string{"swaylock"}, false},
+		{[]string{"swaylock", "--session"}, false},
+		{[]string{"sysc-lock", "--ambient"}, false},
+		{[]string{"sysc-lock", "--session", "--extra"}, false},
+		{nil, false},
+	} {
+		if got := isManagedLocker(tc.argv); got != tc.want {
+			t.Errorf("isManagedLocker(%q) = %v, want %v", tc.argv, got, tc.want)
+		}
+	}
+}

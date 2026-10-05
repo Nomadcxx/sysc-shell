@@ -454,8 +454,11 @@ func NewRegistry(cfg config.Config) *Registry {
 	// the developer's real assignment file and launch real engines; those
 	// tests install their own service.
 	if !runningAsTest() {
-		r.mu.Lock()
+		// Before the mutex: initManagedLock answers the lock owner on the bus
+		// with a two second timeout, and nothing can observe the registry yet,
+		// so holding the lock for it would stall every first frame.
 		r.initManagedLock()
+		r.mu.Lock()
 		r.wallpaperStartLocked()
 		// The launcher scans XDG for .desktop files. Doing that when the panel
 		// first opens makes the very first Mod+D of a session the slow one, on

@@ -172,3 +172,17 @@ func TestLockSettingsApplyRespectsRegistrySaveGuard(t *testing.T) {
 		}
 	}
 }
+
+func TestLockSettingsExplainsHeldBackground(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.backgroundError = "the last lock session did not finish"
+	r.rebuildPanel(h)
+	node := findNode(h.root, func(n *ui.Node) bool {
+		return n.Tone == ui.ToneError && n.Text == "Wallpaper and screensaver are held: the last lock session did not finish."
+	})
+	if node == nil {
+		t.Fatal("held background was not explained in the Lock Screen section")
+	}
+}

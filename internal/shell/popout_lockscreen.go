@@ -81,6 +81,9 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if r != nil && r.managedState.Known && r.managedState.SleepError != "" {
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Tone: ui.ToneError, Text: "The session owner could not protect sleep."})
 	}
+	if r != nil && r.backgroundError != "" {
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Tone: ui.ToneError, Text: "Wallpaper and screensaver are held: " + r.backgroundError + "."})
+	}
 	apply := wallpaperButton(h, "lockscreen-apply", "Apply", false)
 	preview := wallpaperButton(h, "lockscreen-preview", "Preview", false)
 	if saving {

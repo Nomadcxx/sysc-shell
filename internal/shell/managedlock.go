@@ -25,8 +25,12 @@ func (r *Registry) initManagedLock() {
 		if err != nil {
 			r.backgroundError = err.Error()
 			r.backgroundHeld = true
-		} else {
-			r.backgroundHeld = lease != nil
+		} else if lease != nil {
+			// The previous locker left a lease behind: wallpaper and
+			// screensaver stay held until the next seal, and the reason has
+			// to be somewhere the user can read it.
+			r.backgroundHeld = true
+			r.backgroundError = "the last lock session did not finish; background is held until the next unlock"
 		}
 	}
 	client := locksession.New(os.Getenv("XDG_SESSION_ID"), os.Getenv("NIRI_SOCKET"))
@@ -36,6 +40,9 @@ func (r *Registry) initManagedLock() {
 	if isManagedLocker(sessionArgv("session-lock", r.cfg.Session.Locker)) &&
 		!lockStateAllowsBackground(r.managedState) {
 		r.backgroundHeld = true
+		if r.backgroundError == "" {
+			r.backgroundError = "the lock owner is mid-lock; background is held"
+		}
 	}
 	go func() {
 		for {

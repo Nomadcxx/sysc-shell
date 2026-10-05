@@ -111,7 +111,9 @@ The shell draws through `wl_shm` and talks to Niri over its IPC socket.
 - **System monitor**: live gauges, and a process view grouped by application
 - **Session panel**: log out, suspend, reboot and power off, with battery status and power profiles
 - **Session lock**: hands the screen to [sysc-lock](https://github.com/Nomadcxx/sysc-lock) and tracks
-  it through the lock, including one respawn if it dies while locked
+  it through the lock, including one respawn if it dies while locked. Run that lock screen as a user
+  service (`sysc-lock --session`) so one owner holds the lock; the shell's Lock button then commands
+  it, and sleep waits until it reports sealed
 - **OSD**: volume and brightness
 - **Theming**: Material 3 colours from your wallpaper through matugen, applied to the shell and, with
   templates, to your other apps

@@ -305,8 +305,19 @@ func (r *Registry) lockActionLabel() string {
 	return "Lock"
 }
 
+// isManagedLocker reports whether argv is a command whose owner publishes the
+// lock session protocol: the bare binary, or the same binary told to publish
+// it on the session bus. That is the form a sysc-lock session service runs,
+// so a command carrying --session is as managed as the bare name. A different
+// binary, or this one running something else, stays legacy.
 func isManagedLocker(argv []string) bool {
-	return len(argv) == 1 && filepath.Base(argv[0]) == "sysc-lock"
+	if len(argv) == 0 || filepath.Base(argv[0]) != "sysc-lock" {
+		return false
+	}
+	if len(argv) == 1 {
+		return true
+	}
+	return len(argv) == 2 && argv[1] == "--session"
 }
 
 // SuspendTracked waits for the managed protocol event before calling logind.
