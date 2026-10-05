@@ -402,6 +402,13 @@ func run(ctx context.Context) (err error) {
 }
 
 func main() {
+	if token, ok := restoreDisplaysRequested(os.Args[1:]); ok {
+		if err := runRestoreDisplays(context.Background(), token); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "ipc" {
 		if err := runIPC(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

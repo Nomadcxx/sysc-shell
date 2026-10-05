@@ -78,10 +78,15 @@ type Output struct {
 	Logical *LogicalOutput
 }
 
-// ModeIndex returns where m sits in the advertised modes.
+// ModeIndex returns where m sits in the advertised modes. A mode is identified
+// by its width, height and refresh. IsPreferred describes the output's mode
+// list rather than the mode, so a mode read back from an output and offered
+// straight back to ModeValue has to match even though this shell is not told
+// which of the output's modes it prefers.
 func (o Output) ModeIndex(m Mode) (int, bool) {
 	for i, candidate := range o.Modes {
-		if candidate == m {
+		if candidate.Width == m.Width && candidate.Height == m.Height &&
+			candidate.RefreshMilliHz == m.RefreshMilliHz {
 			return i, true
 		}
 	}
