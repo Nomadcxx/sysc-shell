@@ -40,7 +40,7 @@ func TestEverySettingsPageLaysOutEverywhere(t *testing.T) {
 					// Layout accepts a short body without complaint; the live
 					// gate found one cut at the 240 fallback.
 					reg.mu.Lock()
-					body := findScroll(reg.panelHosts[PanelSettings].root)
+					body := settingsBodyScroll(reg.panelHosts[PanelSettings].root)
 					reg.mu.Unlock()
 					if body == nil || body.Bounds.H < int(panel.Height)/2 {
 						t.Errorf("%dx%d %s/%s @%d: body %+v in a %d-tall pane", out[0], out[1], section, page, scale, body.Bounds, panel.Height)
@@ -133,7 +133,7 @@ func TestPalettesEditorLaysOutEverywhere(t *testing.T) {
 			}
 			reg.mu.Lock()
 			root := reg.panelHosts[PanelSettings].root
-			body := findScroll(root)
+			body := settingsBodyScroll(root)
 			save := findAction(root, "palette-save")
 			reg.mu.Unlock()
 			if body == nil || body.Bounds.H < int(panel.Height)/2 {

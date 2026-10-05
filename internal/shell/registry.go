@@ -18,6 +18,7 @@ import (
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/displays"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -229,17 +230,30 @@ type Registry struct {
 	clipboardSender clipboardCommandSender
 
 	// tray is the service-owned tray projection.
-	tray                 *trayState
-	trayCh               chan trayclient.Message
-	traySender           trayCommandSender
-	trayMenu             *trayMenuHost
-	trayDrawer           *trayDrawerHost
-	trayReplies          *trayReplyTracker
-	trayCloses           *trayCloseTracker
-	trayIcons            *icons.Worker
-	wallpaperSvc         *wallpaper.Service
-	wallsService         wallsController
-	wallsSnapshot        walls.Snapshot
+	tray          *trayState
+	trayCh        chan trayclient.Message
+	traySender    trayCommandSender
+	trayMenu      *trayMenuHost
+	trayDrawer    *trayDrawerHost
+	trayReplies   *trayReplyTracker
+	trayCloses    *trayCloseTracker
+	trayIcons     *icons.Worker
+	wallpaperSvc  *wallpaper.Service
+	wallsService  wallsController
+	wallsSnapshot walls.Snapshot
+	// displaysService is nil until the user confirms a niri configuration
+	// root; displaysRoot remembers it from then on, displaysSnapshot is the
+	// service's last reading, and displaysDraft is the edit in progress. The
+	// draft lives here, not on the settings host, because a reconfigure
+	// recreates the host and must not lose what was being edited.
+	displaysService      displaysController
+	displaysSnapshot     displays.Snapshot
+	displaysDiscovery    *displays.Discovery
+	displaysRoot         string
+	displaysDraft        map[string]map[string]string
+	displaysArmed        bool
+	displaysBusy         bool
+	displaysErr          string
 	idleApplying         bool
 	wallpaperThumbs      *icons.Worker
 	wallpaperThumbCancel context.CancelFunc
@@ -1900,6 +1914,7 @@ func (r *Registry) Close() {
 	var inhibit io.Closer
 	var wallpaperSvc *wallpaper.Service
 	var wallsSvc wallsController
+	var displaysSvc displaysController
 	var wallpaperThumbCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
 	var depthEffects depthClockEffects
@@ -1938,6 +1953,8 @@ func (r *Registry) Close() {
 		r.wallpaperSvc = nil
 		wallsSvc = r.wallsService
 		r.wallsService = nil
+		displaysSvc = r.displaysService
+		r.displaysService = nil
 		wallpaperThumbCancel = r.wallpaperThumbCancel
 		r.wallpaperThumbCancel = nil
 		mediaArt = r.mediaArt
@@ -1999,6 +2016,15 @@ func (r *Registry) Close() {
 		if err := wallsSvc.Close(); err != nil {
 			log.Printf("shell: close sysc-walls service: %v", err)
 		}
+	}
+	if displaysSvc != nil {
+		// A preview the shell is still holding has to go back, so the shell
+		// going away is one of the ways recovery is requested.
+		ctx, cancel := context.WithTimeout(context.Background(), closeLockGrace)
+		if err := displaysSvc.Close(ctx); err != nil {
+			log.Printf("shell: close display settings: %v", err)
+		}
+		cancel()
 	}
 	r.dwell.stop()
 	r.clock.Close()

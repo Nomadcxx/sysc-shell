@@ -218,3 +218,49 @@ func TestSnapshotHoldsOnlyTheLatest(t *testing.T) {
 		t.Fatal("no snapshot was published")
 	}
 }
+
+// The countdown on the page moves on the service's own one-second tick, and
+// only while a preview is armed: with nothing armed there is no republish.
+func TestServiceRepublishesOnceASecondOnlyWhilePreviewing(t *testing.T) {
+	svc, _ := serviceFor(t)
+	updates := svc.Subscribe()
+	ctx := context.Background()
+	if err := svc.Preview(ctx, map[string]Policy{"DP-1": {Scale: ptr(1.5)}}); err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	first := <-updates
+	if !first.Preview || first.Remaining <= 0 || first.Remaining > armWindow {
+		t.Fatalf("first armed snapshot = %+v, want a preview with most of the window left", first)
+	}
+	// Nothing is moving yet: the next one only comes from the tick.
+	select {
+	case got := <-updates:
+		t.Fatalf("the snapshot was republished without a tick: %+v", got)
+	default:
+	}
+	deadline := time.After(4 * time.Second)
+	var last time.Duration
+	for last == 0 || last >= first.Remaining {
+		select {
+		case got := <-updates:
+			if !got.Preview {
+				t.Fatal("an armed tick published an unarmed snapshot")
+			}
+			last = got.Remaining
+		case <-deadline:
+			t.Fatalf("the countdown never moved: %v then %v", first.Remaining, last)
+		}
+	}
+	if err := svc.Revert(ctx); err != nil {
+		t.Fatal(err)
+	}
+	<-updates
+	time.Sleep(2500 * time.Millisecond)
+	select {
+	case got := <-updates:
+		if got.Preview {
+			t.Errorf("the service kept ticking after the preview ended: %+v", got)
+		}
+	default:
+	}
+}

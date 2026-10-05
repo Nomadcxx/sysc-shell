@@ -51,6 +51,11 @@ type Snapshot struct {
 	Outputs []Output
 	// Preview is true while a live preview is waiting to be kept or reverted.
 	Preview bool
+	// Remaining is how long the armed window has left, read from the shared
+	// boot clock. The page shows it as a countdown; it is zero when nothing is
+	// armed. The independent helper reverts when the window closes whether or
+	// not the shell is alive to redraw this.
+	Remaining time.Duration
 	// Note is the message the page shows: the last conflict, refusal or
 	// recovery note, or "" when there is nothing to say.
 	Note string
@@ -71,6 +76,9 @@ type Service struct {
 	own    Owned
 	ticket *Ticket
 	note   string
+	// stopTick ends the one-second republish loop that keeps a countdown
+	// moving. It runs only while a preview is armed.
+	stopTick context.CancelFunc
 
 	subMu sync.Mutex
 	subs  []chan Snapshot
@@ -122,6 +130,9 @@ func (s *Service) publish() {
 	snap := Snapshot{Outputs: s.outputs(live, target), Note: s.note}
 	if s.ticket != nil {
 		snap.Preview = true
+		if left, err := Remaining(s.ticket.DeadlineNS); err == nil {
+			snap.Remaining = left
+		}
 	}
 	s.subMu.Lock()
 	defer s.subMu.Unlock()
@@ -218,6 +229,7 @@ func (s *Service) Preview(ctx context.Context, draft map[string]Policy) error {
 		return err
 	}
 	s.note = ""
+	s.startTick()
 	s.publish()
 	return nil
 }
@@ -319,10 +331,49 @@ func (s *Service) abandon(t *Ticket, note string) {
 	s.settle(t, StateReverted)
 }
 
+// startTick republishes once a second while a preview is armed, so the
+// countdown on the page moves. It is the only periodic work the service does:
+// with nothing armed there is no timer and no redraw.
+func (s *Service) startTick() {
+	if s.stopTick != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.stopTick = cancel
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.mu.Lock()
+				armed := s.ticket != nil
+				if armed {
+					s.publish()
+				}
+				s.mu.Unlock()
+				if !armed {
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (s *Service) stopTicking() {
+	if s.stopTick != nil {
+		s.stopTick()
+		s.stopTick = nil
+	}
+}
+
 // settle writes a terminal state, stops the helper and removes the ticket. It
 // runs under the command mutex, so the helper's own decision sees either the
 // state before or the state after, never neither.
 func (s *Service) settle(t *Ticket, state string) {
+	s.stopTicking()
 	if err := t.setState(state, t.Note); err != nil {
 		return
 	}

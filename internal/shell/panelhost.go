@@ -151,6 +151,10 @@ type PanelHost struct {
 	// tree starts at the top, so without this a drag or a remove threw the
 	// user back to the first row and lost their place.
 	settingsScroll int
+	// railScroll retains the rail's own scroll offset across a rebuild, for
+	// the same reason settingsScroll is kept: a rebuilt tree starts at the top,
+	// and the last sections are the ones a long rail needs scrolled to.
+	railScroll int
 	// settingsPage is the open section's page (settings redesign D1). Empty
 	// means the section's first.
 	settingsPage string
@@ -753,6 +757,11 @@ func (r *Registry) closePanelLocked(id PanelID) {
 	output, hasOutput := r.panels.Output(id)
 	if h != nil {
 		output, hasOutput = h.output, true
+	}
+	// Closing the page is one of the ways recovery is requested: a live
+	// preview the user walked away from is not left applied.
+	if id == PanelSettings {
+		r.displaysRevertLocked(h)
 	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
@@ -2577,7 +2586,7 @@ func (h *PanelHost) scrollBy(delta int) bool {
 }
 
 func (h *PanelHost) scrollTo(off int) bool {
-	s := findScroll(h.root)
+	s := findScrollExcept(h.root, settingsRailName)
 	if s == nil {
 		return false
 	}
@@ -2599,6 +2608,24 @@ func findScroll(n *ui.Node) *ui.Node {
 	}
 	for _, c := range n.Children {
 		if got := findScroll(c); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+// findScrollExcept is findScroll for a tree that has more than one scrollable
+// region: the settings rail scrolls beside the page, and Home, End and the page
+// keys belong to the content the user is reading.
+func findScrollExcept(n *ui.Node, skip string) *ui.Node {
+	if n == nil || n.Name == skip {
+		return nil
+	}
+	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findScrollExcept(c, skip); got != nil {
 			return got
 		}
 	}
@@ -2996,6 +3023,17 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "walls:") {
 		return activateWallsAction(r, h, n)
 	}
+	if strings.HasPrefix(n.Action, "displays:") {
+		return activateDisplaysAction(r, h, n)
+	}
+	if rest, ok := strings.CutPrefix(n.Action, "pick:displays."); ok {
+		// The display entries are not in the config registry, so the pick is
+		// resolved against the draft instead of ByPath.
+		if path, value, found := strings.Cut(rest, "="); found {
+			r.setDisplaysDraftLocked(h, path, value)
+		}
+		return true
+	}
 	switch n.Action {
 	case "plugin-close", "plugin-retry", "plugin-disable":
 		if r.plugins != nil {
@@ -3363,6 +3401,7 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
 	if h.id == PanelSettings {
 		h.settingsScroll = settingsScrollOffset(h.root)
+		h.railScroll = settingsRailOffset(h.root)
 		if h.settingsScrollTop {
 			h.settingsScroll, h.settingsScrollTop = 0, false
 		}
@@ -3394,6 +3433,9 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)
+	if h.id == PanelSettings {
+		h.focusDisplaysPreview()
+	}
 	restoredFocus := false
 	if focusedKey != "" {
 		for i, n := range h.focus {
@@ -3664,6 +3706,12 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 		setWallsDraft(r, h, key, settingNodeValue(n))
 		return
 	}
+	if key, ok := strings.CutPrefix(path, "displays."); ok {
+		// A draft edit sends nothing anywhere: it is a string on the
+		// registry until Preview arms a transaction.
+		r.setDisplaysDraftLocked(h, key, settingNodeValue(n))
+		return
+	}
 	if path == "idle.after" || path == "idle.delay" {
 		h.applyIdleSetting(r, path, settingNodeValue(n))
 		return
@@ -3794,6 +3842,12 @@ func (h *PanelHost) applyMenu(r *Registry, path string) {
 		}
 		if m := h.menus[path]; m != nil {
 			setWallsDraft(r, h, key, m.Value())
+		}
+		return
+	}
+	if key, ok := strings.CutPrefix(path, "displays."); ok {
+		if m := h.menus[path]; m != nil {
+			r.setDisplaysDraftLocked(h, key, m.Value())
 		}
 		return
 	}

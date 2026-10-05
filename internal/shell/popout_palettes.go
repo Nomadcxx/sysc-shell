@@ -513,6 +513,14 @@ func (r *Registry) settingsSectionChangingLocked(h *PanelHost, section string) {
 	if section == "Screensaver" && h.section != "Screensaver" {
 		r.refreshWallsLocked()
 	}
+	if h.section == displaysSection && section != displaysSection {
+		// Leaving the page is a request for recovery: a live preview the user
+		// walked away from is not left applied.
+		r.displaysRevertLocked(h)
+	}
+	if section == displaysSection && h.section != displaysSection {
+		r.displaysRefreshLocked(h)
+	}
 }
 
 // customPaletteProblem is why the custom palette cfg names is not what the

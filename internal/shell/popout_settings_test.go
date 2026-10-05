@@ -292,7 +292,7 @@ func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
 	if heading == nil {
 		t.Error("no group heading was rendered")
 	}
-	if findScroll(h.root) == nil {
+	if settingsBodyScroll(h.root) == nil {
 		t.Error("the section does not scroll")
 	}
 }
@@ -1329,7 +1329,7 @@ func TestSettingsBodyLeavesRoomForTheRail(t *testing.T) {
 	h.place.Panel = ui.Rect{W: 900, H: 760}
 	h.root = settingsTree(nil, h)
 
-	body := findScroll(h.root)
+	body := settingsBodyScroll(h.root)
 	if body == nil {
 		t.Fatal("no scrolling body")
 	}

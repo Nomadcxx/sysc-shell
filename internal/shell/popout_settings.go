@@ -51,6 +51,7 @@ var settingsSectionIcons = map[string]string{
 	"Screensaver":   "schedule",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
+	"Display":       "display_settings",
 	"Tray":          "apps",
 	"Plugins":       "extension",
 	"Session":       "power_settings_new",
@@ -148,6 +149,10 @@ func settingsBodyWidth(h *PanelHost) int {
 	return max(panelWidth-2*pad-settingsRailWidth-theme.MarginXL, 0)
 }
 
+// settingsRailName marks the rail's own scroll region, so the page's scroll
+// helpers leave it alone: Home, End and the page keys belong to the content.
+const settingsRailName = "settings-rail"
+
 // settingsBody is the one scrolling column the pane's content sits in. It
 // carries the retained offset, so an edit that rebuilds the tree leaves the
 // user where they were rather than at the top.
@@ -168,7 +173,27 @@ func settingsScrollOffset(root *ui.Node) int {
 		if n == nil || out != 0 {
 			return
 		}
-		if n.Kind == ui.KindScroll {
+		if n.Kind == ui.KindScroll && n.Name != settingsRailName {
+			out = n.ScrollOffset
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
+}
+
+// settingsRailOffset reads the rail's own offset back out of a built tree.
+func settingsRailOffset(root *ui.Node) int {
+	out := 0
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || out != 0 {
+			return
+		}
+		if n.Name == settingsRailName {
 			out = n.ScrollOffset
 			return
 		}
@@ -192,7 +217,14 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 	search.Width = settingsRailWidth
 	settingsFieldInset(h, search)
 	search.Placeholder = "Search settings…"
-	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginXXS, Children: []*ui.Node{search}}
+	// The rail scrolls (sysc-906): at the spacious density a short pane cannot
+	// hold every section, and a clipped last section is one the user cannot
+	// reach at all. The offset is kept on the host so a rebuild does not throw
+	// the view back to the top.
+	rail := &ui.Node{
+		Kind: ui.KindScroll, Name: settingsRailName, Width: settingsRailWidth,
+		Gap: theme.MarginXXS, ScrollOffset: h.railScroll, Children: []*ui.Node{search},
+	}
 	item, itemPad := settingsRailItemHeight(h, search)
 	for _, c := range settings.SectionClusters() {
 		rail.Children = append(rail.Children, &ui.Node{
@@ -340,6 +372,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		if h.set != nil {
 			hits = overlayIdleGets(r, h.set.Search(h.query))
 		}
+		// The display entries are not in the config registry, so search adds
+		// them itself: a search for an output name must find its page.
+		hits = append(hits, displaysSearchEntries(r, h.query)...)
 		return body(settingsSearchColumn(h, hits))
 	}
 
@@ -361,6 +396,11 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if section == "Screensaver" {
 		return body(screensaverSettingsBody(r, h))
+	}
+	if section == displaysSection {
+		// A section with one body of its own: the outputs are live, so the
+		// entries are built from the service rather than from the config.
+		return body(displaysSettingsBody(r, h))
 	}
 	var entries []settings.Entry
 	if h.set != nil {

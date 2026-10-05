@@ -86,17 +86,17 @@ func TestSwitchingPageOpensAtTheTop(t *testing.T) {
 	reg, h := openSettingsForPreview(t)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	findScroll(h.root).ScrollOffset = 300
+	settingsBodyScroll(h.root).ScrollOffset = 300
 	h.focus = []*ui.Node{{Kind: ui.KindButton, Action: "page:Layout", Focusable: true}}
 	h.roving = ui.Roving{Count: 1}
 	h.activate(reg)
-	if h.settingsScroll != 0 || findScroll(h.root).ScrollOffset != 0 {
-		t.Fatalf("Layout opened at %d", findScroll(h.root).ScrollOffset)
+	if h.settingsScroll != 0 || settingsBodyScroll(h.root).ScrollOffset != 0 {
+		t.Fatalf("Layout opened at %d", settingsBodyScroll(h.root).ScrollOffset)
 	}
 }
 
 // At spacious density the rail ran past the bottom of a 1280x720 pane.
-func TestRailFitsThePaneAtEveryDensity(t *testing.T) {
+func TestRailReachesEverySectionAtEveryDensity(t *testing.T) {
 	t.Parallel()
 	for _, d := range []theme.Density{theme.DensityStandard, theme.DensityComfortable, theme.DensitySpacious} {
 		m, ok := theme.MetricsFor(d)
@@ -112,11 +112,45 @@ func TestRailFitsThePaneAtEveryDensity(t *testing.T) {
 			t.Fatalf("%s: %v", d, err)
 		}
 		tabs := byRole(h.root, "tab")
-		last := tabs[len(tabs)-1].Bounds
-		if bottom := h.place.Panel.H - m.PanelPadding; last.Y+last.H > bottom {
-			t.Errorf("%s: last rail tab ends at %d, the pane's content ends at %d", d, last.Y+last.H, bottom)
+		last := tabs[len(tabs)-1]
+		// The rail scrolls (sysc-906): the tabs shrink to fit while they can,
+		// and what does not fit is reached by scrolling rather than clipped.
+		rail := findRail(h.root)
+		if rail == nil {
+			t.Fatalf("%s: the rail is not a scroll region, so a long rail is unreachable", d)
+		}
+		ui.ScrollBy(rail, 1<<20)
+		if rail.ScrollOffset == 0 && last.Bounds.Y+last.Bounds.H > h.place.Panel.H-m.PanelPadding {
+			t.Errorf("%s: the last rail tab is out of reach at %d", d, last.Bounds.Y+last.Bounds.H)
+		}
+		if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+			t.Fatalf("%s after scrolling the rail: %v", d, err)
+		}
+		if bottom := rail.Bounds.Y + rail.Bounds.H; last.Bounds.Y+last.Bounds.H > bottom {
+			t.Errorf("%s: scrolled to the end, the last rail tab ends at %d and the rail at %d", d, last.Bounds.Y+last.Bounds.H, bottom)
 		}
 	}
+}
+
+// settingsBodyScroll is the page's own scroll region. The settings tree has
+// two: the rail beside it and the content. A test that means the content asks
+// for it by name rather than taking whichever comes first in the tree.
+func settingsBodyScroll(root *ui.Node) *ui.Node { return findScrollExcept(root, settingsRailName) }
+
+// findRail is the settings rail's scroll region.
+func findRail(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Name == settingsRailName {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findRail(c); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 // The tree is built before the first configure; a configure at another scale

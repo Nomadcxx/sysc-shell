@@ -194,15 +194,21 @@ func screensaverActions(h *PanelHost, snapshot walls.Snapshot, locked bool) *ui.
 }
 
 func screensaverButton(h *PanelHost, text, action string, disabled bool) *ui.Node {
-	n := &ui.Node{
-		Kind: ui.KindButton, Text: text, Action: action, Name: text, Role: "button",
-		Focusable: true, Height: h.metrics().StandardControl, Fill: ui.FillOutline, Shape: ui.ShapeMedium,
-	}
+	n := settingsButton(h, text, action)
 	if disabled {
 		n.State |= ui.StateDisabled
 		n.AriaDisabled = true
 	}
 	return n
+}
+
+// settingsButton is one action row's button at standard height. A caller that
+// cannot run the action turns it into a disabled one.
+func settingsButton(h *PanelHost, text, action string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Text: text, Action: action, Name: text, Role: "button",
+		Focusable: true, Height: h.metrics().StandardControl, Fill: ui.FillOutline, Shape: ui.ShapeMedium,
+	}
 }
 
 func wallsBoolValue(value bool) float64 {

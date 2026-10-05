@@ -17,6 +17,7 @@ import (
 
 	clipboardclient "github.com/Nomadcxx/sysc-clipboard/client"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/displays"
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -90,6 +91,23 @@ func run(ctx context.Context) (err error) {
 
 	registry := shell.NewRegistry(cfg)
 	registry.SetWallsService(walls.NewService())
+	// Display settings attach only once the user has confirmed a niri
+	// configuration root, which the shell configuration records. Without one the
+	// page says so and offers to find the root; nothing is written until then.
+	if root := cfg.Displays.NiriConfigPath; root != "" {
+		validate, err := displays.NiriValidator()
+		if err != nil {
+			// A shell with no native validator still reads outputs; it refuses
+			// to publish a candidate it could not check first.
+			log.Printf("sysc-shell: display settings will not publish: %v", err)
+		}
+		svc, err := displays.New(socket, root, validate)
+		if err != nil {
+			log.Printf("sysc-shell: display settings unavailable: %v", err)
+		} else {
+			registry.SetDisplaysService(svc)
+		}
+	}
 	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
 	// the socket that was just required; Suspend goes straight to logind.
 	monitorPower := func(action any, what string) {

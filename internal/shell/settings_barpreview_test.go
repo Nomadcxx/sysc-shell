@@ -110,7 +110,7 @@ func TestBarAppearanceLeadsWithPreviewAndCards(t *testing.T) {
 	if err := h.configure(int(reqs[1].Open.Width), int(reqs[1].Open.Height), 150); err != nil {
 		t.Fatal(err)
 	}
-	body := findScroll(h.root)
+	body := settingsBodyScroll(h.root)
 	if body == nil || len(body.Children) < 3 {
 		t.Fatal("Appearance body is missing its blocks")
 	}

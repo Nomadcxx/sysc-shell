@@ -923,15 +923,7 @@ func TestAnEditKeepsTheScrollPosition(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Default().Bar)
 
-	scroll := func() *ui.Node {
-		var out *ui.Node
-		walkNodes(h.root, func(n *ui.Node) {
-			if n.Kind == ui.KindScroll && out == nil {
-				out = n
-			}
-		})
-		return out
-	}
+	scroll := func() *ui.Node { return settingsBodyScroll(h.root) }
 	s := scroll()
 	if s == nil {
 		t.Fatal("the settings body is not a scrolling column")
