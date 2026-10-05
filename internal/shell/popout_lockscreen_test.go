@@ -83,8 +83,13 @@ func TestLockSettingsPreviewHasNoCredentialOrLockPath(t *testing.T) {
 	}) != nil {
 		t.Fatal("preview exposes credential or lock action")
 	}
-	img, err := lockPreview(lockconfig.Default())
-	if err != nil {
+	img := newLockPreviewImage()
+	stop := make(chan struct{})
+	defer close(stop)
+	if err := lockPreviewLoop(lockconfig.Default(), 1, time.Millisecond, stop, func(frame *ui.Image) bool {
+		copy(img.Pix, frame.Pix)
+		return true
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if img.Width != 480 || img.Height != 270 || img.Stride != img.Width*4 || len(img.Pix) != img.Stride*img.Height {
@@ -216,5 +221,76 @@ func TestLockSettingsReducedMotionIsASplitRowToggle(t *testing.T) {
 	}
 	if findNode(h.root, func(n *ui.Node) bool { return n.Text == "Reduced motion: Off" }) != nil {
 		t.Fatal("baked value text still present")
+	}
+}
+
+func TestLockPreviewLoopAnimatesUnlessReducedMotion(t *testing.T) {
+	frames := make(chan *ui.Image, 4)
+	stop := make(chan struct{})
+	defer close(stop)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord"}, 3, time.Millisecond, stop, func(img *ui.Image) bool {
+			// The loop owns one buffer, so keep our own copy of each frame.
+			keep := &ui.Image{Width: img.Width, Height: img.Height, Stride: img.Stride, Pix: append([]byte(nil), img.Pix...)}
+			frames <- keep
+			return true
+		}); err != nil {
+			t.Errorf("loop: %v", err)
+		}
+	}()
+	var got []*ui.Image
+	for len(got) < 3 {
+		select {
+		case img := <-frames:
+			got = append(got, img)
+		case <-done:
+			t.Fatalf("loop ended after %d frames", len(got))
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d frames arrived", len(got))
+		}
+	}
+	if string(got[0].Pix) == string(got[1].Pix) {
+		t.Fatal("preview never advanced: two frames are identical")
+	}
+
+	held := 0
+	quietStop := make(chan struct{})
+	if err := lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord", ReducedMotion: true}, 4, time.Millisecond, quietStop, func(*ui.Image) bool {
+		held++
+		return true
+	}); err != nil {
+		t.Fatalf("reduced loop: %v", err)
+	}
+	if held != 1 {
+		t.Fatalf("reduced motion published %d frames, want one held still", held)
+	}
+}
+
+func TestLockPreviewLoopStopsWhenTold(t *testing.T) {
+	closed := make(chan struct{})
+	close(closed)
+	published := 0
+	if err := lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord"}, 100, time.Millisecond, closed, func(*ui.Image) bool {
+		published++
+		return true
+	}); err != nil {
+		t.Fatalf("stopped loop: %v", err)
+	}
+	if published != 0 {
+		t.Fatalf("published %d frames after stop", published)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord"}, 100, time.Millisecond, stop, func(*ui.Image) bool { return false })
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loop kept running after the panel said it was stale")
 	}
 }
