@@ -223,12 +223,23 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 	}
 
 	var outcomes map[string]error
-	var applyErr error
+	var applyErr, genErr error
 	home := os.Getenv("HOME")
 	if home == "" {
 		applyErr = errors.New("HOME is unset")
 	} else {
-		outcomes, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, r.Tokens(), nil)
+		// Render from the config just written, not the live palette: the
+		// reload poked by writeConfig may not have published it yet, and a
+		// queued apply would then overwrite the new palette with the old
+		// one.
+		//
+		// A generation failure falls back to the last complete palette, so
+		// the templates are still written and this is not an apply failure.
+		// The reason is reported below instead of dropped, because a fallback
+		// palette that reads as a plain success is the shape of failure #101.
+		tok, err := r.tokensFor(cfg)
+		genErr = err
+		outcomes, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok, nil)
 	}
 	if outcomes != nil {
 		r.recordTemplateOutcomes(outcomes, false)
@@ -260,6 +271,9 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 		results[template] = result
 	}
 	body := map[string]any{"results": results}
+	if genErr != nil {
+		body["theme_error"] = genErr.Error()
+	}
 	if name == "" {
 		body["applied"] = "all"
 		return body, nil

@@ -1149,9 +1149,9 @@ func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens t
 // colours: the wallpaper changed, the shell did not, and there was nowhere to
 // look. Callers surface this; they must not treat it as fatal.
 func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
-	tok, err := r.generateOnly(cfg)
+	tok, err := r.tokensFor(cfg)
 	if err != nil {
-		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
+		return tok, err
 	}
 	if !runningAsTest() {
 		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
@@ -1163,6 +1163,17 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		if err != nil {
 			return tok, fmt.Errorf("theme: external templates: %w", err)
 		}
+	}
+	return tok, nil
+}
+
+// tokensFor returns the palette for cfg, or the last complete palette when
+// generation fails. The error comes back with the fallback so callers can
+// surface it without treating it as fatal.
+func (r *Registry) tokensFor(cfg config.Config) (theme.Tokens, error) {
+	tok, err := r.generateOnly(cfg)
+	if err != nil {
+		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
 	}
 	return tok, nil
 }

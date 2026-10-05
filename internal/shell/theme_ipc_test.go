@@ -13,6 +13,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/theming"
 )
 
 func themeCallRegistry(t *testing.T) (*Registry, string) {
@@ -822,6 +823,94 @@ func TestThemeTemplatesApplyReportsUserModifiedRefusal(t *testing.T) {
 	}
 	if got, err := os.ReadFile(sidecar); err != nil || string(got) != "user edit\n" {
 		t.Fatalf("sidecar = %q, err = %v; user edit must be preserved", got, err)
+	}
+}
+
+// A template apply must render from the palette the persisted config names,
+// not from the live palette a reload has not published yet.
+func TestThemeTemplatesApplyRendersFromPersistedPalette(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+
+	names := theme.PaletteNames()
+	stale, fresh := names[0], names[1]
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "palette"
+	cfg.ThemeGen.Seed = stale
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.BindPersist(path, nil)
+
+	persisted := cfg
+	persisted.ThemeGen.Seed = fresh
+	if err := config.Write(path, persisted); err != nil {
+		t.Fatal(err)
+	}
+
+	on := true
+	if _, err := callTheme(t, r, "theme.templates.apply", map[string]any{
+		"name": "foot",
+		"on":   on,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	want, ok := theme.NamedPalette(fresh, cfg.ThemeGen.Mode, cfg.Accessibility.HighContrast)
+	if !ok {
+		t.Fatalf("palette %q missing", fresh)
+	}
+	sidecar := filepath.Join(os.Getenv("HOME"), ".config", "foot", "themes", "sysc-shell")
+	got, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBody := theming.Render(theming.Catalog().WithOverlay().Template("foot"), want)
+	if string(got) != wantBody {
+		t.Fatalf("sidecar rendered from the stale palette:\n got %q\nwant %q", got, wantBody)
+	}
+}
+
+// A palette the persisted config names but the generator cannot produce leaves
+// the apply running on the last complete palette, so the templates are still
+// written and this is not an apply failure. Reporting a plain success would
+// still be the shape of failure #101 describes, so the reply carries the
+// generator's reason the way republishTheme records one in r.themeErr.
+func TestThemeTemplatesApplyReportsUngeneratablePalette(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "palette"
+	cfg.ThemeGen.Seed = theme.PaletteNames()[0]
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.BindPersist(path, nil)
+
+	persisted := cfg
+	persisted.ThemeGen.Seed = "not-a-real-palette"
+	if err := config.Write(path, persisted); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := callTheme(t, r, "theme.templates.apply", map[string]any{
+		"name": "foot",
+		"on":   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason, ok := body["theme_error"].(string)
+	if !ok || reason == "" {
+		t.Fatalf("reply carries no generation reason, so a fallback palette reads as success: %v", body)
+	}
+	if !strings.Contains(reason, "not a named palette") {
+		t.Fatalf("theme_error = %q, want the generator's own reason", reason)
 	}
 }
 
