@@ -873,6 +873,47 @@ func TestThemeTemplatesApplyRendersFromPersistedPalette(t *testing.T) {
 	}
 }
 
+// A palette the persisted config names but the generator cannot produce leaves
+// the apply running on the last complete palette, so the templates are still
+// written and this is not an apply failure. Reporting a plain success would
+// still be the shape of failure #101 describes, so the reply carries the
+// generator's reason the way republishTheme records one in r.themeErr.
+func TestThemeTemplatesApplyReportsUngeneratablePalette(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "palette"
+	cfg.ThemeGen.Seed = theme.PaletteNames()[0]
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.BindPersist(path, nil)
+
+	persisted := cfg
+	persisted.ThemeGen.Seed = "not-a-real-palette"
+	if err := config.Write(path, persisted); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := callTheme(t, r, "theme.templates.apply", map[string]any{
+		"name": "foot",
+		"on":   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason, ok := body["theme_error"].(string)
+	if !ok || reason == "" {
+		t.Fatalf("reply carries no generation reason, so a fallback palette reads as success: %v", body)
+	}
+	if !strings.Contains(reason, "not a named palette") {
+		t.Fatalf("theme_error = %q, want the generator's own reason", reason)
+	}
+}
+
 func TestThemeTemplatesApplyReportsWriteError(t *testing.T) {
 	r, _ := themeCallRegistry(t)
 	t.Cleanup(r.Close)
