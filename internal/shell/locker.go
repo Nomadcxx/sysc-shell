@@ -2,11 +2,13 @@ package shell
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -174,8 +176,22 @@ func realLockerSpawn(argv []string) (io.ReadCloser, <-chan int, error) {
 func (r *Registry) LockTracked() error {
 	r.mu.Lock()
 	argv := sessionArgv("session-lock", r.cfg.Session.Locker)
-	m := r.lockerLocked()
+	managed := r.managedLock
+	native := isManagedLocker(argv) && r.lockerSpawn == nil
+	var m *lockerManager
+	if !native {
+		m = r.lockerLocked()
+	}
 	r.mu.Unlock()
+	if native {
+		if managed == nil {
+			return errors.New("managed locker unavailable")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_, err := managed.Lock(ctx)
+		return err
+	}
 	if len(argv) == 0 {
 		return errors.New("no locker configured")
 	}
@@ -193,11 +209,18 @@ func (m *lockerManager) notifyLocked() {
 func (r *Registry) LockState() (LockState, bool) {
 	r.mu.Lock()
 	m := r.locker
+	if r.managedLock != nil && isManagedLocker(sessionArgv("session-lock", r.cfg.Session.Locker)) {
+		v := r.managedState
+		r.mu.Unlock()
+		return LockState{Running: v.Phase != "idle" && v.Phase != "unavailable" && v.Phase != "failed-before-acquisition", Acquired: v.Known && v.Phase == "sealed"}, v.Known
+	}
 	r.mu.Unlock()
 	if m == nil {
 		return LockState{}, false
 	}
-	return m.State(), true
+	st := m.State()
+	st.Acquired = false
+	return st, false
 }
 
 // lockerLocked returns the manager; caller holds r.mu. The paused callback
@@ -212,7 +235,7 @@ func (r *Registry) lockerLocked() *lockerManager {
 		r.locker = &lockerManager{spawn: spawn, sleep: time.Sleep,
 			stateCB: func(running, acquired bool) {
 				r.mu.Lock()
-				r.lockerRunning, r.lockerAcquired = running, acquired
+				r.lockerRunning, r.lockerAcquired = running, false
 				if h := r.panelHosts[PanelControlCenter]; h != nil {
 					r.rebuildPanel(h)
 					r.publishSurface(h.output, panelSurfaceID(h.id))
@@ -258,18 +281,43 @@ func (r *Registry) LockStateMap() map[string]any {
 	}
 }
 
-// lockActionLabel names the Control Centre lock row by tracked state: a
-// running-but-unacquired locker is "Locking…" (handshake pending), an
-// acquired one "Locked". Third-party lockers without the handshake line only
-// ever show "Locking…" while alive — honest, not a fake "Locked".
+// lockActionLabel labels managed compositor state; legacy commands remain unverified.
 // lockActionLabel reads the state cache; callers hold r.mu (panel rebuild)
 // or lock it (the exported wrapper below).
 func (r *Registry) lockActionLabel() string {
-	if r.lockerRunning {
-		if r.lockerAcquired {
+	if r.managedLock != nil && isManagedLocker(sessionArgv("session-lock", r.cfg.Session.Locker)) {
+		switch r.managedState.Phase {
+		case "requesting":
+			return "Locking…"
+		case "sealed":
 			return "Locked"
+		case "recovering":
+			return "Recovering lock…"
+		case "sealed/unknown":
+			return "Lock state unknown"
+		case "unavailable":
+			return "Lock unavailable"
 		}
-		return "Locking…"
+	}
+	if r.lockerRunning {
+		return "Lock running (unverified)"
 	}
 	return "Lock"
+}
+
+func isManagedLocker(argv []string) bool {
+	return len(argv) == 1 && filepath.Base(argv[0]) == "sysc-lock"
+}
+
+// SuspendTracked waits for the managed protocol event before calling logind.
+func (r *Registry) SuspendTracked() error {
+	r.mu.Lock()
+	managed, run := r.managedLock, r.runArgv
+	r.mu.Unlock()
+	if managed == nil {
+		return errors.New("managed sleep protection unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	return managed.Suspend(ctx, func() error { return run([]string{"loginctl", "suspend"}) })
 }

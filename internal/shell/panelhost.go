@@ -271,6 +271,7 @@ type PanelHost struct {
 	wallsDraft      map[string]string
 	wallsDirty      map[string]bool
 	wallsDraftReady bool
+	lockScreen      lockScreenUI
 
 	pluginManagerTab string
 	// palettes is the Palettes page state (custom palettes P12). Registry.mu.
@@ -3151,6 +3152,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "wallpaper") && h.wallpaperAction(r, n) {
 		return true
 	}
+	if strings.HasPrefix(n.Action, "lockscreen-") && h.lockScreenAction(r, n) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "art-") && h.artAction(r, n) {
 		return true
 	}
@@ -4228,6 +4232,8 @@ func (r *Registry) runSessionAction(h *PanelHost, action string) {
 		// Tracked spawn: handshake, wallpaper pause, respawn policy
 		// (docs/plans/2026-10-03-sysc-lock.md T16).
 		run = func([]string) error { return r.LockTracked() }
+	} else if action == "session-suspend" {
+		run = func([]string) error { return r.SuspendTracked() }
 	}
 	// loginctl actions run under a 5-second timeout; holding Registry.mu
 	// across them stalls every relay and the Wayland owner (GH #5). Launch

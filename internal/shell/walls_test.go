@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/walls"
@@ -395,35 +396,19 @@ func TestScreensaverLockMakesSettingsAndPreviewUnavailable(t *testing.T) {
 	}
 }
 
-func TestLockerHandshakeRefreshesScreensaverPaneAndUnlockState(t *testing.T) {
-	r, h, service := newOpenWallsSettings(t, readyWallsSnapshot())
-	before, _, _, _ := service.counts()
+func TestManagedSnapshotRefreshesScreensaverPane(t *testing.T) {
+	r, h, _ := newOpenWallsSettings(t, readyWallsSnapshot())
+	r.applyManagedSnapshot(locksession.State{Known: true, Snapshot: locksession.Snapshot{Phase: "sealed"}})
 	r.mu.Lock()
-	manager := r.lockerLocked()
+	if !r.lockerAcquired || !strings.Contains(renderText(h.root), "unavailable while locked") {
+		t.Fatal("sealed snapshot did not disable screensaver")
+	}
 	r.mu.Unlock()
-	manager.mu.Lock()
-	manager.running, manager.acquired = true, true
-	manager.notifyLocked()
-	manager.mu.Unlock()
-	waitFor(t, func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return r.lockerAcquired && strings.Contains(renderText(h.root), "unavailable while locked")
-	})
-	manager.mu.Lock()
-	manager.running, manager.acquired = false, false
-	manager.notifyLocked()
-	manager.mu.Unlock()
-	waitFor(t, func() bool {
-		refreshes, _, _, _ := service.counts()
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return !r.lockerAcquired && refreshes > before
-	})
+	r.applyManagedSnapshot(locksession.State{Known: true, Snapshot: locksession.Snapshot{Phase: "idle", ConfirmedUnlock: 5}})
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if strings.Contains(renderText(h.root), "unavailable while locked") {
-		t.Fatal("Screensaver controls stayed disabled after unlock")
+	if r.lockerAcquired || strings.Contains(renderText(h.root), "unavailable while locked") {
+		t.Fatal("confirmed unlock did not refresh screensaver")
 	}
 }
 

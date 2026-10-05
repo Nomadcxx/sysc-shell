@@ -714,7 +714,7 @@ func SectionClusters() []Cluster {
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
-		{"System", []string{"Session", "Accessibility"}},
+		{"System", []string{"Session", "Lock Screen", "Accessibility"}},
 	}
 }
 

@@ -268,7 +268,6 @@ func TestSessionExecMapping(t *testing.T) {
 		want []string
 	}{
 		{"Log out", []string{"loginctl", "terminate-session", "self"}},
-		{"Suspend", []string{"loginctl", "suspend"}},
 		{"Screen off", []string{"niri", "msg", "action", "power-off-monitors"}},
 		{"Reboot", []string{"loginctl", "reboot"}},
 		{"Power off", []string{"loginctl", "poweroff"}},
@@ -831,7 +830,7 @@ func TestRunSessionActionLaunchesOffTheRegistryLock(t *testing.T) {
 	go func() {
 		reg.mu.Lock()
 		defer reg.mu.Unlock()
-		reg.runSessionAction(h, "session-suspend")
+		reg.runSessionAction(h, "session-reboot")
 		close(returned)
 	}()
 
@@ -842,7 +841,7 @@ func TestRunSessionActionLaunchesOffTheRegistryLock(t *testing.T) {
 		close(release)
 		t.Fatal("runArgv never started")
 	}
-	if want := []string{"loginctl", "suspend"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"loginctl", "reboot"}; !reflect.DeepEqual(argv, want) {
 		close(release)
 		t.Errorf("argv = %v, want %v", argv, want)
 		t.FailNow()

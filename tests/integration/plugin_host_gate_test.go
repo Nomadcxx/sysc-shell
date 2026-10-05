@@ -112,7 +112,8 @@ func TestPluginHostGateTwoOutputsShareOneProcess(t *testing.T) {
 }
 
 func TestPluginHostGateFailuresLeaveClockPlacement(t *testing.T) {
-	now := time.Date(2026, 9, 1, 15, 4, 0, 0, time.UTC)
+	// Pick a different displayed minute from the registry's initial real clock.
+	now := time.Now().Add(2 * time.Hour).Truncate(time.Minute)
 	for _, mode := range []string{"bad-view", "crash-after-hello", "garbage", "silent"} {
 		t.Run(mode, func(t *testing.T) {
 			reg := bindGate(t, mode, true)
