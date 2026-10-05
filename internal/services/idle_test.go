@@ -236,8 +236,11 @@ func requireReq(t *testing.T, ch <-chan wayland.IdleRequest, want wayland.IdleRe
 		if got != want {
 			t.Errorf("request = %+v, want %+v", got, want)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("no request %+v within 2s", want)
+	// The re-armed request is queued behind a full queue and a stalled
+	// executor. It arrives within milliseconds, but under a loaded parallel
+	// suite 2s was not enough and this gate reported a false failure.
+	case <-time.After(20 * time.Second):
+		t.Fatalf("no request %+v within 20s", want)
 	}
 }
 
