@@ -289,7 +289,7 @@ func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
 		return err
 	}
 	if w > inner.W || h > inner.H {
-		return fmt.Errorf("button content %dx%d does not fit in %dx%d", w, h, inner.W, inner.H)
+		return fmt.Errorf("button content %dx%d does not fit in %dx%d (text %q)", w, h, inner.W, inner.H, n.Text)
 	}
 	x := inner.X + (inner.W-w)/2
 	for i, child := range n.Children {
