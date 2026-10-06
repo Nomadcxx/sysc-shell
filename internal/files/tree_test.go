@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -485,5 +486,31 @@ func TestTreeFitsTheFilesPanelWhenSelected(t *testing.T) {
 		if err := v1.Validate(Tree(deleting), v1.ViewPanel); err != nil {
 			t.Errorf("%dx%d deleting: %v", size[0], size[1], err)
 		}
+	}
+}
+
+// Every glyph the panel paints must exist in one of the shell's two icon
+// catalogues: iconNode fails the whole view build on a name in neither,
+// which is how selecting a folder crashed the panel with "no icon named
+// content_cut".
+func TestTreeIconsExistInShellInventory(t *testing.T) {
+	models := []Model{
+		{Root: "/r", Cwd: "/r", Mode: ModeOpen, Selected: 1, SelectedFile: true, CanPaste: true, Error: "boom"},
+		{Root: "/r", Cwd: "/r", Mode: ModePickDir, Selected: 2, Deleting: 1},
+		{Root: "/r", Cwd: "/r", Mode: ModePickFile, Selected: 1, SelectedFile: true, Rename: "new.txt", Entries: []Entry{{Name: "a.txt"}, {Name: "lib", Dir: true}}},
+	}
+	for _, m := range models {
+		var walk func(*v1.Node)
+		walk = func(n *v1.Node) {
+			if n.Icon != "" && !render.ValidMaterialIcon(n.Icon) {
+				if _, ok := render.IconByName(n.Icon); !ok {
+					t.Errorf("icon %q is in no shell inventory", n.Icon)
+				}
+			}
+			for _, c := range n.Children {
+				walk(c)
+			}
+		}
+		walk(Tree(m))
 	}
 }
