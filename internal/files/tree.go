@@ -37,24 +37,27 @@ const (
 	ActionCrumb    = "files-crumb-"
 
 	// Phone Connect actionButton / pill metrics.
-	treePad    = 12
-	treeGap    = 8
-	titleH     = 32
-	captionH   = 20
-	toolbarH   = 40
-	crumbH     = 28
-	chooseH    = 40
-	btnPad     = 10
-	rowPad     = 8
-	cardPad    = 12
-	previewW   = 280
-	previewH   = 180
-	minListW   = 160
-	minListH   = 80
-	nameRunes  = 48
-	cardRunes  = 28
-	thumbBytes = 512 << 10
-	maxThumbs  = 12
+	treePad  = 12
+	treeGap  = 8
+	titleH   = 32
+	captionH = 20
+	toolbarH = 40
+	crumbH   = 28
+	chooseH  = 40
+	btnPad   = 10
+	rowPad   = 8
+	cardPad  = 12
+	previewW = 280
+	previewH = 180
+	// Below this panel width the toolbar collapses to icon-only; accessible
+	// Name keeps the label either way.
+	toolbarLabelW = 600
+	minListW      = 160
+	minListH      = 80
+	nameRunes     = 48
+	cardRunes     = 28
+	thumbBytes    = 512 << 10
+	maxThumbs     = 12
 )
 
 // Model is one browser frame the host converts and paints.
@@ -98,17 +101,18 @@ func Tree(m Model) *v1.Node {
 	if m.Hidden {
 		hiddenIcon, hiddenName = "visibility", "Hide hidden files"
 	}
-	hidden := toolButton(ActionHidden, hiddenIcon, "Hidden", hiddenName, false)
+	labels := m.Width >= toolbarLabelW
+	hidden := toolButton(ActionHidden, hiddenIcon, labelText(labels, "Hidden"), hiddenName, false)
 	if m.Hidden {
 		hidden.Fill = "chip"
 	}
 	kids := []*v1.Node{
 		{Kind: v1.KindText, Text: title, Size: "title", Bold: true},
 		{Kind: v1.KindRow, Gap: treeGap, Children: []*v1.Node{
-			toolButton(ActionUp, "chevron_left", "Up", "Up", atRoot),
-			toolButton(ActionMkdir, "add", "New folder", "New folder", false),
+			toolButton(ActionUp, "chevron_left", labelText(labels, "Up"), "Up", atRoot),
+			toolButton(ActionMkdir, "add", labelText(labels, "New folder"), "New folder", false),
 			hidden,
-			toolButton(ActionPaste, "content_paste", "Paste", "Paste", !m.CanPaste),
+			toolButton(ActionPaste, "content_paste", labelText(labels, "Paste"), "Paste", !m.CanPaste),
 		}},
 		crumbRow(m.Root, rel),
 	}
@@ -245,6 +249,15 @@ func deleteCopy(m Model) string {
 		}
 		return fmt.Sprintf("Delete %d items? %s%s", m.Deleting, strings.Join(names, ", "), tail)
 	}
+}
+
+// labelText keeps the visible label only while the panel is wide enough;
+// the accessible Name carries it either way.
+func labelText(labels bool, s string) string {
+	if labels {
+		return s
+	}
+	return ""
 }
 
 func toolButton(id, icon, text, name string, disabled bool) *v1.Node {
