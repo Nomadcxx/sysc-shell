@@ -129,7 +129,7 @@ func TestTreePanelMatchesMonitorSize(t *testing.T) {
 }
 
 func TestTreeToolbarButtonsAreLabeled(t *testing.T) {
-	tree := Tree(Model{Root: "/r", Cwd: "/r", Mode: ModeOpen, Selected: 2, SelectedFile: true, CanPaste: true})
+	tree := Tree(Model{Root: "/r", Cwd: "/r", Mode: ModeOpen, Width: PanelWidth, Height: PanelHeight, Selected: 2, SelectedFile: true, CanPaste: true})
 	want := []struct{ id, text string }{
 		{ActionUp, "Up"},
 		{ActionMkdir, "New folder"},
@@ -633,5 +633,30 @@ func TestEntryRowRelativeDateAndTooltip(t *testing.T) {
 	row = findID(Tree(m), ActionEntry+"0")
 	if row.Tooltip != long {
 		t.Errorf("truncated-name tooltip = %q, want the full name", row.Tooltip)
+	}
+}
+
+func TestTreeToolbarCollapsesAtNarrowWidth(t *testing.T) {
+	tree := Tree(Model{Root: "/r", Cwd: "/r", Width: 360, Height: 400})
+	for id, label := range map[string]string{
+		ActionUp: "Up", ActionMkdir: "New folder", ActionHidden: "Show hidden files", ActionPaste: "Paste",
+	} {
+		n := findID(tree, id)
+		if n == nil {
+			t.Fatalf("missing %s", id)
+		}
+		if n.Text != "" {
+			t.Errorf("%s visible text = %q, want icon-only", id, n.Text)
+		}
+		if n.Name != label {
+			t.Errorf("%s accessible name = %q, want %q", id, n.Name, label)
+		}
+		if n.Icon == "" {
+			t.Errorf("%s lost its icon", id)
+		}
+	}
+	sel := Tree(Model{Root: "/r", Cwd: "/r", Width: 360, Height: 400, Selected: 1, SelectedFile: true})
+	if n := findID(sel, ActionCopy); n == nil || n.Text != "Copy" {
+		t.Errorf("selection row collapsed at narrow width: %+v", n)
 	}
 }
