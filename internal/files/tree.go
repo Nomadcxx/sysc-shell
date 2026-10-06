@@ -385,6 +385,10 @@ func entryRow(i int, e Entry, thumb bool) *v1.Node {
 	}
 	if label != e.Name {
 		row.Tooltip = e.Name
+	} else if !e.ModTime.IsZero() {
+		// ponytail: a full name is rarer than an old file; the name wins the
+		// tooltip, the mtime is already in the row text.
+		row.Tooltip = "Modified " + e.ModTime.Format("Jan 2, 2006 15:04")
 	}
 	return row
 }
@@ -401,7 +405,26 @@ func sizeDate(size int64, mod time.Time) string {
 	if mod.IsZero() {
 		return s
 	}
-	return s + " · " + mod.Format("Jan 2")
+	return s + " · " + relTime(time.Now(), mod)
+}
+
+// relTime renders an age the way people read scan lines: buckets under a week
+// are relative ("2 h ago"), older keeps coarse counts. Absolute time lives in
+// the row tooltip (P1.2).
+func relTime(now, mod time.Time) string {
+	d := now.Sub(mod)
+	switch {
+	case d < 45*time.Second:
+		return "just now"
+	case d < 45*time.Minute:
+		return fmt.Sprintf("%d m ago", int(d/time.Minute))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d h ago", int(d/time.Hour))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%d d ago", int(d/(24*time.Hour)))
+	default:
+		return fmt.Sprintf("%d w ago", int(d/(7*24*time.Hour)))
+	}
 }
 
 func humanSize(n int64) string {

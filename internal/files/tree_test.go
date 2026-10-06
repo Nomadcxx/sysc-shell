@@ -240,7 +240,7 @@ func TestTreePreviewFallsBackForDirsAndPlainFiles(t *testing.T) {
 		Root: "/r", Cwd: "/r", Mode: ModeOpen, PreviewPath: "/r/app.bin",
 		Preview: Preview{Size: 2048, ModTime: when},
 	})
-	if findText(binary, "2 KB · Oct 4") == nil {
+	if findText(binary, "2 KB · "+relTime(time.Now(), when)) == nil {
 		t.Fatal("no size and date for a file with no previewable body")
 	}
 	if findText(Tree(Model{Root: "/r", Cwd: "/r", PreviewPath: "/r/gone"}), "No preview") == nil {
@@ -592,5 +592,46 @@ func TestTreeDeleteConfirmReadsAsDialog(t *testing.T) {
 	}
 	if b := findID(tree, ActionDeleteOK); b == nil || b.Fill != "error-container" || b.Tone != v1.ToneError {
 		t.Error("the destructive control must stay red")
+	}
+}
+
+func TestRelTimeBuckets(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		ago  time.Duration
+		want string
+	}{
+		{10 * time.Second, "just now"},
+		{7 * time.Minute, "7 m ago"},
+		{2 * time.Hour, "2 h ago"},
+		{3 * 24 * time.Hour, "3 d ago"},
+		{80 * 24 * time.Hour, "11 w ago"},
+	} {
+		if got := relTime(now, now.Add(-tc.ago)); got != tc.want {
+			t.Errorf("relTime(-%v) = %q, want %q", tc.ago, got, tc.want)
+		}
+	}
+}
+
+func TestEntryRowRelativeDateAndTooltip(t *testing.T) {
+	mod := time.Now().Add(-2 * time.Hour)
+	m := Model{Root: "/r", Cwd: "/r", Entries: []Entry{
+		{Name: "notes.txt", Path: "/r/notes.txt", Size: 2048, ModTime: mod},
+	}}
+	row := findID(Tree(m), ActionEntry+"0")
+	if row == nil {
+		t.Fatal("missing entry row")
+	}
+	if !strings.Contains(rowLabel(row), "2 h ago") {
+		t.Errorf("row text = %q, want relative date", rowLabel(row))
+	}
+	if !strings.HasPrefix(row.Tooltip, "Modified ") {
+		t.Errorf("tooltip = %q, want absolute mtime", row.Tooltip)
+	}
+	long := strings.Repeat("x", nameRunes+10)
+	m.Entries[0].Name, m.Entries[0].Path = long, "/r/"+long
+	row = findID(Tree(m), ActionEntry+"0")
+	if row.Tooltip != long {
+		t.Errorf("truncated-name tooltip = %q, want the full name", row.Tooltip)
 	}
 }
