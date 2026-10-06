@@ -44,6 +44,19 @@ func fitError(parent *Node, i int, child *Node, content Rect) error {
 		label(parent), i, child.Kind, label(child), content.W, content.H)
 }
 
+// clipsTextHeight reports whether a node may be cut down to the slot its row
+// offered instead of refusing layout. A font with taller vertical metrics than
+// the slot it was measured into must not close the surface holding it; the
+// painter already clips inside Bounds. Controls keep the refusal, so a control
+// that cannot fit is never laid out as if it were usable.
+func clipsTextHeight(n *Node) bool {
+	switch n.Kind {
+	case KindText, KindTab, KindTextField:
+		return true
+	}
+	return false
+}
+
 // Layout arranges a row root and its leaf children inside bounds, writing the
 // result into each node's Bounds. Children are placed in source order from the
 // left content edge and centred vertically in the padded content box.
@@ -175,8 +188,14 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		default:
-			if w < 0 || h < 0 || h > content.H {
+			if w < 0 || h < 0 {
 				return fitError(root, i, child, content)
+			}
+			if h > content.H {
+				if !clipsTextHeight(child) {
+					return fitError(root, i, child, content)
+				}
+				h = content.H
 			}
 			// Nested rows in a column of known width (a System card cell)
 			// must clip overflowing text rather than close the surface.

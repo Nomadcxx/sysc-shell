@@ -126,7 +126,7 @@ func checkRow(n *Node, box Rect, measure MeasureText, out *[]FitProblem) {
 				continue
 			}
 		default:
-			if w < 0 || h < 0 || h > content.H {
+			if w < 0 || h < 0 || (h > content.H && !clipsTextHeight(child)) {
 				*out = append(*out, FitProblem{Path: child.Path, Message: fitError(n, i, child, content).Error()})
 				continue
 			}
@@ -148,6 +148,9 @@ func checkRow(n *Node, box Rect, measure MeasureText, out *[]FitProblem) {
 		}
 		if w < 0 {
 			w = 0
+		}
+		if h > content.H {
+			h = content.H
 		}
 		checkNode(child, Rect{X: x, Y: content.Y, W: w, H: h}, measure, out)
 		x += w

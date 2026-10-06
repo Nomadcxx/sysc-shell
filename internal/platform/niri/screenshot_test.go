@@ -63,8 +63,12 @@ func (f *fakeScreenshotNiri) serve(conn net.Conn) {
 		return
 	}
 	if sc.Text() == request {
-		_, _ = conn.Write([]byte("{\"Ok\":\"Handled\"}\n"))
+		// Record the subscription before the reply: handshake consumes the reply
+		// before screenshot() sends the action, so the reply write is what
+		// orders the two. Closing the channel after the write left the
+		// ordering check racing the write on a loaded runner.
 		close(f.streamSubscribed)
+		_, _ = conn.Write([]byte("{\"Ok\":\"Handled\"}\n"))
 		<-f.actionDelivered
 		for _, e := range f.events {
 			_, _ = conn.Write([]byte(e + "\n"))

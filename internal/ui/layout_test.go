@@ -816,7 +816,9 @@ func TestLayoutNamesTheNodeThatDoesNotFit(t *testing.T) {
 	t.Parallel()
 
 	// The shape that reached a user: a row of declared Height 28 with Padding
-	// 8 leaves a 274x12 content box for a text that measures 16 tall.
+	// 8 leaves a 274x12 content box. Text taller than its slot is clipped now
+	// (see TestTallFontTextClipsToItsSlotInsteadOfRefusingTheRow), so the
+	// naming proof uses a control, which keeps the refusal.
 	row := &Node{Kind: KindRow, Padding: 8, Height: 28, Path: "root.children[1]",
 		Children: []*Node{
 			{Kind: KindText, Text: "Avg 70%", Path: "root.children[1].children[0]"},
@@ -824,11 +826,11 @@ func TestLayoutNamesTheNodeThatDoesNotFit(t *testing.T) {
 		}}
 	err := Layout(row, Rect{W: 290, H: 28}, fakeMeasure)
 	if err == nil {
-		t.Fatal("a 12px content box cannot hold a 16px text; want a rejection")
+		t.Fatal("a 12px content box cannot hold a 16px button; want a rejection")
 	}
 	for _, want := range []string{
 		"root.children[1]",
-		`text "Avg 70%" at root.children[1].children[0]`,
+		`button "Peak Claude 99%" at root.children[1].children[1]`,
 		"does not fit in 274x12",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -901,5 +903,40 @@ func TestButtonLabelEllipsizesInsteadOfRefusingTheButton(t *testing.T) {
 	}
 	if icon.Bounds.W != 20 {
 		t.Fatalf("icon was squeezed to %dpx", icon.Bounds.W)
+	}
+}
+
+// tallMeasure reports a line height of 40 for every glyph, the way a font with
+// generous vertical metrics measures on a runner that only has DejaVu or a
+// second-generation Inter. Text taller than its slot must be clipped to the
+// slot, not close the panel: the painter already truncates within Bounds.
+func tallMeasure(string, TextAttrs) (int, int) { return 80, 40 }
+
+func TestTallFontTextClipsToItsSlotInsteadOfRefusingTheRow(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{
+		Kind:    KindRow,
+		Padding: 4,
+		Children: []*Node{
+			{Kind: KindText, Text: "updates (2)"},
+			{Kind: KindTextField, Width: 200, Placeholder: "folder"},
+		},
+	}
+	slot := Rect{X: 0, Y: 0, W: 300, H: 32}
+	if err := Layout(root, slot, tallMeasure); err != nil {
+		t.Fatalf("row with an over-tall font must still lay out: %v", err)
+	}
+	want := slot.H - 2*root.Padding
+	for i, child := range root.Children {
+		if child.Bounds.H != want {
+			t.Fatalf("child %d height = %d, want the %dpx slot", i, child.Bounds.H, want)
+		}
+	}
+	if got := root.Children[0].Bounds.W; got != 80 {
+		t.Fatalf("clipped text width = %d, want the measured 80", got)
+	}
+	if got := root.Children[1].Bounds.W; got != 200 {
+		t.Fatalf("field width = %d, want its declared 200", got)
 	}
 }
