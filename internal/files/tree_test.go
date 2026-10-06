@@ -554,3 +554,43 @@ func TestTreeIconsExistInShellInventory(t *testing.T) {
 		walk(Tree(m))
 	}
 }
+
+func TestTreeDeleteConfirmReadsAsDialog(t *testing.T) {
+	m := Model{Root: "/r", Cwd: "/r", Mode: ModeOpen, Selected: 2,
+		Deleting: 2, DeletingNames: []string{"a.txt", "b.txt"}}
+	tree := Tree(m)
+	var card *v1.Node
+	var walk func(*v1.Node) bool
+	walk = func(n *v1.Node) bool {
+		if n == nil {
+			return false
+		}
+		for _, c := range n.Children {
+			if walk(c) {
+				return true
+			}
+		}
+		// Post-order with early return: the FIRST hit is the innermost column
+		// that holds the button — ancestors must not overwrite it.
+		if n.Kind == v1.KindColumn && findID(n, ActionDeleteOK) != nil {
+			card = n
+			return true
+		}
+		return false
+	}
+	walk(tree)
+	if card == nil {
+		t.Fatal("delete confirm card not found")
+	}
+	if card.Fill != "card" {
+		t.Errorf("card fill = %q, want neutral dialog surface", card.Fill)
+	}
+	for _, c := range card.Children {
+		if c.Kind == v1.KindText && c.Text == deleteCopy(m) && c.Tone != v1.ToneNormal {
+			t.Errorf("delete message tone = %q, want normal", c.Tone)
+		}
+	}
+	if b := findID(tree, ActionDeleteOK); b == nil || b.Fill != "error-container" || b.Tone != v1.ToneError {
+		t.Error("the destructive control must stay red")
+	}
+}
