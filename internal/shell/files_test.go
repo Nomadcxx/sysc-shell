@@ -121,9 +121,8 @@ func TestFilesActivateEntersOpensAndPicks(t *testing.T) {
 	}
 	opened := make(chan string, 1)
 	orig := filesOpenPath
-	filesOpenPath = func(path string) error {
+	filesOpenPath = func(path string, _ func(error)) {
 		opened <- path
-		return nil
 	}
 	t.Cleanup(func() { filesOpenPath = orig })
 
@@ -466,17 +465,23 @@ func TestFilesOpenPathSurvivesHandlerStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := filesOpenPath("/tmp/example"); err != nil {
-		t.Fatal(err)
-	}
+	reported := make(chan error, 1)
+	filesOpenPath("/tmp/example", func(err error) { reported <- err })
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(marker); err == nil {
-			return
+			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("xdg-open child was killed before it could run")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("xdg-open child was killed before it could run")
+	}
+	select {
+	case err := <-reported:
+		t.Fatalf("clean exit reported as a failure: %v", err)
+	case <-time.After(time.Second):
+	}
 }
 
 func TestFilesOpenModeLoadsOffLock(t *testing.T) {
@@ -838,9 +843,8 @@ func filesSessionWithTwo(t *testing.T) *filesSession {
 func TestFilesPointerSelectsWithoutOpening(t *testing.T) {
 	opened := make(chan string, 1)
 	orig := filesOpenPath
-	filesOpenPath = func(path string) error {
+	filesOpenPath = func(path string, _ func(error)) {
 		opened <- path
-		return nil
 	}
 	t.Cleanup(func() { filesOpenPath = orig })
 
@@ -1203,9 +1207,8 @@ func TestFilesCutButtonCutsTheClip(t *testing.T) {
 func TestFilesOpenControlActsOnTheSelectedFile(t *testing.T) {
 	opened := make(chan string, 1)
 	orig := filesOpenPath
-	filesOpenPath = func(path string) error {
+	filesOpenPath = func(path string, _ func(error)) {
 		opened <- path
-		return nil
 	}
 	t.Cleanup(func() { filesOpenPath = orig })
 
@@ -1237,6 +1240,42 @@ func TestFilesOpenControlActsOnTheSelectedFile(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the open control did not launch the handler")
 	}
+}
+
+// The desktop handler refusing a file (xdg-open exits non-zero) must surface
+// on the panel instead of opening nothing in silence.
+func TestFilesOpenFailureReachesThePanel(t *testing.T) {
+	reports := make(chan func(error), 1)
+	orig := filesOpenPath
+	filesOpenPath = func(path string, report func(error)) { reports <- report }
+	t.Cleanup(func() { filesOpenPath = orig })
+
+	sess := filesSessionWithTwo(t)
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	reg.mu.Lock()
+	reg.files = sess
+	h := &PanelHost{id: PanelFiles}
+	sess.pointerOnEntry(0, 0, 1)
+	if !h.activateFiles(reg, &ui.Node{Action: files.ActionOpen}) {
+		reg.mu.Unlock()
+		t.Fatal("open control not handled")
+	}
+	reg.mu.Unlock()
+
+	report := <-reports
+	report(errors.New("no application knows .txt"))
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		msg := sess.err
+		reg.mu.Unlock()
+		if strings.Contains(msg, "Open failed") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("handler failure never reached the panel (err = %q)", sess.err)
 }
 
 func waitFilesIdle(t *testing.T, r *Registry, sess *filesSession) {
