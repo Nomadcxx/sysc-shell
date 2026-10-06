@@ -93,3 +93,67 @@ func TestLockConfigReplaceFailureKeepsOldFile(t *testing.T) {
 		t.Fatal("left temporary file", err)
 	}
 }
+
+func TestLockConfigGpuKeysRoundTrip(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	body := `{"effect":"rain","palette":"nord","effect_backend":"gpu","effect_gpu_power_save":false,"blur_backdrop":false,"clock_24h":true,"effect_fps":60,"future":{"a":1}}`
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Backend() != "gpu" || c.GpuPowerSave() || c.BlurBackdrop() || !c.Clock24h || c.EffectFPS != 60 {
+		t.Fatalf("gpu keys not read: %+v", c)
+	}
+	if err = Save(p, c); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(p)
+	if !strings.Contains(string(data), `"future"`) {
+		t.Fatal("lost future fields", string(data))
+	}
+	again, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Backend() != "gpu" || again.EffectFPS != 60 {
+		t.Fatalf("round trip lost values: %+v", again)
+	}
+}
+
+func TestLockConfigDefaultsForMissingKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Backend() != "auto" || !c.GpuPowerSave() || !c.BlurBackdrop() || c.Clock24h || c.EffectFPS != 20 {
+		t.Fatalf("defaults not applied: %+v", c)
+	}
+}
+
+func TestLockConfigClampsEffectFps(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	for body, want := range map[string]int{
+		`{"effect_fps":200}`:  120,
+		`{"effect_fps":1}`:    10,
+		`{"effect_fps":0}`:    20,
+		`{"effect_fps":null}`: 20,
+	} {
+		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := Load(p)
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if c.EffectFPS != want {
+			t.Fatalf("%s: got %d want %d", body, c.EffectFPS, want)
+		}
+	}
+}
