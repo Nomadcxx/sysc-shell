@@ -371,7 +371,7 @@ func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
 	for _, name := range config.LaneNames() {
 		strip.Children = append(strip.Children, barLane(h, bar, name, width))
 		if h.barAdding == name {
-			strip.Children = append(strip.Children, barAddList(h, name, width))
+			strip.Children = append(strip.Children, barAddList(r, h, name, width))
 		}
 		// The options sit directly under the lane that owns the selection
 		// rather than after all three, so a widget in the Left lane does not
@@ -648,6 +648,38 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 		h.barAdding = ""
 		return h.barApply(r, laneName, next)
 
+	case strings.HasPrefix(action, "bar-add-plugin:"):
+		rest := strings.TrimPrefix(action, "bar-add-plugin:")
+		laneName, named, ok := strings.Cut(rest, ":")
+		if !ok || barLaneLabels[laneName] == "" {
+			return false
+		}
+		pluginID, entry, ok := strings.Cut(named, ":")
+		if !ok || pluginID == "" || entry == "" {
+			return false
+		}
+		lane := barLaneItems(h.barEditedBar(), laneName)
+		it := config.Item{ID: "plugin", Plugin: pluginID, Entry: entry}
+		config.NewMinter(h.draft).Ensure(&it)
+		next, err := config.InsertItem(lane, len(lane), it)
+		if err != nil {
+			return true
+		}
+		// A placement for a plugin that is not enabled renders nothing and
+		// reports nothing (6fbdc0df), so adding one enables the plugin in the
+		// same edit. The reverse is not true: disabling from the manager
+		// keeps the placement hidden-but-kept, which is its own documented
+		// behaviour.
+		if r.plugins != nil {
+			h.draft.Plugins = h.draft.Plugins.Clone()
+			if !slices.Contains(h.draft.Plugins.Enabled, pluginID) {
+				h.draft.Plugins.Enabled = append(h.draft.Plugins.Enabled, pluginID)
+				_ = r.plugins.enableLocked(pluginID, true)
+			}
+		}
+		h.barAdding = ""
+		return h.barApply(r, laneName, next)
+
 	case strings.HasPrefix(action, "bar-output:"):
 		h.barOutput = strings.TrimPrefix(action, "bar-output:")
 		if h.barOutput == "shared" {
@@ -680,20 +712,58 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 // barAddList is the add control's in-place list of the widget vocabulary. It
 // expands where it stands, the way Menu does, because no popup-over-panel
 // surface exists in this shell.
-func barAddList(h *PanelHost, laneName string, width int) *ui.Node {
+//
+// Plugins that declare widgets follow the built-ins: this is the only way a
+// plugin placement gets onto a bar, and the handler enables the plugin in the
+// same edit. r is nil when the strip is built without a registry, and then
+// only the built-ins are listed.
+func barAddList(r *Registry, h *PanelHost, laneName string, width int) *ui.Node {
 	m := h.metrics()
 	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: "Add to " + barLaneLabels[laneName],
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 	}}
-	for _, id := range config.WidgetIDs() {
-		col.Children = append(col.Children, &ui.Node{
-			Kind: ui.KindButton, Action: "bar-add-item:" + laneName + ":" + id,
-			Name: h.widgetName(config.Item{ID: id}), Role: "button", Focusable: true,
+	row := func(action, text string) *ui.Node {
+		return &ui.Node{
+			Kind: ui.KindButton, Action: action,
+			Name: text, Role: "button", Focusable: true,
 			Width: width, Height: m.StandardControl, Shape: ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindText, Text: h.widgetName(config.Item{ID: id})}},
-		})
+			Children: []*ui.Node{{Kind: ui.KindText, Text: text}},
+		}
 	}
+	for _, id := range config.WidgetIDs() {
+		text := h.widgetName(config.Item{ID: id})
+		col.Children = append(col.Children, row("bar-add-item:"+laneName+":"+id, text))
+	}
+	if r == nil || r.plugins == nil {
+		return col
+	}
+	var pluginRows []*ui.Node
+	for _, c := range r.plugins.discovered().Plugins {
+		if !c.Startable() || len(c.Manifest.Widgets) == 0 {
+			continue
+		}
+		name := c.Manifest.Name
+		if name == "" {
+			name = c.Manifest.ID
+		}
+		for _, w := range c.Manifest.Widgets {
+			text := name
+			if w.Label != "" && w.Label != name {
+				text = name + " — " + w.Label
+			}
+			action := "bar-add-plugin:" + laneName + ":" + c.Manifest.ID + ":" + w.ID
+			pluginRows = append(pluginRows, row(action, text))
+		}
+	}
+	if len(pluginRows) == 0 {
+		return col
+	}
+	col.Children = append(col.Children, &ui.Node{
+		Kind: ui.KindText, Text: "Plugins",
+		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+	})
+	col.Children = append(col.Children, pluginRows...)
 	return col
 }
 

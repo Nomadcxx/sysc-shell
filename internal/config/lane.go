@@ -205,11 +205,16 @@ func (m *Minter) Ensure(it *Item) string {
 	}
 	// The id is derived from the widget it names, so a configuration file
 	// stays readable: "clock-2" says what it is, where a counter would not.
-	// A plugin placement is named for its entry rather than the literal
-	// "plugin", for the same reason.
+	// A plugin placement is named for the plugin, so "faith-1" says what it
+	// is where the literal "plugin" or the entry ("bar") would not.
 	stem := it.ID
-	if it.ID == "plugin" && it.Entry != "" {
-		stem = it.Entry
+	if it.ID == "plugin" {
+		switch {
+		case it.Plugin != "":
+			stem = it.Plugin[strings.LastIndex(it.Plugin, ".")+1:]
+		case it.Entry != "":
+			stem = it.Entry
+		}
 	}
 	stem = strings.TrimSuffix(stem, "-")
 	for n := 1; ; n++ {

@@ -215,6 +215,26 @@ func TestMintedIdsAvoidWhatTheConfigurationAlreadyUses(t *testing.T) {
 	}
 }
 
+// A plugin placement is named for its plugin and not for the literal "plugin"
+// or the entry point, so a bar reads "faith-1" where a counter would not.
+func TestMintedPluginIdsNameThePlugin(t *testing.T) {
+	t.Parallel()
+	m := NewMinter(Config{})
+	it := Item{ID: "plugin", Plugin: "org.sysc.faith", Entry: "bar"}
+	if got := m.Ensure(&it); got != "faith-1" {
+		t.Fatalf("minted %q, want faith-1", got)
+	}
+	second := Item{ID: "plugin", Plugin: "org.sysc.faith", Entry: "bar"}
+	if got := m.Ensure(&second); got != "faith-2" {
+		t.Fatalf("minted %q, want faith-2", got)
+	}
+	// An entry with no plugin still names something, as it did before.
+	third := Item{ID: "plugin", Entry: "bar"}
+	if got := m.Ensure(&third); got != "bar-1" {
+		t.Fatalf("minted %q, want bar-1", got)
+	}
+}
+
 // The whole point of the pure functions: what they produce has to be something
 // the loader will accept. This is the round-trip guard applied to mutations.
 func TestAMutatedLaneSurvivesTheLoader(t *testing.T) {
