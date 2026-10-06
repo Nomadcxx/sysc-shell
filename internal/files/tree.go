@@ -52,6 +52,8 @@ const (
 	// Below this panel width the toolbar collapses to icon-only; accessible
 	// Name keeps the label either way.
 	toolbarLabelW = 600
+	// listSkeletonW is the widest skeleton bar; shorter ones step down.
+	listSkeletonW = 300
 	minListW      = 160
 	minListH      = 80
 	nameRunes     = 48
@@ -198,6 +200,12 @@ func Tree(m Model) *v1.Node {
 	rows := make([]*v1.Node, 0, len(m.Entries)+1)
 	if m.Loading {
 		rows = append(rows, subtle("Loading…"))
+		if len(m.Entries) == 0 {
+			// Initial load: paint skeleton bars instead of an empty list so
+			// the panel reads as working, not broken. ponytail: static bars;
+			// shimmer animation when someone ever measures the wait.
+			rows = append(rows, skeletonRows()...)
+		}
 	}
 	// Entries stay painted while a reload is in flight: a slow directory must
 	// not blank the listing the user is reading.
@@ -231,6 +239,16 @@ func Tree(m Model) *v1.Node {
 
 func subtle(text string) *v1.Node {
 	return &v1.Node{Kind: v1.KindText, Text: text, Size: "caption", Tone: v1.ToneSubtle}
+}
+
+// skeletonRows stands in for rows a first listing has not delivered yet.
+func skeletonRows() []*v1.Node {
+	widths := []int{listSkeletonW, listSkeletonW * 3 / 4, listSkeletonW * 5 / 8}
+	rows := make([]*v1.Node, 0, 3)
+	for _, w := range widths {
+		rows = append(rows, &v1.Node{Kind: v1.KindRow, Height: 24, Width: w, Fill: "chip", Radius: 8})
+	}
+	return rows
 }
 
 // deleteCopy names what dies. Remove is recursive and there is no undo, so one

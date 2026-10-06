@@ -660,3 +660,29 @@ func TestTreeToolbarCollapsesAtNarrowWidth(t *testing.T) {
 		t.Errorf("selection row collapsed at narrow width: %+v", n)
 	}
 }
+
+func TestTreeInitialLoadShowsSkeleton(t *testing.T) {
+	tree := Tree(Model{Root: "/r", Cwd: "/r", Width: PanelWidth, Height: PanelHeight, Loading: true})
+	if findText(tree, "Empty folder") != nil {
+		t.Fatal("initial load looked empty")
+	}
+	if findText(tree, "Loading…") == nil {
+		t.Fatal("initial load lost the loading row")
+	}
+	bars := 0
+	list := findKind(tree, v1.KindList)
+	if list == nil {
+		t.Fatal("missing list")
+	}
+	for _, c := range list.Children {
+		if c.Kind == v1.KindRow && c.Fill == "chip" {
+			bars++
+		}
+	}
+	if bars != 3 {
+		t.Fatalf("skeleton bars = %d, want 3", bars)
+	}
+	if err := v1.Validate(tree, v1.ViewPanel); err != nil {
+		t.Errorf("skeleton tree failed validation: %v", err)
+	}
+}
