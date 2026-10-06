@@ -623,13 +623,14 @@ func (r *Registry) pasteFilesLocked(sess *filesSession) {
 		return
 	}
 	var err error
+	var made []string
 	if sess.clipCut {
-		_, err = files.MoveInto(sess.root, filesCwd(sess), sess.clip)
+		made, err = files.MoveInto(sess.root, filesCwd(sess), sess.clip)
 	} else {
-		_, err = files.CopyInto(sess.root, filesCwd(sess), sess.clip)
+		made, err = files.CopyInto(sess.root, filesCwd(sess), sess.clip)
 	}
 	if err != nil {
-		sess.err = err.Error()
+		sess.err = files.PartialTransfer(sess.clipCut, len(made), len(sess.clip), err)
 		if h := r.panelHosts[PanelFiles]; h != nil {
 			r.rebuildPanel(h)
 		}
