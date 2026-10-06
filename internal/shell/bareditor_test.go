@@ -1,11 +1,14 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -589,6 +592,78 @@ func TestAddAndRemoveReachTheDraft(t *testing.T) {
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "battery" {
 		t.Errorf("after removing: %q", got)
+	}
+}
+
+// writeWidgetPlugin writes a startable plugin that declares one bar widget,
+// and returns the root for it.
+func writeWidgetPlugin(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "org.sysc.faith")
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const manifest = `{"schema":1,"id":"org.sysc.faith","name":"Faith","version":"1.0.0",
+"protocol":{"major":1,"minor":16},"exec":"bin/run","capabilities":[],
+"requires":{"commands":[]},"widgets":[{"id":"bar"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin", "run"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func bindWidgetPlugin(t *testing.T, reg *Registry, root string) {
+	t.Helper()
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sysc-1017: a plugin placement added from the editor enables its plugin in
+// the same edit. A placement for a disabled plugin renders nothing and says
+// nothing (6fbdc0df), so without the reconciliation the add looks like a no-op.
+func TestAddingAPluginWidgetEnablesThePlugin(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
+	bindWidgetPlugin(t, reg, writeWidgetPlugin(t))
+	if !barActivateMu(reg, h, "bar-add-plugin:left:org.sysc.faith:bar") {
+		t.Fatal("add was not handled")
+	}
+	last := h.draft.Bar.Left[len(h.draft.Bar.Left)-1]
+	if last.ID != "plugin" || last.Plugin != "org.sysc.faith" || last.Entry != "bar" || last.Instance != "faith-1" {
+		t.Fatalf("added %+v", last)
+	}
+	if !slices.Contains(h.draft.Plugins.Enabled, "org.sysc.faith") {
+		t.Fatal("the draft does not enable the plugin it places")
+	}
+	if !slices.Contains(reg.cfg.Plugins.Enabled, "org.sysc.faith") {
+		t.Fatal("the live configuration does not enable the plugin either")
+	}
+}
+
+// The add list offers one row per widget of every startable plugin, and only
+// those; the handler's action string is what the row has to match.
+func TestBarAddListNamesThePluginsWidgets(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{})
+	bindWidgetPlugin(t, reg, writeWidgetPlugin(t))
+	h.barAdding = "left"
+	reg.mu.Lock()
+	tree := barAddList(reg, h, "left", 240)
+	reg.mu.Unlock()
+	actions := map[string]bool{}
+	for _, child := range tree.Children {
+		actions[child.Action] = true
+	}
+	if !actions["bar-add-plugin:left:org.sysc.faith:bar"] {
+		t.Fatalf("the add list does not offer the plugin's widget: %v", actions)
 	}
 }
 
