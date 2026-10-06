@@ -426,3 +426,35 @@ func TestNestedRowPinsControlWithoutOverlappingContent(t *testing.T) {
 		})
 	}
 }
+
+// TestColumnHonoursExplicitHeight pins the reserved-box rule the launcher
+// label column relies on: an explicit column height wins over the measured
+// children, so CenterY keeps slack (sysc-1016 follow-up).
+func TestColumnHonoursExplicitHeight(t *testing.T) {
+	t.Parallel()
+	measure := func(string, TextAttrs) (int, int) { return 40, 16 }
+	children := []*Node{{Kind: KindText, Text: "short"}}
+	got, err := columnChildHeight(&Node{Kind: KindColumn, Height: 40, Children: children}, 200, measure)
+	if err != nil {
+		t.Fatalf("column with height: %v", err)
+	}
+	if got != 40 {
+		t.Fatalf("reserved box discarded: got %d, want 40", got)
+	}
+	// Without an explicit height the children still measure normally, and the
+	// drop zone shares the rule.
+	open, err := columnChildHeight(&Node{Kind: KindColumn, Children: children}, 200, measure)
+	if err != nil {
+		t.Fatalf("column without height: %v", err)
+	}
+	if open == 40 {
+		t.Fatalf("unheightened column copied the reserved box: %d", open)
+	}
+	zone, err := columnChildHeight(&Node{Kind: KindDropZone, Height: 24}, 200, measure)
+	if err != nil {
+		t.Fatalf("drop zone: %v", err)
+	}
+	if zone != 24 {
+		t.Fatalf("drop zone reserved box: got %d, want 24", zone)
+	}
+}
