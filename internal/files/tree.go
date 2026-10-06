@@ -162,10 +162,12 @@ func Tree(m Model) *v1.Node {
 		ok := toolButton(ActionDeleteOK, "delete", "Delete", "Confirm delete", false)
 		ok.Fill = "error-container"
 		ok.Tone = v1.ToneError
+		// P1.9: the confirm reads as a dialog, not an error — neutral card
+		// surface and message; only the destructive control stays red.
 		kids = append(kids, &v1.Node{
-			Kind: v1.KindColumn, Fill: "error-container", Radius: 12, Padding: cardPad, Gap: treeGap,
+			Kind: v1.KindColumn, Fill: "card", Radius: 12, Padding: cardPad, Gap: treeGap,
 			Children: []*v1.Node{
-				{Kind: v1.KindText, Text: deleteCopy(m), Tone: v1.ToneError},
+				{Kind: v1.KindText, Text: deleteCopy(m)},
 				{Kind: v1.KindRow, Gap: treeGap, Children: []*v1.Node{
 					ok,
 					toolButton(ActionDeleteNo, "close", "Cancel", "Cancel delete", false),
