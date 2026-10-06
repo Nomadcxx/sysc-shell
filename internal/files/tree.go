@@ -393,6 +393,8 @@ func entryRow(i int, e Entry, thumb bool) *v1.Node {
 	leading := &v1.Node{Kind: v1.KindIcon, Icon: "description"}
 	if e.Dir {
 		leading.Icon = "folder_open"
+	} else {
+		leading.Icon = typeIcon(e.Name)
 	}
 	if thumb {
 		leading = &v1.Node{Kind: v1.KindImage, Path: e.Path, ImageSize: 24}
@@ -469,6 +471,33 @@ func humanSize(n int64) string {
 		return fmt.Sprintf("%.1f MB", float64(n)/float64(k*k))
 	default:
 		return fmt.Sprintf("%.1f GB", float64(n)/float64(k*k*k))
+	}
+}
+
+// codeExts are the extensions whose rows get a terminal glyph; deliberately
+// a small obvious set, not a full language registry.
+const codeExts = " .go .py .js .ts .jsx .tsx .c .h .rs .java .sh .bash .json .yaml .yml .toml .sql .css .html "
+
+// typeIcon picks a row glyph by extension; every name it returns must exist
+// in the shell's Material subset (TestTreeIconsExistInShellInventory guards
+// that). Archives keep the plain description glyph: ponytail — the subset has
+// no folder-zip, and internal/render/icons/material/build.py (pinned Apache-2.0
+// Material Symbols Rounded upstream, see SOURCE.md) is the upgrade path when
+// an operator wants a true archive glyph.
+func typeIcon(name string) string {
+	if imageExt(name) {
+		return "wallpaper"
+	}
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi":
+		return "play_arrow"
+	case ".mp3", ".m4a", ".wav", ".ogg", ".flac", ".opus":
+		return "music_note"
+	default:
+		if strings.Contains(codeExts, strings.ToLower(filepath.Ext(name))) {
+			return "terminal"
+		}
+		return "description"
 	}
 }
 
