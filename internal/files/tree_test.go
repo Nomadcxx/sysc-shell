@@ -418,8 +418,23 @@ func TestTreeSelectedCaption(t *testing.T) {
 	if findText(tree, "2 selected") == nil {
 		t.Fatal("missing selection caption")
 	}
-	if findText(Tree(Model{Root: "/r", Cwd: "/r", Mode: ModeOpen}), "0 selected") != nil {
-		t.Fatal("empty selection still showed a count")
+	empty := Tree(Model{Root: "/r", Cwd: "/r", Mode: ModeOpen})
+	if findText(empty, "0 selected") == nil {
+		t.Fatal("selection footer vanished with no selection")
+	}
+	if findID(empty, ActionClear) != nil {
+		t.Fatal("Clear offered with nothing selected")
+	}
+	if findID(tree, ActionClear) == nil {
+		t.Fatal("missing Clear selection button")
+	}
+	// The footer reserves its height: selecting must not resize the list.
+	plain, sel := findKind(empty, v1.KindList), findKind(tree, v1.KindList)
+	if plain == nil || sel == nil {
+		t.Fatal("missing list")
+	}
+	if plain.Height != sel.Height {
+		t.Fatalf("list height %d without selection, %d with: selection shifts the layout", plain.Height, sel.Height)
 	}
 }
 
