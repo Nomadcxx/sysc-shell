@@ -476,6 +476,10 @@ func (h *PanelHost) activateFiles(r *Registry, n *ui.Node) bool {
 		sess.pendingDelete = nil
 		r.rebuildPanel(h)
 		return true
+	case files.ActionClear:
+		sess.clearSelected()
+		r.rebuildPanel(h)
+		return true
 	}
 	if i := files.CrumbIndex(n.Action); i >= 0 {
 		next, err := files.CrumbTarget(sess.root, filesCwd(sess), i)

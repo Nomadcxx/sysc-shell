@@ -25,6 +25,7 @@ const (
 	ActionHidden   = "files-hidden"
 	ActionMkdir    = "files-mkdir"
 	ActionCopy     = "files-copy"
+	ActionClear    = "files-clear"
 	ActionCut      = "files-cut"
 	ActionPaste    = "files-paste"
 	ActionRename   = "files-rename"
@@ -130,9 +131,11 @@ func Tree(m Model) *v1.Node {
 		})
 		chrome += treeGap + cardPad*2 + captionH + treeGap + chooseH
 	}
+	// The selection footer is always painted and its height reserved, so
+	// selecting a file never shifts the list. ponytail: buttons appear inside
+	// the fixed row; an overlay pill would cost more layout machinery.
+	sel := []*v1.Node{subtle(fmt.Sprintf("%d selected", m.Selected))}
 	if m.Selected > 0 {
-		var sel []*v1.Node
-		sel = append(sel, subtle(fmt.Sprintf("%d selected", m.Selected)))
 		sel = append(sel, toolButton(ActionCopy, "content_copy", "Copy", "Copy", false))
 		sel = append(sel, toolButton(ActionCut, "swap_vert", "Cut", "Cut", false))
 		if m.SelectedFile && m.Rename == "" && m.Deleting == 0 {
@@ -151,9 +154,10 @@ func Tree(m Model) *v1.Node {
 			del.Tone = v1.ToneError
 			sel = append(sel, del)
 		}
-		kids = append(kids, &v1.Node{Kind: v1.KindRow, Gap: treeGap, Children: sel})
-		chrome += treeGap + chooseH
+		sel = append(sel, toolButton(ActionClear, "close", "Clear", "Clear selection", false))
 	}
+	kids = append(kids, &v1.Node{Kind: v1.KindRow, Gap: treeGap, Children: sel})
+	chrome += treeGap + chooseH
 	if m.Deleting > 0 {
 		ok := toolButton(ActionDeleteOK, "delete", "Delete", "Confirm delete", false)
 		ok.Fill = "error-container"
