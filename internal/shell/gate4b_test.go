@@ -119,7 +119,7 @@ func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc})
 
-	s := findScroll(h.root)
+	s := findSettingsBody(h.root)
 	if s == nil {
 		t.Fatal("settings tree has no scroll area")
 	}

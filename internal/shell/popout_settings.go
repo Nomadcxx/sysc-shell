@@ -149,12 +149,19 @@ func settingsBodyWidth(h *PanelHost) int {
 	return max(panelWidth-2*pad-settingsRailWidth-theme.MarginXL, 0)
 }
 
+// settingsBodyKey and settingsRailKey name the pane's two scrolls, so a lookup
+// for the content does not land on the section list or the other way round.
+const (
+	settingsBodyKey = "settings-body"
+	settingsRailKey = "settings-rail"
+)
+
 // settingsBody is the one scrolling column the pane's content sits in. It
 // carries the retained offset, so an edit that rebuilds the tree leaves the
 // user where they were rather than at the top.
 func settingsBody(h *PanelHost, gap int, children ...*ui.Node) *ui.Node {
 	return &ui.Node{
-		Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: gap,
+		Kind: ui.KindScroll, Key: settingsBodyKey, Width: settingsBodyWidth(h), Gap: gap,
 		ScrollOffset: h.settingsScroll, Children: children,
 	}
 }
@@ -169,7 +176,9 @@ func settingsScrollOffset(root *ui.Node) int {
 		if n == nil || out != 0 {
 			return
 		}
-		if n.Kind == ui.KindScroll {
+		// The rail is a scroll too, and it never scrolls; the body's offset is
+		// the one worth restoring.
+		if n.Kind == ui.KindScroll && n.Key == settingsBodyKey {
 			out = n.ScrollOffset
 			return
 		}
@@ -185,7 +194,7 @@ func settingsScrollOffset(root *ui.Node) int {
 // caption and its sections as icon-and-name tabs (settings redesign D5). It
 // runs the full height of the pane, so the title and page tabs sit over the
 // content only, and search stays the first thing the keyboard reaches.
-func settingsRail(h *PanelHost, section string) *ui.Node {
+func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
@@ -193,7 +202,10 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 	search.Width = settingsRailWidth
 	settingsFieldInset(h, search)
 	search.Placeholder = "Search settings…"
-	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: settingsRailGap(), Children: []*ui.Node{search}}
+	// Bounded like the content column: a tall font, a short pane or a long
+	// section list scrolls the rail instead of pushing its last tab past the
+	// pane's content edge.
+	rail := &ui.Node{Kind: ui.KindScroll, Key: settingsRailKey, Width: settingsRailWidth, Height: settingsContentHeight(h, head), Gap: settingsRailGap(), Children: []*ui.Node{search}}
 	item, itemPad := settingsRailItemHeight(h, search)
 	for _, c := range settings.SectionClusters() {
 		rail.Children = append(rail.Children, &ui.Node{
@@ -335,7 +347,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 		right := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: append(append([]*ui.Node{}, head...), content)}
 		return &ui.Node{Kind: ui.KindColumn, Padding: h.metrics().PanelPadding, Children: []*ui.Node{{
-			Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{settingsRail(h, section), right},
+			Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{settingsRail(h, section, head), right},
 		}}}
 	}
 

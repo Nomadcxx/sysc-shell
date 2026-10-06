@@ -545,7 +545,9 @@ func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 		Kind: ui.KindRow, Gap: theme.MarginL,
 		Children: []*ui.Node{
 			launcherIconNode(r, h, e),
-			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: labels},
+			// Height pins the label block to the icon slot: two labels must not
+			// outgrow the row and eat the capsule's 16 foot on a tall font.
+			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Height: launcherIconSlot, Children: labels},
 		},
 	}
 }

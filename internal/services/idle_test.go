@@ -287,7 +287,11 @@ func TestIdleServiceStalledRequestOwnerCannotWedge(t *testing.T) {
 	if got := <-reqs; got.ID != 99 { // free the queue
 		t.Fatalf("queued request = %+v, want the placeholder", got)
 	}
-	svc.SetInhibited(false) // the dropped arm must be reissued here
+	// The flood's parity does not decide the machine's final state, so the
+	// re-arm needs a real transition: inhibited then not. Both recomputes
+	// find a free slot now, and the second one arms the blank timeout.
+	svc.SetInhibited(true)
+	svc.SetInhibited(false)
 	requireReq(t, reqs, wayland.IdleRequest{ID: uint64(IdleBlank), TimeoutMS: 600000})
 }
 
