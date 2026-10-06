@@ -187,7 +187,7 @@ func (r *Registry) startFilesLoadLocked(sess *filesSession, cwd string) {
 		}
 		sess.loading = false
 		if err != nil {
-			sess.err = err.Error()
+			sess.err = files.LoadErrorCopy(err)
 		} else {
 			sess.cwd, sess.entries, sess.truncated, sess.err = cwd, ents, truncated, ""
 		}
