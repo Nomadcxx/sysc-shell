@@ -1,6 +1,7 @@
 package files
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,5 +194,38 @@ func TestPeekPreviewReadsText(t *testing.T) {
 	}
 	if got.Text != "hello preview" || got.Image != "" {
 		t.Fatalf("preview = %+v", got)
+	}
+}
+
+func TestCopyIntoCapReportsPartialSuccess(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	for _, d := range []string{src, dst} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var srcs []string
+	for i := 0; i < maxCopyFiles+1; i++ {
+		p := filepath.Join(src, fmt.Sprintf("f%03d", i))
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		srcs = append(srcs, p)
+	}
+	made, err := CopyInto(root, dst, srcs)
+	if err == nil {
+		t.Fatal("cap did not trip")
+	}
+	if len(made) == 0 || len(made) >= len(srcs) {
+		t.Fatalf("made %d of %d", len(made), len(srcs))
+	}
+	msg := PartialTransfer(false, len(made), len(srcs), err)
+	if !strings.HasPrefix(msg, fmt.Sprintf("Copied %d of %d before stopping: ", len(made), len(srcs))) {
+		t.Errorf("msg = %q", msg)
+	}
+	if raw := PartialTransfer(true, 0, len(srcs), err); raw != err.Error() {
+		t.Errorf("no partial: %q, want raw error", raw)
 	}
 }

@@ -50,6 +50,21 @@ func MoveInto(root, cwd string, srcs []string) ([]string, error) {
 	return transferInto(root, cwd, srcs, true)
 }
 
+// PartialTransfer names how many entries landed before a capped transfer
+// stopped, so a failed Copy/Move reports partial success instead of implying
+// nothing happened. ponytail: caps abort mid-transfer; a worker with progress
+// would replace this message path.
+func PartialTransfer(cut bool, made, total int, err error) string {
+	verb := "Copied"
+	if cut {
+		verb = "Moved"
+	}
+	if made == 0 {
+		return err.Error()
+	}
+	return fmt.Sprintf("%s %d of %d before stopping: %v", verb, made, total, err)
+}
+
 func transferInto(root, cwd string, srcs []string, cut bool) ([]string, error) {
 	here, err := Contain(root, cwd)
 	if err != nil {
