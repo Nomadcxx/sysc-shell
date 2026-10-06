@@ -64,7 +64,7 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 	for _, n := range walk(h.root) {
 		seen[n.Kind] = true
 	}
-	if s := findScroll(h.root); s != nil && s.Item != nil {
+	if s := findSettingsBody(h.root); s != nil && s.Item != nil {
 		for i := 0; i < s.ItemCount; i++ {
 			for _, n := range walk(s.Item(i)) {
 				seen[n.Kind] = true
@@ -292,7 +292,7 @@ func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
 	if heading == nil {
 		t.Error("no group heading was rendered")
 	}
-	if findScroll(h.root) == nil {
+	if findSettingsBody(h.root) == nil {
 		t.Error("the section does not scroll")
 	}
 }
@@ -1329,7 +1329,7 @@ func TestSettingsBodyLeavesRoomForTheRail(t *testing.T) {
 	h.place.Panel = ui.Rect{W: 900, H: 760}
 	h.root = settingsTree(nil, h)
 
-	body := findScroll(h.root)
+	body := findSettingsBody(h.root)
 	if body == nil {
 		t.Fatal("no scrolling body")
 	}
@@ -1829,7 +1829,7 @@ func TestSearchHitsNameTheirPage(t *testing.T) {
 func TestRailIsLabelledAndClustered(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
-	rail := settingsRail(h, "Bar")
+	rail := settingsRail(h, "Bar", nil)
 	var captions, tabs []string
 	for _, n := range walk(rail) {
 		if n.Role == "tab" {

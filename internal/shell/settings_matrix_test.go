@@ -133,7 +133,7 @@ func TestPalettesEditorLaysOutEverywhere(t *testing.T) {
 			}
 			reg.mu.Lock()
 			root := reg.panelHosts[PanelSettings].root
-			body := findScroll(root)
+			body := findSettingsBody(root)
 			save := findAction(root, "palette-save")
 			reg.mu.Unlock()
 			if body == nil || body.Bounds.H < int(panel.Height)/2 {

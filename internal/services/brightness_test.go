@@ -456,7 +456,7 @@ func TestBrightnessInotifyPoke(t *testing.T) {
 	fixtureSysfsIn(t, root, "second", 500, 1000)
 	// The ticker is an hour away; only an inotify poke can make the poll
 	// loop notice the new backlight.
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(20 * time.Second) // slack for a loaded -race runner; the poke itself is immediate
 	for {
 		if got := b.CachedDisplays(); len(got) == 2 {
 			for _, d := range got {

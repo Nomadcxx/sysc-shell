@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Supersede in-flight runs for the same branch or PR so a burst of pushes does
+# not queue a full build each.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Panel layout tests measure text with the configured family
+      # (config.Default() names Inter). Installing it keeps runner metrics
+      # close to the maintainer's machine instead of the fallback face.
+      # raster.FindFont in sysc-terminal probes the Arch font layout, so Noto
+      # is installed and the probed directory is pointed at the Ubuntu one.
+      - name: install test fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-inter fonts-noto-core
+          sudo mkdir -p /usr/share/fonts/noto
+          sudo ln -sf /usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf \
+            /usr/share/fonts/noto/NotoSansMono-Regular.ttf
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -count=1 ./...
+      - name: build
+        run: go build ./...

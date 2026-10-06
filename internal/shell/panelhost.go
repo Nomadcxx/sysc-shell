@@ -2529,9 +2529,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		h.afterPluginStoreScroll(r)
 		return true
 	case keyPageUp:
-		return h.scrollBy(-max(h.logicalH, 1))
+		return h.scrollBodyBy(-max(h.logicalH, 1))
 	case keyPageDown:
-		return h.scrollBy(max(h.logicalH, 1))
+		return h.scrollBodyBy(max(h.logicalH, 1))
 	case keySpace, keyEnter:
 		if n := h.focused(); n != nil && h.anim != nil && ui.Animated(n) {
 			if key := n.StableKey(); key != "" {
@@ -2611,7 +2611,18 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 }
 
 func (h *PanelHost) scrollBy(delta int) bool {
-	s := scrollAt(h.root, h.hoverX, h.hoverY)
+	return h.scrollByOn(scrollAt(h.root, h.hoverX, h.hoverY), delta)
+}
+
+// scrollBodyBy pages the panel's content. Keyboard paging has no pointer to
+// aim with, and a panel can hold chrome scrollables beside its content: the
+// Settings pane's rail is one, and tree order would hand every page key to
+// it. The wheel still goes to whatever is under the pointer.
+func (h *PanelHost) scrollBodyBy(delta int) bool {
+	return h.scrollByOn(scrollBody(h.root), delta)
+}
+
+func (h *PanelHost) scrollByOn(s *ui.Node, delta int) bool {
 	if s == nil {
 		return false
 	}
@@ -2626,8 +2637,34 @@ func (h *PanelHost) scrollBy(delta int) bool {
 	return true
 }
 
+// scrollBody is the scrollable a panel scrolls as a whole. A panel can hold
+// more than one: the Settings pane's rail is chrome beside its content, and
+// tree order hands the offset to whichever was built first. The keyed body
+// wins when the tree has one; otherwise the first scrollable does.
+func scrollBody(root *ui.Node) *ui.Node {
+	if s := keyedScroll(root, settingsBodyKey); s != nil {
+		return s
+	}
+	return findScroll(root)
+}
+
+func keyedScroll(n *ui.Node, key string) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if (n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList) && n.Key == key {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := keyedScroll(c, key); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
 func (h *PanelHost) scrollTo(off int) bool {
-	s := findScroll(h.root)
+	s := scrollBody(h.root)
 	if s == nil {
 		return false
 	}
@@ -3447,7 +3484,7 @@ func (h *PanelHost) revealFocusedRow() {
 	if n == nil || n.Bounds.H <= 0 {
 		return
 	}
-	s := findScroll(h.root)
+	s := scrollBody(h.root)
 	if s == nil || s.Bounds.H <= 0 {
 		return
 	}

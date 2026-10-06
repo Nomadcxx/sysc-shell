@@ -109,8 +109,19 @@ func newStoreFixtureWithInterval(t *testing.T, local map[string]string, checkInt
 		Local:         func() map[string]string { return local },
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go f.st.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.st.Run(ctx)
+	}()
+	// Cancel and wait for Run before the t.TempDir cleanups fire (they were
+	// registered first, so LIFO runs this one first). Without the wait the
+	// refresher can recreate cache files while TempDir removes them, failing
+	// cleanup with "directory not empty".
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 	return f
 }
 

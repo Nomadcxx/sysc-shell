@@ -926,7 +926,7 @@ func TestAnEditKeepsTheScrollPosition(t *testing.T) {
 	scroll := func() *ui.Node {
 		var out *ui.Node
 		walkNodes(h.root, func(n *ui.Node) {
-			if n.Kind == ui.KindScroll && out == nil {
+			if n.Kind == ui.KindScroll && n.Key == settingsBodyKey && out == nil {
 				out = n
 			}
 		})

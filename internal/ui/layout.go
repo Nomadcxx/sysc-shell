@@ -44,6 +44,19 @@ func fitError(parent *Node, i int, child *Node, content Rect) error {
 		label(parent), i, child.Kind, label(child), content.W, content.H)
 }
 
+// clipsTextHeight reports whether a node may be cut down to the slot its row
+// offered instead of refusing layout. A font with taller vertical metrics than
+// the slot it was measured into must not close the surface holding it; the
+// painter already clips inside Bounds. Controls keep the refusal, so a control
+// that cannot fit is never laid out as if it were usable.
+func clipsTextHeight(n *Node) bool {
+	switch n.Kind {
+	case KindText, KindTab, KindTextField:
+		return true
+	}
+	return false
+}
+
 // Layout arranges a row root and its leaf children inside bounds, writing the
 // result into each node's Bounds. Children are placed in source order from the
 // left content edge and centred vertically in the padded content box.
@@ -175,8 +188,14 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		default:
-			if w < 0 || h < 0 || h > content.H {
+			if w < 0 || h < 0 {
 				return fitError(root, i, child, content)
+			}
+			if h > content.H {
+				if !clipsTextHeight(child) {
+					return fitError(root, i, child, content)
+				}
+				h = content.H
 			}
 			// Nested rows in a column of known width (a System card cell)
 			// must clip overflowing text rather than close the surface.
@@ -288,20 +307,38 @@ func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
 	if err != nil {
 		return err
 	}
-	if w > inner.W || h > inner.H {
+	if h > inner.H {
 		return fmt.Errorf("button content %dx%d does not fit in %dx%d", w, h, inner.W, inner.H)
 	}
-	x := inner.X + (inner.W-w)/2
+	widths := make([]int, len(n.Children))
+	heights := make([]int, len(n.Children))
+	consumed := 0
 	for i, child := range n.Children {
-		if i > 0 {
-			x += n.Gap
-		}
 		cw, ch, err := measureNode(child, inner.H, measure)
 		if err != nil {
 			return err
 		}
-		child.Bounds = Rect{X: x, Y: inner.Y + (inner.H-ch)/2, W: cw, H: ch}
-		x += cw
+		if i > 0 {
+			consumed += n.Gap
+		}
+		// A label that overruns the button is ellipsized by the painter, which
+		// truncates text to the node's bounds. Refusing the button instead
+		// costs the user the panel it sits in, and a system sans-serif a
+		// couple of pixels wider than the design font reaches this.
+		if (child.Kind == KindText || child.Kind == KindTab) && consumed+cw > inner.W {
+			cw = max(inner.W-consumed, 0)
+		}
+		widths[i], heights[i] = cw, ch
+		consumed += cw
+	}
+	x := inner.X + max(inner.W-consumed, 0)/2
+	for i, child := range n.Children {
+		if i > 0 {
+			x += n.Gap
+		}
+		child.Bounds = Rect{X: x, Y: inner.Y + (inner.H-heights[i])/2,
+			W: widths[i], H: heights[i]}
+		x += widths[i]
 	}
 	return nil
 }

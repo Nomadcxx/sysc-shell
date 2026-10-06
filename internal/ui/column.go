@@ -36,6 +36,14 @@ func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
 		if err != nil {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
+		// A text node whose font is taller than the room left below it clips
+		// into that room rather than closing the panel. Only a node that
+		// starts inside the box is clipped: one that begins below it belongs
+		// to a column that deliberately overflows (the launcher's floating
+		// chrome), where its own box stands.
+		if room := content.Y + content.H - y; room >= 0 && h > room && clipsTextHeight(child) {
+			h = room
+		}
 		box := Rect{X: content.X, Y: y, W: content.W, H: h}
 		if child.CenterY && len(root.Children) == 1 {
 			box.Y = content.Y + max((content.H-h)/2, 0)

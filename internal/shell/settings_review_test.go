@@ -86,16 +86,19 @@ func TestSwitchingPageOpensAtTheTop(t *testing.T) {
 	reg, h := openSettingsForPreview(t)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	findScroll(h.root).ScrollOffset = 300
+	findSettingsBody(h.root).ScrollOffset = 300
 	h.focus = []*ui.Node{{Kind: ui.KindButton, Action: "page:Layout", Focusable: true}}
 	h.roving = ui.Roving{Count: 1}
 	h.activate(reg)
-	if h.settingsScroll != 0 || findScroll(h.root).ScrollOffset != 0 {
-		t.Fatalf("Layout opened at %d", findScroll(h.root).ScrollOffset)
+	if h.settingsScroll != 0 || findSettingsBody(h.root).ScrollOffset != 0 {
+		t.Fatalf("Layout opened at %d", findSettingsBody(h.root).ScrollOffset)
 	}
 }
 
-// At spacious density the rail ran past the bottom of a 1280x720 pane.
+// At spacious density the rail ran past the bottom of a 1280x720 pane. The
+// rail is a bounded scroll column now: its section list may outgrow the pane
+// (a tall font's labels, a long list), and what has to stay inside the pane
+// is the rail itself, which is what the pane draws.
 func TestRailFitsThePaneAtEveryDensity(t *testing.T) {
 	t.Parallel()
 	for _, d := range []theme.Density{theme.DensityStandard, theme.DensityComfortable, theme.DensitySpacious} {
@@ -111,12 +114,30 @@ func TestRailFitsThePaneAtEveryDensity(t *testing.T) {
 		if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
 			t.Fatalf("%s: %v", d, err)
 		}
-		tabs := byRole(h.root, "tab")
-		last := tabs[len(tabs)-1].Bounds
-		if bottom := h.place.Panel.H - m.PanelPadding; last.Y+last.H > bottom {
-			t.Errorf("%s: last rail tab ends at %d, the pane's content ends at %d", d, last.Y+last.H, bottom)
+		rail := railScroll(h.root)
+		if rail == nil {
+			t.Fatalf("%s: the section list is not a bounded scroll column", d)
+		}
+		if bottom := h.place.Panel.H - m.PanelPadding; rail.Bounds.Y+rail.Bounds.H > bottom {
+			t.Errorf("%s: the rail ends at %d, the pane's content ends at %d", d, rail.Bounds.Y+rail.Bounds.H, bottom)
 		}
 	}
+}
+
+// railScroll is the scroll column holding the section tabs.
+func railScroll(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindScroll && n.Width == settingsRailWidth && len(byRole(n, "tab")) > 0 {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := railScroll(c); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 // The tree is built before the first configure; a configure at another scale
@@ -158,4 +179,17 @@ func TestSettingsOpenedByShortcutTakesTheOutputsSize(t *testing.T) {
 	if want := settingsPanelSize(1536, 864); h.place.Panel.W != want.W {
 		t.Errorf("opened %dx%d, want %d wide", h.place.Panel.W, h.place.Panel.H, want.W)
 	}
+}
+
+// findSettingsBody is the pane's content scroll. The settings pane has two
+// scrolls now — the section rail and the body — so a bare "first scroll" walk
+// finds the rail and every offset and block assertion lands on the wrong one.
+func findSettingsBody(n *ui.Node) *ui.Node {
+	var out *ui.Node
+	walkNodes(n, func(node *ui.Node) {
+		if out == nil && node.Kind == ui.KindScroll && node.Key == settingsBodyKey {
+			out = node
+		}
+	})
+	return out
 }

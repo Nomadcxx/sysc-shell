@@ -110,7 +110,7 @@ func TestBarAppearanceLeadsWithPreviewAndCards(t *testing.T) {
 	if err := h.configure(int(reqs[1].Open.Width), int(reqs[1].Open.Height), 150); err != nil {
 		t.Fatal(err)
 	}
-	body := findScroll(h.root)
+	body := findSettingsBody(h.root)
 	if body == nil || len(body.Children) < 3 {
 		t.Fatal("Appearance body is missing its blocks")
 	}
@@ -179,7 +179,7 @@ func TestAppearanceFillsThePaneAndCardsHoldTheirContent(t *testing.T) {
 	if err := h.configure(int(open.Width), int(open.Height), 120); err != nil {
 		t.Fatal(err)
 	}
-	body := findScroll(h.root)
+	body := findSettingsBody(h.root)
 	if body == nil || body.Bounds.H < int(open.Height)/2 {
 		t.Fatalf("scrolling body is %+v in a %d-tall pane", body.Bounds, open.Height)
 	}

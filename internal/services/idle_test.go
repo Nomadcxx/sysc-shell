@@ -236,8 +236,11 @@ func requireReq(t *testing.T, ch <-chan wayland.IdleRequest, want wayland.IdleRe
 		if got != want {
 			t.Errorf("request = %+v, want %+v", got, want)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("no request %+v within 2s", want)
+	// The re-armed request is queued behind a full queue and a stalled
+	// executor. It arrives within milliseconds, but under a loaded parallel
+	// suite 2s was not enough and this gate reported a false failure.
+	case <-time.After(20 * time.Second):
+		t.Fatalf("no request %+v within 20s", want)
 	}
 }
 
@@ -284,7 +287,11 @@ func TestIdleServiceStalledRequestOwnerCannotWedge(t *testing.T) {
 	if got := <-reqs; got.ID != 99 { // free the queue
 		t.Fatalf("queued request = %+v, want the placeholder", got)
 	}
-	svc.SetInhibited(false) // the dropped arm must be reissued here
+	// The flood's parity does not decide the machine's final state, so the
+	// re-arm needs a real transition: inhibited then not. Both recomputes
+	// find a free slot now, and the second one arms the blank timeout.
+	svc.SetInhibited(true)
+	svc.SetInhibited(false)
 	requireReq(t, reqs, wayland.IdleRequest{ID: uint64(IdleBlank), TimeoutMS: 600000})
 }
 

@@ -21,7 +21,9 @@ func TestCheckFitAgreesWithLayout(t *testing.T) {
 		root   *Node
 		bounds Rect
 	}{
-		{"padded row too short", padded(28,
+		// A text taller than a padded row's content box clips in both paths:
+		// CheckFit stays silent exactly when Layout accepts the tree.
+		{"padded row clips its tall text", padded(28,
 			&Node{Kind: KindText, Text: "Avg 70%"}), Rect{W: 290, H: 28}},
 		{"padded row with room", padded(42,
 			&Node{Kind: KindText, Text: "Avg 70%"}), Rect{W: 290, H: 42}},
@@ -40,8 +42,8 @@ func TestCheckFitAgreesWithLayout(t *testing.T) {
 			{Kind: KindScroll, Width: 200, Height: 80},
 		}}, Rect{W: 120, H: 80}},
 		{"two violations in one tree", &Node{Kind: KindColumn, Children: []*Node{
-			padded(28, &Node{Kind: KindText, Text: "one"}),
-			padded(28, &Node{Kind: KindText, Text: "two"}),
+			padded(28, &Node{Kind: KindButton, Text: "one", Width: 80}),
+			padded(28, &Node{Kind: KindButton, Text: "two", Width: 80}),
 		}}, Rect{W: 290, H: 200}},
 	}
 	for _, c := range cases {
@@ -63,9 +65,9 @@ func TestCheckFitReportsEveryViolation(t *testing.T) {
 
 	root := &Node{Kind: KindColumn, Children: []*Node{
 		{Kind: KindRow, Padding: 8, Height: 28, Path: "root.children[0]",
-			Children: []*Node{{Kind: KindText, Text: "one", Path: "root.children[0].children[0]"}}},
+			Children: []*Node{{Kind: KindButton, Text: "one", Path: "root.children[0].children[0]"}}},
 		{Kind: KindRow, Padding: 8, Height: 28, Path: "root.children[1]",
-			Children: []*Node{{Kind: KindText, Text: "two", Path: "root.children[1].children[0]"}}},
+			Children: []*Node{{Kind: KindButton, Text: "two", Path: "root.children[1].children[0]"}}},
 	}}
 	problems := CheckFit(root, Rect{W: 290, H: 200}, fakeMeasure)
 	if len(problems) != 2 {

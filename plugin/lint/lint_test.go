@@ -27,16 +27,18 @@ func TestTreeAcceptsAFittingView(t *testing.T) {
 }
 
 func TestTreeNamesThePaddedRowThatCannotFit(t *testing.T) {
-	root := panelRoot(paddedRow(28, &v1.Node{Kind: v1.KindText, Text: "Avg 70%", Width: 56}))
+	// Tall text clips to its slot now, so the icon is the offender here: it
+	// still refuses and the finding must name it inside the padded row.
+	root := panelRoot(paddedRow(28, &v1.Node{Kind: v1.KindIcon, Icon: "battery_full", IconSize: 20}))
 	findings := lint.Tree(root, v1.ViewPanel, 290, 200)
 	if len(findings) != 1 {
 		t.Fatalf("findings = %v, want one", findings)
 	}
 	f := findings[0]
 	if f.Path != "root.children[0].children[0]" {
-		t.Errorf("path = %q, want the text inside the padded row", f.Path)
+		t.Errorf("path = %q, want the icon inside the padded row", f.Path)
 	}
-	for _, want := range []string{"root.children[0]", `text "Avg 70%"`, "does not fit in 274x12"} {
+	for _, want := range []string{"root.children[0]", "icon", "does not fit in 274x12"} {
 		if !strings.Contains(f.Message, want) {
 			t.Errorf("%q missing %q", f.Message, want)
 		}
