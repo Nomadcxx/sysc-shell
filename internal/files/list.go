@@ -1,11 +1,14 @@
 package files
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -31,6 +34,26 @@ func ListLimited(root, dir string, limit int, hidden bool) ([]Entry, bool, error
 		return out[:limit], true, nil
 	}
 	return out, false, nil
+}
+
+// LoadErrorCopy words a folder-read failure for the panel. A folder that
+// cannot be reached at all — a stale SFTP/GVFS mount answers ENOENT,
+// ENOTCONN, EIO, ENODEV, ESHUTDOWN or ESTALE — gets mount-disappeared copy
+// distinct from operation failures, which keep their raw text. The errno is
+// preserved after the dash for diagnosis.
+//
+// ponytail: errno classification; /proc/mounts freshness would be the
+// upgrade if the wording ever needs to be exact.
+func LoadErrorCopy(err error) string {
+	for _, gone := range []error{
+		fs.ErrNotExist,
+		syscall.ENOTCONN, syscall.EIO, syscall.ENODEV, syscall.ESHUTDOWN, syscall.ESTALE,
+	} {
+		if errors.Is(err, gone) {
+			return fmt.Sprintf("Folder unavailable, it may have unmounted: %v", err)
+		}
+	}
+	return err.Error()
 }
 
 // List lists at most MaxEntries entries.

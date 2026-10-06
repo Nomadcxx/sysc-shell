@@ -1,10 +1,12 @@
 package files
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -166,5 +168,20 @@ func TestListLimitedReportsTruncation(t *testing.T) {
 	}
 	if len(ents) != 3 || truncated {
 		t.Fatalf("got %d entries truncated=%v, want 3 false", len(ents), truncated)
+	}
+}
+
+func TestLoadErrorCopySeparatesVanishedFolders(t *testing.T) {
+	for _, errno := range []syscall.Errno{
+		syscall.ENOENT, syscall.ENOTCONN, syscall.EIO, syscall.ENODEV, syscall.ESHUTDOWN, syscall.ESTALE,
+	} {
+		err := &os.PathError{Op: "open", Path: "/mnt/sftp", Err: errno}
+		if msg := LoadErrorCopy(err); !strings.HasPrefix(msg, "Folder unavailable, it may have unmounted: ") {
+			t.Errorf("%v: msg = %q", errno, msg)
+		}
+	}
+	raw := errors.New("files: rename boom")
+	if got := LoadErrorCopy(raw); got != raw.Error() {
+		t.Errorf("operation failure was reworded: %q", got)
 	}
 }
