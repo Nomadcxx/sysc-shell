@@ -464,8 +464,8 @@ func (r *Registry) scheduleControl(h *PanelHost, run func() error) {
 	go func() {
 		err := run()
 		r.mu.Lock()
-		defer r.mu.Unlock()
 		if r.panelHosts[h.id] != h {
+			r.mu.Unlock()
 			return
 		}
 		if err != nil {
@@ -474,6 +474,9 @@ func (r *Registry) scheduleControl(h *PanelHost, run func() error) {
 			h.errLabel = ""
 		}
 		r.rebuildPanel(h)
-		r.publishSurface(h.output, panelSurfaceID(h.id))
+		output, id := h.output, panelSurfaceID(h.id)
+		// The invalidation send can block, so it runs with Registry.mu free.
+		r.mu.Unlock()
+		r.publishSurface(output, id)
 	}()
 }
