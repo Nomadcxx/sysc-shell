@@ -686,3 +686,35 @@ func TestTreeInitialLoadShowsSkeleton(t *testing.T) {
 		t.Errorf("skeleton tree failed validation: %v", err)
 	}
 }
+
+func TestTreeEntryRowsUseTypeIcons(t *testing.T) {
+	m := Model{Root: "/r", Cwd: "/r", Width: PanelWidth, Height: PanelHeight, Entries: []Entry{
+		{Name: "movie.mkv", Path: "/r/movie.mkv"},
+		{Name: "song.mp3", Path: "/r/song.mp3"},
+		{Name: "main.go", Path: "/r/main.go"},
+		{Name: "pic.png", Path: "/r/pic.png"},
+		{Name: "mystery.bin", Path: "/r/mystery.bin"},
+	}}
+	tree := Tree(m)
+	want := map[string]string{
+		ActionEntry + "0": "play_arrow",
+		ActionEntry + "1": "music_note",
+		ActionEntry + "2": "terminal",
+		ActionEntry + "3": "wallpaper",
+		ActionEntry + "4": "description",
+	}
+	for id, icon := range want {
+		row := findID(tree, id)
+		if row == nil {
+			t.Fatalf("missing %s", id)
+		}
+		if got := leadingIcon(row); got != icon {
+			t.Errorf("%s icon = %q, want %q", id, got, icon)
+		}
+	}
+	dir := Tree(Model{Root: "/r", Cwd: "/r", Width: PanelWidth, Height: PanelHeight,
+		Entries: []Entry{{Name: "sub", Path: "/r/sub", Dir: true}}})
+	if got := leadingIcon(findID(dir, ActionEntry+"0")); got != "folder_open" {
+		t.Errorf("dir icon = %q", got)
+	}
+}
