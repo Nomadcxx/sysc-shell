@@ -342,6 +342,31 @@ func TestTreeBreadcrumbsReplaceCaption(t *testing.T) {
 	}
 }
 
+func TestTreeEllipsisCrumbJumpsToHiddenAncestor(t *testing.T) {
+	root := t.TempDir()
+	deep := root
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		deep = filepath.Join(deep, name)
+		if err := os.MkdirAll(deep, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tree := Tree(Model{Root: root, Cwd: deep, Title: "Files", Mode: ModeOpen, Width: PanelWidth, Height: PanelHeight})
+	ellipsis := findID(tree, ActionCrumb+"3")
+	if ellipsis == nil || ellipsis.Text != "…" || ellipsis.Disabled {
+		t.Fatal("ellipsis crumb is not an actionable jump to the nearest hidden ancestor")
+	}
+	if findID(tree, ActionCrumb+"ellipsis") != nil {
+		t.Fatal("dead non-numeric crumb id present")
+	}
+	if last := findID(tree, ActionCrumb+"5"); last == nil || last.Tooltip != deep {
+		t.Fatal("crumb tooltip does not carry the full path")
+	}
+	if got, err := CrumbTarget(root, deep, 3); err != nil || got != filepath.Join(root, "a", "b", "c") {
+		t.Fatalf("ellipsis target: %q, %v", got, err)
+	}
+}
+
 func TestTreeThumbnailRowKeepsName(t *testing.T) {
 	root := t.TempDir()
 	name := "pic.png"
