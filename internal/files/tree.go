@@ -134,9 +134,9 @@ func Tree(m Model) *v1.Node {
 		var sel []*v1.Node
 		sel = append(sel, subtle(fmt.Sprintf("%d selected", m.Selected)))
 		sel = append(sel, toolButton(ActionCopy, "content_copy", "Copy", "Copy", false))
-		sel = append(sel, toolButton(ActionCut, "content_cut", "Cut", "Cut", false))
+		sel = append(sel, toolButton(ActionCut, "swap_vert", "Cut", "Cut", false))
 		if m.SelectedFile && m.Rename == "" && m.Deleting == 0 {
-			open := toolButton(ActionOpen, "open_in_new", "Open", "Open", false)
+			open := toolButton(ActionOpen, "play_arrow", "Open", "Open", false)
 			if m.Mode == ModePickFile {
 				open.Text, open.Name = "Choose this file", "Choose this file"
 			}
