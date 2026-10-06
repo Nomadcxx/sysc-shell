@@ -109,7 +109,7 @@ func Tree(m Model) *v1.Node {
 			hidden,
 			toolButton(ActionPaste, "content_paste", "Paste", "Paste", !m.CanPaste),
 		}},
-		crumbRow(rel),
+		crumbRow(m.Root, rel),
 	}
 	// pad×2 + title + toolbar + crumbs, with a gap after each chrome row
 	// including the gap before the list.
@@ -318,32 +318,35 @@ func dirSummary(p Preview) string {
 	}
 }
 
-func crumbRow(rel string) *v1.Node {
+// crumbRow paints the root crumb plus the path parts. Past four parts the
+// middle collapses into an "…" crumb that jumps to the nearest hidden
+// ancestor. Every crumb carries its full path as a tooltip.
+func crumbRow(root, rel string) *v1.Node {
 	parts := relParts(rel)
-	kids := []*v1.Node{crumbButton(0, "/", len(parts) == 0)}
-	show := parts
+	kids := []*v1.Node{crumbButton(0, "/", root, len(parts) == 0)}
+	first := 0
 	if len(parts) > 4 {
-		kids = append(kids, crumbButton(-1, "…", true))
-		kids[len(kids)-1].ID = ActionCrumb + "ellipsis"
-		kids[len(kids)-1].Name = "More"
-		show = parts[len(parts)-2:]
-		for i, p := range show {
-			idx := len(parts) - 2 + i
-			kids = append(kids, crumbButton(idx+1, p, i == len(show)-1))
-		}
-		return &v1.Node{Kind: v1.KindRow, Gap: 4, Children: kids}
+		first = len(parts) - 2
+		path := filepath.Join(append([]string{root}, parts[:first]...)...)
+		kids = append(kids, crumbButton(first, "…", path, false))
 	}
-	for i, p := range show {
-		kids = append(kids, crumbButton(i+1, p, i == len(show)-1))
+	for i := first; i < len(parts); i++ {
+		path := filepath.Join(append([]string{root}, parts[:i+1]...)...)
+		kids = append(kids, crumbButton(i+1, parts[i], path, i == len(parts)-1))
 	}
 	return &v1.Node{Kind: v1.KindRow, Gap: 4, Children: kids}
 }
 
-func crumbButton(index int, text string, current bool) *v1.Node {
+func crumbButton(index int, text, path string, current bool) *v1.Node {
+	name := text
+	if text == "…" {
+		name = "Jump to " + filepath.Base(path)
+	}
 	return &v1.Node{
 		Kind: v1.KindButton, ID: fmt.Sprintf("%s%d", ActionCrumb, index),
-		Text: text, Name: text, Role: "button", Disabled: current,
-		Shape: "small", Height: crumbH, Padding: 6,
+		Text: text, Name: name, Role: "button", Disabled: current,
+		Tooltip: path,
+		Shape:   "small", Height: crumbH, Padding: 6,
 		Events: []v1.EventKind{v1.EventActivate},
 	}
 }

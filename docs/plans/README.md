@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-10-05.
+Last updated: 2026-10-06.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -607,6 +607,7 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 | `2026-10-04-sysc-shell-file-browser-manager-design.md` | design | Manager chrome over the selection: breadcrumbs replacing the path caption, a hidden-files toggle, name/size/date rows, new folder, rename, delete with confirm, and the in-process copy/cut/paste clip. No protocol change. Executed; its ceilings are listed in the commission below. |
 | `2026-10-04-file-browser-chrome-uiux.md` | plan | The chrome pass intent and method: UI/UX Pro Max searches plus the system monitor, Phone Connect and battery widget as sibling source, tokens only, no emoji. Sized the panel to the monitor sibling, moved the title out of the header chips, gave every toolbar control icon+text, and replaced the full-width preview strip with a 280px side pane. Executed. |
 | `2026-10-04-file-browser-chrome-commission.md` | audit-report | Commission and audit of the chrome pass as built: the 800×650 reskin, the interaction set already present, and a 28-item ranked UI/UX gap list with the smallest closing change for each. Two of its items were corrected against the code (`KindList` takes no `Gap` in `plugin.Convert`; `FittedSize` clamps height rather than width, and the widest chrome now measures clean). It also surfaced that the preview read ran under `Registry.mu` on every click. The gap list is **not** the status source: it was harvested into bd as epic `sysc-938`, whose eight high-priority items are closed and whose description carries the remaining twenty. Live checklist unrun. |
+| `2026-10-06-file-browser-polish-commission.md` | commission | Open commission to a shell agent: finish the post-#99 file browser — P0 real-use errors (SFTP mount lifecycle, copy caps, preview stalls, invisible xdg-open failures), P1 chrome-catalogue polish, P2 sort/filter/range-selection expansion, P3 jail hardening. Minor 16 semantics frozen; one item per PR. First item executed here: the dead `…` breadcrumb is now a jump-to-ancestor crumb with full-path tooltips. |
 
 ## Sibling repositories
 
