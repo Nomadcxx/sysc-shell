@@ -42,14 +42,20 @@ type filesSession struct {
 var errFilesCancelled = errors.New("cancelled")
 
 // filesOpenPath launches the desktop handler. Tests replace it. Start, not
-// Run: this is called under Registry.mu.
-var filesOpenPath = func(path string) error {
+// Run: callers launch it off the Registry lock. report receives every
+// failure — including the handler's exit code, non-zero when no application
+// claims the file — and nothing on success.
+var filesOpenPath = func(path string, report func(error)) {
 	cmd := exec.Command("xdg-open", path)
 	if err := cmd.Start(); err != nil {
-		return err
+		report(err)
+		return
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			report(err)
+		}
+	}()
 }
 
 func (r *Registry) openFilesBrowser(ctx context.Context, p v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
@@ -513,7 +519,17 @@ func (r *Registry) openFilesTargetLocked(sess *filesSession, e files.Entry) {
 	case files.ModePickFile:
 		r.finishFilesPickLocked(sess, e.Path, nil)
 	case files.ModeOpen:
-		go func() { _ = filesOpenPath(e.Path) }()
+		go filesOpenPath(e.Path, func(err error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if err == nil || r.files != sess {
+				return
+			}
+			sess.err = "Open failed: " + err.Error()
+			if h := r.panelHosts[PanelFiles]; h != nil {
+				r.rebuildPanel(h)
+			}
+		})
 	}
 }
 
