@@ -229,15 +229,17 @@ func (r *Registry) scheduleLoadProfiles(h *PanelHost) {
 	go func() {
 		names, active, ok := fetchProfileList(look, run)
 		r.mu.Lock()
-		defer r.mu.Unlock()
 		if r.panelHosts[h.id] != h {
+			r.mu.Unlock()
 			return
 		}
 		h.profiles = names
 		h.profileActive = active
 		h.profilesOK = ok
 		r.rebuildPanel(h)
-		r.publishSurface(h.output, panelSurfaceID(h.id))
+		output, id := h.output, panelSurfaceID(h.id)
+		r.mu.Unlock()
+		r.publishSurface(output, id)
 	}()
 }
 

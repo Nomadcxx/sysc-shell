@@ -294,7 +294,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		r.rebuildPanel(h)
 		if settings := r.panelHosts[PanelSettings]; settings != nil && settings.section == "Screensaver" {
 			r.rebuildPanel(settings)
-			r.publishSurface(settings.output, panelSurfaceID(settings.id))
+			output, id := settings.output, panelSurfaceID(settings.id)
+			// Handlers hold Registry.mu and the invalidation send can block.
+			r.publishSurfaceAsync(output, id)
 		}
 		return true
 	case "cc:dnd":
