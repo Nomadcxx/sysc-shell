@@ -79,14 +79,23 @@ func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []wa
 	m.theme = m.r.panelTheme()
 	pos := m.r.cfg.Panels.OSD
 	pad := m.r.cfg.Panels.Padding
-	zone := m.r.cfg.Bar.Height
 	size := ui.Rect{W: osdWidth, H: osdHeight}
 	for global := range m.r.bars {
+		// The bar's last configure is its exclusive-zone strip, not the
+		// screen: on a side bar that is 48x1080, so centring a card in it
+		// pinned the card to the screen edge, on top of the bar (#112).
 		out := ui.Rect{W: 1920, H: 1080}
-		if bar := m.r.bars[global]; bar != nil && bar.configured.set {
-			out.W, out.H = bar.configured.width, bar.configured.height
+		zone, edge := m.r.cfg.Bar.Height, ""
+		if bar := m.r.bars[global]; bar != nil {
+			if w, h := bar.outputSize(); w > 0 && h > 0 {
+				out.W, out.H = w, h
+			} else if bar.configured.set {
+				out.W, out.H = bar.configured.width, bar.configured.height
+			}
+			zone = exclusiveBarZone(bar)
+			edge = bar.themeSnapshot().BarEdge
 		}
-		anchor, margins := osdPlace(pos, out, size, zone, pad)
+		anchor, margins := osdPlace(pos, out, size, zone, pad, edge)
 		id := osdSurfaceID(global)
 		if !m.open[global] {
 			aux = append(aux, wayland.AuxRequest{Output: global, Open: m.spec(id, anchor, margins)})
@@ -168,6 +177,10 @@ func (m *OSDManager) spec(id string, anchor uint32, mgn Margins) *wayland.AuxSpe
 		Height:        osdHeight,
 		ExclusiveZone: -1,
 		Keyboard:      keyboardNone,
+		// A readout never wants a click. Without an empty input region the
+		// default full-surface region swallowed the clicks meant for whatever
+		// the card is drawn over (#112).
+		InputRects: []ui.Rect{},
 		Callbacks: wayland.HostCallbacks{
 			Configure: func(int, int, int) error { return nil },
 			Render:    m.renderLocking,
@@ -276,8 +289,8 @@ func (m *OSDManager) revealLoop() {
 
 func osdSurfaceID(global uint32) string { return fmt.Sprintf("osd:%d", global) }
 
-func osdPlace(pos string, output, size ui.Rect, barZone, pad int) (uint32, Margins) {
-	m := osdMargins(pos, output, size, barZone, pad)
+func osdPlace(pos string, output, size ui.Rect, barZone, pad int, edge string) (uint32, Margins) {
+	m := osdMargins(pos, output, size, barZone, pad, edge)
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
 	if strings.HasPrefix(pos, "bottom") {
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
@@ -285,19 +298,31 @@ func osdPlace(pos string, output, size ui.Rect, barZone, pad int) (uint32, Margi
 	return anchor, m
 }
 
-func osdMargins(pos string, output, size ui.Rect, barZone, pad int) Margins {
+func osdMargins(pos string, output, size ui.Rect, barZone, pad int, edge string) Margins {
+	// A side bar spends its thickness horizontally: the drawable width shrinks
+	// and a left bar moves its origin. Only a top or bottom bar reserves height
+	// as a vertical inset (#112).
+	origin, avail := 0, output.W
 	inset := barZone + pad
+	switch edge {
+	case "left":
+		origin, avail, inset = barZone, max(output.W-barZone, 0), pad
+	case "right":
+		avail, inset = max(output.W-barZone, 0), pad
+	case "top", "bottom":
+		inset = barZone + pad
+	}
 	if inset < 0 {
 		inset = 0
 	}
 	left := func(align string) int {
 		switch align {
 		case "left":
-			return pad
+			return origin + pad
 		case "right":
-			return output.W - size.W - pad
+			return origin + avail - size.W - pad
 		default:
-			return (output.W - size.W) / 2
+			return origin + (avail-size.W)/2
 		}
 	}
 	var m Margins

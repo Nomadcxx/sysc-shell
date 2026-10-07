@@ -15,7 +15,7 @@ import (
 
 func TestOsdPositionMarginsBottomCenter(t *testing.T) {
 	t.Parallel()
-	m := osdMargins("bottom-center", ui.Rect{W: 1920, H: 1080}, ui.Rect{W: 220, H: 64}, 40, 8)
+	m := osdMargins("bottom-center", ui.Rect{W: 1920, H: 1080}, ui.Rect{W: 220, H: 64}, 40, 8, "bottom")
 	if m.Bottom != 48 {
 		t.Fatalf("bottom = %d, want 48", m.Bottom)
 	}
@@ -34,7 +34,7 @@ func TestOsdPositionAllNineTokens(t *testing.T) {
 		"bottom-left", "bottom-center", "bottom-right",
 	}
 	for _, pos := range tokens {
-		m := osdMargins(pos, output, size, 40, 8)
+		m := osdMargins(pos, output, size, 40, 8, "bottom")
 		box := osdBox(pos, output, size, m)
 		if box.X < 0 || box.Y < 0 || box.X+box.W > output.W || box.Y+box.H > output.H {
 			t.Fatalf("%s box %+v escapes output", pos, box)
@@ -277,4 +277,71 @@ func osdBox(pos string, output, size ui.Rect, m Margins) ui.Rect {
 		box.Y = output.H - m.Bottom - size.H
 	}
 	return box
+}
+
+// A side bar spends its thickness horizontally. Placing a card against the
+// screen edge instead of the bar put it on top of the bar and swallowed the
+// clicks meant for the bar's widgets (#112).
+func TestOsdClearsTheBarOnEveryEdge(t *testing.T) {
+	t.Parallel()
+	output := ui.Rect{W: 1920, H: 1080}
+	size := ui.Rect{W: osdWidth, H: osdHeight}
+	const zone, pad = 48, 8
+	tokens := []string{
+		"top-left", "top-center", "top-right",
+		"center-left", "center", "center-right",
+		"bottom-left", "bottom-center", "bottom-right",
+	}
+	for _, edge := range []string{"top", "right", "bottom", "left"} {
+		for _, pos := range tokens {
+			m := osdMargins(pos, output, size, zone, pad, edge)
+			box := osdBox(pos, output, size, m)
+			switch edge {
+			case "left":
+				if box.X < zone {
+					t.Fatalf("%s on a left bar sits at x=%d, want >= %d", pos, box.X, zone)
+				}
+			case "right":
+				if box.X+box.W > output.W-zone {
+					t.Fatalf("%s on a right bar ends at x=%d, want <= %d", pos, box.X+box.W, output.W-zone)
+				}
+			case "top":
+				if box.Y < zone {
+					t.Fatalf("%s on a top bar sits at y=%d, want >= %d", pos, box.Y, zone)
+				}
+			case "bottom":
+				if box.Y+box.H > output.H-zone {
+					t.Fatalf("%s on a bottom bar ends at y=%d, want <= %d", pos, box.Y+box.H, output.H-zone)
+				}
+			}
+		}
+	}
+}
+
+// A side bar's last configure is its 48x1080 strip, not the screen. Sizing
+// the card against that pinned it to the left edge, over the bar (#112).
+func TestOsdSizesAgainstTheLogicalOutput(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	bar := &Bar{conn: "DP-1"}
+	bar.theme = Theme{BarEdge: "left"}
+	bar.setOutputSize(1920, 1080)
+	bar.configured.set, bar.configured.width, bar.configured.height = true, 48, 1080
+	reg.setTestBar(1, bar)
+	reg.OSD().Show(OSDView{Kind: "audio", Level: 50})
+	reqs := drainAux(t, reg, 1)
+	spec := reqs[0].Open
+	if spec == nil {
+		t.Fatalf("osd aux = %+v", reqs[0])
+	}
+	box := osdBox("bottom-center", ui.Rect{W: 1920, H: 1080}, ui.Rect{W: osdWidth, H: osdHeight}, Margins{Left: int(spec.MarginLeft), Bottom: int(spec.MarginBottom)})
+	if box.X < 48 {
+		t.Fatalf("card sits at x=%d, over a 48 px left bar", box.X)
+	}
+	if want := (1920 - osdWidth) / 2; box.X < want || box.X > want+exclusiveBarZone(bar) {
+		t.Fatalf("card x = %d, want the output centre %d clear of a left bar", box.X, want)
+	}
+	if spec.InputRects == nil || len(spec.InputRects) != 0 {
+		t.Fatalf("input rects = %v, want none so bar widgets keep their clicks", spec.InputRects)
+	}
 }
