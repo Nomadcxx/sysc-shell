@@ -1006,7 +1006,7 @@ func TestWallpaperEmptyStatesOfferAnAction(t *testing.T) {
 
 	state := func() (string, string) {
 		t.Helper()
-		n := wallpaperEmptyState(h)
+		n := wallpaperEmptyState(reg, h)
 		text, action := "", ""
 		walkNodes(n, func(c *ui.Node) {
 			if c.Kind == ui.KindText && text == "" {
@@ -1046,7 +1046,7 @@ func TestWallpaperEmptyStatesOfferAnAction(t *testing.T) {
 
 	h.wallpaperSnap.Library = nil
 	if text, action := state(); !strings.Contains(text, "Indexing") || action != "" ||
-		findNode(wallpaperEmptyState(h), func(n *ui.Node) bool { return n.Kind == ui.KindSpinner }) == nil {
+		findNode(wallpaperEmptyState(reg, h), func(n *ui.Node) bool { return n.Kind == ui.KindSpinner }) == nil {
 		t.Errorf("indexing: %q / %q, want a spinner and no action", text, action)
 	}
 }
@@ -1464,5 +1464,44 @@ func TestWallpaperOutputSelectCollapsesOnOneOutput(t *testing.T) {
 	header := h.root.Children[0]
 	if len(outputs) != 0 || findNode(header, func(n *ui.Node) bool { return n.Text == "eDP-1" }) == nil {
 		t.Fatalf("one output: select %v; want a caption naming eDP-1 in the header", outputs)
+	}
+}
+
+// A held background never starts the wallpaper service, so the picker opens to
+// a nil snapshot. It used to render that as an endless "Indexing wallpaper
+// library…" spinner with nothing explaining the hold (#114).
+func TestWallpaperPickerExplainsAHeldBackground(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	reg.mu.Lock()
+	reg.backgroundHeld = true
+	reg.backgroundError = "the lock session service is not reporting"
+	reg.mu.Unlock()
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	open := reqs[1].Open
+	if err := open.Callbacks.Configure(int(open.Width), int(open.Height), 120); err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelWallpaper]
+	if h == nil {
+		t.Fatal("picker did not open")
+	}
+	var said []string
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Kind == ui.KindText && n.Text != "" {
+			said = append(said, n.Text)
+		}
+	})
+	if !strings.Contains(strings.Join(said, "\n"), reg.backgroundError) {
+		t.Fatalf("picker never says why the background is held:\n%s", strings.Join(said, "\n"))
+	}
+	if n := findNodeKey(h.root, "wallpaper-indexing"); n != nil {
+		t.Fatal("picker still spins while the background is held")
 	}
 }
