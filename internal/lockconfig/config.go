@@ -21,6 +21,7 @@ var atomicReplace = os.Rename
 type Config struct {
 	Effect             string  `json:"effect"`
 	Palette            string  `json:"palette"`
+	ClockStyle         string  `json:"clock_style"`
 	ReducedMotion      bool    `json:"reduced_motion"`
 	Clock24h           bool    `json:"clock_24h"`
 	EffectFPS          int     `json:"effect_fps"`
@@ -29,7 +30,29 @@ type Config struct {
 	EffectGpuPowerSave *bool   `json:"effect_gpu_power_save"`
 }
 
-func Default() Config { return Config{Effect: "rain", Palette: "nord", EffectFPS: 20} }
+func Default() Config {
+	return Config{Effect: "rain", Palette: "nord", ClockStyle: DefaultClockStyle, EffectFPS: 20}
+}
+
+// DefaultClockStyle and ClockStyles mirror sysc-lock internal/art, whose glyph
+// tables the shell cannot import; the locker owns the names.
+const DefaultClockStyle = "kompaktblk"
+
+var clockStyles = []string{DefaultClockStyle, "phm_blocky_reverse", "phmvga", "phm_slanted", "plain"}
+
+// ClockStyles returns the clock styles the locker can render.
+func ClockStyles() []string { return append([]string(nil), clockStyles...) }
+
+// ClockStyle resolves a name the way the locker's art.Lookup does: an unknown
+// or empty name falls back to the default rather than failing.
+func ClockStyle(name string) string {
+	for _, style := range clockStyles {
+		if style == name {
+			return name
+		}
+	}
+	return DefaultClockStyle
+}
 
 // Backend, GpuPowerSave and BlurBackdrop mirror the sysc-lock accessors:
 // unset means the locker default, never a shell opinion.
@@ -108,6 +131,7 @@ func Load(path string) (Config, error) {
 	} else {
 		c.EffectFPS = max(10, min(120, c.EffectFPS))
 	}
+	c.ClockStyle = ClockStyle(c.ClockStyle)
 	return c, renderer.Validate(c.Effect, c.Palette)
 }
 func Save(path string, c Config) error {
