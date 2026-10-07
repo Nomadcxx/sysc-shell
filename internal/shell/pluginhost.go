@@ -442,11 +442,14 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 			v.tree = &plugin.ViewTree{View: v.Kind}
 		}
 		_ = v.tree.ApplySnapshot(m.Revision, m.Root)
+		// Read the bounds under the lock: PanelResize is a plugin-facing callback
+		// and writes these fields from the plugin's goroutine (pluginhost.go:1265).
+		w, ht := v.Width, v.Height
 		h.mu.Unlock()
 		h.prep.Submit(plugin.Job{
 			ViewID: m.ViewID, Plugin: v.Plugin, View: v.Kind,
 			Revision: m.Revision, Root: m.Root,
-			Bounds: ui.Rect{W: v.Width, H: v.Height},
+			Bounds: ui.Rect{W: w, H: ht},
 		})
 	case *v1.ViewPatch:
 		h.mu.Lock()
