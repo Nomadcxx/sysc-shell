@@ -2,6 +2,7 @@ package shell
 
 import (
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,19 @@ type lockScreenUI struct {
 	image                      *ui.Image
 	previewSequence            uint64
 	previewStop                chan struct{}
+}
+
+// lockToggle is a labelled switch row, disabled while another save is in flight.
+func lockToggle(label, action string, on, disabled bool) *ui.Node {
+	node := &ui.Node{Kind: ui.KindToggle, Action: action, Focusable: true, Name: label, Role: "switch"}
+	if on {
+		node.Value = 1
+	}
+	if disabled {
+		node.State |= ui.StateDisabled
+		node.AriaDisabled, node.Focusable = true, false
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{{Kind: ui.KindText, Text: label}, node}}
 }
 
 func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
@@ -46,6 +60,8 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}{
 		{"effect", "Effect", s.config.Effect, renderer.Effects()},
 		{"palette", "Palette", s.config.Palette, renderer.Palettes()},
+		{"backend", "Effect engine", s.config.Backend(), []string{"auto", "cpu", "gpu"}},
+		{"fps", "Effect FPS", strconv.Itoa(s.config.EffectFPS), []string{"10", "20", "30", "60"}},
 	} {
 		combo := wallpaperCombo(h, "lockscreen-"+choice.key, choice.value, min(settingsDropdownFixedWidth, settingsBodyWidth(h)/2))
 		combo.Action = "lockscreen-menu:" + choice.key
@@ -65,18 +81,12 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 			rows = append(rows, wallpaperOptionList(h, opts))
 		}
 	}
-	motion := &ui.Node{
-		Kind: ui.KindToggle, Action: "lockscreen-reduced",
-		Focusable: true, Name: "Reduced motion", Role: "switch",
-	}
-	if s.config.ReducedMotion {
-		motion.Value = 1
-	}
-	if saving {
-		motion.State |= ui.StateDisabled
-		motion.AriaDisabled, motion.Focusable = true, false
-	}
-	rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{{Kind: ui.KindText, Text: "Reduced motion"}, motion}})
+	rows = append(rows,
+		lockToggle("Reduced motion", "lockscreen-reduced", s.config.ReducedMotion, saving),
+		lockToggle("24-hour clock", "lockscreen-clock24", s.config.Clock24h, saving),
+		lockToggle("Blur backdrop", "lockscreen-blur", s.config.BlurBackdrop(), saving),
+		lockToggle("GPU power save", "lockscreen-gpu-save", s.config.GpuPowerSave(), saving),
+	)
 	protected := "Unavailable"
 	if r != nil && r.managedState.Known && r.managedState.SleepProtected {
 		protected = "Protected"
@@ -181,7 +191,9 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 	switch {
 	case strings.HasPrefix(n.Action, "lockscreen-menu:"):
 		menu := strings.TrimPrefix(n.Action, "lockscreen-menu:")
-		if menu != "effect" && menu != "palette" {
+		switch menu {
+		case "effect", "palette", "backend", "fps":
+		default:
 			return true
 		}
 		if s.menu == menu {
@@ -191,10 +203,18 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 		}
 	case n.Action == "lockscreen-reduced":
 		s.config.ReducedMotion = !s.config.ReducedMotion
-		s.stopPreview()
-		s.previewSequence++
-		s.image = nil
-		s.message = ""
+		s.draftChanged()
+	case n.Action == "lockscreen-clock24":
+		s.config.Clock24h = !s.config.Clock24h
+		s.draftChanged()
+	case n.Action == "lockscreen-blur":
+		blur := !s.config.BlurBackdrop()
+		s.config.Blur = &blur
+		s.draftChanged()
+	case n.Action == "lockscreen-gpu-save":
+		save := !s.config.GpuPowerSave()
+		s.config.EffectGpuPowerSave = &save
+		s.draftChanged()
 	case n.Action == "lockscreen-preview":
 		if s.previewing {
 			return true
@@ -283,6 +303,20 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 			cfg.Effect = value
 		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-palette:"); ok {
 			cfg.Palette = value
+		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-backend:"); ok {
+			if value != "auto" && value != "cpu" && value != "gpu" {
+				s.message = "That presentation choice is unavailable."
+				break
+			}
+			backend := value
+			cfg.EffectBackend = &backend
+		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-fps:"); ok {
+			fps, err := strconv.Atoi(value)
+			if err != nil || fps < 10 || fps > 120 {
+				s.message = "That presentation choice is unavailable."
+				break
+			}
+			cfg.EffectFPS = fps
 		} else {
 			return false
 		}
@@ -307,4 +341,13 @@ func (s *lockScreenUI) stopPreview() {
 		s.previewStop = nil
 	}
 	s.previewing = false
+}
+
+// draftChanged drops the running reel and its frame after a draft edit.
+// Callers hold r.mu.
+func (s *lockScreenUI) draftChanged() {
+	s.stopPreview()
+	s.previewSequence++
+	s.image = nil
+	s.message = ""
 }

@@ -170,7 +170,7 @@ func TestLockSettingsApplyRespectsRegistrySaveGuard(t *testing.T) {
 		t.Fatal("overlapped another settings save")
 	}
 	root := lockScreenSettingsTree(r, h)
-	for _, action := range []string{"lockscreen-apply", "lockscreen-preview", "lockscreen-reduced", "lockscreen-menu:effect", "lockscreen-menu:palette"} {
+	for _, action := range []string{"lockscreen-apply", "lockscreen-preview", "lockscreen-reduced", "lockscreen-menu:effect", "lockscreen-menu:palette", "lockscreen-menu:backend", "lockscreen-menu:fps", "lockscreen-clock24", "lockscreen-blur", "lockscreen-gpu-save"} {
 		n := findAction(root, action)
 		if n == nil || !n.State.Has(ui.StateDisabled) || !n.AriaDisabled || n.Focusable {
 			t.Fatalf("busy control %s lacks disabled accessibility state", action)
@@ -292,5 +292,81 @@ func TestLockPreviewLoopStopsWhenTold(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("loop kept running after the panel said it was stale")
+	}
+}
+
+func TestLockSettingsShowsNewPresentationRows(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for action, label := range map[string]string{
+		"lockscreen-clock24":  "24-hour clock",
+		"lockscreen-blur":     "Blur backdrop",
+		"lockscreen-gpu-save": "GPU power save",
+	} {
+		row := findNode(h.root, func(n *ui.Node) bool {
+			if n.Kind != ui.KindRow {
+				return false
+			}
+			for _, c := range n.Children {
+				if c.Kind == ui.KindToggle && c.Action == action {
+					return true
+				}
+			}
+			return false
+		})
+		if row == nil {
+			t.Fatalf("missing toggle row %s", action)
+		}
+		labelled := false
+		for _, c := range row.Children {
+			if c.Kind == ui.KindText && c.Text == label {
+				labelled = true
+			}
+		}
+		if !labelled {
+			t.Fatalf("row for %s lacks label %q", action, label)
+		}
+	}
+	if findAction(h.root, "lockscreen-menu:backend") == nil || findAction(h.root, "lockscreen-menu:fps") == nil {
+		t.Fatal("missing backend or fps dropdown")
+	}
+}
+
+func TestLockSettingsEditsGpuAndPresentationKeys(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-menu:backend"}) || h.lockScreen.menu != "backend" {
+		t.Fatal("backend menu did not open")
+	}
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-backend:gpu"}) || h.lockScreen.config.Backend() != "gpu" {
+		t.Fatalf("backend not drafted: %+v", h.lockScreen.config)
+	}
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-menu:fps"})
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-fps:30"}) || h.lockScreen.config.EffectFPS != 30 {
+		t.Fatal("fps choice not drafted")
+	}
+	before := h.lockScreen.config
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-fps:nope"}) || h.lockScreen.config != before {
+		t.Fatal("invalid fps accepted")
+	}
+	if h.lockScreen.message == "" {
+		t.Fatal("invalid fps left no message")
+	}
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-backend:text"}) || h.lockScreen.config.Backend() != "gpu" {
+		t.Fatal("invalid backend accepted")
+	}
+	for _, action := range []string{"lockscreen-clock24", "lockscreen-blur", "lockscreen-gpu-save"} {
+		before := h.lockScreen.config
+		if !h.lockScreenAction(r, &ui.Node{Action: action}) || h.lockScreen.config == before {
+			t.Fatalf("%s did not change the draft", action)
+		}
+	}
+	if !h.lockScreen.config.Clock24h || h.lockScreen.config.BlurBackdrop() || h.lockScreen.config.GpuPowerSave() {
+		t.Fatalf("toggle values wrong: %+v", h.lockScreen.config)
+	}
+	if h.lockScreenAction(r, &ui.Node{Action: "lockscreen-zzz"}) {
+		t.Fatal("unknown action handled")
 	}
 }
