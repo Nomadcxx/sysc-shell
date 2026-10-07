@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,47 @@ func TestLockSettingsSleepProtectionUsesManagedOwner(t *testing.T) {
 	r.rebuildPanel(h)
 	if findNode(h.root, func(n *ui.Node) bool { return n.Text == "Lock before sleep: Protected" }) != nil {
 		t.Fatal("disconnected owner reported protected")
+	}
+}
+
+func TestLockSettingsReenablesPreviewWhenTheReelEnds(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	// One held frame, so the reel ends in milliseconds instead of eight
+	// seconds; the completion path is the same either way.
+	h.lockScreen.config.ReducedMotion = true
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-preview"})
+	if n := findAction(h.root, "lockscreen-preview"); n == nil || !n.State.Has(ui.StateDisabled) {
+		r.mu.Unlock()
+		t.Fatal("Preview is not disabled while the reel runs")
+	}
+	r.mu.Unlock()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		r.mu.Lock()
+		pending := h.lockScreen.previewing
+		r.mu.Unlock()
+		if !pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("preview stalled")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	preview := findAction(h.root, "lockscreen-preview")
+	if preview == nil {
+		t.Fatal("Preview row vanished when the reel ended")
+	}
+	if preview.State.Has(ui.StateDisabled) || preview.AriaDisabled || !preview.Focusable {
+		t.Fatalf("Preview still disabled after the reel ended: %+v", preview)
+	}
+	// The roving index walks the focusable list, so a stale count keeps
+	// keyboard focus off Preview.
+	if n := slices.IndexFunc(h.focus, func(n *ui.Node) bool { return n.Action == "lockscreen-preview" }); n < 0 {
+		t.Fatal("Preview is not in the roving focus list after the reel ended")
 	}
 }
 
