@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -321,14 +322,23 @@ func isManagedLocker(argv []string) bool {
 }
 
 // SuspendTracked waits for the managed protocol event before calling logind.
+// Without a managed locker, or with one whose owner is not on the bus, there
+// is no seal to wait for, so plain suspend runs: sleep protection is a
+// preference, but refusing to suspend is not an option (GH #116).
 func (r *Registry) SuspendTracked() error {
 	r.mu.Lock()
 	managed, run := r.managedLock, r.runArgv
+	managedLocker := managed != nil && isManagedLocker(sessionArgv("session-lock", r.cfg.Session.Locker))
 	r.mu.Unlock()
-	if managed == nil {
-		return errors.New("managed sleep protection unavailable")
+	suspend := func() error { return run([]string{"loginctl", "suspend"}) }
+	if !managedLocker {
+		return suspend()
+	}
+	if !managed.State().Known {
+		log.Printf("shell: suspend: no managed lock owner; suspending without a lock")
+		return suspend()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	return managed.Suspend(ctx, func() error { return run([]string{"loginctl", "suspend"}) })
+	return managed.Suspend(ctx, suspend)
 }
