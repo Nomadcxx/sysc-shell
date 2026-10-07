@@ -157,3 +157,58 @@ func TestLockConfigClampsEffectFps(t *testing.T) {
 		}
 	}
 }
+
+func TestLockConfigClockStyleRoundTripsAndNormalizes(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"clock_style":"phm_slanted"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ClockStyle != "phm_slanted" {
+		t.Fatalf("clock style not read: %+v", c)
+	}
+	if err = Save(p, c); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ClockStyle != "phm_slanted" {
+		t.Fatalf("round trip lost clock style: %+v", again)
+	}
+	for body, want := range map[string]string{
+		`{}`:                      DefaultClockStyle,
+		`{"clock_style":""}`:      DefaultClockStyle,
+		`{"clock_style":"nope"}`:  DefaultClockStyle,
+		`{"clock_style":null}`:    DefaultClockStyle,
+		`{"clock_style":"plain"}`: "plain",
+	} {
+		if err = os.WriteFile(p, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		c, err = Load(p)
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if c.ClockStyle != want {
+			t.Fatalf("%s: clock style = %q, want %q", body, c.ClockStyle, want)
+		}
+	}
+}
+
+func TestLockConfigClockStylesMatchTheLockerNames(t *testing.T) {
+	want := []string{"kompaktblk", "phm_blocky_reverse", "phmvga", "phm_slanted", "plain"}
+	got := ClockStyles()
+	if len(got) != len(want) {
+		t.Fatalf("clock styles = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] || ClockStyle(want[i]) != want[i] {
+			t.Fatalf("clock style %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

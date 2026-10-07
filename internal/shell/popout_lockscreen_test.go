@@ -328,8 +328,10 @@ func TestLockSettingsShowsNewPresentationRows(t *testing.T) {
 			t.Fatalf("row for %s lacks label %q", action, label)
 		}
 	}
-	if findAction(h.root, "lockscreen-menu:backend") == nil || findAction(h.root, "lockscreen-menu:fps") == nil {
-		t.Fatal("missing backend or fps dropdown")
+	for _, action := range []string{"lockscreen-menu:backend", "lockscreen-menu:fps", "lockscreen-menu:clockstyle"} {
+		if findAction(h.root, action) == nil {
+			t.Fatalf("missing %s dropdown", action)
+		}
 	}
 }
 
@@ -368,5 +370,27 @@ func TestLockSettingsEditsGpuAndPresentationKeys(t *testing.T) {
 	}
 	if h.lockScreenAction(r, &ui.Node{Action: "lockscreen-zzz"}) {
 		t.Fatal("unknown action handled")
+	}
+}
+
+func TestLockSettingsEditsClockStyle(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.lockScreen.config.ClockStyle != lockconfig.DefaultClockStyle {
+		t.Fatalf("draft style = %q", h.lockScreen.config.ClockStyle)
+	}
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-menu:clockstyle"}) || h.lockScreen.menu != "clockstyle" {
+		t.Fatal("clock style menu did not open")
+	}
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-clockstyle:phm_slanted"}) || h.lockScreen.config.ClockStyle != "phm_slanted" {
+		t.Fatalf("clock style not drafted: %+v", h.lockScreen.config)
+	}
+	before := h.lockScreen.config
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-clockstyle:nope"}) || h.lockScreen.config != before {
+		t.Fatal("invalid clock style accepted")
+	}
+	if h.lockScreen.message == "" {
+		t.Fatal("invalid clock style left no message")
 	}
 }

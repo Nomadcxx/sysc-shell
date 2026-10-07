@@ -2,6 +2,7 @@ package shell
 
 import (
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,7 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}{
 		{"effect", "Effect", s.config.Effect, renderer.Effects()},
 		{"palette", "Palette", s.config.Palette, renderer.Palettes()},
+		{"clockstyle", "Clock style", s.config.ClockStyle, lockconfig.ClockStyles()},
 		{"backend", "Effect engine", s.config.Backend(), []string{"auto", "cpu", "gpu"}},
 		{"fps", "Effect FPS", strconv.Itoa(s.config.EffectFPS), []string{"10", "20", "30", "60"}},
 	} {
@@ -192,7 +194,7 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 	case strings.HasPrefix(n.Action, "lockscreen-menu:"):
 		menu := strings.TrimPrefix(n.Action, "lockscreen-menu:")
 		switch menu {
-		case "effect", "palette", "backend", "fps":
+		case "effect", "palette", "clockstyle", "backend", "fps":
 		default:
 			return true
 		}
@@ -303,6 +305,12 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 			cfg.Effect = value
 		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-palette:"); ok {
 			cfg.Palette = value
+		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-clockstyle:"); ok {
+			if !slices.Contains(lockconfig.ClockStyles(), value) {
+				s.message = "That presentation choice is unavailable."
+				break
+			}
+			cfg.ClockStyle = value
 		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-backend:"); ok {
 			if value != "auto" && value != "cpu" && value != "gpu" {
 				s.message = "That presentation choice is unavailable."
