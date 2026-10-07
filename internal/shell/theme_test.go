@@ -795,3 +795,30 @@ func TestThemeStyleCarriesEveryPaletteRole(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveTypeKeepsTheMonoRoleOnARealMonospace(t *testing.T) {
+	t.Parallel()
+	comp, ok := theme.PresetComposition(theme.PresetStandard)
+	if !ok {
+		t.Fatal("standard preset missing")
+	}
+	comp.FontFamily = "DejaVu Sans"
+	comp.MonoFontFamily = "DejaVu Sans"
+	set := resolveType(comp, config.Bar{})
+	want := render.MonospaceFamily(comp.MonoFontFamily, theme.DefaultMonoFamily)
+	if set.MonoFamily != want {
+		t.Fatalf("MonoFamily = %q, want %q", set.MonoFamily, want)
+	}
+	for role := range set.Roles {
+		r := theme.TextRole(role)
+		if theme.TypeFor(r).Mono {
+			if spec := set.Roles[role]; spec.Family != want {
+				t.Errorf("mono role %v family = %q, want %q", r, spec.Family, want)
+			}
+			continue
+		}
+		if spec := set.Roles[role]; spec.Family != comp.FontFamily {
+			t.Errorf("role %v family = %q, want %q", r, spec.Family, comp.FontFamily)
+		}
+	}
+}

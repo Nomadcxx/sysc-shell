@@ -257,7 +257,9 @@ func resolveType(comp theme.Composition, bar config.Bar) render.TypeSet {
 	if bar.FontFamily != "" {
 		family = bar.FontFamily
 	}
-	set := render.TypeSet{Family: family, MonoFamily: comp.MonoFontFamily}
+	// The mono role must land on a face whose advances really are equal.
+	mono := render.MonospaceFamily(comp.MonoFontFamily, theme.DefaultMonoFamily)
+	set := render.TypeSet{Family: family, MonoFamily: mono}
 	for role := range set.Roles {
 		r := theme.TextRole(role)
 		spec := render.TextSpec{
@@ -266,7 +268,7 @@ func resolveType(comp theme.Composition, bar config.Bar) render.TypeSet {
 			Weight: comp.TextWeight(r),
 		}
 		if theme.TypeFor(r).Mono {
-			spec.Family = comp.MonoFontFamily
+			spec.Family = mono
 		}
 		set.Roles[role] = spec
 	}
