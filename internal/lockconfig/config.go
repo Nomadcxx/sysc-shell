@@ -19,12 +19,34 @@ const MaxBytes = 64 << 10
 var atomicReplace = os.Rename
 
 type Config struct {
-	Effect        string `json:"effect"`
-	Palette       string `json:"palette"`
-	ReducedMotion bool   `json:"reduced_motion"`
+	Effect             string  `json:"effect"`
+	Palette            string  `json:"palette"`
+	ReducedMotion      bool    `json:"reduced_motion"`
+	Clock24h           bool    `json:"clock_24h"`
+	EffectFPS          int     `json:"effect_fps"`
+	Blur               *bool   `json:"blur_backdrop"`
+	EffectBackend      *string `json:"effect_backend"`
+	EffectGpuPowerSave *bool   `json:"effect_gpu_power_save"`
 }
 
-func Default() Config { return Config{Effect: "rain", Palette: "nord"} }
+func Default() Config { return Config{Effect: "rain", Palette: "nord", EffectFPS: 20} }
+
+// Backend, GpuPowerSave and BlurBackdrop mirror the sysc-lock accessors:
+// unset means the locker default, never a shell opinion.
+func (c Config) Backend() string {
+	if c.EffectBackend == nil {
+		return "auto"
+	}
+	switch *c.EffectBackend {
+	case "cpu", "gpu", "auto":
+		return *c.EffectBackend
+	}
+	return "auto"
+}
+
+func (c Config) GpuPowerSave() bool { return c.EffectGpuPowerSave == nil || *c.EffectGpuPowerSave }
+
+func (c Config) BlurBackdrop() bool { return c.Blur == nil || *c.Blur }
 func Path() string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -78,6 +100,13 @@ func Load(path string) (Config, error) {
 	data, _ := json.Marshal(fields)
 	if err = json.Unmarshal(data, &c); err != nil {
 		return c, err
+	}
+	// ponytail: 20/10/120 mirror sysc-lock internal/config; the locker owns
+	// the single source, revisit if these two files ever drift.
+	if fields["effect_fps"] == nil || c.EffectFPS == 0 {
+		c.EffectFPS = 20
+	} else {
+		c.EffectFPS = max(10, min(120, c.EffectFPS))
 	}
 	return c, renderer.Validate(c.Effect, c.Palette)
 }
