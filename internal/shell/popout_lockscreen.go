@@ -266,6 +266,16 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 				log.Printf("shell: lock preview: %v", err)
 				s.message = "Preview unavailable."
 			}
+			select {
+			case <-r.closed:
+				return
+			default:
+			}
+			if r.panelHosts[PanelSettings] != h {
+				return
+			}
+			r.rebuildPanel(h)
+			r.publishSurface(h.output, panelSurfaceID(h.id))
 		}()
 	case n.Action == "lockscreen-apply":
 		cfg, path := s.config, lockconfig.Path()
