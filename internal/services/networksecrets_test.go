@@ -221,9 +221,12 @@ func TestUnansweredPromptExpiresAtTheDeadline(t *testing.T) {
 	case <-time.After(20 * time.Second): // slack for a loaded -race runner; the timeout itself is 25ms
 		t.Fatal("an unanswered prompt never timed out")
 	}
+	// The nudge is sent after answerGen releases this prompt, so it races our
+	// return. Wait for it rather than sampling; a bare select here failed on a
+	// loaded -race runner.
 	select {
 	case <-expired:
-	default:
+	case <-time.After(5 * time.Second):
 		t.Fatal("the relay was not nudged to clear the password card")
 	}
 	next := make(chan secretReply, 1)
