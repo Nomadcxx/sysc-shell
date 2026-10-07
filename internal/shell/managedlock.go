@@ -41,7 +41,14 @@ func (r *Registry) initManagedLock() {
 		!lockStateAllowsBackground(r.managedState) {
 		r.backgroundHeld = true
 		if r.backgroundError == "" {
-			r.backgroundError = "the lock owner is mid-lock; background is held"
+			if r.managedState.Known {
+				r.backgroundError = "the lock owner is mid-lock; background is held"
+			} else {
+				// An owner the shell cannot reach is not a lock in progress;
+				// "mid-lock" here sent people looking for a lock that was
+				// never happening (#114).
+				r.backgroundError = "the lock session service is not reporting; background is held until it does"
+			}
 		}
 	}
 	go func() {

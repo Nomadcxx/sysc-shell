@@ -341,3 +341,24 @@ func startPrivateSessionBus(t *testing.T) {
 	}
 	t.Fatal("dbus-daemon did not report its address")
 }
+
+// An owner the shell cannot reach holds the background, but it is not a lock
+// in progress and the reason has to say so (#114).
+func TestHeldBackgroundNamesAnUnreachableLockService(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/dev/null")
+	cfg := config.Default()
+	cfg.Session.Locker = "sysc-lock"
+	r := &Registry{cfg: cfg}
+	r.initManagedLock()
+	t.Cleanup(r.lockCancel)
+	if !r.backgroundHeld {
+		t.Fatal("an unreachable lock owner did not hold the background")
+	}
+	if strings.Contains(r.backgroundError, "mid-lock") {
+		t.Fatalf("unreachable owner reads %q", r.backgroundError)
+	}
+	if !strings.Contains(r.backgroundError, "not reporting") {
+		t.Fatalf("unreachable owner reads %q", r.backgroundError)
+	}
+}

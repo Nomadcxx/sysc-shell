@@ -277,7 +277,7 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.wallpaperMenu == "folder" {
 		children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
 	}
-	children = append(children, wallpaperBanners(h)...)
+	children = append(children, wallpaperBanners(r, h)...)
 
 	media := wallpaperMedia(h)
 	// The theme list opens beside its combo in the footer, so it sits under
@@ -303,7 +303,7 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 		},
 	}
 	if len(media) == 0 {
-		children = append(children, wallpaperEmptyState(h))
+		children = append(children, wallpaperEmptyState(r, h))
 	} else {
 		children = append(children, list)
 	}
@@ -330,7 +330,7 @@ func childHeightFor(n *ui.Node) int {
 
 // wallpaperEmptyState explains an empty grid, which otherwise reads as a
 // broken picker, and offers the one action that gets out of it.
-func wallpaperEmptyState(h *PanelHost) *ui.Node {
+func wallpaperEmptyState(r *Registry, h *PanelHost) *ui.Node {
 	row := func(text string, lead, button *ui.Node) *ui.Node {
 		n := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Height: wallpaperChromeH(h)}
 		if lead != nil {
@@ -344,6 +344,11 @@ func wallpaperEmptyState(h *PanelHost) *ui.Node {
 	}
 	lib := h.wallpaperSnap.Library
 	if lib == nil {
+		if r != nil && r.backgroundHeld {
+			// The banner above carries the reason. Spinning here would claim
+			// indexing is under way when nothing is indexing.
+			return row("Wallpaper service is held", nil, nil)
+		}
 		return row("Indexing wallpaper library\u2026", &ui.Node{Kind: ui.KindSpinner, Key: "wallpaper-indexing"}, nil)
 	}
 	if search := wallpaperSearch(h); search != "" {
@@ -665,13 +670,18 @@ func wallpaperMatchCount(h *PanelHost, entry wallpaper.Entry) (matched, total in
 // wallpaperBanners surfaces the capability, scan, and apply failures. They are
 // separate rows because they have separate causes: a missing engine is not a
 // bad directory is not a refused apply (D4).
-func wallpaperBanners(h *PanelHost) []*ui.Node {
+func wallpaperBanners(r *Registry, h *PanelHost) []*ui.Node {
 	var out []*ui.Node
 	add := func(text string, tone ui.Tone) {
 		if text == "" {
 			return
 		}
 		out = append(out, &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, Height: wallpaperCaptionH})
+	}
+	// A held background means no service, no library, and no assignment. The
+	// only copy of the reason used to live on the Lock Screen page.
+	if r != nil && r.backgroundHeld && r.backgroundError != "" {
+		add("Wallpaper and screensaver are held: "+r.backgroundError+".", ui.ToneError)
 	}
 	for _, connector := range wallpaperTargets(h) {
 		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StateStarting {
