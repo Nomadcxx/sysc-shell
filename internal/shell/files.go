@@ -462,7 +462,13 @@ func (h *PanelHost) activateFiles(r *Registry, n *ui.Node) bool {
 		return true
 	case files.ActionOpen:
 		if e := sess.selectedFileEntry(); e.Path != "" {
-			r.openFilesTargetLocked(sess, e)
+			target, err := files.Contain(sess.root, e.Path)
+			if err != nil {
+				sess.err = err.Error()
+				r.rebuildPanel(h)
+				return true
+			}
+			r.openFilesTargetLocked(sess, e, target)
 		}
 		return true
 	case files.ActionRename:
@@ -502,28 +508,33 @@ func (h *PanelHost) activateFiles(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	e := sess.entries[i]
-	if _, err := files.Contain(sess.root, e.Path); err != nil {
+	// Entry.Path names the lexical child, a symlink included. Resolve it now,
+	// at action time, so following, opening and previewing use what the link
+	// points at after the listing, and an out-of-jail swap is refused.
+	target, err := files.Contain(sess.root, e.Path)
+	if err != nil {
 		sess.err = err.Error()
 		r.rebuildPanel(h)
 		return true
 	}
 	if e.Dir {
-		r.reloadFilesLocked(sess, e.Path)
+		r.reloadFilesLocked(sess, target)
 		return true
 	}
-	r.openFilesTargetLocked(sess, e)
+	r.openFilesTargetLocked(sess, e, target)
 	return true
 }
 
 // openFilesTargetLocked acts on one selected file the way activating its row
 // does. pick-file returns the path and closes the panel; open hands it to the
-// desktop handler. Any other mode keeps the file merely selected.
-func (r *Registry) openFilesTargetLocked(sess *filesSession, e files.Entry) {
+// desktop handler. Any other mode keeps the file merely selected. target is
+// e.Path resolved through the jail at action time.
+func (r *Registry) openFilesTargetLocked(sess *filesSession, e files.Entry, target string) {
 	switch sess.mode {
 	case files.ModePickFile:
-		r.finishFilesPickLocked(sess, e.Path, nil)
+		r.finishFilesPickLocked(sess, target, nil)
 	case files.ModeOpen:
-		go filesOpenPath(e.Path, func(err error) {
+		go filesOpenPath(target, func(err error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			if err == nil || r.files != sess {
