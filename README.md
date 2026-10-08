@@ -47,7 +47,7 @@ you just don't get that feature.
 - **Notifications** — [sysc-notify](https://github.com/Nomadcxx/sysc-notify#installation). Stop mako,
   dunst or swaync first.
 - **Clipboard history** — [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard#installation).
-- **System tray** — [sysc-tray](https://github.com/Nomadcxx/sysc-tray) `v0.1.0-rc.3`.
+- **System tray** — [sysc-tray](https://github.com/Nomadcxx/sysc-tray) `v0.1.1`.
 - **Session lock** — [sysc-lock](https://github.com/Nomadcxx/sysc-lock), then point the shell at it:
 
   ```json
