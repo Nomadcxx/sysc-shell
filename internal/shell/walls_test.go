@@ -412,21 +412,12 @@ func TestManagedSnapshotRefreshesScreensaverPane(t *testing.T) {
 	}
 }
 
-func TestMissingUnitDoesNotDisableStandalonePreview(t *testing.T) {
-	snapshot := readyWallsSnapshot()
-	snapshot.LoadState, snapshot.UnitFileState = "not-found", "not-found"
-	snapshot.ServiceAvailable = false
-	snapshot.CanApply = false
-	snapshot.CanPreview = true
-	row := ccWallsRow(240, snapshot, false, false)
-	preview := findNode(row, func(n *ui.Node) bool { return n.Action == "cc:walls-preview" })
-	settings := findNode(row, func(n *ui.Node) bool { return n.Action == "settings-section:Screensaver" })
-	if preview == nil || preview.State.Has(ui.StateDisabled) || settings == nil {
-		t.Fatalf("missing unit removed standalone Preview or Settings navigation: %s", renderText(row))
-	}
-	if !strings.Contains(renderText(row), "Screensaver service is not installed") {
-		t.Fatalf("missing unit state is hidden: %s", renderText(row))
-	}
+// renderTextWithTooltips is renderText plus every tooltip: Home carries the
+// screensaver state on its pill's tooltip, where the page has no row for it.
+func renderTextWithTooltips(n *ui.Node) string {
+	out := renderText(n)
+	walkNodes(n, func(c *ui.Node) { out += " " + c.Tooltip })
+	return out
 }
 
 func TestWallsRelayUpdatesBothPanelsAndClosingOneKeepsService(t *testing.T) {
@@ -444,7 +435,7 @@ func TestWallsRelayUpdatesBothPanelsAndClosingOneKeepsService(t *testing.T) {
 		return r.wallsSnapshot.Theme == "nord"
 	})
 	r.mu.Lock()
-	if !strings.Contains(renderText(settingsHost.root), "nord") || !strings.Contains(renderText(r.panelHosts[PanelControlCenter].root), "Enabled at login") || !strings.Contains(renderText(r.panelHosts[PanelControlCenter].root), "Running") {
+	if !strings.Contains(renderText(settingsHost.root), "nord") || !strings.Contains(renderTextWithTooltips(r.panelHosts[PanelControlCenter].root), "Enabled at login") || !strings.Contains(renderTextWithTooltips(r.panelHosts[PanelControlCenter].root), "Running") {
 		r.mu.Unlock()
 		t.Fatalf("panels do not share the new snapshot: settings=%q control=%q", renderText(settingsHost.root), renderText(r.panelHosts[PanelControlCenter].root))
 	}
@@ -464,8 +455,8 @@ func TestWallsRelayUpdatesBothPanelsAndClosingOneKeepsService(t *testing.T) {
 	})
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !strings.Contains(renderText(r.panelHosts[PanelControlCenter].root), "Failed") {
-		t.Fatalf("remaining Control Centre did not update: %q", renderText(r.panelHosts[PanelControlCenter].root))
+	if !strings.Contains(renderTextWithTooltips(r.panelHosts[PanelControlCenter].root), "Failed") {
+		t.Fatalf("remaining Control Centre did not update: %q", renderTextWithTooltips(r.panelHosts[PanelControlCenter].root))
 	}
 }
 
@@ -478,10 +469,10 @@ func TestCaffeineCaptionDoesNotSubmitWallsCommands(t *testing.T) {
 	r.mu.Lock()
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	offRoot := ccHome(r, h)
-	off := renderText(offRoot)
+	off := renderTextWithTooltips(offRoot)
 	r.inhibitWanted = true
 	onRoot := ccHome(r, h)
-	on := renderText(onRoot)
+	on := renderTextWithTooltips(onRoot)
 	r.mu.Unlock()
 	if strings.Contains(off, "Caffeine does not pause the screensaver") || !strings.Contains(on, "Caffeine does not pause the screensaver") {
 		t.Fatalf("Caffeine caption off/on = %q / %q", off, on)

@@ -400,73 +400,89 @@ func TestControlCentreHeaderAndBodyComposition(t *testing.T) {
 	}
 }
 
-func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
+func homeMeasure(scale int) func(string, ui.TextAttrs) (int, int) {
+	return func(s string, attrs ui.TextAttrs) (int, int) {
+		base := 19
+		switch attrs.Role {
+		case theme.RoleCaption:
+			base = 15
+		case theme.RoleTitle:
+			base = 22
+		}
+		return len([]rune(s)) * 8 * scale / 100, (base*scale + 99) / 100
+	}
+}
+
+func TestControlCentreHomeFitsTheViewportWithoutScrolling(t *testing.T) {
+	for _, scale := range []int{75, 100, 125, 150} {
+		t.Run(fmt.Sprintf("font-scale-%d", scale), func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Theme.FontScale = scale
+			h := &PanelHost{id: PanelControlCenter, section: "home", theme: ThemeFrom(cfg, cfg.Bar)}
+			r := &Registry{sample: fixtureSnapshot(), reading: observedWeather(),
+				mediaState: services.MediaState{Available: true, Title: "A very long track title that will not fit", Status: services.PlaybackPlaying}}
+			root := controlCentreTree(r, h)
+			viewport := root.Children[1].Children[1]
+			home := viewport.Children[0]
+			if home.Height > viewport.Height {
+				t.Fatalf("Home is %d tall in a %d viewport: it would scroll", home.Height, viewport.Height)
+			}
+			body := ccBodyWidth(h)
+			if err := ui.LayoutColumn(home, ui.Rect{W: body, H: viewport.Height}, homeMeasure(scale)); err != nil {
+				t.Fatal(err)
+			}
+			pageBottom := home.Bounds.Y + home.Bounds.H
+			walkNodes(home, func(n *ui.Node) {
+				b := n.Bounds
+				if b.X < home.Bounds.X || b.X+b.W > home.Bounds.X+body || b.Y < home.Bounds.Y || b.Y+b.H > pageBottom {
+					t.Errorf("%s %q at %+v leaves the page %+v", n.Kind, n.Name+n.Text, b, home.Bounds)
+				}
+			})
+			split := home.Children[2]
+			right := split.Children[1]
+			if got := right.Bounds.X + right.Bounds.W; got != home.Bounds.X+body {
+				t.Errorf("right column ends at %d, want the body edge %d", got, home.Bounds.X+body)
+			}
+		})
+	}
+}
+
+func TestControlCentreHomeRowTable(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
-	root := controlCentreTree(&Registry{}, h)
-	body := root.Children[1].Children[1]
-	if body.Height != 480 {
-		t.Fatalf("body height = %d, want 480", body.Height)
+	home := ccHome(&Registry{}, h)
+	if home.Gap != theme.MarginM || len(home.Children) != 5 {
+		t.Fatalf("Home = %d blocks gap %d, want 5 blocks gap MarginM", len(home.Children), home.Gap)
 	}
-	home := body.Children[0]
-	if home.Gap != theme.MarginL || len(home.Children) != 5 {
-		t.Fatalf("Home composition = %+v, want five blocks separated by one MarginL", home)
-	}
-	want := []int{ccIdentityCardH, ccTogglePillH, ccWallsRowH, ccSplitH, ccSlidersH}
+	want := []int{ccHomeTopH, ccHomeToggleH, ccHomeSplitH, ccHomeSliderH, ccHomeSliderH}
 	for i, child := range home.Children {
 		if child.Height != want[i] {
 			t.Errorf("Home block %d height = %d, want %d", i, child.Height, want[i])
 		}
 	}
-}
-
-func TestControlCentreHomeShowsScreensaverAndPreviewActions(t *testing.T) {
-	t.Parallel()
-	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
-	root := ccHome(&Registry{}, h)
-	var settings, preview bool
-	var walk func(*ui.Node)
-	walk = func(n *ui.Node) {
-		if n == nil {
-			return
-		}
-		settings = settings || n.Action == "settings-section:Screensaver"
-		preview = preview || n.Action == "cc:walls-preview"
-		for _, child := range n.Children {
-			walk(child)
-		}
-	}
-	walk(root)
-	if !settings || !preview {
-		t.Fatalf("Home screensaver actions: settings=%v preview=%v", settings, preview)
+	if ccHomeHeight(2) != 460 || home.Height != 460 {
+		t.Fatalf("Home height = %d (ccHomeHeight(2)=%d), want 460", home.Height, ccHomeHeight(2))
 	}
 }
 
-func TestControlCentreDisablesPreviewWhileLocked(t *testing.T) {
-	t.Parallel()
-	r := &Registry{lockerAcquired: true}
+func TestHomeToggleRowHoldsFourPills(t *testing.T) {
+	r := &Registry{externalInhibitors: []services.ScreenSaverInhibitor{{App: "mpv", Cookie: 1}}}
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
-	root := ccHome(r, h)
-	preview := findNode(root, func(n *ui.Node) bool { return n.Action == "cc:walls-preview" })
-	if preview == nil {
-		t.Fatal("Home has no Preview action")
+	row := ccHome(r, h).Children[1]
+	if row.Kind != ui.KindRow || row.Gap != theme.MarginM || len(row.Children) != 4 {
+		t.Fatalf("toggle row = %+v, want four pills in a MarginM row", row)
 	}
-	if !preview.State.Has(ui.StateDisabled) || !preview.AriaDisabled {
-		t.Fatalf("Preview remains available while locked: %+v", preview)
-	}
-}
-
-func TestControlCentreHomeChildrenFitItsViewport(t *testing.T) {
-	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
-	home := ccHome(&Registry{}, h)
-	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
-	if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccHomePageH}, measure); err != nil {
-		t.Fatal(err)
-	}
-	bottom := home.Bounds.Y + home.Bounds.H
-	for i, child := range home.Children {
-		if got := child.Bounds.Y + child.Bounds.H; got > bottom {
-			t.Errorf("Home block %d ends at %d, beyond viewport bottom %d: %+v", i, got, bottom, child.Bounds)
+	actions := map[string]string{"Caffeine": "cc:caffeine", "Wallpaper": "cc:wallpaper",
+		"Terminal Art": "cc:terminal-art", "Screensaver": "settings-section:Screensaver"}
+	for name, action := range actions {
+		n := findByName(row, name)
+		if n == nil || n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium || n.Action != action {
+			t.Errorf("%s = %+v, want a stadium button with %s", name, n, action)
 		}
+	}
+	// The idle-held list rides on the Caffeine pill's tooltip: the page has no
+	// row to spare for it.
+	if caffeine := findByName(row, "Caffeine"); !strings.Contains(caffeine.Tooltip, "Idle held: mpv") {
+		t.Errorf("Caffeine tooltip = %q, want the idle-held list", caffeine.Tooltip)
 	}
 }
 
@@ -508,10 +524,10 @@ func TestHomeWeatherSummaryFollowsNightAndFailureStates(t *testing.T) {
 func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	quick := ccHome(&Registry{}, h).Children[1]
-	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 3 {
-		t.Fatalf("quick access = %+v, want three controls in a MarginM-gap row", quick)
+	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 4 {
+		t.Fatalf("quick access = %+v, want four controls in a MarginM-gap row", quick)
 	}
-	for _, name := range []string{"Caffeine", "Wallpaper", "Terminal Art"} {
+	for _, name := range []string{"Caffeine", "Wallpaper", "Terminal Art", "Screensaver"} {
 		n := findByName(quick, name)
 		if n == nil || n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium || !n.Focusable {
 			t.Errorf("%s = %+v, want independent capsule button", name, n)
@@ -613,13 +629,14 @@ func TestControlCentreHomeSystemGaugesFitInsideCardBounds(t *testing.T) {
 				height := (base*scale + 99) / 100
 				return len([]rune(s)) * 8 * scale / 100, height
 			}
-			if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccHomePageH}, measure); err != nil {
+			if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: home.Height}, measure); err != nil {
 				t.Fatal(err)
 			}
 
-			system := home.Children[3].Children[0].Children[1]
-			if system.Kind != ui.KindCapsule || system.Bounds.H != ccCardH || system.Name != "System" || system.Role != "group" {
-				t.Fatalf("system card = %+v, want fixed accessible %dpx card", system, ccCardH)
+			system := findByName(home, "System")
+			wantH := ccHomeSplitH - ccHomeWeatherH - ccHomeGap
+			if system == nil || system.Kind != ui.KindCapsule || system.Bounds.H != wantH || system.Role != "group" {
+				t.Fatalf("system card = %+v, want fixed accessible %dpx card", system, wantH)
 			}
 			inner := ui.Rect{
 				X: system.Bounds.X + system.Padding,
@@ -785,8 +802,8 @@ func TestHomeUnavailableControlsAreDisabledAndBatteryIsAReadout(t *testing.T) {
 	battery := findNode(home, func(n *ui.Node) bool {
 		return n.Kind == ui.KindCapsule && strings.Contains(renderText(n), "Battery")
 	})
-	if battery == nil || battery.Focusable || battery.Action != "" || battery.Stroke == 0 {
-		t.Errorf("battery = %+v, want an outlined non-actionable readout", battery)
+	if battery == nil || battery.Focusable || battery.Action != "" || battery.Stroke != 0 || battery.Fill != ui.FillContainerHigh {
+		t.Errorf("battery = %+v, want a filled non-actionable readout", battery)
 	}
 }
 
@@ -844,45 +861,6 @@ func TestHomeTerminalArtControlOpensItsPanel(t *testing.T) {
 	r.mu.Unlock()
 	if controlOpen || !artOpen || wallpaperOpen {
 		t.Fatalf("after Terminal Art: control=%v art=%v wallpaper=%v", controlOpen, artOpen, wallpaperOpen)
-	}
-}
-
-// The quick row holds three stadium buttons. The idle-held list used to share
-// the row as a fourth child and ran past the body; it now rides on the
-// Caffeine button's tooltip, because the page height is fixed.
-func TestHomeQuickRowFitsThreeButtons(t *testing.T) {
-	r := newPanelRegistry(t)
-	r.SetExternalInhibitors([]services.ScreenSaverInhibitor{{App: "mpv", Cookie: 1}})
-	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
-		t.Fatal(err)
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	h := r.panelHosts[PanelControlCenter]
-	caffeine := findByName(h.root, "Caffeine")
-	if caffeine == nil {
-		t.Fatal("no Caffeine control")
-	}
-	var row *ui.Node
-	walkNodes(h.root, func(n *ui.Node) {
-		for _, c := range n.Children {
-			if c == caffeine {
-				row = n
-			}
-		}
-	})
-	if row == nil || len(row.Children) != 3 {
-		t.Fatalf("quick row = %+v, want exactly three buttons", row)
-	}
-	width := 2 * theme.MarginM
-	for _, c := range row.Children {
-		width += c.Width
-	}
-	if body := ccBodyWidth(h); width > body {
-		t.Fatalf("quick row is %d wide, body is %d", width, body)
-	}
-	if !strings.Contains(caffeine.Tooltip, "Idle held: mpv") {
-		t.Fatalf("Caffeine tooltip = %q, want the idle-held list", caffeine.Tooltip)
 	}
 }
 
@@ -1543,7 +1521,7 @@ func TestControlCentreSettingsPageLinksIntoThePanel(t *testing.T) {
 // TestControlCentreMeasuredRowsFitTheirContainers guards the fit rather than
 // the heights. The quick tiles and the forecast slots were each sized to fill
 // their container exactly at the old gap, so moving the ladder overflows the
-// row and configure() refuses the child. TestControlCentreHomeFillsTheBodyContract
+// row and configure() refuses the child. TestControlCentreHomeRowTable
 // proves the bands are the right height; nothing proved they still fit across.
 //
 // Every term is derived here. A literal width would be the same drift this
@@ -1554,14 +1532,19 @@ func TestControlCentreMeasuredRowsFitTheirContainers(t *testing.T) {
 	body := ccBodyWidth(h)
 
 	home := ccHome(&Registry{}, h)
-	wallsRow := home.Children[2]
-	if len(wallsRow.Children) != 2 {
-		t.Fatalf("screensaver row holds %d tiles, want 2", len(wallsRow.Children))
+	for _, tc := range []struct {
+		name string
+		row  *ui.Node
+	}{{"top", home.Children[0]}, {"toggle", home.Children[1]}} {
+		used := (len(tc.row.Children) - 1) * tc.row.Gap
+		for _, c := range tc.row.Children {
+			used += c.Width
+		}
+		if used > body {
+			t.Errorf("%s row uses %dpx across a %dpx body", tc.name, used, body)
+		}
 	}
-	if used := wallsRow.Children[0].Width + wallsRow.Gap + wallsRow.Children[1].Width; used > body {
-		t.Errorf("screensaver row uses %dpx across a %dpx body", used, body)
-	}
-	split := home.Children[3]
+	split := home.Children[2]
 	left, right := split.Children[0], split.Children[1]
 	if used := left.Width + split.Gap + right.Width; used > body {
 		t.Errorf("Home split uses %dpx across a %dpx body", used, body)
