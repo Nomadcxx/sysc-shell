@@ -8,12 +8,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 
 	"github.com/Nomadcxx/sysc-terminal/renderer"
 )
 
 const MaxBytes = 64 << 10
+
+const EffectNone = "none"
 
 // atomicReplace follows shell config writing, with a test seam for rename failure.
 var atomicReplace = os.Rename
@@ -31,7 +34,21 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{Effect: "rain", Palette: "nord", ClockStyle: DefaultClockStyle, EffectFPS: 20}
+	return Config{Effect: EffectNone, Palette: "nord", ClockStyle: DefaultClockStyle, EffectFPS: 20}
+}
+
+// Effects includes the locker's static presentation alongside renderer effects.
+func Effects() []string { return append([]string{EffectNone}, renderer.Effects()...) }
+
+// Validate follows the locker: none needs a valid palette, without an effect.
+func Validate(effect, palette string) error {
+	if effect == EffectNone {
+		if !slices.Contains(renderer.Palettes(), palette) {
+			return fmt.Errorf("unknown palette %q", palette)
+		}
+		return nil
+	}
+	return renderer.Validate(effect, palette)
 }
 
 // DefaultClockStyle and ClockStyles mirror sysc-lock internal/art, whose glyph
@@ -132,10 +149,10 @@ func Load(path string) (Config, error) {
 		c.EffectFPS = max(10, min(120, c.EffectFPS))
 	}
 	c.ClockStyle = ClockStyle(c.ClockStyle)
-	return c, renderer.Validate(c.Effect, c.Palette)
+	return c, Validate(c.Effect, c.Palette)
 }
 func Save(path string, c Config) error {
-	if err := renderer.Validate(c.Effect, c.Palette); err != nil {
+	if err := Validate(c.Effect, c.Palette); err != nil {
 		return err
 	}
 	fields, err := read(path)
