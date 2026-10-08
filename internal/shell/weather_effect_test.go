@@ -200,3 +200,55 @@ func TestWeatherPanelFitsLaptopScale(t *testing.T) {
 		t.Fatalf("weather panel does not fit 460x560 at scale 1.25: %v", err)
 	}
 }
+
+func TestWeatherDaylightFollowsSunriseAndSunset(t *testing.T) {
+	zone := "Australia/Melbourne"
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		t.Skip("tzdata unavailable:", err)
+	}
+	day := []services.Day{{Date: "2026-10-08", Sunrise: "2026-10-08T06:38", Sunset: "2026-10-08T19:40"}}
+	night := false
+	base := services.Reading{Observed: true, Timezone: &zone, Daily: day, IsDay: &night}
+	at := func(hhmm string) time.Time {
+		v, err := time.ParseInLocation("2006-01-02T15:04", "2026-10-08T"+hhmm, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.UTC() // the clock is in any zone; the sky reads it in the reading's
+	}
+	for _, tc := range []struct {
+		name   string
+		clock  string
+		lo, hi float64
+	}{
+		{"before dawn", "05:54", 0, 0},
+		{"sunrise is mid-twilight", "06:38", .49, .51},
+		{"twenty minutes after sunrise", "06:58", 1, 1},
+		{"midday", "13:00", 1, 1},
+		{"ten minutes before sunset", "19:30", .7, .9},
+		{"sunset is mid-twilight", "19:40", .49, .51},
+		{"night", "22:30", 0, 0},
+	} {
+		got := weatherDaylight(base, at(tc.clock))
+		if got < tc.lo || got > tc.hi {
+			t.Errorf("%s: daylight %.3f, want [%v, %v]", tc.name, got, tc.lo, tc.hi)
+		}
+	}
+
+	t.Run("falls back to IsDay", func(t *testing.T) {
+		bad := "Not/AZone"
+		dayFlag := true
+		for name, r := range map[string]services.Reading{
+			"no timezone":     {Observed: true, Daily: day, IsDay: &dayFlag},
+			"bad timezone":    {Observed: true, Timezone: &bad, Daily: day, IsDay: &dayFlag},
+			"no daily":        {Observed: true, Timezone: &zone, IsDay: &dayFlag},
+			"unparseable sun": {Observed: true, Timezone: &zone, IsDay: &dayFlag, Daily: []services.Day{{Date: "2026-10-08", Sunrise: "dawn", Sunset: "dusk"}}},
+			"other date":      {Observed: true, Timezone: &zone, IsDay: &dayFlag, Daily: []services.Day{{Date: "2026-10-01", Sunrise: "2026-10-01T06:50", Sunset: "2026-10-01T19:32"}}},
+		} {
+			if got := weatherDaylight(r, at("22:30")); got != 1 {
+				t.Errorf("%s: daylight %v, want the IsDay fallback 1", name, got)
+			}
+		}
+	})
+}
