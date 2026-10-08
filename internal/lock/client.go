@@ -31,11 +31,76 @@ type State struct {
 type Client struct {
 	mu              sync.Mutex
 	session, socket string
-	conn            *dbus.Conn
+	conn            busConn
 	state           State
 	updates         chan State
 	changed         chan struct{}
 }
+
+// busConn is the small slice of the session bus the watcher needs. Keeping it
+// an interface lets the watch loop and snapshot be tested without a live bus.
+type busConn interface {
+	Close() error
+	Done() <-chan struct{}
+	Signals() chan *dbus.Signal
+	GetNameOwner(ctx context.Context) (string, error)
+	GetConnectionUnixUser(ctx context.Context, owner string) (uint32, error)
+	GetState(ctx context.Context, owner string) (string, error)
+	RequestLock(ctx context.Context, owner string) (string, error)
+}
+
+type liveBus struct {
+	conn    *dbus.Conn
+	signals chan *dbus.Signal
+}
+
+func (b *liveBus) Close() error               { return b.conn.Close() }
+func (b *liveBus) Done() <-chan struct{}      { return b.conn.Context().Done() }
+func (b *liveBus) Signals() chan *dbus.Signal { return b.signals }
+func (b *liveBus) GetNameOwner(ctx context.Context) (string, error) {
+	var owner string
+	err := b.conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", 0, busName).Store(&owner)
+	return owner, err
+}
+func (b *liveBus) GetConnectionUnixUser(ctx context.Context, owner string) (uint32, error) {
+	var uid uint32
+	err := b.conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetConnectionUnixUser", 0, owner).Store(&uid)
+	return uid, err
+}
+func (b *liveBus) GetState(ctx context.Context, owner string) (string, error) {
+	var data string
+	err := b.conn.Object(owner, busPath).CallWithContext(ctx, busName+".GetState", 0).Store(&data)
+	return data, err
+}
+func (b *liveBus) RequestLock(ctx context.Context, owner string) (string, error) {
+	var data string
+	err := b.conn.Object(owner, busPath).CallWithContext(ctx, busName+".Lock", 0).Store(&data)
+	return data, err
+}
+
+// dialFn opens one session-bus connection with both signal matches installed.
+// Tests replace it to count dials without a bus.
+var dialFn = func() (busConn, error) {
+	conn, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (busConn, error) { conn.Close(); return nil, err }
+	signals := make(chan *dbus.Signal, 32)
+	conn.Signal(signals)
+	if err = conn.AddMatchSignal(dbus.WithMatchSender(busName), dbus.WithMatchObjectPath(busPath), dbus.WithMatchInterface(busName), dbus.WithMatchMember("Changed")); err != nil {
+		return fail(err)
+	}
+	if err = conn.AddMatchSignal(dbus.WithMatchSender("org.freedesktop.DBus"), dbus.WithMatchInterface("org.freedesktop.DBus"), dbus.WithMatchMember("NameOwnerChanged"), dbus.WithMatchArg(0, busName)); err != nil {
+		return fail(err)
+	}
+	return &liveBus{conn: conn, signals: signals}, nil
+}
+
+// waitFn paces reconnect attempts after a dial failure. Tests replace it.
+var waitFn = time.After
+
+const reconnectBackoffCap = 30 * time.Second
 
 func New(session, socket string) *Client {
 	return &Client{session: session, socket: socket, state: State{Snapshot: Snapshot{Phase: "unavailable"}}, updates: make(chan State, 1), changed: make(chan struct{})}
@@ -86,7 +151,7 @@ func (c *Client) acceptLocked(owner string, v Snapshot) error {
 }
 
 // A method reply cannot revalidate a connection superseded by an owner change.
-func (c *Client) acceptReply(conn *dbus.Conn, owner, currentOwner string, v Snapshot) error {
+func (c *Client) acceptReply(conn busConn, owner, currentOwner string, v Snapshot) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn != conn || !c.state.Known || c.state.Owner != owner {
@@ -103,75 +168,77 @@ func (c *Client) disconnect() {
 	defer c.mu.Unlock()
 	c.disconnectLocked()
 }
+
+// disconnectLocked publishes only on an actual change. State and Snapshot are
+// scalar-only by design so == is the change test; TestStateIsComparable
+// fails the build if a future field breaks that.
 func (c *Client) disconnectLocked() {
+	prev := c.state
 	if c.state.Phase != "idle" && c.state.Phase != "failed-before-acquisition" && c.state.Generation != 0 {
 		c.state.Phase = "sealed/unknown"
 	} else {
 		c.state.Phase = "unavailable"
+		// An unavailable client knows no generation. Clearing it keeps a
+		// repeated disconnect identical, so the check below stays quiet.
+		c.state.Generation = 0
+		c.state.ConfirmedUnlock = 0
 	}
 	c.state.Known = false
 	c.state.SleepProtected = false
 	c.state.Owner = ""
 	c.conn = nil
-	c.publish()
+	if c.state != prev {
+		c.publish()
+	}
 }
-func (c *Client) invalidateReply(conn *dbus.Conn, owner string) {
+func (c *Client) invalidateReply(conn busConn, owner string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn == conn && c.state.Known && c.state.Owner == owner {
 		c.disconnectLocked()
 	}
 }
-func (c *Client) connect(ctx context.Context) (*dbus.Conn, chan *dbus.Signal, error) {
-	conn, err := dbus.ConnectSessionBus()
+
+// snapshot reads the locker over an already-dialed connection and never closes
+// it. An absent or wrong owner is a state change, not a bus fault: the
+// connection stays open and the next NameOwnerChanged re-runs the snapshot.
+func (c *Client) snapshot(ctx context.Context, bus busConn) {
+	query, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	owner, err := bus.GetNameOwner(query)
+	if err != nil || owner == "" {
+		c.disconnect()
+		return
+	}
+	uid, err := bus.GetConnectionUnixUser(query, owner)
+	if err != nil || uid != uint32(os.Getuid()) {
+		c.disconnect()
+		return
+	}
+	data, err := bus.GetState(query, owner)
 	if err != nil {
-		return nil, nil, err
-	}
-	fail := func(err error) (*dbus.Conn, chan *dbus.Signal, error) { conn.Close(); return nil, nil, err }
-	signals := make(chan *dbus.Signal, 32)
-	conn.Signal(signals)
-	if err = conn.AddMatchSignal(dbus.WithMatchSender(busName), dbus.WithMatchObjectPath(busPath), dbus.WithMatchInterface(busName), dbus.WithMatchMember("Changed")); err != nil {
-		return fail(err)
-	}
-	if err = conn.AddMatchSignal(dbus.WithMatchSender("org.freedesktop.DBus"), dbus.WithMatchInterface("org.freedesktop.DBus"), dbus.WithMatchMember("NameOwnerChanged"), dbus.WithMatchArg(0, busName)); err != nil {
-		return fail(err)
-	}
-	var owner string
-	if err = conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", 0, busName).Store(&owner); err != nil {
-		return fail(err)
-	}
-	var uid uint32
-	if err = conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetConnectionUnixUser", 0, owner).Store(&uid); err != nil {
-		return fail(err)
-	}
-	if uid != uint32(os.Getuid()) {
-		return fail(fmt.Errorf("locker UID differs"))
-	}
-	var data string
-	if err = conn.Object(owner, busPath).CallWithContext(ctx, busName+".GetState", 0).Store(&data); err != nil {
-		return fail(err)
+		c.disconnect()
+		return
 	}
 	v, err := decode(data)
 	if err != nil {
-		return fail(err)
+		c.disconnect()
+		return
 	}
-	var currentOwner string
-	if err = conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", 0, busName).Store(&currentOwner); err != nil {
-		return fail(err)
-	}
-	if currentOwner != owner {
-		return fail(fmt.Errorf("lock ownership changed during snapshot"))
+	currentOwner, err := bus.GetNameOwner(query)
+	if err != nil || currentOwner != owner {
+		c.disconnect()
+		return
 	}
 	c.mu.Lock()
 	err = c.acceptLocked(owner, v)
 	if err == nil {
-		c.conn = conn
+		c.conn = bus
 	}
 	c.mu.Unlock()
 	if err != nil {
-		return fail(err)
+		c.disconnect()
 	}
-	return conn, signals, nil
 }
 func decode(data string) (Snapshot, error) {
 	var v Snapshot
@@ -182,52 +249,60 @@ func decode(data string) (Snapshot, error) {
 	return v, err
 }
 
-// Start queries before background startup, then reconciles on every owner change.
+// Start dials once before background startup, then keeps that connection for
+// the life of the client. Reconnect happens only when the bus itself closes,
+// paced by exponential backoff; an unowned bus name costs nothing but a wait.
 func (c *Client) Start(ctx context.Context) {
-	query, cancel := context.WithTimeout(ctx, 2*time.Second)
-	conn, signals, err := c.connect(query)
-	cancel()
+	bus, err := dialFn()
 	if err != nil {
 		c.disconnect()
+	} else {
+		c.snapshot(ctx, bus)
 	}
-	go c.run(ctx, conn, signals)
+	go c.run(ctx, bus)
 }
-func (c *Client) run(ctx context.Context, conn *dbus.Conn, signals chan *dbus.Signal) {
+func (c *Client) run(ctx context.Context, bus busConn) {
 	defer func() {
-		if conn != nil {
-			conn.Close()
+		if bus != nil {
+			bus.Close()
 		}
 		c.disconnect()
 	}()
+	delay := time.Second
 	for {
-		if conn == nil {
-			timer := time.NewTimer(time.Second)
+		if bus == nil {
 			select {
 			case <-ctx.Done():
-				timer.Stop()
 				return
-			case <-timer.C:
+			case <-waitFn(delay):
 			}
-			query, cancel := context.WithTimeout(ctx, 2*time.Second)
-			var err error
-			conn, signals, err = c.connect(query)
-			cancel()
+			next, err := dialFn()
 			if err != nil {
 				c.disconnect()
+				delay *= 2
+				if delay > reconnectBackoffCap {
+					delay = reconnectBackoffCap
+				}
 				continue
 			}
+			bus, delay = next, time.Second
+			c.snapshot(ctx, bus)
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-conn.Context().Done():
-			conn = nil
+		case <-bus.Done():
+			bus = nil
 			c.disconnect()
-		case sig, ok := <-signals:
-			if !ok || sig == nil || sig.Name == "org.freedesktop.DBus.NameOwnerChanged" {
-				conn.Close()
-				conn = nil
+		case sig, ok := <-bus.Signals():
+			if !ok || sig == nil {
+				bus.Close()
+				bus = nil
 				c.disconnect()
+				continue
+			}
+			if sig.Name == "org.freedesktop.DBus.NameOwnerChanged" {
+				c.snapshot(ctx, bus)
 				continue
 			}
 			state := c.State()
@@ -240,8 +315,6 @@ func (c *Client) run(ctx context.Context, conn *dbus.Conn, signals chan *dbus.Si
 			}
 			v, err := decode(data)
 			if err != nil || c.accept(sig.Sender, v) != nil {
-				conn.Close()
-				conn = nil
 				c.disconnect()
 			}
 		}
@@ -249,16 +322,16 @@ func (c *Client) run(ctx context.Context, conn *dbus.Conn, signals chan *dbus.Si
 }
 func (c *Client) Lock(ctx context.Context) (State, error) {
 	c.mu.Lock()
-	conn, owner := c.conn, c.state.Owner
+	bus, owner := c.conn, c.state.Owner
 	known := c.state.Known
 	c.mu.Unlock()
-	if conn == nil || !known {
+	if bus == nil || !known {
 		return c.State(), fmt.Errorf("managed locker unavailable")
 	}
-	var data string
-	if err := conn.Object(owner, busPath).CallWithContext(ctx, busName+".Lock", 0).Store(&data); err != nil {
-		c.invalidateReply(conn, owner)
-		conn.Close()
+	data, err := bus.RequestLock(ctx, owner)
+	if err != nil {
+		c.invalidateReply(bus, owner)
+		bus.Close()
 		return c.State(), err
 	}
 	v, err := decode(data)
@@ -266,17 +339,16 @@ func (c *Client) Lock(ctx context.Context) (State, error) {
 		return c.State(), err
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	var currentOwner string
-	err = conn.BusObject().CallWithContext(checkCtx, "org.freedesktop.DBus.GetNameOwner", 0, busName).Store(&currentOwner)
+	currentOwner, err := bus.GetNameOwner(checkCtx)
 	cancel()
 	if err != nil {
-		c.invalidateReply(conn, owner)
-		conn.Close()
+		c.invalidateReply(bus, owner)
+		bus.Close()
 		return c.State(), fmt.Errorf("recheck lock owner: %w", err)
 	}
-	if err = c.acceptReply(conn, owner, currentOwner, v); err != nil {
-		c.invalidateReply(conn, owner)
-		conn.Close()
+	if err = c.acceptReply(bus, owner, currentOwner, v); err != nil {
+		c.invalidateReply(bus, owner)
+		bus.Close()
 		return c.State(), err
 	}
 	return c.State(), nil
