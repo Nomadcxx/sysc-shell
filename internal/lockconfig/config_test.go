@@ -265,6 +265,7 @@ func TestLockConfigNativeDescriptionContract(t *testing.T) {
 	var description struct {
 		ClockStyles []string `json:"clock_styles"`
 		Effects     []string `json:"effects"`
+		TextEffects []string `json:"text_effects"`
 		Palettes    []string `json:"palettes"`
 		Defaults    Config   `json:"defaults"`
 	}
@@ -277,11 +278,84 @@ func TestLockConfigNativeDescriptionContract(t *testing.T) {
 	if !reflect.DeepEqual(description.Effects, Effects()) {
 		t.Fatalf("effect mirror drift: %v != %v", description.Effects, Effects())
 	}
+	if !reflect.DeepEqual(description.TextEffects, append([]string{"none"}, renderer.TextEffects()...)) {
+		t.Fatal("text effect mirror drift")
+	}
+	if description.Defaults.Header != Default().Header || description.Defaults.TextEffect != Default().TextEffect {
+		t.Fatal("artwork defaults drift")
+	}
 	if !reflect.DeepEqual(description.Palettes, renderer.Palettes()) {
 		t.Fatal("palette mirror drift")
 	}
 	c, want := description.Defaults, Default()
 	if c.Effect != want.Effect || c.Palette != want.Palette || c.ClockStyle != want.ClockStyle || c.ReducedMotion != want.ReducedMotion || c.Clock24h != want.Clock24h || c.EffectFPS != want.EffectFPS || c.BlurBackdrop() != want.BlurBackdrop() || c.Backend() != want.Backend() || c.GpuPowerSave() != want.GpuPowerSave() {
 		t.Fatalf("default mirror drift: %+v != %+v", c, want)
+	}
+}
+
+func TestArtworkPreferencesSurviveShellSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"header":"ascii_custom","text_effect":"fire-text","future":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil || c.Header != "ascii_custom" || c.TextEffect != "fire-text" {
+		t.Fatalf("load: %+v %v", c, err)
+	}
+	c.Palette = "eldritch"
+	if err = Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil || got.Header != c.Header || got.TextEffect != c.TextEffect {
+		t.Fatalf("save lost artwork: %+v %v", got, err)
+	}
+}
+
+func TestRawHeadersAreBoundedAndNeverFollowSpecialFiles(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "headers.conf")
+	if got, err := ReadHeaders(p); err != nil || got != "" {
+		t.Fatal("missing must use native defaults")
+	}
+	data := "ascii_custom=\"\"\"\n# = literal art\n\"\"\"\n"
+	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadHeaders(p); err != nil || got != data {
+		t.Fatal("shell changed native conf")
+	}
+	if err := os.WriteFile(p, make([]byte, MaxBytes+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadHeaders(p); err == nil {
+		t.Fatal("oversized accepted")
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(p, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadHeaders(p); err == nil {
+		t.Fatal("fifo accepted")
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadHeaders(p); err == nil {
+		t.Fatal("symlink accepted")
+	}
+}
+
+func TestRawHeadersRejectInvalidUTF8BeforeJSON(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "headers.conf")
+	if err := os.WriteFile(p, []byte{'a', 0xff}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadHeaders(p); err == nil {
+		t.Fatal("JSON would silently replace invalid artwork bytes")
 	}
 }

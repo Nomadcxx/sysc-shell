@@ -142,11 +142,14 @@ func lockPreview(ctx context.Context, c lockconfig.Config) (*ui.Image, error) {
 	if err := lockconfig.Validate(c.Effect, c.Palette); err != nil {
 		return nil, err
 	}
+	// Invalid decoration uses the native shipped catalogue, just as locking does.
+	headers, _ := lockconfig.ReadHeaders(lockconfig.HeadersPath())
 	request, err := json.Marshal(struct {
-		Config lockconfig.Config `json:"config"`
-		Width  int               `json:"width"`
-		Height int               `json:"height"`
-	}{c, 2 * lockPreviewWidth, 2 * lockPreviewHeight})
+		Headers string            `json:"headers"`
+		Config  lockconfig.Config `json:"config"`
+		Width   int               `json:"width"`
+		Height  int               `json:"height"`
+	}{headers, c, 2 * lockPreviewWidth, 2 * lockPreviewHeight})
 	if err != nil {
 		return nil, err
 	}

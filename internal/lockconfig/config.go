@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-terminal/renderer"
 )
@@ -22,6 +23,8 @@ const EffectNone = "none"
 var atomicReplace = os.Rename
 
 type Config struct {
+	Header             string  `json:"header"`
+	TextEffect         string  `json:"text_effect"`
 	Effect             string  `json:"effect"`
 	Palette            string  `json:"palette"`
 	ClockStyle         string  `json:"clock_style"`
@@ -34,7 +37,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{Effect: EffectNone, Palette: "nord", ClockStyle: DefaultClockStyle, EffectFPS: 20}
+	return Config{Header: "ascii_1", TextEffect: "none", Effect: EffectNone, Palette: "nord", ClockStyle: DefaultClockStyle, EffectFPS: 20}
 }
 
 // Effects includes the locker's static presentation alongside renderer effects.
@@ -94,6 +97,41 @@ func Path() string {
 	}
 	return filepath.Join(dir, "sysc-lock", "config.json")
 }
+func HeadersPath() string {
+	path := Path()
+	if path == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), "headers.conf")
+}
+
+// ReadHeaders transports literal bounded artwork; only sysc-lock parses it.
+func ReadHeaders(path string) (string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !st.Mode().IsRegular() || st.Size() > MaxBytes {
+		return "", fmt.Errorf("headers.conf exceeds regular file budget")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > MaxBytes || !utf8.Valid(data) {
+		return "", fmt.Errorf("headers.conf exceeds byte budget")
+	}
+	return string(data), nil
+}
+
 func read(path string) (map[string]json.RawMessage, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if os.IsNotExist(err) {
