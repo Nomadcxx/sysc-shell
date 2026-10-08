@@ -1484,6 +1484,27 @@ func TestDisabledControlsNeitherFocusNorActivate(t *testing.T) {
 	}
 }
 
+func TestPanelHitFocusablePrefersMenuPopupOverFollowingControl(t *testing.T) {
+	t.Parallel()
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Action: "set:appearance.seed", Focusable: true,
+		Bounds: ui.Rect{X: 10, Y: 10, W: 100, H: 24},
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "Theme", Bounds: ui.Rect{
+			X: 10, Y: 34, W: 100, H: 20,
+		}}},
+	}
+	cover := &ui.Node{Kind: ui.KindButton, Action: "settings:after", Focusable: true,
+		Bounds: ui.Rect{X: 10, Y: 34, W: 100, H: 20}}
+	h := &PanelHost{
+		root:  &ui.Node{Kind: ui.KindColumn, Bounds: ui.Rect{W: 120, H: 80}, Children: []*ui.Node{menu, cover}},
+		focus: []*ui.Node{menu, cover},
+	}
+
+	if got := h.hitFocusable(20, 40); got != menu {
+		t.Fatalf("popup hit = %p (%v), want menu %p", got, got, menu)
+	}
+}
+
 func TestReducedMotionSettlesStateWithoutAnimating(t *testing.T) {
 	t.Parallel()
 	// newPanelRegistry is already reduced-motion.
