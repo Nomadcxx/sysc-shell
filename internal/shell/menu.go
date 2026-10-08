@@ -6,6 +6,10 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+// ponytail: cap the drawn list at six rows; arrows advance the window, with
+// pointer-wheel scrolling as the next step if users need it.
+const menuVisibleRows = 6
+
 // Menu is an in-panel dropdown. It is not a Wayland surface: the open list
 // is a child region of the already-mapped panel.
 //
@@ -28,6 +32,7 @@ type Menu struct {
 	// tall and reads as a rule rather than a control.
 	filterHeight int
 	matches      []int
+	windowStart  int
 }
 
 func NewMenu(options []string, index int) *Menu {
@@ -59,6 +64,7 @@ func (m *Menu) Open() {
 	}
 	m.open = true
 	m.cursor = m.index
+	m.windowStart = 0
 	if m.filter != nil {
 		// Reopening starts from a clean well, or the last search is still
 		// narrowing a list the user has come back to read whole.
@@ -99,14 +105,18 @@ func (m *Menu) refilter() {
 			m.matches = append(m.matches, i)
 		}
 	}
-	if len(m.matches) == 0 || m.drawn(m.cursor) {
+	m.windowStart = 0
+	if len(m.matches) == 0 {
 		return
 	}
-	m.cursor = m.matches[0]
+	if !m.matchesFilter(m.cursor) {
+		m.cursor = m.matches[0]
+	}
+	m.keepCursorVisible()
 }
 
-// drawn reports whether the list is currently showing this option.
-func (m *Menu) drawn(i int) bool {
+// matchesFilter reports whether this option survives the current search.
+func (m *Menu) matchesFilter(i int) bool {
 	if m.filter == nil {
 		return i >= 0 && i < len(m.options)
 	}
@@ -116,6 +126,57 @@ func (m *Menu) drawn(i int) bool {
 		}
 	}
 	return false
+}
+
+func (m *Menu) optionCount() int {
+	if m.filter == nil {
+		return len(m.options)
+	}
+	return len(m.matches)
+}
+
+func (m *Menu) optionAt(position int) int {
+	if position < 0 || position >= m.optionCount() {
+		return -1
+	}
+	if m.filter == nil {
+		return position
+	}
+	return m.matches[position]
+}
+
+func (m *Menu) cursorPosition() (int, bool) {
+	if m.filter == nil {
+		return m.cursor, m.cursor >= 0 && m.cursor < len(m.options)
+	}
+	for position, index := range m.matches {
+		if index == m.cursor {
+			return position, true
+		}
+	}
+	return 0, false
+}
+
+func (m *Menu) keepCursorVisible() {
+	count := m.optionCount()
+	maxStart := max(count-menuVisibleRows, 0)
+	m.windowStart = min(max(m.windowStart, 0), maxStart)
+	position, ok := m.cursorPosition()
+	if !ok {
+		return
+	}
+	if position < m.windowStart {
+		m.windowStart = position
+	} else if position >= m.windowStart+menuVisibleRows {
+		m.windowStart = position - menuVisibleRows + 1
+	}
+	m.windowStart = min(max(m.windowStart, 0), maxStart)
+}
+
+func (m *Menu) visibleRange() (int, int) {
+	m.keepCursorVisible()
+	start := m.windowStart
+	return start, min(start+menuVisibleRows, m.optionCount())
 }
 
 func (m *Menu) Index() int {
@@ -137,19 +198,20 @@ func (m *Menu) step(by int) {
 	}
 	if m.filter == nil {
 		m.cursor = (m.cursor + by + len(m.options)) % len(m.options)
-		return
-	}
-	if len(m.matches) == 0 {
-		return
-	}
-	at := 0
-	for i, idx := range m.matches {
-		if idx == m.cursor {
-			at = i
-			break
+	} else {
+		if len(m.matches) == 0 {
+			return
 		}
+		at := 0
+		for i, idx := range m.matches {
+			if idx == m.cursor {
+				at = i
+				break
+			}
+		}
+		m.cursor = m.matches[(at+by+len(m.matches))%len(m.matches)]
 	}
-	m.cursor = m.matches[(at+by+len(m.matches))%len(m.matches)]
+	m.keepCursorVisible()
 }
 
 func (m *Menu) Select() int {
@@ -158,7 +220,7 @@ func (m *Menu) Select() int {
 	}
 	// A filter matching nothing leaves the cursor on a row that is not on
 	// screen. Committing it would write a value the user never saw.
-	if m.open && len(m.options) > 0 && m.drawn(m.cursor) {
+	if m.open && len(m.options) > 0 && m.matchesFilter(m.cursor) {
 		m.index = m.cursor
 	}
 	m.open = false
@@ -207,14 +269,19 @@ func (m *Menu) PickAt(n *ui.Node, x, y int) bool {
 		if c == nil || !c.Bounds.Contains(x, y) {
 			continue
 		}
-		if m.filter == nil {
-			m.cursor = i
-			return true
-		}
-		if i == 0 || i-1 >= len(m.matches) {
+		if m.filter != nil && i == 0 {
 			return false
 		}
-		m.cursor = m.matches[i-1]
+		position := m.windowStart + i
+		if m.filter != nil {
+			position--
+		}
+		option := m.optionAt(position)
+		if option < 0 {
+			return false
+		}
+		m.cursor = option
+		m.keepCursorVisible()
 		return true
 	}
 	return false
@@ -250,8 +317,11 @@ func (m *Menu) Node() *ui.Node {
 	if !m.open {
 		return n
 	}
+	start, end := m.visibleRange()
 	if m.filter == nil {
-		for i, opt := range m.options {
+		for position := start; position < end; position++ {
+			i := m.optionAt(position)
+			opt := m.options[i]
 			child := &ui.Node{Kind: ui.KindText, Text: opt}
 			if i == m.cursor {
 				child.Value = 1
@@ -271,7 +341,8 @@ func (m *Menu) Node() *ui.Node {
 		well.Height = m.filterHeight
 	}
 	n.Children = append(n.Children, well)
-	for _, i := range m.matches {
+	for position := start; position < end; position++ {
+		i := m.optionAt(position)
 		child := &ui.Node{Kind: ui.KindText, Text: m.options[i]}
 		if i == m.cursor {
 			child.Value = 1

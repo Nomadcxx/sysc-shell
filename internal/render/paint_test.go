@@ -1919,7 +1919,11 @@ func TestTabAndMenuRowCarryTheStateLayer(t *testing.T) {
 			Bounds: ui.Rect{X: 2, Y: 2, W: 26, H: 14}}
 		menu := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{W: 30, H: 40}, Children: []*ui.Node{row}}
 		c := newTestCanvas(t, 30, 40)
-		if err := paintNode(c, menu, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		text := NewTextRenderer(mustTestFace(t))
+		if err := paintNode(c, menu, text, testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		if err := paintMenuPopup(c, menu, text, testStyle, testStyle.Size); err != nil {
 			t.Fatal(err)
 		}
 		return pixelAt(t, c, 3, 3)
@@ -2419,7 +2423,10 @@ func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
 		},
 	}
 	if err := paintNode(c, menu, nil, testStyle, testStyle.Size); err != nil {
-		t.Fatalf("paintNode: %v", err)
+		t.Fatalf("paint menu trigger: %v", err)
+	}
+	if err := paintMenuPopup(c, menu, nil, testStyle, testStyle.Size); err != nil {
+		t.Fatalf("paint menu popup: %v", err)
 	}
 
 	// paintTextField strokes a boundary around the well: the quiet outline
@@ -2435,6 +2442,30 @@ func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
 	}
 	if !found {
 		t.Error("the filter well drew no outline, so it was painted as text rather than as a field")
+	}
+}
+
+func TestPaintMenuPopupOverlaysFollowingContent(t *testing.T) {
+	t.Parallel()
+	const width, height = 140, 80
+	c := newTestCanvas(t, width, height)
+	style := testStyle
+	style.Body = ui.Rect{W: width, H: height}
+	text := NewTextRenderer(mustTestFace(t))
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Text: "Theme", Padding: 4,
+		Bounds: ui.Rect{X: 8, Y: 8, W: 120, H: 24},
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "Option",
+			Bounds: ui.Rect{X: 8, Y: 32, W: 120, H: 24}}},
+	}
+	cover := &ui.Node{Kind: ui.KindMeter, Value: 1,
+		Bounds: ui.Rect{X: 8, Y: 32, W: 120, H: 24}}
+	root := &ui.Node{Kind: ui.KindColumn, Bounds: style.Body, Children: []*ui.Node{menu, cover}}
+	if err := Paint(c, root, text, style); err != nil {
+		t.Fatalf("paint open menu: %v", err)
+	}
+	if got, want := pixelAt(t, c, 100, 40), style.containerHighest(); got != want {
+		t.Fatalf("popup over following content = %+v, want menu surface %+v", got, want)
 	}
 }
 
@@ -2500,7 +2531,10 @@ func TestPaintMenuHonorsRoundedFieldPadding(t *testing.T) {
 			Bounds: ui.Rect{X: x, Y: y + 44, W: 144, H: 28}}},
 	}
 	if err := paintNode(c, n, r, testStyle, testStyle.Size); err != nil {
-		t.Fatalf("paint menu: %v", err)
+		t.Fatalf("paint menu trigger: %v", err)
+	}
+	if err := paintMenuPopup(c, n, r, testStyle, testStyle.Size); err != nil {
+		t.Fatalf("paint menu popup: %v", err)
 	}
 	surface := testStyle.containerHighest()
 	for _, region := range []ui.Rect{
