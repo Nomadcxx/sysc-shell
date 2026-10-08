@@ -127,3 +127,54 @@ func TestWeatherCloudsAreLitAboveAndShadedBelow(t *testing.T) {
 		t.Fatal("cloud palette is not quantised; every frame of a dusk would rebake")
 	}
 }
+
+func TestWeatherNearRainStreaksAreLargerThanFarOnes(t *testing.T) {
+	const w, h = 160, 120
+	litPixels := func(layer int) int {
+		c := newTestCanvas(t, w, h)
+		spec := rainSpec(7)
+		spec.Intensity = 1
+		paintWeatherRain(c, ui.Rect{W: w, H: h}, fullMask(w, h), spec, .3, layer)
+		n := 0
+		for i := 3; i < len(c.Pix); i += 4 {
+			if c.Pix[i] != 0 {
+				n++
+			}
+		}
+		return n
+	}
+	particles := func(layer int) int {
+		n := 0
+		for i := 0; i < weatherRainCount; i++ {
+			if weatherDepth(7, i) == layer {
+				n++
+			}
+		}
+		return n
+	}
+	far, near := litPixels(0), litPixels(2)
+	if far == 0 || near == 0 {
+		t.Fatal("a rain layer painted nothing")
+	}
+	// Near streaks are longer and wider (defocused), so each covers more of
+	// the card than a far one.
+	if near/max(particles(2), 1) <= far/max(particles(0), 1) {
+		t.Errorf("near rain covers %d px per streak, far %d; near should be larger",
+			near/max(particles(2), 1), far/max(particles(0), 1))
+	}
+}
+
+func TestWeatherPrecipitationLeavesTheCardBeforeItWraps(t *testing.T) {
+	// A particle wraps from the bottom back to the top. If any of it is still
+	// on the card at that instant, it pops out of existence mid-fall.
+	const w, h = 160, 120
+	for _, v := range []float64{0, math.Nextafter(1, 0)} {
+		if y0, y1 := weatherRainSpan(v, h, weatherRainLayers[2].length*h); y1 > 0 && y0 < h {
+			t.Errorf("near rain at v=%v spans rows %.1f..%.1f, inside the card", v, y0, y1)
+		}
+		r := weatherFlakeRadius(h, 2, true)
+		if y := weatherSnowY(v, h, r); y+r > 0 && y-r < h {
+			t.Errorf("near flake at v=%v is centred on row %.1f, inside the card", v, y)
+		}
+	}
+}
