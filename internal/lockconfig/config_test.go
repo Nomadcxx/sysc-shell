@@ -359,3 +359,63 @@ func TestRawHeadersRejectInvalidUTF8BeforeJSON(t *testing.T) {
 		t.Fatal("JSON would silently replace invalid artwork bytes")
 	}
 }
+
+func TestLoadAcceptsEffectNone(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	body := `{"effect":"none","clock_24h":true,"effect_fps":60,"effect_backend":"gpu",` +
+		`"blur_backdrop":false,"effect_gpu_power_save":false,"clock_style":"phmvga"}`
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("the locker's own default effect was rejected: %v", err)
+	}
+	if c.Effect != "none" || !c.Clock24h || c.EffectFPS != 60 ||
+		c.Backend() != "gpu" || c.BlurBackdrop() || c.GpuPowerSave() ||
+		c.ClockStyle != "phmvga" {
+		t.Fatalf("decoded config lost fields: %+v", c)
+	}
+}
+
+func TestSaveAcceptsEffectNone(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	c := Default()
+	if err := Save(p, c); err != nil {
+		t.Fatal(err)
+	}
+	back, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Effect != EffectNone {
+		t.Fatalf("round trip lost none: %q", back.Effect)
+	}
+}
+
+func TestSaveKeepsExistingKeyForNilPointer(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	original := []byte(`{"effect":"none","palette":"nord","effect_backend":"gpu",` +
+		`"effect_gpu_power_save":false,"blur_backdrop":false}`)
+	if err := os.WriteFile(p, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(p, Default()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default carries nil pointers for these keys. Saving it must not erase
+	// the values the file already holds.
+	for _, want := range []string{
+		`"effect_backend": "gpu"`,
+		`"effect_gpu_power_save": false`,
+		`"blur_backdrop": false`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("save clobbered %s:\n%s", want, data)
+		}
+	}
+}

@@ -646,3 +646,47 @@ func TestLockPreviewInstalledComposition(t *testing.T) {
 		t.Fatal("clock style did not change the native composition")
 	}
 }
+
+func TestLockSettingsLoadFailureDisablesApply(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	dir := filepath.Join(home, "sysc-lock")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	original := []byte(`{"effect":"bogus","palette":"gruvbox","clock_style":"phmvga","clock_24h":true}` + "\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtSettings(t, r)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h.section = "Lock Screen"
+	r.rebuildPanel(h)
+	apply := findAction(h.root, "lockscreen-apply")
+	if apply == nil {
+		t.Fatal("no Apply node in lock settings")
+	}
+	if !apply.State.Has(ui.StateDisabled) || !apply.AriaDisabled || apply.Focusable {
+		t.Fatalf("Apply stayed armed over a failed load: %v", apply)
+	}
+	if findNode(h.root, func(n *ui.Node) bool {
+		return strings.Contains(n.Text, "Cannot read lock screen settings")
+	}) == nil {
+		t.Fatal("the failed read is not surfaced to the user")
+	}
+	// Fire the action anyway, as a stale or scripted activation would.
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-apply"})
+	if h.lockScreen.saving || r.lockSettingsSaving {
+		t.Fatal("apply ran over a failed load")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, original) {
+		t.Fatalf("the unreadable config was rewritten:\n got %s\nwant %s", data, original)
+	}
+}
