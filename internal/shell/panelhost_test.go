@@ -151,6 +151,11 @@ func TestShieldPressDuringOpenLeavesThePanelUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
+	// Exercise the opening state even if construction or scheduling used its
+	// real 400ms grace. The neighboring quiet-state test fixes the other side.
+	reg.mu.Lock()
+	reg.panelHosts[PanelSession].shieldQuiet = time.Now().Add(time.Hour)
+	reg.mu.Unlock()
 	if reqs[0].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventPointerPress}) {
 		t.Fatal("shield press during open reported a close")
 	}

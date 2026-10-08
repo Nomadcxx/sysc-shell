@@ -1,12 +1,20 @@
 package shell
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"image/png"
+	"io"
 	"log"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/lockconfig"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -20,7 +28,7 @@ type lockScreenUI struct {
 	menu, message              string
 	image                      *ui.Image
 	previewSequence            uint64
-	previewStop                chan struct{}
+	previewCancel              context.CancelFunc
 }
 
 // lockToggle is a labelled switch row, disabled while another save is in flight.
@@ -59,7 +67,7 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		key, label, value string
 		values            []string
 	}{
-		{"effect", "Effect", s.config.Effect, renderer.Effects()},
+		{"effect", "Effect", s.config.Effect, lockconfig.Effects()},
 		{"palette", "Palette", s.config.Palette, renderer.Palettes()},
 		{"clockstyle", "Clock style", s.config.ClockStyle, lockconfig.ClockStyles()},
 		{"backend", "Effect engine", s.config.Backend(), []string{"auto", "cpu", "gpu"}},
@@ -116,70 +124,101 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if s.image != nil {
 		w := min(s.image.Width, settingsBodyWidth(h))
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Preview"}, &ui.Node{Kind: ui.KindImage, Image: s.image, ImageW: w, ImageH: w * s.image.Height / s.image.Width})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Still preview"}, &ui.Node{Kind: ui.KindImage, Image: s.image, ImageW: w, ImageH: w * s.image.Height / s.image.Width})
 	}
 	return settingsBody(h, theme.MarginM, rows...)
 }
 
 const (
-	lockPreviewWidth  = 480
-	lockPreviewHeight = 270
-	// A reel, not a slideshow: twenty four frames a second reads as motion
-	// at this size, and the run ends after eight seconds so a settings
-	// panel never spends a core behind a preview nobody is watching.
-	lockPreviewFrames = 192
-	lockPreviewEvery  = time.Second / 24
+	lockPreviewWidth    = 480
+	lockPreviewHeight   = 270
+	lockPreviewPNGBytes = 4 << 20
+	lockPreviewTimeout  = 4 * time.Second
 )
 
-func newLockPreviewImage() *ui.Image {
-	return &ui.Image{Width: lockPreviewWidth, Height: lockPreviewHeight, Stride: lockPreviewWidth * 4, Pix: make([]byte, lockPreviewWidth*lockPreviewHeight*4)}
+// lockPreview renders an ordinary sample through the installed locker; no
+// credentials, session bus or lock request crosses this command boundary.
+func lockPreview(ctx context.Context, c lockconfig.Config) (*ui.Image, error) {
+	if err := lockconfig.Validate(c.Effect, c.Palette); err != nil {
+		return nil, err
+	}
+	request, err := json.Marshal(struct {
+		Config lockconfig.Config `json:"config"`
+		Width  int               `json:"width"`
+		Height int               `json:"height"`
+	}{c, 2 * lockPreviewWidth, 2 * lockPreviewHeight})
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "sysc-lock", "--preview")
+	cmd.Stdin = bytes.NewReader(request)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	defer out.Close()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	// Closing the read side also bounds a child that leaves an inherited pipe
+	// open after the preview process has been cancelled.
+	stopClose := context.AfterFunc(ctx, func() { _ = out.Close() })
+	defer stopClose()
+	data, readErr := io.ReadAll(io.LimitReader(out, lockPreviewPNGBytes+1))
+	if readErr != nil || len(data) > lockPreviewPNGBytes {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	if len(data) > lockPreviewPNGBytes {
+		return nil, fmt.Errorf("lock preview exceeds PNG budget")
+	}
+	if waitErr != nil {
+		return nil, waitErr
+	}
+	header, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if header.Width != 2*lockPreviewWidth || header.Height != 2*lockPreviewHeight {
+		return nil, fmt.Errorf("lock preview dimensions differ")
+	}
+	// Reuse the shell's bounded raster decoder, scaling the matching aspect
+	// ratio to the ordinary settings image and converting to premultiplied BGRA.
+	img := icons.DecodeRaster(data, lockPreviewWidth, lockPreviewHeight)
+	if img == nil {
+		return nil, fmt.Errorf("cannot decode lock preview")
+	}
+	return img, nil
 }
 
-// lockPreviewLoop steps the effect and hands every frame to publish. publish
-// reports whether the panel still wants frames: false ends the run at once, so
-// a closed panel or a changed effect costs one frame, not a reel. Reduced
-// motion renders one held frame, which is the same answer as before.
-func lockPreviewLoop(c lockconfig.Config, frames int, every time.Duration, stop <-chan struct{}, publish func(*ui.Image) bool) error {
-	r, err := renderer.New(renderer.Config{Effect: c.Effect, Palette: c.Palette, Width: lockPreviewWidth, Height: lockPreviewHeight})
+// finishLockPreview only publishes the current request into its owning panel.
+func (r *Registry) finishLockPreview(h *PanelHost, sequence uint64, img *ui.Image, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	select {
+	case <-r.closed:
+		return
+	default:
+	}
+	s := &h.lockScreen
+	if r.panelHosts[PanelSettings] != h || sequence != s.previewSequence {
+		return
+	}
+	s.previewing, s.previewCancel = false, nil
 	if err != nil {
-		return err
+		log.Printf("shell: lock preview: %v", err)
+		s.message = "Preview unavailable. Install or update sysc-lock."
+	} else {
+		s.image = img
 	}
-	// The renderer wants one step before it will draw at all, and pausing
-	// first would skip it: step, then pause, then hold.
-	if err = r.Step(); err != nil {
-		return err
-	}
-	r.SetPaused(c.ReducedMotion)
-	if c.ReducedMotion {
-		frames = 1
-	}
-	img := newLockPreviewImage()
-	for i := 0; i < frames; i++ {
-		select {
-		case <-stop:
-			return nil
-		default:
-		}
-		if i > 0 {
-			tick := time.NewTimer(every)
-			select {
-			case <-stop:
-				tick.Stop()
-				return nil
-			case <-tick.C:
-			}
-			if err = r.Step(); err != nil {
-				return err
-			}
-		}
-		if _, err = r.Draw(img.Pix, img.Stride, nil); err != nil {
-			return err
-		}
-		if !publish(img) {
-			return nil
-		}
-	}
-	return nil
+	r.rebuildPanel(h)
+	r.publishSurface(h.output, panelSurfaceID(h.id))
 }
 
 func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
@@ -222,60 +261,24 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 			return true
 		}
 		s.previewing = true
+		s.message = ""
 		s.previewSequence++
 		sequence, cfg := s.previewSequence, s.config
-		stop := make(chan struct{})
-		s.previewStop = stop
+		ctx, cancel := context.WithTimeout(context.Background(), lockPreviewTimeout)
+		s.previewCancel = cancel
 		go func() {
-			r.mu.Lock()
-			if s.previewSequence != sequence {
-				r.mu.Unlock()
-				return
-			}
-			if s.image == nil {
-				s.image = newLockPreviewImage()
-			}
-			live := s.image
-			r.mu.Unlock()
-			err := lockPreviewLoop(cfg, lockPreviewFrames, lockPreviewEvery, stop, func(frame *ui.Image) bool {
-				r.mu.Lock()
-				defer r.mu.Unlock()
+			defer cancel()
+			go func() {
 				select {
+				case <-h.stopAnim:
+					cancel()
 				case <-r.closed:
-					return false
-				default:
+					cancel()
+				case <-ctx.Done():
 				}
-				if r.panelHosts[PanelSettings] != h || sequence != s.previewSequence {
-					return false
-				}
-				copy(live.Pix, frame.Pix)
-				r.rebuildPanel(h)
-				r.publishSurface(h.output, panelSurfaceID(h.id))
-				return true
-			})
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			s.previewing = false
-			if s.previewStop == stop {
-				s.previewStop = nil
-			}
-			if sequence != s.previewSequence {
-				return
-			}
-			if err != nil {
-				log.Printf("shell: lock preview: %v", err)
-				s.message = "Preview unavailable."
-			}
-			select {
-			case <-r.closed:
-				return
-			default:
-			}
-			if r.panelHosts[PanelSettings] != h {
-				return
-			}
-			r.rebuildPanel(h)
-			r.publishSurface(h.output, panelSurfaceID(h.id))
+			}()
+			img, err := lockPreview(ctx, cfg)
+			r.finishLockPreview(h, sequence, img, err)
 		}()
 	case n.Action == "lockscreen-apply":
 		cfg, path := s.config, lockconfig.Path()
@@ -338,7 +341,7 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 		} else {
 			return false
 		}
-		if err := renderer.Validate(cfg.Effect, cfg.Palette); err != nil {
+		if err := lockconfig.Validate(cfg.Effect, cfg.Palette); err != nil {
 			s.message = "That presentation choice is unavailable."
 		} else {
 			s.config = cfg
@@ -352,16 +355,16 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 	return true
 }
 
-// stopPreview ends a running reel. Callers hold r.mu.
+// stopPreview cancels the native sample request. Callers hold r.mu.
 func (s *lockScreenUI) stopPreview() {
-	if s.previewStop != nil {
-		close(s.previewStop)
-		s.previewStop = nil
+	if s.previewCancel != nil {
+		s.previewCancel()
+		s.previewCancel = nil
 	}
 	s.previewing = false
 }
 
-// draftChanged drops the running reel and its frame after a draft edit.
+// draftChanged drops the native request and its frame after a draft edit.
 // Callers hold r.mu.
 func (s *lockScreenUI) draftChanged() {
 	s.stopPreview()

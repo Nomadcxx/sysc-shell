@@ -1,6 +1,12 @@
 package shell
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -73,6 +79,7 @@ func TestLockSettingsKeepsIdlePolicySeparate(t *testing.T) {
 }
 
 func TestLockSettingsPreviewHasNoCredentialOrLockPath(t *testing.T) {
+	installLockPreviewHelper(t, "")
 	r, h := openLockSettings(t)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,13 +91,10 @@ func TestLockSettingsPreviewHasNoCredentialOrLockPath(t *testing.T) {
 	}) != nil {
 		t.Fatal("preview exposes credential or lock action")
 	}
-	img := newLockPreviewImage()
-	stop := make(chan struct{})
-	defer close(stop)
-	if err := lockPreviewLoop(lockconfig.Default(), 1, time.Millisecond, stop, func(frame *ui.Image) bool {
-		copy(img.Pix, frame.Pix)
-		return true
-	}); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), lockPreviewTimeout)
+	defer cancel()
+	img, err := lockPreview(ctx, lockconfig.Default())
+	if err != nil {
 		t.Fatal(err)
 	}
 	if img.Width != 480 || img.Height != 270 || img.Stride != img.Width*4 || len(img.Pix) != img.Stride*img.Height {
@@ -103,7 +107,7 @@ func TestLockSettingsPreviewHasNoCredentialOrLockPath(t *testing.T) {
 	}
 	h.lockScreen.image = img
 	r.rebuildPanel(h)
-	if findNode(h.root, func(n *ui.Node) bool { return n.Text == "Preview" }) == nil || findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindImage && n.Image == img }) == nil {
+	if findNode(h.root, func(n *ui.Node) bool { return n.Text == "Still preview" }) == nil || findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindImage && n.Image == img }) == nil {
 		t.Fatal("preview is not labeled ordinary image")
 	}
 }
@@ -130,16 +134,15 @@ func TestLockSettingsSleepProtectionUsesManagedOwner(t *testing.T) {
 	}
 }
 
-func TestLockSettingsReenablesPreviewWhenTheReelEnds(t *testing.T) {
+func TestLockSettingsReenablesPreviewWhenTheNativeRequestEnds(t *testing.T) {
+	installLockPreviewHelper(t, "")
 	r, h := openLockSettings(t)
 	r.mu.Lock()
-	// One held frame, so the reel ends in milliseconds instead of eight
-	// seconds; the completion path is the same either way.
 	h.lockScreen.config.ReducedMotion = true
 	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-preview"})
 	if n := findAction(h.root, "lockscreen-preview"); n == nil || !n.State.Has(ui.StateDisabled) {
 		r.mu.Unlock()
-		t.Fatal("Preview is not disabled while the reel runs")
+		t.Fatal("Preview is not disabled while the preview runs")
 	}
 	r.mu.Unlock()
 	deadline := time.Now().Add(3 * time.Second)
@@ -159,19 +162,20 @@ func TestLockSettingsReenablesPreviewWhenTheReelEnds(t *testing.T) {
 	defer r.mu.Unlock()
 	preview := findAction(h.root, "lockscreen-preview")
 	if preview == nil {
-		t.Fatal("Preview row vanished when the reel ended")
+		t.Fatal("Preview row vanished when the preview ended")
 	}
 	if preview.State.Has(ui.StateDisabled) || preview.AriaDisabled || !preview.Focusable {
-		t.Fatalf("Preview still disabled after the reel ended: %+v", preview)
+		t.Fatalf("Preview still disabled after the preview ended: %+v", preview)
 	}
 	// The roving index walks the focusable list, so a stale count keeps
 	// keyboard focus off Preview.
 	if n := slices.IndexFunc(h.focus, func(n *ui.Node) bool { return n.Action == "lockscreen-preview" }); n < 0 {
-		t.Fatal("Preview is not in the roving focus list after the reel ended")
+		t.Fatal("Preview is not in the roving focus list after the preview ended")
 	}
 }
 
 func TestLockSettingsRejectsInvalidChoicesAndStalePreview(t *testing.T) {
+	installLockPreviewHelper(t, "")
 	r, h := openLockSettings(t)
 	r.mu.Lock()
 	before := h.lockScreen.config
@@ -263,77 +267,6 @@ func TestLockSettingsReducedMotionIsASplitRowToggle(t *testing.T) {
 	}
 	if findNode(h.root, func(n *ui.Node) bool { return n.Text == "Reduced motion: Off" }) != nil {
 		t.Fatal("baked value text still present")
-	}
-}
-
-func TestLockPreviewLoopAnimatesUnlessReducedMotion(t *testing.T) {
-	frames := make(chan *ui.Image, 4)
-	stop := make(chan struct{})
-	defer close(stop)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if err := lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord"}, 3, time.Millisecond, stop, func(img *ui.Image) bool {
-			// The loop owns one buffer, so keep our own copy of each frame.
-			keep := &ui.Image{Width: img.Width, Height: img.Height, Stride: img.Stride, Pix: append([]byte(nil), img.Pix...)}
-			frames <- keep
-			return true
-		}); err != nil {
-			t.Errorf("loop: %v", err)
-		}
-	}()
-	var got []*ui.Image
-	for len(got) < 3 {
-		select {
-		case img := <-frames:
-			got = append(got, img)
-		case <-done:
-			t.Fatalf("loop ended after %d frames", len(got))
-		case <-time.After(5 * time.Second):
-			t.Fatalf("only %d frames arrived", len(got))
-		}
-	}
-	if string(got[0].Pix) == string(got[1].Pix) {
-		t.Fatal("preview never advanced: two frames are identical")
-	}
-
-	held := 0
-	quietStop := make(chan struct{})
-	if err := lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord", ReducedMotion: true}, 4, time.Millisecond, quietStop, func(*ui.Image) bool {
-		held++
-		return true
-	}); err != nil {
-		t.Fatalf("reduced loop: %v", err)
-	}
-	if held != 1 {
-		t.Fatalf("reduced motion published %d frames, want one held still", held)
-	}
-}
-
-func TestLockPreviewLoopStopsWhenTold(t *testing.T) {
-	closed := make(chan struct{})
-	close(closed)
-	published := 0
-	if err := lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord"}, 100, time.Millisecond, closed, func(*ui.Image) bool {
-		published++
-		return true
-	}); err != nil {
-		t.Fatalf("stopped loop: %v", err)
-	}
-	if published != 0 {
-		t.Fatalf("published %d frames after stop", published)
-	}
-
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = lockPreviewLoop(lockconfig.Config{Effect: "rain", Palette: "nord"}, 100, time.Millisecond, stop, func(*ui.Image) bool { return false })
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("loop kept running after the panel said it was stale")
 	}
 }
 
@@ -434,5 +367,271 @@ func TestLockSettingsEditsClockStyle(t *testing.T) {
 	}
 	if h.lockScreen.message == "" {
 		t.Fatal("invalid clock style left no message")
+	}
+}
+
+// This subprocess replaces only the installed command during the native PNG
+// contract tests. It never connects to a session bus or Wayland display.
+func TestLockPreviewCommandHelper(t *testing.T) {
+	if os.Getenv("SYSC_SHELL_PREVIEW_HELPER") != "1" {
+		return
+	}
+	if os.Args[len(os.Args)-1] != "--preview" {
+		os.Exit(2)
+	}
+	data, err := os.ReadFile("/dev/stdin")
+	if err != nil {
+		os.Exit(2)
+	}
+	var request struct {
+		Config        lockconfig.Config `json:"config"`
+		Width, Height int
+	}
+	if json.Unmarshal(data, &request) != nil {
+		os.Exit(2)
+	}
+	if path := os.Getenv("SYSC_SHELL_PREVIEW_REQUEST"); path != "" {
+		if os.WriteFile(path, data, 0600) != nil {
+			os.Exit(2)
+		}
+	}
+	switch os.Getenv("SYSC_SHELL_PREVIEW_MODE") {
+	case "fail":
+		os.Exit(2)
+	case "wait":
+		time.Sleep(time.Minute)
+		os.Exit(2)
+	case "overflow":
+		os.Stdout.Write(bytes.Repeat([]byte{'x'}, 5<<20))
+		os.Exit(0)
+	case "malformed":
+		os.Stdout.Write([]byte("not a PNG"))
+		os.Exit(0)
+	case "dimensions":
+		request.Width, request.Height = 2, 2
+	}
+	img := image.NewRGBA(image.Rect(0, 0, request.Width, request.Height))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = 30, 20, 9, 255
+	}
+	if png.Encode(os.Stdout, img) != nil {
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
+
+func installLockPreviewHelper(t *testing.T, mode string) string {
+	t.Helper()
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\nexec '" + strings.ReplaceAll(binary, "'", "'\"'\"'") + "' -test.run=^TestLockPreviewCommandHelper$ -- \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "sysc-lock"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("SYSC_SHELL_PREVIEW_HELPER", "1")
+	t.Setenv("SYSC_SHELL_PREVIEW_MODE", mode)
+	request := filepath.Join(dir, "request.json")
+	t.Setenv("SYSC_SHELL_PREVIEW_REQUEST", request)
+	return request
+}
+
+func waitLockPreview(t *testing.T, r *Registry, h *PanelHost) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		pending := h.lockScreen.previewing
+		r.mu.Unlock()
+		if !pending {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("preview did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestLockSettingsNativeStillPreview(t *testing.T) {
+	requestPath := installLockPreviewHelper(t, "")
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	h.lockScreen.config = lockconfig.Config{Effect: "fire", Palette: "eldritch", ClockStyle: "plain", Clock24h: true, ReducedMotion: true, EffectFPS: 30}
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-preview"})
+	r.mu.Unlock()
+	waitLockPreview(t, r, h)
+	data, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatalf("preview did not invoke native --preview command: %v", err)
+	}
+	var request struct {
+		Config        lockconfig.Config `json:"config"`
+		Width, Height int
+	}
+	if err := json.Unmarshal(data, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Width != 960 || request.Height != 540 || request.Config != h.lockScreen.config {
+		t.Fatalf("preview request = %+v", request)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	img := h.lockScreen.image
+	if img == nil || img.Width != 480 || img.Height != 270 || !bytes.Equal(img.Pix[:4], []byte{9, 20, 30, 255}) {
+		t.Fatal("native PNG was not fitted to a 480x270 BGRA preview")
+	}
+	if findNode(h.root, func(n *ui.Node) bool { return n.Text == "Still preview" }) == nil {
+		t.Fatal("native preview is not explicitly labeled still")
+	}
+	if n := findAction(h.root, "lockscreen-preview"); n == nil || !n.Focusable || n.AriaDisabled || n.State.Has(ui.StateDisabled) {
+		t.Fatal("Preview did not reenable")
+	}
+}
+
+func TestLockSettingsSelectsNone(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-menu:effect"})
+	list := findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindVirtualList })
+	if list == nil || findAction(list.Item(0), "lockscreen-effect:none") == nil {
+		t.Fatal("none is missing from effect picker")
+	}
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-effect:none"})
+	if h.lockScreen.config.Effect != "none" || h.lockScreen.message != "" {
+		t.Fatal("none was rejected")
+	}
+}
+
+func TestLockPreviewRejectsUntrustedCommandOutput(t *testing.T) {
+	for _, mode := range []string{"fail", "overflow", "malformed", "dimensions"} {
+		t.Run(mode, func(t *testing.T) {
+			installLockPreviewHelper(t, mode)
+			ctx, cancel := context.WithTimeout(context.Background(), lockPreviewTimeout)
+			defer cancel()
+			if img, err := lockPreview(ctx, lockconfig.Default()); err == nil || img != nil {
+				t.Fatal("accepted invalid preview output")
+			}
+		})
+	}
+}
+
+func TestLockPreviewCancellationStopsTheCommand(t *testing.T) {
+	path := installLockPreviewHelper(t, "wait")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := lockPreview(ctx, lockconfig.Default()); done <- err }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("preview command did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled preview: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled command was not reaped")
+	}
+}
+
+func TestLockSettingsPreviewFailureReenablesTheControl(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-preview"})
+	r.mu.Unlock()
+	waitLockPreview(t, r, h)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.lockScreen.message == "" {
+		t.Fatal("missing preview failure status")
+	}
+	if n := findAction(h.root, "lockscreen-preview"); n == nil || n.AriaDisabled || n.State.Has(ui.StateDisabled) || !n.Focusable {
+		t.Fatal("failed preview left control disabled")
+	}
+}
+
+func TestLockSettingsStalePreviewCannotCompleteANewerRequest(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	h.lockScreen.previewSequence = 2
+	h.lockScreen.previewing = true
+	cancelled := false
+	h.lockScreen.previewCancel = func() { cancelled = true }
+	h.lockScreen.message = "new request"
+	r.mu.Unlock()
+	r.finishLockPreview(h, 1, &ui.Image{}, errors.New("old request failed"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !h.lockScreen.previewing || h.lockScreen.previewCancel == nil || h.lockScreen.message != "new request" || h.lockScreen.image != nil || cancelled {
+		t.Fatal("stale completion mutated newer request")
+	}
+	h.lockScreen.stopPreview()
+	if !cancelled {
+		t.Fatal("draft change did not cancel current request")
+	}
+}
+
+func TestLockSettingsClosedPreviewDoesNotPublish(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	h.lockScreen.previewSequence = 1
+	h.lockScreen.previewing = true
+	delete(r.panelHosts, PanelSettings)
+	r.mu.Unlock()
+	r.finishLockPreview(h, 1, &ui.Image{}, nil)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.lockScreen.image != nil {
+		t.Fatal("closed panel received preview")
+	}
+}
+
+func TestLockPreviewDeadline(t *testing.T) {
+	installLockPreviewHelper(t, "wait")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if img, err := lockPreview(ctx, lockconfig.Default()); !errors.Is(err, context.DeadlineExceeded) || img != nil {
+		t.Fatalf("deadline: image=%v error=%v", img, err)
+	}
+}
+
+func TestLockPreviewInstalledComposition(t *testing.T) {
+	binary := os.Getenv("SYSC_LOCK_CONTRACT_BINARY")
+	if binary == "" {
+		t.Skip("set SYSC_LOCK_CONTRACT_BINARY to check native PNG presentation")
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(binary, filepath.Join(dir, "sysc-lock")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	c := lockconfig.Default()
+	ctx, cancel := context.WithTimeout(context.Background(), lockPreviewTimeout)
+	defer cancel()
+	first, err := lockPreview(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ClockStyle = "plain"
+	second, err := lockPreview(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(first.Pix, second.Pix) {
+		t.Fatal("clock style did not change the native composition")
 	}
 }

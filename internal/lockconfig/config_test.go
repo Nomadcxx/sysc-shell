@@ -1,7 +1,14 @@
 package lockconfig
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"os/exec"
+	"reflect"
+	"time"
+
+	"github.com/Nomadcxx/sysc-terminal/renderer"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,5 +217,71 @@ func TestLockConfigClockStylesMatchTheLockerNames(t *testing.T) {
 		if got[i] != want[i] || ClockStyle(want[i]) != want[i] {
 			t.Fatalf("clock style %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestLockConfigNoneMatchesLockerDefault(t *testing.T) {
+	if got := Default().Effect; got != "none" {
+		t.Fatalf("default effect = %q, want none", got)
+	}
+	p := filepath.Join(t.TempDir(), "config.json")
+	for _, body := range []string{`{}`, `{"effect":"none","palette":"eldritch","future":{"a":1}}`} {
+		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := Load(p)
+		if err != nil || c.Effect != "none" {
+			t.Fatalf("load %s: %+v, %v", body, c, err)
+		}
+		if err := Save(p, c); err != nil {
+			t.Fatal(err)
+		}
+		again, err := Load(p)
+		if err != nil || again.Effect != "none" || again.Palette != c.Palette {
+			t.Fatalf("round trip: %+v, %v", again, err)
+		}
+	}
+	if err := os.WriteFile(p, []byte(`{"effect":"none","palette":"invalid"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Fatal("none accepted invalid palette")
+	}
+}
+
+// Run with SYSC_LOCK_CONTRACT_BINARY=/path/to/sysc-lock to check the native
+// producer when it changes. No network or locker session is needed.
+func TestLockConfigNativeDescriptionContract(t *testing.T) {
+	binary := os.Getenv("SYSC_LOCK_CONTRACT_BINARY")
+	if binary == "" {
+		t.Skip("set SYSC_LOCK_CONTRACT_BINARY to verify the locker presentation contract")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, binary, "--describe").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var description struct {
+		ClockStyles []string `json:"clock_styles"`
+		Effects     []string `json:"effects"`
+		Palettes    []string `json:"palettes"`
+		Defaults    Config   `json:"defaults"`
+	}
+	if err := json.Unmarshal(data, &description); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(description.ClockStyles, ClockStyles()) {
+		t.Fatalf("clock style mirror drift: %v != %v", description.ClockStyles, ClockStyles())
+	}
+	if !reflect.DeepEqual(description.Effects, Effects()) {
+		t.Fatalf("effect mirror drift: %v != %v", description.Effects, Effects())
+	}
+	if !reflect.DeepEqual(description.Palettes, renderer.Palettes()) {
+		t.Fatal("palette mirror drift")
+	}
+	c, want := description.Defaults, Default()
+	if c.Effect != want.Effect || c.Palette != want.Palette || c.ClockStyle != want.ClockStyle || c.ReducedMotion != want.ReducedMotion || c.Clock24h != want.Clock24h || c.EffectFPS != want.EffectFPS || c.BlurBackdrop() != want.BlurBackdrop() || c.Backend() != want.Backend() || c.GpuPowerSave() != want.GpuPowerSave() {
+		t.Fatalf("default mirror drift: %+v != %+v", c, want)
 	}
 }
