@@ -409,7 +409,11 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.weather.SetCity(cfg.Weather.City)
 	// Construction is single-threaded, so the first snapshot needs no lock.
 	r.palettes = listPalettes(palettes)
-	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
+	initialTokens, initialErr := r.generateTheme(cfg)
+	r.tokens, r.themeErr = tokensAndReason(initialTokens, initialErr)
+	if !runningAsTest() && generatedTheme(initialErr) {
+		r.publishCommittedThemeSelection(cfg, initialTokens)
+	}
 	r.osd = newOSDManager(r, 0)
 	r.tooltips = newTooltipHost(r, nil)
 	go r.relayTooltips(r.dwell)
@@ -1176,7 +1180,7 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		// that eventually runs the job reports its outcomes instead.
 		r.recordTemplateOutcomes(outcomes, true)
 		if err != nil {
-			return tok, fmt.Errorf("theme: external templates: %w", err)
+			return tok, fmt.Errorf("%w: %w", errThemeTemplates, err)
 		}
 	}
 	return tok, nil
@@ -1812,6 +1816,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				if !runningAsTest() && generatedTheme(genErr) {
+					go r.publishCommittedThemeSelection(cfg, tok)
+				}
 				if mediaConfigChanged && media != nil {
 					media.Configure(cfg.Media.Preferred, cfg.Media.Blacklist)
 				}
