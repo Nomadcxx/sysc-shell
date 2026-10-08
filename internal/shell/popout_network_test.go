@@ -471,8 +471,8 @@ func TestNetworkPanelTeardownClearsCredential(t *testing.T) {
 		id: PanelNetwork, stopAnim: make(chan struct{}), pendingSSID: "Orac 15A",
 		password: ui.NewField("hunter2"),
 	}
-	r.panelHosts[PanelNetwork] = h
 	r.mu.Lock()
+	r.panelHosts[PanelNetwork] = h
 	r.teardownPanelLocked(PanelNetwork)
 	r.mu.Unlock()
 	if h.password.Text != "" || h.pendingSSID != "" {
