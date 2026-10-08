@@ -78,7 +78,7 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 	if got != card {
 		t.Fatal("weather wrapper replaced the card node")
 	}
-	if got.Width != 320 || got.Height != 180 || got.Padding != 13 ||
+	if got.Width != 320 || got.Height != 180 || got.Padding != 0 ||
 		got.Fill != ui.FillContainerHigh || got.Shape != ui.ShapeCard ||
 		got.Action != "weather-open" || got.Name != "Weather" || got.Role != "region" {
 		t.Fatalf("card chrome or accessibility changed: %+v", got)
@@ -98,6 +98,9 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 	}
 	if stack.Children[2] != content {
 		t.Fatal("stack did not retain the original foreground content")
+	}
+	if content.Padding != 13 {
+		t.Fatalf("foreground padding = %d, want the card's 13 moved onto it", content.Padding)
 	}
 }
 
@@ -250,5 +253,59 @@ func TestWeatherDaylightFollowsSunriseAndSunset(t *testing.T) {
 				t.Errorf("%s: daylight %v, want the IsDay fallback 1", name, got)
 			}
 		}
+	})
+}
+
+func TestWeatherScrimFillDarkensTheTextSide(t *testing.T) {
+	for _, tc := range []struct {
+		bias float64
+		want ui.Fill
+	}{
+		{1, ui.FillScrimFadeLeading},   // scene trailing, text leading
+		{-1, ui.FillScrimFadeTrailing}, // scene leading, text trailing
+		{0, ui.FillScrim},              // stacked: text under the scene
+	} {
+		if got := weatherScrimFill(tc.bias); got != tc.want {
+			t.Errorf("weatherScrimFill(%v) = %v, want %v", tc.bias, got, tc.want)
+		}
+	}
+}
+
+func TestWeatherEffectFillsItsCardEdgeToEdge(t *testing.T) {
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
+	check := func(t *testing.T, root *ui.Node) {
+		t.Helper()
+		var card, effect *ui.Node
+		walkNodes(root, func(n *ui.Node) {
+			if card != nil || n.Kind != ui.KindCapsule || len(n.Children) != 1 || n.Children[0].Kind != ui.KindStack {
+				return
+			}
+			if first := n.Children[0].Children[0]; first.Kind == ui.KindEffect {
+				card, effect = n, first
+			}
+		})
+		if card == nil {
+			t.Fatal("no weather card with an effect")
+		}
+		if effect.Bounds != card.Bounds {
+			t.Fatalf("effect bounds %+v, want the card's %+v", effect.Bounds, card.Bounds)
+		}
+	}
+	t.Run("home", func(t *testing.T) {
+		h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+		home := ccHome(&Registry{reading: observedWeather()}, h)
+		if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: home.Height}, measure); err != nil {
+			t.Fatal(err)
+		}
+		check(t, home)
+	})
+	t.Run("weather page", func(t *testing.T) {
+		r := &Registry{reading: observedWeather()}
+		h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+		root := weatherTree(r, h)
+		if err := ui.LayoutColumn(root, ui.Rect{W: 460, H: 560}, h.measureText()); err != nil {
+			t.Fatal(err)
+		}
+		check(t, root)
 	})
 }

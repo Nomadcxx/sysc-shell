@@ -550,6 +550,12 @@ const (
 	// draws. As a fill it paints nothing, like FillOutline. It marks a control
 	// whose edge should read without competing with the focus outline.
 	FillOutlineVariant
+	// FillScrimFadeLeading and FillScrimFadeTrailing are the scrim as a
+	// horizontal fade: full strength at the named edge, clear by 70% of the
+	// width. A card whose text sits on one side keeps its art visible on the
+	// other.
+	FillScrimFadeLeading
+	FillScrimFadeTrailing
 )
 
 // Tone selects which theme colour paints a text node.

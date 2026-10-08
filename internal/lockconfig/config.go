@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"unicode/utf8"
 
@@ -23,6 +24,7 @@ const EffectNone = "none"
 var atomicReplace = os.Rename
 
 type Config struct {
+	FollowShell        *bool   `json:"follow_shell"`
 	Header             string  `json:"header"`
 	TextEffect         string  `json:"text_effect"`
 	Effect             string  `json:"effect"`
@@ -260,4 +262,35 @@ func Save(path string, c Config) error {
 		_ = d.Close()
 	}
 	return nil
+}
+
+// FollowsShell defaults to true unless the user selects an independent palette.
+func (c Config) FollowsShell() bool { return c.FollowShell == nil || *c.FollowShell }
+
+func (c Config) WithShellTheme() Config {
+	if !c.FollowsShell() {
+		return c
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return c
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "sysc-shell", "shell-theme"), os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return c
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 64 {
+		return c
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 65))
+	if err != nil || len(data) > 64 {
+		return c
+	}
+	name := strings.TrimSpace(string(data))
+	if slices.Contains(renderer.Palettes(), name) {
+		c.Palette = name
+	}
+	return c
 }

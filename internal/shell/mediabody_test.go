@@ -415,21 +415,55 @@ func TestMediaSeekWritesOnRelease(t *testing.T) {
 	t.Fatal("media seek remained pending after the scheduled write")
 }
 
-func TestHomeShowsNowPlayingTile(t *testing.T) {
-	state := services.MediaState{Available: true, Title: "Track", Status: services.PlaybackPlaying}
-	r, h := mediaTestRegistry(t, state, nil)
+func TestHomeMediaCardStates(t *testing.T) {
+	playing := services.MediaState{Available: true, Title: "Track", Artist: "Band", Identity: "mpv",
+		Status: services.PlaybackPlaying, CanPause: true, CanNext: true, CanPrev: true, LengthUS: 60_000_000, PositionUS: 15_000_000}
+	r, h := mediaTestRegistry(t, playing, nil)
 	r.mu.Lock()
-	page := ccHome(r, h)
-	r.mediaState = services.MediaState{}
-	empty := ccHome(r, h)
-	r.mu.Unlock()
-	tile := findByName(page, "Now playing")
-	if tile == nil || !mediaTreeHasText(tile, "Track") || findNode(tile, func(n *ui.Node) bool { return n.Kind == ui.KindIcon && n.Icon == "pause" }) == nil {
-		t.Fatalf("now-playing tile = %#v", tile)
+	defer r.mu.Unlock()
+
+	card := findByName(ccHome(r, h), "Now playing")
+	if card == nil || card.Fill == ui.FillAccent || card.State.Has(ui.StateSelected) {
+		t.Fatalf("media card = %+v, want an unaccented card", card)
 	}
-	emptyTile := findByName(empty, "Now playing")
-	if emptyTile == nil || !emptyTile.State.Has(ui.StateDisabled) || !mediaTreeHasText(emptyTile, "Nothing playing") {
-		t.Fatalf("empty now-playing tile = %#v", emptyTile)
+	for _, want := range []string{"Track", "Band", "mpv"} {
+		if !mediaTreeHasText(card, want) {
+			t.Errorf("media card is missing %q", want)
+		}
+	}
+	for _, action := range []string{"media:prev", "media:playpause", "media:next"} {
+		if findNode(card, func(n *ui.Node) bool { return n.Action == action }) == nil {
+			t.Errorf("media card has no %s button", action)
+		}
+	}
+	if pp := findNode(card, func(n *ui.Node) bool { return n.Action == "media:playpause" }); pp.Children[0].Icon != "pause" {
+		t.Errorf("play button icon = %q, want pause while playing", pp.Children[0].Icon)
+	}
+	meter := findNode(card, func(n *ui.Node) bool { return n.Kind == ui.KindMeter })
+	if meter == nil || meter.Value != 0.25 {
+		t.Errorf("progress = %+v, want a read-only meter at 0.25", meter)
+	}
+	if findNode(card, func(n *ui.Node) bool { return n.Kind == ui.KindImage }) != nil {
+		t.Error("card drew an image box with no art or wallpaper loaded")
+	}
+
+	r.mediaState = services.MediaState{Available: true, Title: "Stream"}
+	stuck := findByName(ccHome(r, h), "Now playing")
+	// A disabled button drops its action, so find it by its accessible name.
+	if pp := findByName(stuck, "Play or pause"); pp == nil || !pp.State.Has(ui.StateDisabled) {
+		t.Errorf("play button = %+v, want disabled when the player can neither play nor pause", pp)
+	}
+
+	r.mediaState = services.MediaState{}
+	empty := findByName(ccHome(r, h), "Now playing")
+	if empty == nil || !mediaTreeHasText(empty, "Nothing playing") || !mediaTreeHasText(empty, "Start a player") {
+		t.Fatalf("empty media card = %+v", empty)
+	}
+	if findNode(empty, func(n *ui.Node) bool { return strings.HasPrefix(n.Action, "media:") }) != nil {
+		t.Error("empty media card still offers transport")
+	}
+	if empty.Height != ccHomeTopH {
+		t.Errorf("empty card height = %d, want %d so the row never shifts", empty.Height, ccHomeTopH)
 	}
 }
 

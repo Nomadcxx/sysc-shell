@@ -1322,6 +1322,9 @@ func (r *Registry) republishTheme(cfg config.Config) {
 		themeErr = genErr.Error()
 	}
 	r.paintTheme(cfg, tokens, themeErr, true)
+	if !runningAsTest() && generatedTheme(genErr) {
+		go r.publishCommittedThemeSelection(cfg, tokens)
+	}
 }
 
 // paintTheme repaints every surface with tokens. commit is true for the
