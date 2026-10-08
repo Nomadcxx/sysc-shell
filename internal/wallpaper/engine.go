@@ -53,9 +53,14 @@ func (w *processWatch) ForceStop() error {
 }
 
 func watchProcess(proc Process) *processWatch {
-	w := &processWatch{Process: proc, done: make(chan error, 1)}
+	w := &processWatch{Process: proc, done: make(chan error)}
 	go func() {
-		w.done <- proc.Wait()
+		// Close-only signal. Nobody reads the Wait error, and sending one
+		// before closing created two events on the channel: a blocking
+		// waitProcess could drain the value in the window before close,
+		// leaving the non-blocking processExited probe blind — the flaky
+		// "current exited process was missed". A closed channel is sticky.
+		_ = proc.Wait()
 		close(w.done)
 	}()
 	return w
