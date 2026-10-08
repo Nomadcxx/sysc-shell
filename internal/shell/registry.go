@@ -245,6 +245,8 @@ type Registry struct {
 	traySender           trayCommandSender
 	trayMenu             *trayMenuHost
 	trayDrawer           *trayDrawerHost
+	mediaStrip           *mediaStripHost
+	mediaIntent          *mediaStripIntent
 	trayReplies          *trayReplyTracker
 	trayCloses           *trayCloseTracker
 	trayIcons            *icons.Worker
