@@ -244,6 +244,13 @@ func (r *Registry) queueBackground() {
 
 func (r *Registry) applyManagedSnapshot(state locksession.State) {
 	r.mu.Lock()
+	// Defence in depth: an identical snapshot is not a change. Rebuilding
+	// and republishing both panels for it is what made the idle poll
+	// expensive; the client already suppresses unchanged states upstream.
+	if r.managedState == state {
+		r.mu.Unlock()
+		return
+	}
 	r.managedState = state
 	r.lockerRunning = state.Phase != "idle" && state.Phase != "failed-before-acquisition" && state.Phase != "unavailable"
 	r.lockerAcquired = state.Known && state.Phase == "sealed"

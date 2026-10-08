@@ -60,7 +60,7 @@ func TestManagedRejectsAnotherSession(t *testing.T) {
 
 func TestManagedLateReplyCannotRestoreOldOwner(t *testing.T) {
 	c := New("session", "niri")
-	old, current := new(dbus.Conn), new(dbus.Conn)
+	old, current := new(liveBus), new(liveBus)
 	v := Snapshot{Session: "session", Compositor: "niri:1:2", Generation: 4, Sequence: 3, Phase: "sealed"}
 	_ = c.accept("old", v)
 	c.conn = old
@@ -87,12 +87,13 @@ func TestManagedConnectionLossInvalidatesSnapshot(t *testing.T) {
 	}
 	c := New("session", "niri")
 	_ = c.accept("owner", Snapshot{Session: "session", Compositor: "niri:1:2", Generation: 4, Phase: "sealed"})
-	c.conn = conn
+	bus := &liveBus{conn: conn, signals: make(chan *dbus.Signal, 32)}
+	c.conn = bus
 	changed := c.changed
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
-	go func() { defer close(done); c.run(ctx, conn, make(chan *dbus.Signal)) }()
+	go func() { defer close(done); c.run(ctx, bus) }()
 	defer func() { cancel(); <-done }()
 	conn.Close()
 	select {
@@ -187,11 +188,12 @@ func TestManagedLockCancellationInvalidatesUnconfirmedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := New("session", "niri")
-	conn, _, err := c.connect(context.Background())
+	conn, err := dialFn()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	c.snapshot(context.Background(), conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { _, err := c.Lock(ctx); result <- err }()
@@ -225,11 +227,12 @@ func managedOwnerRaceClient(t *testing.T, release bool) *Client {
 		t.Fatal(err)
 	}
 	c := New("session", "niri")
-	conn, _, err := c.connect(context.Background())
+	conn, err := dialFn()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	c.snapshot(context.Background(), conn)
 	return c
 }
 
