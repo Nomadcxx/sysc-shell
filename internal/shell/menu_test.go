@@ -23,6 +23,58 @@ func TestMenuOpensOnActivateAndSelectsOnEnter(t *testing.T) {
 	}
 }
 
+func TestMenuShowsBoundedRowsAndPointerSelectsTheVisibleOption(t *testing.T) {
+	t.Parallel()
+	options := []string{"zero", "one", "two", "three", "four", "five", "six", "seven"}
+
+	for _, filtered := range []bool{false, true} {
+		name := "plain"
+		newMenu := func() *Menu { return NewMenu(options, 0) }
+		wantChildren, optionStart := 6, 0
+		if filtered {
+			name = "picker"
+			newMenu = func() *Menu { return NewPicker(options, nil, 0) }
+			wantChildren, optionStart = 7, 1
+		}
+		t.Run(name, func(t *testing.T) {
+			m := newMenu()
+			m.Open()
+			n := m.Node()
+			if len(n.Children) != wantChildren {
+				t.Fatalf("open menu has %d children, want %d", len(n.Children), wantChildren)
+			}
+			if filtered && n.Children[0].Kind != ui.KindTextField {
+				t.Fatalf("first picker child kind = %v, want filter field", n.Children[0].Kind)
+			}
+			for i := range 6 {
+				if got := n.Children[optionStart+i].Text; got != options[i] {
+					t.Errorf("initial option %d = %q, want %q", i, got, options[i])
+				}
+			}
+
+			for range 6 {
+				m.Next()
+			}
+			n = m.Node()
+			for i := range 6 {
+				if got, want := n.Children[optionStart+i].Text, options[i+1]; got != want {
+					t.Errorf("scrolled option %d = %q, want %q", i, got, want)
+				}
+			}
+			for i, child := range n.Children {
+				child.Bounds = ui.Rect{Y: i * 10, W: 100, H: 10}
+			}
+			clickRow := optionStart + 2
+			if !m.PickAt(n, 10, clickRow*10+5) {
+				t.Fatal("click on a visible option did not select a row")
+			}
+			if got := m.Select(); got != 3 {
+				t.Fatalf("clicked visible option index = %d, want 3", got)
+			}
+		})
+	}
+}
+
 func TestMenuEscapeReturnsToField(t *testing.T) {
 	t.Parallel()
 	m := NewMenu([]string{"dark", "light"}, 0)

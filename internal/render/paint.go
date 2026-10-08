@@ -215,6 +215,9 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 			}
 		}
 	}
+	if err := paintMenuOverlays(c, root, text, style, size); err != nil {
+		return err
+	}
 	clearOutsideRoundedRect(c, box, radius, square, jointL, jointR, style.AttachEdge)
 	// The end wedges lie outside the body, where the clear above has just
 	// emptied every row, so they go down last.
@@ -695,11 +698,9 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	style = dimmedControl(n, style)
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	field := box
-	if len(n.Children) > 0 {
-		first := style.Scale120.PhysicalRect(n.Children[0].Bounds)
-		if first.Y > box.Y {
-			field.H = first.Y - box.Y
-		}
+	popup := style.Scale120.PhysicalRect(ui.MenuPopupBounds(n))
+	if popup.H > 0 && popup.Y > box.Y {
+		field.H = popup.Y - box.Y
 	}
 	radius := style.Scale120.Physical(6)
 	surface := style.containerHighest()
@@ -713,16 +714,53 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	textBox = centreLine(textBox, text, style, n)
 	_ = paintText(c, n.Text, textBox, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 	paintMenuChevron(c, n, text, style)
-	if len(n.Children) == 0 {
+	return nil
+}
+
+// paintMenuOverlays draws open option lists after normal content, preserving
+// the panel's paint order while letting a dropdown float over later rows.
+func paintMenuOverlays(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	if n == nil || n.Kind == ui.KindEffect {
 		return nil
 	}
-	last := style.Scale120.PhysicalRect(n.Children[len(n.Children)-1].Bounds)
-	list := ui.Rect{X: box.X, Y: field.Y + field.H, W: box.W, H: last.Y + last.H - (field.Y + field.H)}
+	prev := c.restrict
+	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
+		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+	}
+	defer func() { c.restrict = prev }()
+	for i, child := range n.Children {
+		if child == nil {
+			return fmt.Errorf("render: nil menu overlay child %d", i)
+		}
+		if err := paintMenuOverlays(c, child, text, style, size); err != nil {
+			return err
+		}
+	}
+	if n.Kind == ui.KindMenu {
+		return paintMenuPopup(c, n, text, style, size)
+	}
+	return nil
+}
+
+func paintMenuPopup(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	if n == nil || len(n.Children) == 0 {
+		return nil
+	}
+	style = dimmedControl(n, style)
+	list := style.Scale120.PhysicalRect(ui.MenuPopupBounds(n))
+	if list.W <= 0 || list.H <= 0 {
+		return nil
+	}
+	radius := style.Scale120.Physical(6)
+	surface := style.containerHighest()
 	if ink, ok := style.shadowInk(); ok {
 		c.DrawShadow(list, style.Scale120.Physical(6), style.shadowSpreadFor(), ink)
 	}
 	c.FillRounded(list, radius, surface)
 	for _, child := range n.Children {
+		if child == nil {
+			continue
+		}
 		// An option is a run of label text, and drawing it here rather than
 		// through paintNode keeps the list one pass. A picker's filter well
 		// is not an option: it owns chrome of its own, so it goes back through

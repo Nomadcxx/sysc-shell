@@ -82,6 +82,50 @@ func TestColumnLayoutAcceptsGraph(t *testing.T) {
 	}
 }
 
+func TestOpenMenuOptionsOverlayWithoutChangingColumnFlow(t *testing.T) {
+	t.Parallel()
+	measure := func(string, TextAttrs) (int, int) { return 40, 16 }
+	makeTree := func(open bool) (*Node, *Node, *Node) {
+		menu := &Node{Kind: KindMenu, Text: "Theme", Action: "set:appearance.seed", Height: 24, Padding: 4}
+		if open {
+			menu.Children = []*Node{
+				{Kind: KindText, Text: "one"},
+				{Kind: KindText, Text: "two"},
+			}
+		}
+		after := &Node{Kind: KindButton, Text: "After", Action: "after", Height: 24}
+		root := &Node{Kind: KindColumn, Gap: 8, Children: []*Node{menu, after}}
+		if err := LayoutColumn(root, Rect{W: 200, H: 100}, measure); err != nil {
+			t.Fatalf("layout menu open=%v: %v", open, err)
+		}
+		return root, menu, after
+	}
+
+	_, _, closedAfter := makeTree(false)
+	root, menu, openAfter := makeTree(true)
+	if openAfter.Bounds.Y != closedAfter.Bounds.Y {
+		t.Fatalf("following row moved from y=%d to y=%d when menu opened", closedAfter.Bounds.Y, openAfter.Bounds.Y)
+	}
+	if menu.Bounds.H != 24 {
+		t.Fatalf("open menu trigger height = %d, want 24", menu.Bounds.H)
+	}
+	if len(menu.Children) == 0 {
+		t.Fatal("open menu has no popup rows")
+	}
+	if menu.Children[0].Bounds.Y != menu.Bounds.Y+menu.Bounds.H {
+		t.Fatalf("first popup row = %+v, want directly below trigger %+v", menu.Children[0].Bounds, menu.Bounds)
+	}
+
+	row := menu.Children[0].Bounds
+	x, y := row.X+1, row.Y+row.H/2
+	if !openAfter.Bounds.Contains(x, y) {
+		t.Fatalf("test point (%d,%d) does not overlap the following row %+v", x, y, openAfter.Bounds)
+	}
+	if action, ok := Hit(root, x, y); !ok || action != menu.Action {
+		t.Fatalf("popup hit = %q, %v; want menu action %q above the following row", action, ok, menu.Action)
+	}
+}
+
 func TestSegmentedControlSharesTheSessionWidth(t *testing.T) {
 	t.Parallel()
 	segments := &Node{Kind: KindSegmented, Height: 40, Gap: 4, Children: []*Node{

@@ -3990,6 +3990,18 @@ func (h *PanelHost) setFocus(n *ui.Node) {
 }
 
 func (h *PanelHost) hitFocusable(x, y int) *ui.Node {
+	// An open menu's option rows paint and receive hits outside the trigger.
+	// Resolve its overlay before focus rectangles so a covered control cannot
+	// steal a press intended for the popup.
+	for i := len(h.focus) - 1; i >= 0; i-- {
+		n := h.focus[i]
+		if n == nil || n.Kind != ui.KindMenu || !ui.MenuPopupBounds(n).Contains(x, y) {
+			continue
+		}
+		if action, ok := ui.Hit(h.root, x, y); ok && action == n.Action {
+			return n
+		}
+	}
 	for i := len(h.focus) - 1; i >= 0; i-- {
 		n := h.focus[i]
 		if n.Bounds.Contains(x, y) {

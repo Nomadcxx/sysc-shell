@@ -23,6 +23,7 @@ const (
 	KindTab
 	KindToggle
 	KindSlider
+	// KindMenu lays out its trigger in flow; open option children are overlays.
 	KindMenu
 	KindTextField
 	KindScroll

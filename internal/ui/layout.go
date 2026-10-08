@@ -652,13 +652,6 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		if n.Width > 0 {
 			w = n.Width
 		}
-		for _, c := range n.Children {
-			if c == nil {
-				continue
-			}
-			_, ch := measure(c.Text, TextAttrsOf(c))
-			h += ch
-		}
 		return w, h, nil
 	case KindTextField:
 		// A field's width is declared, never measured from its text: sizing
@@ -770,17 +763,72 @@ func layoutStackChildren(n *Node, measure MeasureText) error {
 	return nil
 }
 
+// MenuPopupBounds is the laid-out option list below an open menu trigger. The
+// trigger stays in normal flow while these rows paint and receive hits as an
+// overlay.
+func MenuPopupBounds(n *Node) Rect {
+	if n == nil || n.Kind != KindMenu {
+		return Rect{}
+	}
+	top, bottom, found := 0, 0, false
+	for _, child := range n.Children {
+		if child == nil || child.Bounds.W <= 0 || child.Bounds.H <= 0 {
+			continue
+		}
+		if !found || child.Bounds.Y < top {
+			top = child.Bounds.Y
+		}
+		if !found || child.Bounds.Y+child.Bounds.H > bottom {
+			bottom = child.Bounds.Y + child.Bounds.H
+		}
+		found = true
+	}
+	if !found {
+		return Rect{}
+	}
+	return Rect{X: n.Bounds.X, Y: top, W: n.Bounds.W, H: bottom - top}
+}
+
 // Hit reports the action of the topmost arranged node containing the point.
-//
-// Children are searched in reverse source order, which is reverse paint order,
-// and the search descends so a nested section resolves to its leaf rather than
-// stopping at the container.
+// Menu option lists are checked first because they paint above the rest of the
+// panel; ordinary children keep reverse paint order within the panel flow.
 func Hit(root *Node, x, y int) (string, bool) {
+	if root == nil || root.Kind == KindEffect {
+		return "", false
+	}
+	if !root.Bounds.Contains(x, y) && !(root.Kind == KindMenu && MenuPopupBounds(root).Contains(x, y)) {
+		return "", false
+	}
+	if action, ok := hitMenuPopup(root, x, y); ok {
+		return action, true
+	}
+	return hitNode(root, x, y)
+}
+
+func hitMenuPopup(n *Node, x, y int) (string, bool) {
+	if n == nil || n.Kind == KindEffect {
+		return "", false
+	}
+	if (n.Kind == KindScroll || n.Kind == KindVirtualList) && !n.Bounds.Contains(x, y) {
+		return "", false
+	}
+	for i := len(n.Children) - 1; i >= 0; i-- {
+		if action, ok := hitMenuPopup(n.Children[i], x, y); ok {
+			return action, true
+		}
+	}
+	if n.Kind == KindMenu && n.Action != "" && MenuPopupBounds(n).Contains(x, y) {
+		return n.Action, true
+	}
+	return "", false
+}
+
+func hitNode(root *Node, x, y int) (string, bool) {
 	if root == nil || root.Kind == KindEffect || !root.Bounds.Contains(x, y) {
 		return "", false
 	}
 	for i := len(root.Children) - 1; i >= 0; i-- {
-		if action, ok := Hit(root.Children[i], x, y); ok {
+		if action, ok := hitNode(root.Children[i], x, y); ok {
 			return action, true
 		}
 	}

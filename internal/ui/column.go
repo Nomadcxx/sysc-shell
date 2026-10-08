@@ -182,18 +182,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		return SliderKnob, nil
 	case KindMenu:
 		_, labelHeight := measure(n.Text, TextAttrsOf(n))
-		h := max(n.Height, labelHeight+2*n.Padding)
-		for _, c := range n.Children {
-			if c == nil {
-				continue
-			}
-			ch, err := columnChildHeight(c, width, measure)
-			if err != nil {
-				return 0, err
-			}
-			h += ch
-		}
-		return h, nil
+		return max(n.Height, labelHeight+2*n.Padding), nil
 	case KindTextField:
 		if n.Height > 0 {
 			return n.Height, nil
