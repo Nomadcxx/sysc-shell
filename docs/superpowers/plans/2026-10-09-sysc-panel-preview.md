@@ -645,3 +645,26 @@ PR body: why (catalog thumbnails need real panel screenshots; sysc-plugins must 
 - Output depends on installed fonts; the shell's CI installs `fonts-inter` and Noto, and the tests assert structure only.
 - The command imports `internal/shell`, so a future shell refactor must keep it building; `go build ./...` in CI covers it.
 - A later sysc-plugins plan consumes this command's flags (`-width`, `-height`, `-scale`, `-o`, JSON on stdin) as its interface; changing them later is a breaking change for that plan.
+
+## Addendum: changes made after the whole-branch review
+
+The final review found two Important gaps, both fixed test-first before merge:
+
+- **Image nodes painted as empty boxes.** The host decodes image nodes through
+  its icon worker; the first version never did. `render.go` now fills each
+  image node with `icons.DecodeRaster` (bounded by `icons.MaxFileBytes`) at its
+  declared logical box and fails with `image <path> could not be decoded` for a
+  missing or unreadable file. Tests: `TestRenderPanelPaintsAnImageNode`,
+  `TestRenderPanelRefusesAnImageItCannotDecode`.
+- **Per-edge caps still allowed multi-gigabyte buffers.** An 8192x8192 panel at
+  400% rendered (and took about a minute). A painted-area cap of 1<<25 pixels
+  (128 MiB) now applies before any work, and the pixel buffer is converted to
+  straight RGBA in place instead of copied. Test:
+  `TestRenderPanelRejectsAnAreaPastTheCap`.
+
+Deferred minors from the review (not fixed): atomic write and checked close for
+`-o`; a clearer message when the tree file precedes the flags; "no input" for
+empty input; `-h` exiting 0; refusing `-o` equal to the input; rounding in
+unpremultiply; a comment on the unreachable row-layout branch; font-scan log
+lines on stderr; the no-file-on-failure CLI test using an invalid root rather
+than a does-not-fit tree.

@@ -3,6 +3,9 @@ package main
 import (
 	"image"
 	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -107,5 +110,78 @@ func TestRenderPanelRejectsSizesAndScalesOutOfRange(t *testing.T) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// writeSolidPNG writes a size-by-size PNG of one colour and returns its path.
+func writeSolidPNG(t *testing.T, size int, c color.NRGBA) string {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, size, size))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = c.R, c.G, c.B, c.A
+	}
+	path := filepath.Join(t.TempDir(), "solid.png")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func imagePanel(path string) *v1.Node {
+	return &v1.Node{Kind: v1.KindColumn, Padding: 16, Children: []*v1.Node{
+		{Kind: v1.KindImage, Path: path, ImageSize: 96},
+	}}
+}
+
+// The host decodes image nodes through its icon worker; a preview that skipped
+// that would paint every picture as empty panel and report nothing.
+func TestRenderPanelPaintsAnImageNode(t *testing.T) {
+	red := color.NRGBA{R: 0xe0, G: 0x20, B: 0x20, A: 0xff}
+	img, err := renderPanel(imagePanel(writeSolidPNG(t, 64, red)), 360, 240, 180, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The 96 px box sits at (16,16) logical; at 150% its centre is (96,96).
+	got := img.NRGBAAt(96, 96)
+	if got.R < 0xb0 || got.G > 0x60 || got.B > 0x60 {
+		t.Fatalf("image box centre = %v, want the image's red (an empty box paints the panel colour)", got)
+	}
+}
+
+func TestRenderPanelRefusesAnImageItCannotDecode(t *testing.T) {
+	notAnImage := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(notAnImage, []byte("this is not an image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"missing file": filepath.Join(t.TempDir(), "gone.png"),
+		"not an image": notAnImage,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := renderPanel(imagePanel(path), 360, 240, 180, "")
+			if err == nil || !strings.Contains(err.Error(), "could not be decoded") || !strings.Contains(err.Error(), path) {
+				t.Fatalf("err = %v, want one saying %s could not be decoded", err, path)
+			}
+		})
+	}
+}
+
+// The edge caps alone still allow an 8192x8192 panel at 400%: gigabytes. The
+// area is what bounds memory.
+func TestRenderPanelRejectsAnAreaPastTheCap(t *testing.T) {
+	for _, tc := range []struct{ w, h, scale int }{
+		{8192, 8192, 180},
+		{8192, 8192, 480},
+		{4000, 4000, 180},
+	} {
+		_, err := renderPanel(sampleNode(), tc.w, tc.h, tc.scale, "")
+		if err == nil || !strings.Contains(err.Error(), "pixels") {
+			t.Errorf("%dx%d at %d: err = %v, want a pixel-area refusal", tc.w, tc.h, tc.scale, err)
+		}
 	}
 }
