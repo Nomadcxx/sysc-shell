@@ -154,7 +154,7 @@ func TestRegistrySharesCachedMediaArtWithTheBar(t *testing.T) {
 func TestMediaWidgetSetsMarqueeConfig(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{{ID: "media", MaxWidth: 120}}, 8, standardMetrics())
-	if len(widgets) != 1 || widgets[0].inner == nil || len(widgets[0].inner.Children) != 2 {
+	if len(widgets) != 1 || widgets[0].inner == nil || len(widgets[0].inner.Children) != 3 {
 		t.Fatalf("media widget = %+v", widgets)
 	}
 	title := widgets[0].inner.Children[1]
@@ -163,5 +163,32 @@ func TestMediaWidgetSetsMarqueeConfig(t *testing.T) {
 	}
 	if widgets[0].inner.Action != panelMediaAction || widgets[0].inner.Name != "Media" || widgets[0].inner.Role != "button" {
 		t.Fatalf("media accessibility = %+v", widgets[0].inner)
+	}
+}
+
+func TestMediaPillCarriesAPlayButtonThatFollowsState(t *testing.T) {
+	t.Parallel()
+	w := buildMediaWidget()
+	row := w.node
+	for _, tc := range []struct {
+		state    services.MediaState
+		icon     string
+		disabled bool
+	}{
+		{services.MediaState{Available: true, Status: services.PlaybackPlaying, CanPause: true}, "pause", false},
+		{services.MediaState{Available: true, Status: services.PlaybackPaused, CanPlay: true}, "play_arrow", false},
+		{services.MediaState{Available: true, Status: services.PlaybackStopped}, "play_arrow", true},
+	} {
+		w.refresh(barView{Media: tc.state})
+		button := row.Children[2]
+		if button.Action != mediaPlayPauseAction || button.Name != "Play or pause" || button.Role != "button" {
+			t.Fatalf("pill button = %+v, want an accessible play/pause action", button)
+		}
+		if button.Icon != tc.icon {
+			t.Errorf("status %v icon = %q, want %q", tc.state.Status, button.Icon, tc.icon)
+		}
+		if got := button.Tone == ui.ToneSubtle; got != tc.disabled {
+			t.Errorf("status %v subdued = %v, want %v", tc.state.Status, got, tc.disabled)
+		}
 	}
 }
