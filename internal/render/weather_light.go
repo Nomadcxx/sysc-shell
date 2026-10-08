@@ -61,22 +61,43 @@ func paintWeatherSun(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy int, r, a
 	blitWeatherSprite(c, box, mask, rays, cx-edge/2, cy-edge/2, alpha*breathe)
 }
 
+// weatherMoonCraters are the reference design's four fixed craters: centre
+// offset and radius, in disc radii.
+var weatherMoonCraters = [...][3]float64{{-.3, -.2, .22}, {.25, .15, .16}, {-.05, .38, .12}, {.35, -.35, .1}}
+
+// paintWeatherMoon draws a lit disc with craters inside a wide, soft glow
+// that falls off smoothly from 0.6 to 6 disc radii.
 func paintWeatherMoon(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy int, r, alpha float64) {
-	edge := int(math.Round(r * .9))
+	edge := int(math.Round(r * 1.05))
 	moon := weatherSpriteFor(weatherSpriteKey{kind: "moon", w: edge, h: edge}, func() *weatherSprite {
-		disc := .085 / .9 // disc radius as a fraction of the sprite
-		return bakeWeatherSprite(edge, edge, 2, func(u, v float64) Color {
-			dist := math.Hypot(u-.5, v-.5)
-			if dist <= disc {
-				shade := LerpColor(weatherHex("#fbfbff"), weatherHex("#cfd6ee"), dist/disc)
-				if weatherFBM(u*40, v*40, 5, 3) > .62 {
-					shade = LerpColor(shade, weatherHex("#969fc3"), .35)
-				}
-				return shade
+		disc := .085 / 1.05 // disc radius as a fraction of the sprite
+		px := 1 / math.Max(float64(edge), 1)
+		lit, dark, crater := weatherHex("#fbfbff"), weatherHex("#cfd6ee"), weatherHex("#969fc3")
+		glowCol := Color{R: 200, G: 214, B: 255}
+		return bakeWeatherSprite(edge, edge, 1, func(u, v float64) Color {
+			du, dv := u-.5, v-.5
+			dist := math.Hypot(du, dv)
+			// Smoothstep rather than the reference's linear ramp: a linear
+			// falloff kinks at its rim and draws a visible ring on a dark sky.
+			glow := .32 * weatherSmoothstep(0, 1, 1-(dist-.6*disc)/(5.4*disc))
+			cover := clampEffect((disc-dist)/px+.5, 0, 1)
+			if cover == 0 {
+				out := glowCol
+				out.A = weatherAlpha(255, glow)
+				return out
 			}
-			glow := weatherHex("#c8d6ff")
-			glow.A = weatherAlpha(255, .32*math.Exp(-(dist-disc)*9))
-			return glow
+			// The highlight sits up and left of centre, as in a lit sphere.
+			shade := LerpColor(lit, dark, clampEffect(math.Hypot(du+.3*disc, dv+.3*disc)/(1.15*disc), 0, 1))
+			for _, k := range weatherMoonCraters {
+				in := clampEffect((k[2]*disc-math.Hypot(du-k[0]*disc, dv-k[1]*disc))/px+.5, 0, 1)
+				shade = LerpColor(shade, crater, .35*in)
+			}
+			// The opaque disc over its own glow, antialiased at the rim.
+			a := cover + glow*(1-cover)
+			mixc := func(d, g uint8) uint8 {
+				return uint8(math.Round((float64(d)*cover + float64(g)*glow*(1-cover)) / a))
+			}
+			return Color{R: mixc(shade.R, glowCol.R), G: mixc(shade.G, glowCol.G), B: mixc(shade.B, glowCol.B), A: weatherAlpha(255, a)}
 		})
 	})
 	blitWeatherSprite(c, box, mask, moon, cx-edge/2, cy-edge/2, alpha)

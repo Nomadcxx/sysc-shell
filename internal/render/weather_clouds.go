@@ -69,13 +69,34 @@ func weatherCloudSprite(seed uint64, lit, shade Color, w, h int) *weatherSprite 
 				return Color{}
 			}
 			n := weatherFBM(u*6.5, v*3.2, seed, 4)
-			dens := weatherSmoothstep(.05, .42, base*.9+(n-.5)*1.25)
+			// The window takes density to zero at the sprite's border: noise can
+			// lift the envelope above zero at its edges, which would cut the
+			// cloud off along its own rectangle.
+			window := weatherSmoothstep(0, .12, 1-math.Abs(nx)) * weatherSmoothstep(0, .12, 1-math.Abs(ny))
+			dens := weatherSmoothstep(.05, .42, base*.9+(n-.5)*1.25) * window
 			light := clampEffect(.95-v*1.05+(n-.5)*.55, 0, 1)
 			col := LerpColor(shade, lit, light)
 			col.A = weatherAlpha(255, dens)
 			return col
 		})
 	})
+}
+
+// weatherCloudCentre is cloud i's horizontal centre as a fraction of the card
+// width. Clouds take evenly spaced slots across a span a little wider than
+// the card, in a seeded order and with jitter, so they read as separate
+// clouds instead of stacking into one bank; the outermost ones run off the
+// edges, as real cloud does.
+func weatherCloudCentre(seed uint64, i, count int) float64 {
+	key := weatherUnit(seed, uint64(i), 21)
+	rank := 0
+	for j := 0; j < count; j++ {
+		if k := weatherUnit(seed, uint64(j), 21); k < key || k == key && j < i {
+			rank++
+		}
+	}
+	slot := 1.3 / float64(max(count, 1))
+	return -.15 + slot*(float64(rank)+.5) + (weatherUnit(seed, uint64(i), 24)-.5)*.5*slot
 }
 
 // paintWeatherClouds draws the far (slow, faint, high) or near (larger,
@@ -102,7 +123,7 @@ func paintWeatherClouds(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, 
 		h := w / 2
 		seed := spec.Seed + uint64(i%4)
 		sprite := weatherCloudSprite(seed, lit, shade, w, h)
-		baseX := weatherUnit(spec.Seed, uint64(i), 21)*float64(box.W+w) - float64(w)*.6
+		baseX := weatherCloudCentre(spec.Seed, i, count)*float64(box.W) - float64(w)/2
 		drift := math.Sin(2*math.Pi*(loop+weatherUnit(spec.Seed, uint64(i), 22))) * (.01 + .03*depth) * float64(box.W)
 		y := (.02 + .40*weatherUnit(spec.Seed, uint64(i), 23) + .12*depth) * float64(box.H)
 		alpha := (.55 + .45*depth) * intensity

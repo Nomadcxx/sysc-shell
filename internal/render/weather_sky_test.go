@@ -178,3 +178,26 @@ func TestWeatherPrecipitationLeavesTheCardBeforeItWraps(t *testing.T) {
 		}
 	}
 }
+
+func TestWeatherCloudSpriteFadesOutAtItsBorder(t *testing.T) {
+	// A cloud that still has density at its sprite's border shows a straight
+	// edge where the rectangle cuts it off.
+	lit, shade := weatherCloudColours(weatherCloudy, 1, testStyle)
+	for seed := uint64(1); seed <= 8; seed++ {
+		s := weatherCloudSprite(seed, lit, shade, 200, 100)
+		for y := 0; y < s.h; y++ {
+			for _, x := range []int{0, s.w - 1} {
+				if a := s.pix[(y*s.w+x)*4+3]; a != 0 {
+					t.Fatalf("seed %d: border pixel (%d,%d) has alpha %d", seed, x, y, a)
+				}
+			}
+		}
+		for x := 0; x < s.w; x++ {
+			for _, y := range []int{0, s.h - 1} {
+				if a := s.pix[(y*s.w+x)*4+3]; a != 0 {
+					t.Fatalf("seed %d: border pixel (%d,%d) has alpha %d", seed, x, y, a)
+				}
+			}
+		}
+	}
+}
