@@ -183,17 +183,6 @@ func mediaTime(us int64) string {
 	return fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)
 }
 
-func mediaGlyph(status services.PlaybackStatus) string {
-	switch status {
-	case services.PlaybackPlaying:
-		return "pause"
-	case services.PlaybackPaused:
-		return "play_arrow"
-	default:
-		return "music_note"
-	}
-}
-
 func mediaBodyVisible(h *PanelHost) bool {
 	return h != nil && h.id == PanelControlCenter && h.section == "media"
 }
