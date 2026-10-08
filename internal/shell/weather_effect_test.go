@@ -12,22 +12,22 @@ import (
 func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 	day := true
 	cases := []struct {
-		name    string
-		code    int
-		variant ui.EffectVariant
-		isDay   *bool
-		night   bool
+		name     string
+		code     int
+		variant  ui.EffectVariant
+		isDay    *bool
+		daylight float64
 	}{
-		{name: "clear day", code: 0, variant: ui.WeatherClear, isDay: &day},
-		{name: "clear night", code: 0, variant: ui.WeatherClear, isDay: func() *bool { v := false; return &v }(), night: true},
-		{name: "partly cloudy", code: 2, variant: ui.WeatherPartlyCloudy, isDay: &day},
-		{name: "cloudy", code: 3, variant: ui.WeatherCloudy, isDay: &day},
-		{name: "fog", code: 45, variant: ui.WeatherFog, isDay: &day},
-		{name: "rain", code: 61, variant: ui.WeatherRain, isDay: &day},
-		{name: "snow", code: 71, variant: ui.WeatherSnow, isDay: &day},
-		{name: "heavy snow", code: 75, variant: ui.WeatherHeavySnow, isDay: &day},
-		{name: "thunderstorm", code: 95, variant: ui.WeatherThunderstorm, isDay: &day},
-		{name: "unknown falls back to cloudy", code: 44, variant: ui.WeatherCloudy, isDay: &day},
+		{name: "clear day", code: 0, variant: ui.WeatherClear, isDay: &day, daylight: 1},
+		{name: "clear night", code: 0, variant: ui.WeatherClear, isDay: func() *bool { v := false; return &v }(), daylight: 0},
+		{name: "partly cloudy", code: 2, variant: ui.WeatherPartlyCloudy, isDay: &day, daylight: 1},
+		{name: "cloudy", code: 3, variant: ui.WeatherCloudy, isDay: &day, daylight: 1},
+		{name: "fog", code: 45, variant: ui.WeatherFog, isDay: &day, daylight: 1},
+		{name: "rain", code: 61, variant: ui.WeatherRain, isDay: &day, daylight: 1},
+		{name: "snow", code: 71, variant: ui.WeatherSnow, isDay: &day, daylight: 1},
+		{name: "heavy snow", code: 75, variant: ui.WeatherHeavySnow, isDay: &day, daylight: 1},
+		{name: "thunderstorm", code: 95, variant: ui.WeatherThunderstorm, isDay: &day, daylight: 1},
+		{name: "unknown falls back to cloudy", code: 44, variant: ui.WeatherCloudy, isDay: &day, daylight: 1},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,8 +39,8 @@ func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 			if spec.Program != ui.EffectWeather || spec.Variant != tt.variant {
 				t.Fatalf("spec = %+v, want weather variant %d", spec, tt.variant)
 			}
-			if spec.Night != tt.night {
-				t.Fatalf("spec night = %v, want %v", spec.Night, tt.night)
+			if spec.Daylight != tt.daylight {
+				t.Fatalf("spec daylight = %v, want %v", spec.Daylight, tt.daylight)
 			}
 			if err := spec.Validate(); err != nil {
 				t.Fatalf("effect spec is invalid: %v", err)

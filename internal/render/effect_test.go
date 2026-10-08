@@ -52,7 +52,7 @@ func TestWeatherNightUsesAMoonSilhouette(t *testing.T) {
 	day := rainSpec(7)
 	day.Variant = ui.WeatherClear
 	night := day
-	night.Night = true
+	night.Daylight = 0
 	dayPixels := paintWeatherVariantFrameWithSpec(t, day, .25, width, height)
 	nightPixels := paintWeatherVariantFrameWithSpec(t, night, .25, width, height)
 	if got := differingWeatherPixels(dayPixels, nightPixels, width, ui.Rect{W: width, H: height / 2}, 18); got < 80 {
@@ -233,6 +233,7 @@ func TestWeatherEffectRendersEveryVariant(t *testing.T) {
 					Seed:      7,
 					Intensity: .8,
 					Speed:     1,
+					Daylight:  1,
 				},
 			}
 			if err := paintEffect(c, n, testStyle); err != nil {
@@ -359,6 +360,7 @@ func rainSpec(seed uint64) ui.EffectSpec {
 		Seed:      seed,
 		Intensity: .7,
 		Speed:     1,
+		Daylight:  1,
 	}
 }
 

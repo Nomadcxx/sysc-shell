@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"time"
+
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -51,7 +53,7 @@ func weatherEffectSpec(reading services.Reading) (ui.EffectSpec, bool) {
 	spec := ui.EffectSpec{
 		Program:   ui.EffectWeather,
 		Variant:   variant,
-		Night:     !isDay,
+		Daylight:  weatherDaylight(reading, time.Now()),
 		Seed:      weatherEffectSeed,
 		Intensity: intensity,
 		Speed:     speed,
@@ -60,6 +62,14 @@ func weatherEffectSpec(reading services.Reading) (ui.EffectSpec, bool) {
 		return ui.EffectSpec{}, false
 	}
 	return spec, true
+}
+
+// weatherDaylight is how far into day the sky is at now.
+func weatherDaylight(reading services.Reading, now time.Time) float64 {
+	if reading.IsDay == nil || *reading.IsDay {
+		return 1
+	}
+	return 0
 }
 
 func weatherEffectNode(reading services.Reading, key string, bias float64) *ui.Node {

@@ -149,7 +149,7 @@ func paintCelestial(c *Canvas, box, scene ui.Rect, mask *image.Alpha, style Styl
 	if radius < 3 {
 		radius = 3
 	}
-	if spec.Night {
+	if spec.Daylight < .5 {
 		paintMoon(c, box, mask, style, spec, time, cx, cy, radius, intensity)
 		return
 	}
@@ -365,7 +365,7 @@ func paintSkyCloudWash(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, s
 	if intensity <= 0 || box.W <= 0 || box.H <= 0 {
 		return
 	}
-	skyTop, skyBottom, cloud := weatherSkyColors(style, spec.Night)
+	skyTop, skyBottom, cloud := weatherSkyColors(style, spec.Daylight < .5)
 	if skyTop.A == 0 || skyBottom.A == 0 || cloud.A == 0 {
 		return
 	}

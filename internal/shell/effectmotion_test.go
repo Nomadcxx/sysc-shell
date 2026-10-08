@@ -124,7 +124,7 @@ func TestWeatherSurfaceRendersAndPublishesAnimatedFrames(t *testing.T) {
 	a, clock := newTestAnimator(false)
 	const width, height = 460, 560
 	effect := &ui.Node{Kind: ui.KindEffect, Key: "weather:hero", Bounds: ui.Rect{W: width, H: height}, Effect: ui.EffectSpec{
-		Program: ui.EffectWeather, Variant: ui.WeatherClear, Seed: 7, Intensity: .7, Speed: 1,
+		Program: ui.EffectWeather, Variant: ui.WeatherClear, Seed: 7, Intensity: .7, Speed: 1, Daylight: 1,
 	}}
 	h := &PanelHost{
 		id: PanelWeather, output: 7, root: &ui.Node{Kind: ui.KindStack, Bounds: ui.Rect{W: width, H: height}, Children: []*ui.Node{effect}},
