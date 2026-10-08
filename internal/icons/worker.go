@@ -19,6 +19,7 @@ import (
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
 	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )

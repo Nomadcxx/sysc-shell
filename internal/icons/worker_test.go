@@ -300,6 +300,23 @@ func TestDecodeRasterPreservesAspectByCroppingTheCentre(t *testing.T) {
 	}
 }
 
+// Plugin catalog thumbnails ship as WebP, which the standard library cannot
+// decode; the golden file is a lossless red, green, blue row.
+func TestDecodeRasterDecodesWebP(t *testing.T) {
+	data, err := os.ReadFile("testdata/rgb.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := DecodeRaster(data, 1, 1)
+	if got == nil {
+		t.Fatal("decode returned no raster for a WebP source")
+	}
+	if got.Pix[0] != 0 || got.Pix[1] != 0xff || got.Pix[2] != 0 || got.Pix[3] != 0xff {
+		t.Fatalf("cropped pixel in BGRA = %v, want the centred green pixel", got.Pix[:4])
+	}
+}
+
 func TestWorkerDecodesANonSquareTarget(t *testing.T) {
 	// A wallpaper thumbnail is landscape. The decode target has to carry both
 	// edges, because scaling a 16:9 source into a square box is a visible
