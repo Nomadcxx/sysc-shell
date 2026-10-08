@@ -104,3 +104,26 @@ func TestWeatherFlashIsAPulseOncePerLoop(t *testing.T) {
 		t.Fatal("rain flashes")
 	}
 }
+
+func TestWeatherCloudsAreLitAboveAndShadedBelow(t *testing.T) {
+	const w, h = 200, 120
+	c := newTestCanvas(t, w, h)
+	spec := rainSpec(7)
+	spec.Variant, spec.Daylight, spec.Intensity = ui.WeatherCloudy, 1, 1
+	paintWeatherClouds(c, ui.Rect{W: w, H: h}, fullMask(w, h), testStyle, spec, weatherCloudy, .3, false, 0)
+	paintWeatherClouds(c, ui.Rect{W: w, H: h}, fullMask(w, h), testStyle, spec, weatherCloudy, .3, true, 0)
+	upper := meanWeatherColor(c.Pix, w, ui.Rect{W: w, H: h / 3})
+	lower := meanWeatherColor(c.Pix, w, ui.Rect{Y: h / 2, W: w, H: h / 3})
+	if upper == [3]byte{} || lower == [3]byte{} {
+		t.Fatal("clouds painted nothing")
+	}
+	lit, shade := weatherCloudColours(weatherCloudy, 1, testStyle)
+	if int(lit.R)+int(lit.G)+int(lit.B) <= int(shade.R)+int(shade.G)+int(shade.B) {
+		t.Fatalf("lit %+v is not brighter than shade %+v", lit, shade)
+	}
+	a, _ := weatherCloudColours(weatherCloudy, .51, testStyle)
+	b, _ := weatherCloudColours(weatherCloudy, .54, testStyle)
+	if a != b {
+		t.Fatal("cloud palette is not quantised; every frame of a dusk would rebake")
+	}
+}
