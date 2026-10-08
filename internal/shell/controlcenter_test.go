@@ -420,7 +420,8 @@ func TestControlCentreHomeFitsTheViewportWithoutScrolling(t *testing.T) {
 			cfg.Theme.FontScale = scale
 			h := &PanelHost{id: PanelControlCenter, section: "home", theme: ThemeFrom(cfg, cfg.Bar)}
 			r := &Registry{sample: fixtureSnapshot(), reading: observedWeather(),
-				mediaState: services.MediaState{Available: true, Title: "A very long track title that will not fit", Status: services.PlaybackPlaying}}
+				mediaState: services.MediaState{Available: true, Title: "A very long track title that will not fit", Artist: "An equally long artist name", Identity: "mpv",
+					Status: services.PlaybackPlaying, CanPause: true, LengthUS: 100, PositionUS: 25}}
 			root := controlCentreTree(r, h)
 			viewport := root.Children[1].Children[1]
 			home := viewport.Children[0]
@@ -438,6 +439,20 @@ func TestControlCentreHomeFitsTheViewportWithoutScrolling(t *testing.T) {
 					t.Errorf("%s %q at %+v leaves the page %+v", n.Kind, n.Name+n.Text, b, home.Bounds)
 				}
 			})
+			// Nothing may leave its own card: the page-wide check above passes
+			// when a card's content spills into the gap beside or below it.
+			for _, name := range []string{"Now playing", "System"} {
+				card := findByName(home, name)
+				walkNodes(card, func(n *ui.Node) {
+					b, c := n.Bounds, card.Bounds
+					if b.W == 0 && n.Kind == ui.KindMeter {
+						t.Errorf("%s: meter %q has no width", name, n.Name)
+					}
+					if b.X < c.X || b.X+b.W > c.X+c.W || b.Y < c.Y || b.Y+b.H > c.Y+c.H {
+						t.Errorf("%s: %s %q at %+v leaves its card %+v", name, n.Kind, n.Name+n.Text, b, c)
+					}
+				})
+			}
 			split := home.Children[2]
 			right := split.Children[1]
 			if got := right.Bounds.X + right.Bounds.W; got != home.Bounds.X+body {

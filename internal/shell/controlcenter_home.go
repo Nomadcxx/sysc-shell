@@ -20,6 +20,8 @@ const (
 	ccHomeSplitH   = 196
 	ccHomeWeatherH = 98
 	ccHomeSliderH  = 40
+	// ccHomeMeterH is the media card's read-only progress line.
+	ccHomeMeterH = 4
 	// ccHomeLeftW keeps the clock and system cards at the width the system
 	// gauges were sized for.
 	ccHomeLeftW = 355
@@ -71,7 +73,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	half := (body - ccHomeGap) / 2
 	top := &ui.Node{Kind: ui.KindRow, Height: ccHomeTopH, Gap: ccHomeGap, Children: []*ui.Node{
 		ccHomeIdentity(r, h, identity, half),
-		ccHomeMediaSlot(media, body-half-ccHomeGap),
+		ccHomeMediaCard(r, h, media, body-half-ccHomeGap),
 	}}
 	toggles := ccHomeToggles(r, body, caffeine, wallsStatus)
 	split := &ui.Node{Kind: ui.KindRow, Height: ccHomeSplitH, Gap: ccHomeGap, Children: []*ui.Node{
@@ -104,20 +106,60 @@ func ccHomeIdentity(r *Registry, h *PanelHost, identity ccIdentity, width int) *
 	return card
 }
 
-// ccHomeMediaSlot is the top row's media half. Task 5 replaces the tile with
-// the media card.
-func ccHomeMediaSlot(media services.MediaState, width int) *ui.Node {
-	title := "Nothing playing"
-	if media.Available {
-		title = ccText(media.Title)
-	}
-	tile := ccQuickTile(width, mediaGlyph(media.Status), "Now playing", title, "section:media", false)
-	tile.Name, tile.Height = "Now playing", ccHomeTopH
-	tile.Children[0].Children[2].MaxWidth = width - 2*theme.MarginL // the title ellipsises in the tile
+// ccHomeMediaCard is Now playing with real transport: art behind a scrim,
+// title, artist and source, previous/play/next and a read-only progress line.
+// Seeking lives on the Media page and in the bar strip. With no player it is
+// an empty state of the same size, so the row never shifts.
+func ccHomeMediaCard(r *Registry, h *PanelHost, media services.MediaState, width int) *ui.Node {
+	m := h.metrics()
+	card := &ui.Node{Kind: ui.KindCapsule, Width: width, Height: ccHomeTopH,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Name: "Now playing", Role: "group"}
 	if !media.Available {
-		ccDisable(tile)
+		card.Padding = m.CardPadding
+		card.Children = []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginL, CenterY: true, Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "music_note", IconSize: m.IconLarge},
+			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: "Nothing playing", TextRole: theme.RoleLabel},
+				{Kind: ui.KindText, Text: "Start a player to control it here", TextRole: theme.RoleCaption},
+			}},
+		}}}
+		return card
 	}
-	return tile
+	card.Action = "section:media"
+	progress := 0.0
+	if media.LengthUS > 0 {
+		progress = float64(media.PositionUS) / float64(media.LengthUS)
+	}
+	textW := width - 2*m.CardPadding // titles ellipsise inside the card
+	buttons := mediaTransportButtons(media, false)
+	buttonW := centreIconSize + 2*centreIconPad
+	// The progress line takes what the buttons and their gaps leave.
+	meterW := max(textW-len(buttons)*(buttonW+theme.MarginS), 0)
+	transport := append(buttons, &ui.Node{Kind: ui.KindMeter, Value: progress, Width: meterW,
+		Height: ccHomeMeterH, Absent: media.LengthUS <= 0, Name: "Position"})
+	// Title, artist and source on one caption line, then transport: the most
+	// that fits 104px at 150% font scale, so the column carries no gap.
+	var byline []string
+	for _, part := range []string{media.Artist, media.Identity} {
+		if strings.TrimSpace(part) != "" {
+			byline = append(byline, part)
+		}
+	}
+	foreground := &ui.Node{Kind: ui.KindColumn, Padding: m.CardPadding, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: ccText(media.Title), TextRole: theme.RoleLabel, MaxWidth: textW},
+		{Kind: ui.KindText, Text: ccText(strings.Join(byline, " · ")), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: textW},
+		{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: transport},
+	}}
+	layers := []*ui.Node{}
+	if r != nil && h != nil {
+		if art := mediaArtImageLocked(r, h.output, media.ArtKey, ccHomeTopH); art != nil {
+			layers = append(layers,
+				&ui.Node{Kind: ui.KindImage, Image: art, ImageSize: ccHomeTopH, Background: true, Shape: ui.ShapeCard},
+				&ui.Node{Kind: ui.KindCapsule, Fill: ui.FillScrim, Shape: ui.ShapeCard})
+		}
+	}
+	card.Children = []*ui.Node{{Kind: ui.KindStack, Children: append(layers, foreground)}}
+	return card
 }
 
 func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string) *ui.Node {
