@@ -175,8 +175,9 @@ func TestWeatherSurfaceRendersAndPublishesAnimatedFrames(t *testing.T) {
 		}
 		return pixels
 	}
+	// A quarter loop apart: the clear sky's ray breath repeats every half loop.
 	first := renderAt(.10)
-	second := renderAt(.60)
+	second := renderAt(.35)
 	if !weatherFrameRegionDiffers(first, second, width, region) {
 		t.Fatal("changing the weather phase did not change the rendered hero")
 	}

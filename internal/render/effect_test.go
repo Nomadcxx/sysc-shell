@@ -47,19 +47,6 @@ func TestWeatherPartlyCloudyPaintsDistinctSkyAndCloudRegions(t *testing.T) {
 	}
 }
 
-func TestWeatherNightUsesAMoonSilhouette(t *testing.T) {
-	const width, height = 160, 96
-	day := rainSpec(7)
-	day.Variant = ui.WeatherClear
-	night := day
-	night.Daylight = 0
-	dayPixels := paintWeatherVariantFrameWithSpec(t, day, .25, width, height)
-	nightPixels := paintWeatherVariantFrameWithSpec(t, night, .25, width, height)
-	if got := differingWeatherPixels(dayPixels, nightPixels, width, ui.Rect{W: width, H: height / 2}, 18); got < 80 {
-		t.Fatalf("day and night clear forms differ at only %d upper-hero pixels, want a moon-specific silhouette", got)
-	}
-}
-
 func TestWeatherSkyHasReadableVerticalDepth(t *testing.T) {
 	const width, height = 160, 96
 	pixels := paintWeatherVariantFrame(t, ui.WeatherClear, .25, width, height)
@@ -71,28 +58,29 @@ func TestWeatherSkyHasReadableVerticalDepth(t *testing.T) {
 }
 
 func TestWeatherCloudsHaveHighlightAndShadowLayers(t *testing.T) {
-	const width, height = 240, 144
-	pixels := paintWeatherVariantFrame(t, ui.WeatherCloudy, .37, width, height)
-	upper := meanWeatherColor(pixels, width, ui.Rect{Y: 62, W: width, H: 24})
-	lower := meanWeatherColor(pixels, width, ui.Rect{Y: 102, W: width, H: 24})
-	if got := weatherRGBDistance(upper, lower); got < 12 {
-		t.Fatalf("cloud layer contrast = %d, want distinct highlight and shadow layers", got)
+	// Lit from above: inside one cloud, the dense pixels of its upper third
+	// are brighter than those of its lower third.
+	lit, shade := weatherCloudColours(weatherCloudy, 1, testStyle)
+	s := weatherCloudSprite(99, lit, shade, 240, 120)
+	band := func(y0, y1 int) (sum, n int) {
+		for y := y0; y < y1; y++ {
+			for x := 0; x < s.w; x++ {
+				i := (y*s.w + x) * 4
+				if a := int(s.pix[i+3]); a > 200 {
+					sum += (int(s.pix[i]) + int(s.pix[i+1]) + int(s.pix[i+2])) * 255 / a
+					n++
+				}
+			}
+		}
+		return sum, n
 	}
-}
-
-func TestWeatherCloudScenePreservesLandscapeComposition(t *testing.T) {
-	const width, height = 720, 400
-	c := newTestCanvas(t, width, height)
-	box := ui.Rect{W: width, H: height}
-	fillRect(c, box, testStyle.Capsule)
-	paintCloudScene(c, box, weatherSceneBox(box, 0), RoundedMask(0, width, height), testStyle, rainSpec(7), .37, 1, 1)
-
-	bounds, ok := weatherDifferenceBounds(c.Pix, width, testStyle.Capsule, 6)
-	if !ok {
-		t.Fatal("landscape cloud scene painted no measurable cloud form")
+	upSum, upN := band(0, s.h/3)
+	lowSum, lowN := band(2*s.h/3, s.h)
+	if upN == 0 || lowN == 0 {
+		t.Fatalf("cloud has %d dense upper and %d dense lower pixels", upN, lowN)
 	}
-	if bounds.W > height*3/2 {
-		t.Fatalf("landscape cloud width = %d in %dx%d hero, want no more than %d", bounds.W, width, height, height*3/2)
+	if up, low := upSum/upN, lowSum/lowN; up-low < 36 {
+		t.Fatalf("cloud upper brightness %d, lower %d; want a lit top and shaded base", up, low)
 	}
 }
 
@@ -107,34 +95,26 @@ func TestWeatherCelestialAndCloudFormsRespondToPhase(t *testing.T) {
 }
 
 func TestWeatherLargeFormsHaveReadablePhaseMotion(t *testing.T) {
+	// The Living sky moves gently: the sun's rays breathe in place and clouds
+	// drift, so motion is measured at a fine threshold between phases that
+	// sit at opposite ends of each motion (ray breath peaks every half loop).
 	const width, height = 240, 144
-	for _, variant := range []ui.EffectVariant{ui.WeatherClear, ui.WeatherCloudy} {
-		t.Run(fmt.Sprintf("variant-%d", variant), func(t *testing.T) {
-			first := paintWeatherVariantFrame(t, variant, .05, width, height)
-			second := paintWeatherVariantFrame(t, variant, .55, width, height)
-			got := differingWeatherPixels(first, second, width, ui.Rect{W: width, H: height}, 12)
-			if got < 3000 {
-				t.Fatalf("variant %d changed only %d pixels at hero scale, want deliberate large-form motion", variant, got)
+	for _, tc := range []struct {
+		variant    ui.EffectVariant
+		from, to   float64
+		minChanged int
+	}{
+		{ui.WeatherClear, 0, .25, 250},
+		{ui.WeatherCloudy, .05, .55, 2000},
+	} {
+		t.Run(fmt.Sprintf("variant-%d", tc.variant), func(t *testing.T) {
+			first := paintWeatherVariantFrame(t, tc.variant, tc.from, width, height)
+			second := paintWeatherVariantFrame(t, tc.variant, tc.to, width, height)
+			got := differingWeatherPixels(first, second, width, ui.Rect{W: width, H: height}, 6)
+			if got < tc.minChanged {
+				t.Fatalf("variant %d changed only %d pixels at hero scale, want at least %d", tc.variant, got, tc.minChanged)
 			}
 		})
-	}
-}
-
-func TestWeatherCloudMassBlendsItsUnionOnce(t *testing.T) {
-	const width, height = 160, 96
-	box := ui.Rect{W: width, H: height}
-	mask := RoundedMask(0, width, height)
-	cloud := Color{R: 255, G: 255, B: 255, A: 255}
-
-	painted := newTestCanvas(t, width, height)
-	fillRect(painted, box, testStyle.Capsule)
-	paintCloudMass(painted, box, mask, 80, 50, 120, 40, cloud, 128)
-
-	want := newTestCanvas(t, width, height)
-	fillRect(want, box, testStyle.Capsule)
-	localWeatherPixel(want, box, mask, 80, 50, cloud, 128, 1)
-	if got, expected := effectPixelBytes(painted, 80, 50), effectPixelBytes(want, 80, 50); !bytes.Equal(got, expected) {
-		t.Fatalf("overlapping cloud puffs stacked alpha: got %v, want one union blend %v", got, expected)
 	}
 }
 
@@ -157,32 +137,6 @@ func TestWeatherZeroSpeedParksAtOneDeterministicFrame(t *testing.T) {
 	second := paintWeatherVariantFrameWithSpec(t, spec, .75, 160, 96)
 	if !bytes.Equal(first, second) {
 		t.Fatal("a zero-speed weather effect moved between parked phases")
-	}
-}
-
-func TestWeatherLightningPulseIsDeterministicAndPhaseDependent(t *testing.T) {
-	const seed uint64 = 7
-	var previous float64
-	positive, changed := false, false
-	for i := 0; i <= 100; i++ {
-		phase := float64(i) / 100
-		pulse := lightningPulse(phase, 1, seed)
-		if pulse > 0 {
-			positive = true
-		}
-		if i > 0 && pulse != previous {
-			changed = true
-		}
-		if pulse != lightningPulse(phase, 1, seed) {
-			t.Fatalf("lightning pulse at phase %.2f was not deterministic", phase)
-		}
-		previous = pulse
-	}
-	if !positive {
-		t.Fatal("lightning pulse never produced a flash")
-	}
-	if !changed {
-		t.Fatal("lightning pulse did not respond to phase")
 	}
 }
 
@@ -476,180 +430,81 @@ func weatherDifferenceBounds(pixels []byte, width int, base Color, threshold uin
 	return ui.Rect{X: minX, Y: minY, W: maxX - minX + 1, H: maxY - minY + 1}, true
 }
 
-func BenchmarkPaintWeatherEffect(b *testing.B) {
-	for _, size := range []struct {
-		name   string
-		width  int
-		height int
-	}{
-		{name: "card", width: 256, height: 160},
-		{name: "landscape", width: 720, height: 400},
-	} {
-		b.Run(size.name, func(b *testing.B) {
-			c, err := NewCanvas(make([]byte, size.width*size.height*4), size.width, size.height, size.width*4)
-			if err != nil {
-				b.Fatal(err)
-			}
-			n := &ui.Node{
-				Kind:        ui.KindEffect,
-				Bounds:      ui.Rect{W: size.width, H: size.height},
-				Effect:      rainSpec(7),
-				EffectPhase: .25,
-			}
-			for i := 0; i < b.N; i++ {
-				clear(c.Pix)
-				if err := paintEffect(c, n, testStyle); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
-func TestWeatherSceneBoxLocksAspectAndHonoursBias(t *testing.T) {
-	t.Parallel()
-	// A Control Centre-shaped box: 578x318 is aspect 1.82, well past the lock.
-	wide := ui.Rect{W: 578, H: 318}
-	locked := weatherSceneBox(wide, 0).W
-	tests := []struct {
-		name  string
-		bias  float64
-		wantX int
-	}{
-		{"centred", 0, (578 - locked) / 2},
-		{"leading edge", -1, 0},
-		{"trailing edge", 1, 578 - locked},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scene := weatherSceneBox(wide, tt.bias)
-			if scene.W != locked {
-				t.Fatalf("scene width = %d, want %d", scene.W, locked)
-			}
-			if scene.X != tt.wantX {
-				t.Fatalf("scene x = %d, want %d", scene.X, tt.wantX)
-			}
-			if scene.H != wide.H {
-				t.Fatalf("scene height = %d, want %d", scene.H, wide.H)
-			}
-		})
-	}
-
-	// A box at or inside the lock keeps its full width and never letterboxes.
-	narrow := ui.Rect{W: 380, H: 346}
-	if scene := weatherSceneBox(narrow, 0); scene.W != narrow.W || scene.X != 0 {
-		t.Fatalf("narrow scene = %+v, want full width at origin", scene)
-	}
-
-	// The standalone panel is 1.2023, a hair past the 1.20 lock, so it
-	// letterboxes by a pixel. That is a rounding artefact, not a composition:
-	// assert it stays invisible rather than pretending it is exactly zero.
-	panel := ui.Rect{W: 416, H: 346}
-	if scene := weatherSceneBox(panel, 0); panel.W-scene.W > 2 {
-		t.Fatalf("panel scene width = %d, want within 2px of %d", scene.W, panel.W)
-	}
-}
-
-func TestWeatherFormsStayInsideTheBiasedScene(t *testing.T) {
-	t.Parallel()
-	const w, h = 578, 318
-	locked := weatherSceneBox(ui.Rect{W: w, H: h}, 0).W
-	for _, tt := range []struct {
-		name string
-		bias float64
-		minX int
-	}{
-		{"centred", 0, (w - locked) / 2},
-		{"leading edge", -1, 0},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			spec := rainSpec(7)
-			spec.Variant = ui.WeatherClear
-			spec.SceneBias = tt.bias
-			pixels := paintWeatherVariantFrameWithSpec(t, spec, .37, w, h)
-			// The sun disc is the brightest thing in a clear scene.
-			bx, _, ok := brightestWeatherPixel(pixels, w, h)
-			if !ok {
-				t.Fatal("no painted pixels")
-			}
-			if bx < tt.minX || bx >= tt.minX+locked {
-				t.Fatalf("brightest pixel x = %d, outside scene [%d,%d)", bx, tt.minX, tt.minX+locked)
-			}
-		})
-	}
-}
-
-func brightestWeatherPixel(pixels []byte, width, height int) (int, int, bool) {
-	best, bx, by := -1, 0, 0
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			i := y*width*4 + x*4
-			lum := int(pixels[i]) + int(pixels[i+1]) + int(pixels[i+2])
-			if lum > best {
-				best, bx, by = lum, x, y
-			}
-		}
-	}
-	return bx, by, best >= 0
-}
-
-func TestWeatherLightningDescendsFromTheCloudBase(t *testing.T) {
-	t.Parallel()
-	const w, h = 416, 346
-	spec := rainSpec(7)
-	spec.Variant = ui.WeatherThunderstorm
-	// Sweep phases so at least one frame catches the irregular pulse.
-	struck := false
-	for _, phase := range []float64{0, .04, .08, .12, .2, .3, .4, .5, .6, .7, .8, .9} {
-		lit := paintWeatherVariantFrameWithSpec(t, spec, phase, w, h)
-		dark := paintWeatherVariantFrameWithSpec(t, withoutLightning(spec), phase, w, h)
-		base := weatherSceneBox(ui.Rect{W: w, H: h}, 0).H
-		base = int(float64(base) * weatherLightningOriginY)
-		// Above the cloud base only the glow may differ, never the bolt. The
-		// bolt is near-white and high contrast; the glow is a few percent.
-		for y := 0; y < base; y++ {
-			for x := 0; x < w; x++ {
-				i := y*w*4 + x*4
-				if absWeatherByte(lit[i+2], dark[i+2]) > 40 {
-					t.Fatalf("bolt-strength pixel at (%d,%d), above cloud base y=%d", x, y, base)
-				}
-			}
-		}
-		if differingWeatherPixels(lit, dark, w, ui.Rect{Y: base, W: w, H: h - base}, 40) > 0 {
-			struck = true
-		}
-	}
-	if !struck {
-		t.Fatal("no phase in the sweep produced a bolt below the cloud base")
-	}
-}
-
-// withoutLightning is the same storm with its bolt suppressed, so a difference
-// isolates the strike rather than the whole scene.
-func withoutLightning(spec ui.EffectSpec) ui.EffectSpec {
-	out := spec
-	out.Variant = ui.WeatherRain
-	return out
-}
-
 func TestWeatherSkyIsStaticAcrossPhases(t *testing.T) {
 	t.Parallel()
-	// Direction B keeps a vertical sky gradient but takes all motion from the
-	// forms. A travelling sky is the "animated gradient" this replaces, so two
-	// phases must agree everywhere the forms do not reach.
+	// The sky is a static gradient and all motion comes from the forms. A
+	// travelling sky is the "animated gradient" the weather program replaced,
+	// so two phases must agree everywhere the forms do not reach.
 	const w, h = 578, 318
 	spec := rainSpec(7)
 	spec.Variant = ui.WeatherClear
-	spec.SceneBias = -1 // forms hard left, so the right edge is pure sky
+	spec.SceneBias = -1 // the sun hard left, so the right edge is pure sky
 	first := paintWeatherVariantFrameWithSpec(t, spec, .11, w, h)
 	second := paintWeatherVariantFrameWithSpec(t, spec, .74, w, h)
 
-	scene := weatherSceneBox(ui.Rect{W: w, H: h}, -1)
-	skyOnly := ui.Rect{X: scene.X + scene.W + 8, Y: 0, W: w - (scene.X + scene.W + 8), H: h}
+	// The sun's bloom and rays span 1.3x the short side around its centre.
+	sunRight := weatherCelestialX(ui.Rect{W: w, H: h}, -1) + int(math.Round(1.3*h))/2
+	skyOnly := ui.Rect{X: sunRight + 8, W: w - sunRight - 8, H: h}
 	if skyOnly.W <= 0 {
 		t.Fatal("no sky-only region to sample")
 	}
 	if n := differingWeatherPixels(first, second, w, skyOnly, 2); n != 0 {
 		t.Fatalf("%d sky pixels changed between phases; the sky must not travel", n)
+	}
+}
+
+func TestLivingSkyLoopSeamIsInvisible(t *testing.T) {
+	for _, v := range []ui.EffectVariant{ui.WeatherRain, ui.WeatherSnow, ui.WeatherThunderstorm, ui.WeatherFog, ui.WeatherPartlyCloudy} {
+		spec := rainSpec(7)
+		spec.Variant = v
+		if !bytes.Equal(paintEffectFrame(t, spec, 0), paintEffectFrame(t, spec, 1)) {
+			t.Errorf("variant %d: phase 0 and phase 1 differ, so the loop jumps", v)
+		}
+	}
+}
+
+func TestLivingSkyFillsTheWholeBox(t *testing.T) {
+	// The Living sky is opaque edge to edge, with no locked scene box: inside
+	// the card's shape the card behind it never shows through, so two
+	// backings give one frame.
+	const w, h = 300, 80
+	box := ui.Rect{W: w, H: h}
+	for _, v := range []ui.EffectVariant{ui.WeatherClear, ui.WeatherCloudy, ui.WeatherFog, ui.WeatherRain} {
+		spec := rainSpec(7)
+		spec.Variant = v
+		n := &ui.Node{Kind: ui.KindEffect, Bounds: box, Effect: spec, EffectPhase: .3}
+		frame := func(backing Color) []byte {
+			c := newTestCanvas(t, w, h)
+			fillRect(c, box, backing)
+			if err := paintEffect(c, n, testStyle); err != nil {
+				t.Fatal(err)
+			}
+			return c.Pix
+		}
+		mask := RoundedMask(chromeRadius(testStyle, nodeRadius(testStyle, n, testStyle.Radius), box), w, h)
+		black, white := frame(Color{A: 255}), frame(Color{R: 255, G: 255, B: 255, A: 255})
+		leaks := 0
+		for i, coverage := range mask.Pix {
+			if coverage == 255 && !bytes.Equal(black[i*4:i*4+4], white[i*4:i*4+4]) {
+				leaks++
+			}
+		}
+		if leaks > 0 {
+			t.Errorf("variant %d: the card shows through the sky at %d pixels", v, leaks)
+		}
+	}
+}
+
+func TestLivingSkyTinyBoxesDoNotPanic(t *testing.T) {
+	for _, size := range []int{1, 2, 3} {
+		for _, v := range []ui.EffectVariant{ui.WeatherClear, ui.WeatherFog, ui.WeatherHeavySnow, ui.WeatherThunderstorm} {
+			c := newTestCanvas(t, 4, 4)
+			spec := rainSpec(7)
+			spec.Variant = v
+			n := &ui.Node{Kind: ui.KindEffect, Bounds: ui.Rect{W: size, H: size}, Effect: spec, EffectPhase: .47}
+			if err := paintEffect(c, n, testStyle); err != nil {
+				t.Fatalf("%dx%d variant %d: %v", size, size, v, err)
+			}
+		}
 	}
 }
