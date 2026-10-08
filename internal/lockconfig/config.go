@@ -49,7 +49,7 @@ func (c Config) Validate() error {
 	if err := Validate(c.Effect, c.Palette); err != nil {
 		return err
 	}
-	if !slices.Contains(TextEffects(), c.TextEffect) {
+	if c.TextEffect != "" && !slices.Contains(TextEffects(), c.TextEffect) {
 		return fmt.Errorf("unknown text effect %q", c.TextEffect)
 	}
 	return nil
@@ -199,6 +199,9 @@ func Load(path string) (Config, error) {
 		c.EffectFPS = max(10, min(120, c.EffectFPS))
 	}
 	c.ClockStyle = ClockStyle(c.ClockStyle)
+	if c.TextEffect == "" {
+		c.TextEffect = EffectNone
+	}
 	return c, c.Validate()
 }
 func Save(path string, c Config) error {
