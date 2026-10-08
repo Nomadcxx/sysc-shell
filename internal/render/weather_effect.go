@@ -346,18 +346,33 @@ func weatherEllipseCoverage(x, y int, cx, cy, rx, ry float64) float64 {
 	return clampEffect(.5+edge, 0, 1)
 }
 
+// drawWeatherStroke draws a round-capped, antialiased line. Coverage is the
+// distance to the segment, so every pixel blends once: stamping overlapping
+// discs along the line would compound a faint glow toward opaque.
 func drawWeatherStroke(c *Canvas, box ui.Rect, mask *image.Alpha, x0, y0, x1, y1, width float64, col Color, alpha uint8) {
-	if alpha == 0 || width <= 0 {
+	if alpha == 0 || width <= 0 || math.IsNaN(x0+y0+x1+y1) || math.IsInf(x0+y0+x1+y1, 0) {
 		return
 	}
-	steps := max(int(math.Ceil(math.Hypot(x1-x0, y1-y0))), 1)
-	steps = min(steps, 96)
 	radius := width / 2
-	for step := 0; step <= steps; step++ {
-		t := float64(step) / float64(steps)
-		x := x0 + (x1-x0)*t
-		y := y0 + (y1-y0)*t
-		drawWeatherEllipse(c, box, mask, x, y, radius, radius, col, alpha)
+	minX := max(int(math.Floor(math.Min(x0, x1)-radius-1)), 0)
+	maxX := min(int(math.Ceil(math.Max(x0, x1)+radius+1)), box.W)
+	minY := max(int(math.Floor(math.Min(y0, y1)-radius-1)), 0)
+	maxY := min(int(math.Ceil(math.Max(y0, y1)+radius+1)), box.H)
+	dx, dy := x1-x0, y1-y0
+	length2 := dx*dx + dy*dy
+	for y := minY; y < maxY; y++ {
+		py := float64(y) + .5
+		for x := minX; x < maxX; x++ {
+			px := float64(x) + .5
+			t := 0.0
+			if length2 > 0 {
+				t = clampEffect(((px-x0)*dx+(py-y0)*dy)/length2, 0, 1)
+			}
+			coverage := clampEffect(radius+.5-math.Hypot(px-x0-dx*t, py-y0-dy*t), 0, 1)
+			if coverage > 0 {
+				localWeatherPixel(c, box, mask, x, y, col, alpha, coverage)
+			}
+		}
 	}
 }
 
