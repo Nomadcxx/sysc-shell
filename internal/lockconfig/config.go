@@ -43,6 +43,18 @@ func Default() Config {
 // Effects includes the locker's static presentation alongside renderer effects.
 func Effects() []string { return append([]string{EffectNone}, renderer.Effects()...) }
 
+func TextEffects() []string { return append([]string{EffectNone}, renderer.TextEffects()...) }
+
+func (c Config) Validate() error {
+	if err := Validate(c.Effect, c.Palette); err != nil {
+		return err
+	}
+	if c.TextEffect != "" && !slices.Contains(TextEffects(), c.TextEffect) {
+		return fmt.Errorf("unknown text effect %q", c.TextEffect)
+	}
+	return nil
+}
+
 // Validate follows the locker: none needs a valid palette, without an effect.
 func Validate(effect, palette string) error {
 	if effect == EffectNone {
@@ -187,10 +199,13 @@ func Load(path string) (Config, error) {
 		c.EffectFPS = max(10, min(120, c.EffectFPS))
 	}
 	c.ClockStyle = ClockStyle(c.ClockStyle)
-	return c, Validate(c.Effect, c.Palette)
+	if c.TextEffect == "" {
+		c.TextEffect = EffectNone
+	}
+	return c, c.Validate()
 }
 func Save(path string, c Config) error {
-	if err := Validate(c.Effect, c.Palette); err != nil {
+	if err := c.Validate(); err != nil {
 		return err
 	}
 	fields, err := read(path)

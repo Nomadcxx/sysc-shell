@@ -24,6 +24,9 @@ import (
 // Registry.mu owns the draft and completion of file/preview work.
 type lockScreenUI struct {
 	loaded, saving, previewing bool
+	loadingHeaders             bool
+	headers                    []string
+	headerMessage              string
 	loadErr                    bool
 	config                     lockconfig.Config
 	menu, message              string
@@ -70,7 +73,9 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		key, label, value string
 		values            []string
 	}{
-		{"effect", "Effect", s.config.Effect, lockconfig.Effects()},
+		{"effect", "Background", s.config.Effect, lockconfig.Effects()},
+		{"header", "Header", s.config.Header, s.headers},
+		{"texteffect", "Text effect", s.config.TextEffect, lockconfig.TextEffects()},
 		{"palette", "Palette", s.config.Palette, renderer.Palettes()},
 		{"clockstyle", "Clock style", s.config.ClockStyle, lockconfig.ClockStyles()},
 		{"backend", "Effect engine", s.config.Backend(), []string{"auto", "cpu", "gpu"}},
@@ -87,6 +92,9 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 		rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{{Kind: ui.KindText, Text: choice.label}, combo}})
 		if s.menu == choice.key {
+			if choice.key == "header" && s.headerMessage != "" {
+				rows = append(rows, &ui.Node{Kind: ui.KindText, Role: "status", Text: s.headerMessage})
+			}
 			opts := make([]wallpaperOption, 0, len(choice.values))
 			for _, value := range choice.values {
 				opts = append(opts, wallpaperOption{action: "lockscreen-" + choice.key + ":" + value, label: value, selected: value == choice.value})
@@ -142,7 +150,7 @@ const (
 // lockPreview renders an ordinary sample through the installed locker; no
 // credentials, session bus or lock request crosses this command boundary.
 func lockPreview(ctx context.Context, c lockconfig.Config) (*ui.Image, error) {
-	if err := lockconfig.Validate(c.Effect, c.Palette); err != nil {
+	if err := c.Validate(); err != nil {
 		return nil, err
 	}
 	// Invalid decoration uses the native shipped catalogue, just as locking does.
@@ -156,36 +164,9 @@ func lockPreview(ctx context.Context, c lockconfig.Config) (*ui.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "sysc-lock", "--preview")
-	cmd.Stdin = bytes.NewReader(request)
-	out, err := cmd.StdoutPipe()
+	data, err := lockCommand(ctx, "--preview", request, lockPreviewPNGBytes)
 	if err != nil {
 		return nil, err
-	}
-	defer out.Close()
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	// Closing the read side also bounds a child that leaves an inherited pipe
-	// open after the preview process has been cancelled.
-	stopClose := context.AfterFunc(ctx, func() { _ = out.Close() })
-	defer stopClose()
-	data, readErr := io.ReadAll(io.LimitReader(out, lockPreviewPNGBytes+1))
-	if readErr != nil || len(data) > lockPreviewPNGBytes {
-		_ = cmd.Process.Kill()
-	}
-	waitErr := cmd.Wait()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if readErr != nil {
-		return nil, readErr
-	}
-	if len(data) > lockPreviewPNGBytes {
-		return nil, fmt.Errorf("lock preview exceeds PNG budget")
-	}
-	if waitErr != nil {
-		return nil, waitErr
 	}
 	header, err := png.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -201,6 +182,104 @@ func lockPreview(ctx context.Context, c lockconfig.Config) (*ui.Image, error) {
 		return nil, fmt.Errorf("cannot decode lock preview")
 	}
 	return img, nil
+}
+
+// lockCommand bounds native output and closes inherited pipes on cancellation.
+func lockCommand(ctx context.Context, argument string, input []byte, budget int64) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "sysc-lock", argument)
+	cmd.Stdin = bytes.NewReader(input)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	defer out.Close()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	// Closing the read side also bounds a child that leaves an inherited pipe
+	// open after the preview process has been cancelled.
+	stopClose := context.AfterFunc(ctx, func() { _ = out.Close() })
+	defer stopClose()
+	data, readErr := io.ReadAll(io.LimitReader(out, budget+1))
+	if readErr != nil || int64(len(data)) > budget {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	if int64(len(data)) > budget {
+		return nil, fmt.Errorf("lock command exceeds output budget")
+	}
+	if waitErr != nil {
+		return nil, waitErr
+	}
+	return data, nil
+}
+
+func lockHeaderIDs(ctx context.Context) ([]string, error) {
+	data, err := lockCommand(ctx, "--describe", nil, lockconfig.MaxBytes)
+	if err != nil {
+		return nil, err
+	}
+	var description struct {
+		Headers []string `json:"headers"`
+	}
+	if err := json.Unmarshal(data, &description); err != nil {
+		return nil, err
+	}
+	if len(description.Headers) == 0 || len(description.Headers) > 16 {
+		return nil, fmt.Errorf("invalid header count")
+	}
+	seen := make(map[string]bool)
+	for _, id := range description.Headers {
+		if !strings.HasPrefix(id, "ascii_") || len(id) <= 6 || len(id) > 32 || seen[id] {
+			return nil, fmt.Errorf("invalid header ID")
+		}
+		for _, c := range id {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+				return nil, fmt.Errorf("invalid header ID")
+			}
+		}
+		seen[id] = true
+	}
+	return description.Headers, nil
+}
+
+// loadLockHeaders queries only when the menu opens. Registry.mu owns publication.
+func (r *Registry) loadLockHeaders(h *PanelHost) {
+	s := &h.lockScreen
+	if s.loadingHeaders {
+		return
+	}
+	s.loadingHeaders, s.headerMessage = true, "Loading headers…"
+	s.headers = nil
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), lockPreviewTimeout)
+		defer cancel()
+		headers, err := lockHeaderIDs(ctx)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		select {
+		case <-r.closed:
+			return
+		default:
+		}
+		if r.panelHosts[PanelSettings] != h {
+			return
+		}
+		s.loadingHeaders = false
+		if err != nil {
+			s.headerMessage = "Headers unavailable. Install or update sysc-lock."
+		} else {
+			s.headers, s.headerMessage = headers, ""
+		}
+		r.rebuildPanel(h)
+		r.publishSurface(h.output, panelSurfaceID(h.id))
+	}()
 }
 
 // finishLockPreview only publishes the current request into its owning panel.
@@ -239,7 +318,7 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 	case strings.HasPrefix(n.Action, "lockscreen-menu:"):
 		menu := strings.TrimPrefix(n.Action, "lockscreen-menu:")
 		switch menu {
-		case "effect", "palette", "clockstyle", "backend", "fps":
+		case "effect", "header", "texteffect", "palette", "clockstyle", "backend", "fps":
 		default:
 			return true
 		}
@@ -247,6 +326,9 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 			s.menu = ""
 		} else {
 			s.menu = menu
+			if menu == "header" {
+				r.loadLockHeaders(h)
+			}
 		}
 	case n.Action == "lockscreen-reduced":
 		s.config.ReducedMotion = !s.config.ReducedMotion
@@ -326,6 +408,14 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 		cfg := s.config
 		if value, ok := strings.CutPrefix(n.Action, "lockscreen-effect:"); ok {
 			cfg.Effect = value
+		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-header:"); ok {
+			if !slices.Contains(s.headers, value) {
+				s.message = "That presentation choice is unavailable."
+				break
+			}
+			cfg.Header = value
+		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-texteffect:"); ok {
+			cfg.TextEffect = value
 		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-palette:"); ok {
 			cfg.Palette = value
 		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-clockstyle:"); ok {
@@ -351,7 +441,7 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 		} else {
 			return false
 		}
-		if err := lockconfig.Validate(cfg.Effect, cfg.Palette); err != nil {
+		if err := cfg.Validate(); err != nil {
 			s.message = "That presentation choice is unavailable."
 		} else {
 			s.config = cfg

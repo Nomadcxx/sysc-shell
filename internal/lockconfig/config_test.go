@@ -360,6 +360,29 @@ func TestRawHeadersRejectInvalidUTF8BeforeJSON(t *testing.T) {
 	}
 }
 
+func TestLockConfigRejectsInvalidTextPreference(t *testing.T) {
+	c := Default()
+	c.TextEffect = "missing"
+	if err := Save(filepath.Join(t.TempDir(), "config.json"), c); err == nil {
+		t.Fatal("invalid text effect saved")
+	}
+}
+
+func TestEmptyTextEffectKeepsExistingPresentation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"text_effect":"","header":"ascii_custom","effect":"fire","palette":"eldritch"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil || c.TextEffect != "none" || c.Header != "ascii_custom" || c.Effect != "fire" || c.Palette != "eldritch" {
+		t.Fatalf("lost existing presentation: %+v %v", c, err)
+	}
+	c.TextEffect = ""
+	if err := Save(path, c); err != nil {
+		t.Fatalf("native static text rejected: %v", err)
+	}
+}
+
 func TestLoadAcceptsEffectNone(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
 	body := `{"effect":"none","clock_24h":true,"effect_fps":60,"effect_backend":"gpu",` +
