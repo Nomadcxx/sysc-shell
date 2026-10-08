@@ -385,10 +385,6 @@ func TestScreensaverLockMakesSettingsAndPreviewUnavailable(t *testing.T) {
 		}
 	}
 	activateWallsAction(r, h, preview)
-	ccPreview := &ui.Node{Action: "cc:walls-preview"}
-	hcc := &PanelHost{id: PanelControlCenter, section: "home"}
-	r.wallsSnapshot.CanPreview = true
-	hcc.activateControlCentre(r, ccPreview)
 	r.mu.Unlock()
 	_, previews, _, _ := service.counts()
 	if previews != 0 {
@@ -642,6 +638,34 @@ func waitFor(t *testing.T, ready func() bool) {
 		case <-deadline.C:
 			t.Fatal("condition did not settle before deadline")
 		case <-ticker.C:
+		}
+	}
+}
+
+func TestMissingUnitKeepsSettingsPreviewAvailable(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.LoadState, snapshot.UnitFileState = "not-found", "not-found"
+	snapshot.ServiceAvailable = false
+	snapshot.CanApply = false
+	snapshot.CanPreview = true
+	r, h, _ := newOpenWallsSettings(t, snapshot)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	preview := findNode(h.root, func(n *ui.Node) bool { return n.Action == "walls:preview" })
+	if preview == nil || preview.State.Has(ui.StateDisabled) {
+		t.Fatalf("missing unit disabled Settings Preview: %s", renderText(h.root))
+	}
+}
+
+func TestHomeNoLongerHandlesScreensaverPreview(t *testing.T) {
+	r := &Registry{wallsSnapshot: readyWallsSnapshot()}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	for _, action := range []string{"cc:walls-preview", "cc:walls-stop"} {
+		if h.activateControlCentre(r, &ui.Node{Action: action}) {
+			t.Errorf("%s is still handled by the Control Centre", action)
+		}
+		if findNode(ccHome(r, h), func(n *ui.Node) bool { return n.Action == action }) != nil {
+			t.Errorf("Home still renders %s", action)
 		}
 	}
 }
