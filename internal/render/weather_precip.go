@@ -101,7 +101,7 @@ func paintWeatherSnow(c *Canvas, box ui.Rect, mask *image.Alpha, spec ui.EffectS
 		edge := int(math.Ceil(r*2 + 2))
 		// The radius keys the sprite: two radii can round to one edge.
 		flake := weatherSpriteFor(weatherSpriteKey{kind: "flake", seed: math.Float64bits(r) + uint64(layer), w: edge, h: edge}, func() *weatherSprite {
-			return bakeWeatherSprite(edge, edge, func(u, v float64) Color {
+			return bakeWeatherSprite(edge, edge, 2, func(u, v float64) Color {
 				dist := math.Hypot(u-.5, v-.5) * float64(edge) / r
 				a := 1.0
 				if dist > L.soft {

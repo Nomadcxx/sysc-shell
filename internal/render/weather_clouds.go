@@ -59,10 +59,16 @@ func weatherCloudCount(kind weatherKind) int {
 // base, lit from above and shaded below.
 func weatherCloudSprite(seed uint64, lit, shade Color, w, h int) *weatherSprite {
 	return weatherSpriteFor(weatherSpriteKey{kind: "cloud", seed: seed, a: lit, b: shade, w: w, h: h}, func() *weatherSprite {
-		return bakeWeatherSprite(w, h, func(u, v float64) Color {
+		return bakeWeatherSprite(w, h, 2, func(u, v float64) Color {
 			nx, ny := u*2-1, v*2-1
-			base := 1 - nx*nx*1.05 - math.Pow(math.Max(0, -ny), 2)*1.6 - math.Pow(math.Max(0, ny), 2)*5.5
-			n := weatherFBM(u*6.5, v*3.2, seed, 5)
+			top, bottom := math.Max(0, -ny), math.Max(0, ny)
+			base := 1 - nx*nx*1.05 - top*top*1.6 - bottom*bottom*5.5
+			// Noise adds at most .625 to base*.9, so below this the density
+			// is zero whatever the noise says: skip the noise.
+			if base*.9+.625 <= .05 {
+				return Color{}
+			}
+			n := weatherFBM(u*6.5, v*3.2, seed, 4)
 			dens := weatherSmoothstep(.05, .42, base*.9+(n-.5)*1.25)
 			light := clampEffect(.95-v*1.05+(n-.5)*.55, 0, 1)
 			col := LerpColor(shade, lit, light)
@@ -108,7 +114,8 @@ func paintWeatherClouds(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, 
 	}
 }
 
-// paintWeatherFog drifts four soft, horizontally tileable bands across the card.
+// paintWeatherFog sways four soft bands across the card. Each band is wider
+// than the card and its drift is a sway, never a wrap, so it need not tile.
 func paintWeatherFog(c *Canvas, box ui.Rect, mask *image.Alpha, spec ui.EffectSpec, phase float64) {
 	col := LerpColor(weatherHex("#788092"), weatherHex("#ecf0f4"), math.Round(clampEffect(spec.Daylight, 0, 1)*10)/10)
 	w, h := int(float64(box.W)*1.3), int(float64(box.H)*.55)
@@ -116,9 +123,15 @@ func paintWeatherFog(c *Canvas, box ui.Rect, mask *image.Alpha, spec ui.EffectSp
 	for i := 0; i < 4; i++ {
 		seed := spec.Seed + 30 + uint64(i)
 		band := weatherSpriteFor(weatherSpriteKey{kind: "fog", seed: seed, a: col, w: w, h: h}, func() *weatherSprite {
-			return bakeWeatherSprite(w, h, func(u, v float64) Color {
-				n := weatherFBM(u*8, v*4, seed, 4)*(1-u) + weatherFBM((u-1)*8, v*4, seed, 4)*u // tileable in x
-				a := clampEffect((n-.32)*1.9, 0, 1) * math.Pow(math.Sin(v*math.Pi), 1.4)
+			// The grid is evaluated row by row, so the vertical falloff is
+			// computed once per row rather than once per sample.
+			lastV, falloff := -1.0, 0.0
+			return bakeWeatherSprite(w, h, 4, func(u, v float64) Color {
+				if v != lastV {
+					lastV, falloff = v, math.Pow(math.Sin(v*math.Pi), 1.4)
+				}
+				n := weatherFBM(u*8, v*4, seed, 4)
+				a := clampEffect((n-.32)*1.9, 0, 1) * falloff
 				out := col
 				out.A = weatherAlpha(255, a)
 				return out

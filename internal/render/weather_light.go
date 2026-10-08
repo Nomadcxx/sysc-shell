@@ -35,7 +35,7 @@ func paintWeatherSun(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy int, r, a
 	core := LerpColor(weatherHex("#fff4d6"), weatherHex("#ffb270"), warm)
 	edge := int(math.Round(r * 1.3))
 	bloom := weatherSpriteFor(weatherSpriteKey{kind: "bloom", a: core, w: edge, h: edge}, func() *weatherSprite {
-		return bakeWeatherSprite(edge, edge, func(u, v float64) Color {
+		return bakeWeatherSprite(edge, edge, 4, func(u, v float64) Color {
 			dist := math.Hypot(u-.5, v-.5) * 2 // 0 centre, 1 edge
 			a := .9*math.Exp(-dist*dist*60) + .35*math.Exp(-dist*dist*9) + .22*math.Exp(-dist*dist*2.2)
 			col := core
@@ -45,10 +45,13 @@ func paintWeatherSun(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy int, r, a
 	})
 	blitWeatherSprite(c, box, mask, bloom, cx-edge/2, cy-edge/2, alpha)
 	rays := weatherSpriteFor(weatherSpriteKey{kind: "rays", a: core, w: edge, h: edge}, func() *weatherSprite {
-		return bakeWeatherSprite(edge, edge, func(u, v float64) Color {
+		return bakeWeatherSprite(edge, edge, 2, func(u, v float64) Color {
 			dx, dy := u-.5, v-.5
 			dist := math.Hypot(dx, dy) * 2
-			spoke := math.Pow(math.Abs(math.Cos(6*math.Atan2(dy, dx)+.3)), 24)
+			c2 := math.Cos(6*math.Atan2(dy, dx) + .3)
+			c2 *= c2
+			c8 := c2 * c2 * c2 * c2
+			spoke := c8 * c8 * c8 // |cos|^24 without math.Pow
 			col := core
 			col.A = weatherAlpha(255, .22*spoke*math.Max(0, 1-dist))
 			return col
@@ -62,7 +65,7 @@ func paintWeatherMoon(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy int, r, 
 	edge := int(math.Round(r * .9))
 	moon := weatherSpriteFor(weatherSpriteKey{kind: "moon", w: edge, h: edge}, func() *weatherSprite {
 		disc := .085 / .9 // disc radius as a fraction of the sprite
-		return bakeWeatherSprite(edge, edge, func(u, v float64) Color {
+		return bakeWeatherSprite(edge, edge, 2, func(u, v float64) Color {
 			dist := math.Hypot(u-.5, v-.5)
 			if dist <= disc {
 				shade := LerpColor(weatherHex("#fbfbff"), weatherHex("#cfd6ee"), dist/disc)

@@ -21,7 +21,7 @@ func TestWeatherFBMIsDeterministicAndBounded(t *testing.T) {
 }
 
 func TestWeatherSpriteBakeAndBlitStayInsideTheMask(t *testing.T) {
-	s := bakeWeatherSprite(40, 20, func(u, v float64) Color { return Color{R: 255, G: 255, B: 255, A: 255} })
+	s := bakeWeatherSprite(40, 20, 2, func(u, v float64) Color { return Color{R: 255, G: 255, B: 255, A: 255} })
 	if s.w != 40 || s.h != 20 || len(s.pix) != 40*20*4 {
 		t.Fatalf("sprite = %dx%d len %d", s.w, s.h, len(s.pix))
 	}
@@ -49,8 +49,8 @@ func TestWeatherSpriteBakeAndBlitStayInsideTheMask(t *testing.T) {
 	blitWeatherSprite(c, ui.Rect{}, mask, s, 0, 0, 1)
 	blitWeatherSprite(c, box, mask, nil, 0, 0, 1)
 	blitWeatherSprite(c, box, mask, s, 1000, -1000, 1)
-	_ = bakeWeatherSprite(0, 0, func(float64, float64) Color { return Color{} })
-	_ = bakeWeatherSprite(1, 1, func(float64, float64) Color { return Color{A: 255} })
+	_ = bakeWeatherSprite(0, 0, 2, func(float64, float64) Color { return Color{} })
+	_ = bakeWeatherSprite(1, 1, 2, func(float64, float64) Color { return Color{A: 255} })
 }
 
 func TestWeatherSpriteCacheIsBoundedAndReuses(t *testing.T) {
@@ -58,7 +58,7 @@ func TestWeatherSpriteCacheIsBoundedAndReuses(t *testing.T) {
 	bakes := 0
 	bake := func() *weatherSprite {
 		bakes++
-		return bakeWeatherSprite(2, 2, func(float64, float64) Color { return Color{A: 255} })
+		return bakeWeatherSprite(2, 2, 2, func(float64, float64) Color { return Color{A: 255} })
 	}
 	first := weatherSpriteFor(weatherSpriteKey{kind: "t", seed: 1, w: 2, h: 2}, bake)
 	again := weatherSpriteFor(weatherSpriteKey{kind: "t", seed: 1, w: 2, h: 2}, bake)

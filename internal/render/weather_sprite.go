@@ -46,34 +46,55 @@ func weatherFBM(x, y float64, seed uint64, octaves int) float64 {
 	return math.Min(v/norm, math.Nextafter(1, 0))
 }
 
-// bakeWeatherSprite evaluates shade on a half-resolution grid and upsamples it
-// bilinearly into a w x h sprite. Noise fields are smooth, so the half grid
-// costs a quarter of the evaluations and shows no difference.
-func bakeWeatherSprite(w, h int, shade func(u, v float64) Color) *weatherSprite {
+// bakeWeatherSprite evaluates shade on a grid coarser than the sprite by div
+// (at least 1) and upsamples it bilinearly into a w x h sprite. Textured forms
+// use 2: noise fields are smooth, so the half grid costs a quarter of the
+// evaluations and shows no difference. Pure falloffs such as a bloom use 4.
+func bakeWeatherSprite(w, h, div int, shade func(u, v float64) Color) *weatherSprite {
 	w, h = clampInt(w, 0, weatherSpriteMaxEdge), clampInt(h, 0, weatherSpriteMaxEdge)
 	s := &weatherSprite{w: w, h: h, pix: make([]byte, w*h*4)}
 	if w == 0 || h == 0 {
 		return s
 	}
-	gw, gh := max((w+1)/2, 1), max((h+1)/2, 1)
-	grid := make([]Color, (gw+1)*(gh+1))
+	div = max(div, 1)
+	gw, gh := max((w+div-1)/div, 1), max((h+div-1)/div, 1)
+	// The grid holds premultiplied B, G, R, A as floats: interpolating
+	// premultiplied values keeps a transparent texel's colour out of the
+	// edges it borders, and floats skip a rounding per channel per lerp.
+	stride := gw + 1
+	grid := make([][4]float32, stride*(gh+1))
 	for gy := 0; gy <= gh; gy++ {
 		for gx := 0; gx <= gw; gx++ {
-			grid[gy*(gw+1)+gx] = shade(float64(gx)/float64(gw), float64(gy)/float64(gh))
+			c := shade(float64(gx)/float64(gw), float64(gy)/float64(gh))
+			a := float32(c.A) / 255
+			grid[gy*stride+gx] = [4]float32{float32(c.B) * a, float32(c.G) * a, float32(c.R) * a, float32(c.A)}
 		}
+	}
+	cols := make([]struct {
+		x0 int
+		tx float32
+	}, w)
+	for x := range cols {
+		fx := float64(x) / float64(max(w-1, 1)) * float64(gw)
+		x0 := min(int(fx), gw-1)
+		cols[x].x0, cols[x].tx = x0, float32(fx-float64(x0))
 	}
 	for y := 0; y < h; y++ {
 		fy := float64(y) / float64(max(h-1, 1)) * float64(gh)
 		y0 := min(int(fy), gh-1)
-		ty := fy - float64(y0)
-		for x := 0; x < w; x++ {
-			fx := float64(x) / float64(max(w-1, 1)) * float64(gw)
-			x0 := min(int(fx), gw-1)
-			tx := fx - float64(x0)
-			top := LerpColor(grid[y0*(gw+1)+x0], grid[y0*(gw+1)+x0+1], tx)
-			bottom := LerpColor(grid[(y0+1)*(gw+1)+x0], grid[(y0+1)*(gw+1)+x0+1], tx)
-			p := LerpColor(top, bottom, ty).premultiply()
-			copy(s.pix[(y*w+x)*4:], p[:])
+		ty := float32(fy - float64(y0))
+		top, bottom := grid[y0*stride:], grid[(y0+1)*stride:]
+		row := s.pix[y*w*4 : (y+1)*w*4]
+		for x, col := range cols {
+			a, b, c, d := &top[col.x0], &top[col.x0+1], &bottom[col.x0], &bottom[col.x0+1]
+			if a[3] == 0 && b[3] == 0 && c[3] == 0 && d[3] == 0 {
+				continue // a fully transparent cell; the pixels are already zero
+			}
+			for i := 0; i < 4; i++ {
+				upper := a[i] + (b[i]-a[i])*col.tx
+				lower := c[i] + (d[i]-c[i])*col.tx
+				row[x*4+i] = uint8(upper + (lower-upper)*ty + .5)
+			}
 		}
 	}
 	return s
