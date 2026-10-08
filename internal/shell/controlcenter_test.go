@@ -1794,3 +1794,38 @@ func TestCalendarPageRendersToPNG(t *testing.T) {
 		}
 	}
 }
+
+func TestHomeBrightnessRowsPairTwoDisplaysAndStackMore(t *testing.T) {
+	m := DefaultTheme().Metrics
+	one := ccBrightnessRows(m, services.BrightnessState{Level: 60}, true, nil, 596)
+	if len(one) != 1 || findByName(one[0], "Brightness") == nil {
+		t.Fatalf("single display rows = %d, want one Brightness row", len(one))
+	}
+	two := []services.DisplayInfo{{ID: "a", Label: "eDP-1", Level: 50, OK: true}, {ID: "b", Label: "DP-1", Level: 70, OK: true}}
+	paired := ccBrightnessRows(m, services.BrightnessState{}, false, two, 596)
+	if len(paired) != 1 || paired[0].Kind != ui.KindRow || len(paired[0].Children) != 2 {
+		t.Fatalf("two displays = %+v, want one row holding two sliders", paired)
+	}
+	for _, d := range two {
+		if findNode(paired[0], func(n *ui.Node) bool { return n.Action == "cc:brightness:"+d.ID }) == nil {
+			t.Errorf("paired row lacks %s", d.ID)
+		}
+	}
+	column := &ui.Node{Kind: ui.KindColumn, Children: paired}
+	if err := ui.LayoutColumn(column, ui.Rect{W: 596, H: ccHomeSliderH}, homeMeasure(150)); err != nil {
+		t.Fatalf("paired sliders do not lay out at 150%% font scale: %v", err)
+	}
+	walkNodes(column, func(n *ui.Node) {
+		if b := n.Bounds; b.X < 0 || b.X+b.W > 596 || b.Y < 0 || b.Y+b.H > ccHomeSliderH {
+			t.Errorf("%s %q at %+v leaves the 596x%d row", n.Kind, n.Name+n.Text, b, ccHomeSliderH)
+		}
+	})
+	three := append(two, services.DisplayInfo{ID: "c", Label: "HDMI-1", Level: 40, OK: true})
+	stacked := ccBrightnessRows(m, services.BrightnessState{}, false, three, 596)
+	if len(stacked) != 3 {
+		t.Fatalf("three displays gave %d rows, want one per display", len(stacked))
+	}
+	if h := ccHomeHeight(1 + len(stacked)); h <= 480 {
+		t.Fatalf("three displays should exceed the viewport and scroll; height %d", h)
+	}
+}

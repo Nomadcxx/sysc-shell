@@ -259,11 +259,34 @@ func ccHomeTiles(h *PanelHost, snap services.Snapshot, audio services.AudioState
 	}}
 }
 
-// ccHomeSliders is the volume row and the brightness rows. Task 6 replaces
-// the brightness half with ccBrightnessRows.
+// ccHomeSliders is the volume row and the brightness rows.
 func ccHomeSliders(m theme.Metrics, audio services.AudioState, audioOK bool, brightness services.BrightnessState, brightnessOK bool, displays []services.DisplayInfo, body int) []*ui.Node {
 	volume := ccHomeSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK, body)
-	return []*ui.Node{volume, ccHomeSlider(m, "brightness_high", "Brightness", "cc:brightness", brightness.Level, brightnessOK, body)}
+	return append([]*ui.Node{volume}, ccBrightnessRows(m, brightness, brightnessOK, displays, body)...)
+}
+
+// ccBrightnessRows is one row for one display, two half-width sliders in one
+// row for two, and a row per display beyond that. Three or more displays are
+// the one case where Home scrolls.
+func ccBrightnessRows(m theme.Metrics, single services.BrightnessState, singleOK bool, displays []services.DisplayInfo, body int) []*ui.Node {
+	switch {
+	case len(displays) <= 1:
+		return []*ui.Node{ccHomeSlider(m, "brightness_high", "Brightness", "cc:brightness", single.Level, singleOK, body)}
+	case len(displays) == 2:
+		half := (body - ccHomeGap) / 2
+		row := &ui.Node{Kind: ui.KindRow, Height: ccHomeSliderH, Gap: ccHomeGap}
+		for _, d := range displays {
+			row.Children = append(row.Children,
+				ccHomeSlider(m, "brightness_high", d.Label, "cc:brightness:"+d.ID, d.Level, d.OK, half))
+		}
+		return []*ui.Node{row}
+	default:
+		rows := make([]*ui.Node, 0, len(displays))
+		for _, d := range displays {
+			rows = append(rows, ccHomeSlider(m, "brightness_high", "Brightness "+d.Label, "cc:brightness:"+d.ID, d.Level, d.OK, body))
+		}
+		return rows
+	}
 }
 
 // ccHomeSliderLabelW is the slider label column. A fixed column that
