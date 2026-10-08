@@ -29,7 +29,19 @@ func TestAudioChangeEventsIncludeExternal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(30 * time.Millisecond)
+	// ponytail: wait for the baseline poll to cache 0.40 instead of sleeping;
+	// a slow fork+exec of the fake wpctl can land after a fixed sleep and
+	// swallow the change into the baseline, failing waitForAudio on time.
+	baseline := time.Now().Add(2 * time.Second)
+	for {
+		if st, ok := a.CachedState(); ok && st.Level == 40 {
+			break
+		}
+		if time.Now().After(baseline) {
+			t.Fatal("baseline poll never cached 0.40")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	fake.set("0.55")
 	ev := waitForAudio(t, a)
 	if ev.Level != 55 {
