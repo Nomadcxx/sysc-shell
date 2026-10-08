@@ -216,6 +216,14 @@ func Save(path string, c Config) error {
 	var patch map[string]json.RawMessage
 	_ = json.Unmarshal(known, &patch)
 	for key, value := range patch {
+		// A nil pointer field marshals to null. It must never erase a real
+		// value already in the file; a key absent from the file still gets
+		// its explicit null so round trips stay faithful.
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			if old, ok := fields[key]; ok && !bytes.Equal(bytes.TrimSpace(old), []byte("null")) {
+				continue
+			}
+		}
 		fields[key] = value
 	}
 	data, err := json.MarshalIndent(fields, "", "  ")

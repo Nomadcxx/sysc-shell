@@ -27,6 +27,7 @@ type lockScreenUI struct {
 	loadingHeaders             bool
 	headers                    []string
 	headerMessage              string
+	loadErr                    bool
 	config                     lockconfig.Config
 	menu, message              string
 	image                      *ui.Image
@@ -56,8 +57,10 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 			if err != nil {
 				log.Printf("shell: read lock presentation: %v", err)
 				s.message = "Cannot read lock screen settings."
+				s.loadErr = true
 			} else {
 				s.config = cfg
+				s.loadErr = false
 			}
 		}
 	}
@@ -118,7 +121,7 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	apply := wallpaperButton(h, "lockscreen-apply", "Apply", false)
 	preview := wallpaperButton(h, "lockscreen-preview", "Preview", false)
-	if saving {
+	if saving || s.loadErr {
 		apply.State |= ui.StateDisabled
 		apply.AriaDisabled, apply.Focusable = true, false
 	}
@@ -366,6 +369,10 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 			r.finishLockPreview(h, sequence, img, err)
 		}()
 	case n.Action == "lockscreen-apply":
+		// Never write a draft seeded from defaults over a failed read.
+		if s.loadErr {
+			break
+		}
 		cfg, path := s.config, lockconfig.Path()
 		s.saving, r.lockSettingsSaving = true, true
 		s.menu = ""
