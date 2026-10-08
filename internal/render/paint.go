@@ -1358,7 +1358,7 @@ func fillPair(style Style, fill ui.Fill, base Color) (Color, Color) {
 	case ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac:
 		paper, ink, _ := PaperPair(fill)
 		return paper, ink
-	case ui.FillScrim:
+	case ui.FillScrim, ui.FillScrimFadeLeading, ui.FillScrimFadeTrailing:
 		// The wash is the scrim token at the shield's alpha, so the content
 		// behind it survives the composite. Contents keep the surface
 		// foreground; a shield carries none today.
@@ -1506,7 +1506,12 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	radius = ui.MorphRadius(radius, n.PressProgress)
 	fill, fg := chromeFill(style, n, base)
 	mask := RoundedMask(radius, box.W, box.H)
-	if stops := resolveGradient(n, style); fill.A > 0 && stops != nil {
+	if angle, ok := scrimFadeAngle(n.Fill); ok && fill.A > 0 && !n.State.Has(ui.StateSelected) {
+		clear := fill
+		clear.A = 0
+		blendMaskGradient(c, mask, box.X, box.Y,
+			[]gradientStop{{at: 0, c: fill}, {at: scrimFadeEnd, c: clear}}, angle, 0, false)
+	} else if stops := resolveGradient(n, style); fill.A > 0 && stops != nil {
 		blendMaskGradient(c, mask, box.X, box.Y, quietChromeGradient(stops, fill),
 			n.Gradient.AngleDeg, n.GradientOffset, false)
 	} else {
@@ -1572,6 +1577,22 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	labelBox := style.Scale120.PhysicalRect(label)
 	spec := textSpec(inner, n)
 	return paintCentredTextColor(c, n.Text, labelBox, text, spec, n.Tabular, fg, n.Underline)
+}
+
+// scrimFadeEnd is where a fading scrim reaches clear, as a fraction of the
+// card's width.
+const scrimFadeEnd = 0.7
+
+// scrimFadeAngle names the gradient axis for a fading scrim: zero degrees
+// starts at the leading edge, 180 at the trailing one.
+func scrimFadeAngle(fill ui.Fill) (float64, bool) {
+	switch fill {
+	case ui.FillScrimFadeLeading:
+		return 0, true
+	case ui.FillScrimFadeTrailing:
+		return 180, true
+	}
+	return 0, false
 }
 
 // quietChromeGradient keeps declared semantic stops close to the resolved

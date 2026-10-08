@@ -3011,3 +3011,35 @@ func TestSideSurfaceShapeMatchesBlurCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestScrimFadeDarkensOneEdgeAndLeavesTheOtherClear(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	style.Scrim = Color{A: 0xff}
+	style.ContainerHighest = Color{R: 200, G: 200, B: 200, A: 0xff}
+	lum := func(pix []byte, x int) int {
+		i := 10*20*4 + x*4 // middle row of the 20x20 canvas
+		return int(pix[i]) + int(pix[i+1]) + int(pix[i+2])
+	}
+	for _, tc := range []struct {
+		name        string
+		fill        ui.Fill
+		dark, clear int
+	}{
+		{"leading", ui.FillScrimFadeLeading, 2, 17},
+		{"trailing", ui.FillScrimFadeTrailing, 17, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bright := &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillContainerHighest, Shape: ui.ShapeSmall, Bounds: ui.Rect{W: 20, H: 20}}
+			fade := &ui.Node{Kind: ui.KindCapsule, Fill: tc.fill, Shape: ui.ShapeSmall, Bounds: ui.Rect{W: 20, H: 20}}
+			with := paintStackToStyle(t, style, bright, fade)
+			without := paintStackToStyle(t, style, bright)
+			if lum(with, tc.dark) >= lum(without, tc.dark) {
+				t.Errorf("dark edge x=%d not darkened: %d vs %d", tc.dark, lum(with, tc.dark), lum(without, tc.dark))
+			}
+			if lum(with, tc.clear) != lum(without, tc.clear) {
+				t.Errorf("clear edge x=%d changed: %d vs %d", tc.clear, lum(with, tc.clear), lum(without, tc.clear))
+			}
+		})
+	}
+}
