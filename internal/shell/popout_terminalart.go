@@ -1,13 +1,19 @@
 package shell
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-shell/internal/files"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 const (
@@ -34,7 +40,7 @@ func terminalArtTree(r *Registry, h *PanelHost) *ui.Node {
 	for start := 0; start < len(effects); start += artColumns {
 		row := &ui.Node{Kind: ui.KindRow, Gap: wallpaperGridGap, Height: artCardH}
 		for i := start; i < min(start+artColumns, len(effects)); i++ {
-			row.Children = append(row.Children, artCard(h, effects[i].ID, i))
+			row.Children = append(row.Children, artCard(h, effects[i], i))
 		}
 		children = append(children, row)
 	}
@@ -195,6 +201,7 @@ func artBanners(h *PanelHost) []*ui.Node {
 	if !h.wallpaperSnap.Caps.Terminal {
 		add(artNotInstalled)
 	}
+	add(h.errLabel)
 	add(h.wallpaperSnap.Err)
 	for _, connector := range wallpaperTargets(h) {
 		if rt := h.wallpaperSnap.Runtime[connector]; rt.Err != "" {
@@ -204,16 +211,9 @@ func artBanners(h *PanelHost) []*ui.Node {
 	return out
 }
 
-// artEffects is the catalog without text effects, which need artwork the
-// shell has no way to supply yet.
+// artEffects is the catalog reported by sysc-terminal.
 func artEffects(h *PanelHost) []wallpaper.EffectInfo {
-	var out []wallpaper.EffectInfo
-	for _, e := range h.wallpaperSnap.Caps.Catalog.Effects {
-		if !e.Text {
-			out = append(out, e)
-		}
-	}
-	return out
+	return h.wallpaperSnap.Caps.Catalog.Effects
 }
 
 // artRunningOn lists the outputs running effect id.
@@ -227,17 +227,25 @@ func artRunningOn(h *PanelHost, id string) []string {
 	return out
 }
 
-func artCard(h *PanelHost, id string, index int) *ui.Node {
+func artCard(h *PanelHost, effect wallpaper.EffectInfo, index int) *ui.Node {
+	id := effect.ID
 	lines := []*ui.Node{{Kind: ui.KindText, Text: id, MaxWidth: artCardW - 2*theme.MarginS}}
 	card := &ui.Node{
 		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh,
 		Width: artCardW, Height: artCardH, Padding: theme.MarginS,
 		Action: "art-apply:" + id, Name: id, Role: "button", Focusable: true,
 	}
+	var details []string
 	if on := artRunningOn(h, id); len(on) > 0 {
-		lines = append(lines, &ui.Node{Kind: ui.KindText, Text: "on " + strings.Join(on, ", "), TextRole: theme.RoleCaption})
+		details = append(details, "on "+strings.Join(on, ", "))
 		card.Stroke = wallpaperSelectedStroke
 		card.StrokeFill = ui.FillAccent
+	}
+	if effect.Text {
+		details = append(details, "requires artwork")
+	}
+	if len(details) > 0 {
+		lines = append(lines, &ui.Node{Kind: ui.KindText, Text: strings.Join(details, " · "), TextRole: theme.RoleCaption})
 	}
 	card.Children = []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: lines}}
 	if index == h.wallpaperSel {
@@ -312,12 +320,20 @@ func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
 
 // artApply runs effect id on the selected outputs.
 func (h *PanelHost) artApply(r *Registry, id string) {
-	if !h.wallpaperSnap.Caps.Terminal || !h.artSelectEffect(id) {
+	if !h.wallpaperSnap.Caps.Terminal {
+		return
+	}
+	effect, ok := h.artSelectEffect(id)
+	if !ok {
 		return
 	}
 	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
 	r.rebuildPanel(h)
 	h.focusByName(id)
+	if effect.Text {
+		h.artPickArtwork(r, id)
+		return
+	}
 	if svc := r.wallpaperServiceLocked(); svc != nil {
 		svc.Enqueue(wallpaper.Command{
 			Op: wallpaper.OpApply, Token: h.wallpaperOutput,
@@ -328,14 +344,59 @@ func (h *PanelHost) artApply(r *Registry, id string) {
 
 // artSelectEffect finds the current catalog index for a card action. Actions
 // can arrive from either a key or a pointer and may outlive a rebuilt tree.
-func (h *PanelHost) artSelectEffect(id string) bool {
+func (h *PanelHost) artSelectEffect(id string) (wallpaper.EffectInfo, bool) {
 	for i, effect := range artEffects(h) {
 		if effect.ID == id {
 			h.wallpaperSel = i
-			return true
+			return effect, true
 		}
 	}
-	return false
+	return wallpaper.EffectInfo{}, false
+}
+
+// artPickArtwork runs the existing jailed file browser off Registry.mu, then
+// applies the still-listed effect with the selected path.
+func (h *PanelHost) artPickArtwork(r *Registry, id string) {
+	svc := r.wallpaperServiceLocked()
+	if svc == nil {
+		return
+	}
+	output := h.wallpaperOutput
+	theme := artPalette(h)
+	r.scheduleControl(h, func() error {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("find home directory: %w", err)
+		}
+		picked, err := r.openFilesBrowser(context.Background(), v1.FilesBrowseParams{
+			Root: filepath.Join(home, ".config"), Title: "Select artwork", Mode: files.ModePickFile,
+		})
+		if errors.Is(err, errFilesCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		snap := svc.Snapshot()
+		found := false
+		for _, effect := range snap.Caps.Catalog.Effects {
+			if effect.ID == id {
+				found = true
+				break
+			}
+		}
+		if !snap.Caps.Terminal || !found {
+			return fmt.Errorf("effect %q is no longer available", id)
+		}
+		if !slices.Contains(snap.Caps.Catalog.Themes, theme) && len(snap.Caps.Catalog.Themes) > 0 {
+			theme = snap.Caps.Catalog.Themes[0]
+		}
+		svc.Enqueue(wallpaper.Command{
+			Op: wallpaper.OpApply, Token: wallpaperOutputSelection(snap, output),
+			Kind: wallpaper.KindEffect, Effect: id, Theme: theme, Artwork: picked.Path,
+		})
+		return nil
+	})
 }
 
 func artFocusedEffect(h *PanelHost, effects []wallpaper.EffectInfo) int {
@@ -400,12 +461,7 @@ func terminalArtSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if !caps.Terminal {
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: artNotInstalled, Tone: ui.ToneError, Height: wallpaperCaptionH})
 	} else {
-		effects := 0
-		for _, e := range caps.Catalog.Effects {
-			if !e.Text {
-				effects++
-			}
-		}
+		effects := len(caps.Catalog.Effects)
 		rows = append(rows, &ui.Node{
 			Kind: ui.KindText, Text: "sysc-terminal \u00b7 sysc-Go \u00b7 " + plural(effects, "effect"),
 			Role: "status", Height: wallpaperCaptionH,

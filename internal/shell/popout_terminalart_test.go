@@ -1,12 +1,15 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/files"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -27,6 +30,7 @@ func (artWallpaperEngine) Capabilities() wallpaper.Capabilities {
 		},
 	}
 }
+func (e artWallpaperEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
 
 // artRegistry is a registry with a bar on output 7 and a wallpaper service on
 // connectors (DP-1 and DP-3 when none are named) backed by engine. No panel is
@@ -214,8 +218,8 @@ func TestTerminalArtCardsFromCatalog(t *testing.T) {
 	defer reg.mu.Unlock()
 	var cards []string
 	collectActions(h.root, "art-apply:", &cards)
-	if !slices.Equal(cards, []string{"art-apply:fire", "art-apply:rain"}) {
-		t.Fatalf("cards = %v, want fire and rain; text effects are hidden", cards)
+	if !slices.Equal(cards, []string{"art-apply:fire", "art-apply:rain", "art-apply:fire-text"}) {
+		t.Fatalf("cards = %v, want every catalog effect", cards)
 	}
 	for _, action := range cards {
 		card := findAction(h.root, action)
@@ -223,12 +227,98 @@ func TestTerminalArtCardsFromCatalog(t *testing.T) {
 			t.Errorf("card %s = name %q focusable %v state %v", action, card.Name, card.Focusable, card.State)
 		}
 	}
-	if findByName(h.root, "fire-text") != nil {
-		t.Error("a text effect is listed")
+	if !strings.Contains(strings.Join(artTexts(h.root), " "), "requires artwork") {
+		t.Error("the text effect does not say that it requires artwork")
 	}
-	if !slices.Contains(artTexts(h.root), "2 effects") {
+	if !slices.Contains(artTexts(h.root), "3 effects") {
 		t.Errorf("footer missing; texts = %v", artTexts(h.root))
 	}
+}
+
+type catalogRefreshArtEngine struct {
+	stubWallpaperEngine
+	initial   wallpaper.Capabilities
+	refreshed wallpaper.Capabilities
+	refreshes int
+}
+
+func (e *catalogRefreshArtEngine) Capabilities() wallpaper.Capabilities { return e.initial }
+func (e *catalogRefreshArtEngine) RefreshTerminalCatalog() wallpaper.Capabilities {
+	e.refreshes++
+	return e.refreshed
+}
+
+func TestTerminalArtRefreshesCatalogOnOpen(t *testing.T) {
+	initial := artWallpaperEngine{}.Capabilities()
+	updated := initial
+	updated.Catalog.Effects = append(updated.Catalog.Effects, wallpaper.EffectInfo{ID: "sonar"})
+	engine := &catalogRefreshArtEngine{initial: initial, refreshed: updated}
+	reg, svc := artRegistry(t, engine)
+	go reg.relayWallpaper(svc)
+	h := openArtPanel(t, reg)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		found := findAction(h.root, "art-apply:sonar") != nil
+		reg.mu.Unlock()
+		if found {
+			if engine.refreshes != 1 {
+				t.Fatalf("catalog refreshes = %d, want 1", engine.refreshes)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("new terminal effect did not appear after opening the panel")
+}
+
+func TestTerminalArtTextEffectPicksArtwork(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".config")
+	if err := os.Mkdir(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	artwork := filepath.Join(configDir, "text.txt")
+	if err := os.WriteFile(artwork, []byte("SYSC"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	action := findAction(h.root, "art-apply:fire-text")
+	if action == nil || !h.artAction(reg, action) {
+		reg.mu.Unlock()
+		t.Fatal("text effect did not open the artwork picker")
+	}
+	reg.mu.Unlock()
+
+	deadline := time.Now().Add(2 * time.Second)
+	var sess *filesSession
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		sess = reg.files
+		ready := sess != nil && sess.mode == files.ModePickFile && sess.root == configDir
+		reg.mu.Unlock()
+		if ready {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if sess == nil || sess.mode != files.ModePickFile || sess.root != configDir {
+		t.Fatalf("file picker = %+v; want a file picker rooted at %s", sess, configDir)
+	}
+	reg.mu.Lock()
+	// The picker opened asynchronously so path validation and its wait do not
+	// hold Registry.mu.
+	reg.finishFilesPickLocked(sess, artwork, nil)
+	reg.mu.Unlock()
+
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool {
+		return a.Kind == wallpaper.KindEffect && a.Effect == "fire-text" && a.Artwork == artwork
+	})
 }
 
 func TestTerminalArtUnavailableExplains(t *testing.T) {
@@ -514,9 +604,9 @@ func TestTerminalArtPaletteChangePreservesArtwork(t *testing.T) {
 	})
 }
 
-type sixArtEngine struct{ stubWallpaperEngine }
+type sevenArtEngine struct{ stubWallpaperEngine }
 
-func (sixArtEngine) Capabilities() wallpaper.Capabilities {
+func (sevenArtEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{
 		Terminal: true,
 		Catalog: wallpaper.Catalog{
@@ -527,16 +617,17 @@ func (sixArtEngine) Capabilities() wallpaper.Capabilities {
 		},
 	}
 }
+func (e sevenArtEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
 
 func TestTerminalArtArrowKeysWalkThreeColumns(t *testing.T) {
-	reg, svc := artRegistry(t, sixArtEngine{})
+	reg, svc := artRegistry(t, sevenArtEngine{})
 	h := openArtPanel(t, reg)
 	reg.mu.Lock()
 	for _, step := range []struct {
 		key  uint32
 		want int
 	}{
-		{keyDown, 3}, {keyRight, 4}, {keyDown, 5}, {keyUp, 2}, {keyLeft, 1}, {keyUp, 0}, {keyLeft, 0},
+		{keyDown, 3}, {keyRight, 4}, {keyDown, 6}, {keyUp, 3}, {keyLeft, 2}, {keyUp, 0}, {keyLeft, 0},
 	} {
 		if !h.keyPress(reg, step.key) {
 			reg.mu.Unlock()
@@ -548,17 +639,17 @@ func TestTerminalArtArrowKeysWalkThreeColumns(t *testing.T) {
 		}
 	}
 	h.keyPress(reg, keyRight)
-	h.keyPress(reg, keyDown) // "e": the hidden text effect is not a stop
+	h.keyPress(reg, keyDown) // d is the first card on the next row.
 	if !h.keyPress(reg, keyEnter) {
 		reg.mu.Unlock()
 		t.Fatal("Enter on the grid was not handled")
 	}
 	reg.mu.Unlock()
-	awaitArt(t, svc, "DP-1", runningEffect("e", "nord"))
+	awaitArt(t, svc, "DP-1", runningEffect("d", "nord"))
 }
 
 func TestTerminalArtArrowKeysRequireCardFocus(t *testing.T) {
-	reg, _ := artRegistry(t, sixArtEngine{})
+	reg, _ := artRegistry(t, sevenArtEngine{})
 	h := openArtPanel(t, reg)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -574,7 +665,7 @@ func TestTerminalArtArrowKeysRequireCardFocus(t *testing.T) {
 }
 
 func TestTerminalArtFocusedCardOwnsGridNavigation(t *testing.T) {
-	reg, _ := artRegistry(t, sixArtEngine{})
+	reg, _ := artRegistry(t, sevenArtEngine{})
 	h := openArtPanel(t, reg)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -582,8 +673,8 @@ func TestTerminalArtFocusedCardOwnsGridNavigation(t *testing.T) {
 	if !h.artKeyPress(reg, keyRight) {
 		t.Fatal("right arrow was not handled by a focused card")
 	}
-	if h.wallpaperSel != 4 || h.focused() == nil || h.focused().Action != "art-apply:e" {
-		t.Fatalf("selection=%d focused=%+v, want e at index 4", h.wallpaperSel, h.focused())
+	if h.wallpaperSel != 5 || h.focused() == nil || h.focused().Action != "art-apply:e" {
+		t.Fatalf("selection=%d focused=%+v, want e at index 5", h.wallpaperSel, h.focused())
 	}
 }
 
@@ -742,14 +833,14 @@ func TestTerminalArtSectionIsReachable(t *testing.T) {
 }
 
 func TestTerminalArtSettingsShowsEngineAndDefault(t *testing.T) {
-	reg, _ := artRegistry(t, sixArtEngine{})
+	reg, _ := artRegistry(t, sevenArtEngine{})
 	h := openArtSettings(t, reg)
 	reg.mu.Lock()
 	texts := strings.Join(artTexts(h.root), "\n")
 	combo := findAction(h.root, "art-menu:default")
 	reg.mu.Unlock()
-	if !strings.Contains(texts, "sysc-Go") || !strings.Contains(texts, "6 effects") {
-		t.Errorf("status = %q, want sysc-Go and 6 effects", texts)
+	if !strings.Contains(texts, "sysc-Go") || !strings.Contains(texts, "7 effects") {
+		t.Errorf("status = %q, want sysc-Go and 7 effects", texts)
 	}
 	if combo == nil || !strings.Contains(combo.Name, "nord") {
 		t.Fatalf("unset palette combo = %+v, want the first catalog theme", combo)
