@@ -822,3 +822,21 @@ func TestLockSettingsLoadFailureDisablesApply(t *testing.T) {
 		t.Fatalf("the unreadable config was rewritten:\n got %s\nwant %s", data, original)
 	}
 }
+
+func TestLockScreenFollowShellSwitch(t *testing.T) {
+	r, h := openLockSettings(t)
+	if !h.lockScreen.config.FollowsShell() || findAction(h.root, "lockscreen-follow-shell") == nil {
+		t.Fatal("missing default follow switch")
+	}
+	if !h.lockScreenAction(r, &ui.Node{Action: "lockscreen-follow-shell"}) || h.lockScreen.config.FollowsShell() {
+		t.Fatal("could not disable following")
+	}
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-follow-shell"})
+	if !h.lockScreen.config.FollowsShell() {
+		t.Fatal("could not re-enable following")
+	}
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-palette:dracula"})
+	if h.lockScreen.config.FollowsShell() || h.lockScreen.config.Palette != "dracula" {
+		t.Fatal("manual palette did not opt out")
+	}
+}

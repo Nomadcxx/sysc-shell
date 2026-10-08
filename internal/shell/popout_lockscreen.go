@@ -76,7 +76,7 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		{"effect", "Background", s.config.Effect, lockconfig.Effects()},
 		{"header", "Header", s.config.Header, s.headers},
 		{"texteffect", "Text effect", s.config.TextEffect, lockconfig.TextEffects()},
-		{"palette", "Palette", s.config.Palette, renderer.Palettes()},
+		{"palette", "Palette", s.config.WithShellTheme().Palette, renderer.Palettes()},
 		{"clockstyle", "Clock style", s.config.ClockStyle, lockconfig.ClockStyles()},
 		{"backend", "Effect engine", s.config.Backend(), []string{"auto", "cpu", "gpu"}},
 		{"fps", "Effect FPS", strconv.Itoa(s.config.EffectFPS), []string{"10", "20", "30", "60"}},
@@ -103,6 +103,7 @@ func lockScreenSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 	}
 	rows = append(rows,
+		lockToggle("Follow shell theme", "lockscreen-follow-shell", s.config.FollowsShell(), saving),
 		lockToggle("Reduced motion", "lockscreen-reduced", s.config.ReducedMotion, saving),
 		lockToggle("24-hour clock", "lockscreen-clock24", s.config.Clock24h, saving),
 		lockToggle("Blur backdrop", "lockscreen-blur", s.config.BlurBackdrop(), saving),
@@ -155,6 +156,7 @@ func lockPreview(ctx context.Context, c lockconfig.Config) (*ui.Image, error) {
 	}
 	// Invalid decoration uses the native shipped catalogue, just as locking does.
 	headers, _ := lockconfig.ReadHeaders(lockconfig.HeadersPath())
+	c = c.WithShellTheme()
 	request, err := json.Marshal(struct {
 		Headers string            `json:"headers"`
 		Config  lockconfig.Config `json:"config"`
@@ -330,6 +332,10 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 				r.loadLockHeaders(h)
 			}
 		}
+	case n.Action == "lockscreen-follow-shell":
+		follow := !s.config.FollowsShell()
+		s.config.FollowShell = &follow
+		s.draftChanged()
 	case n.Action == "lockscreen-reduced":
 		s.config.ReducedMotion = !s.config.ReducedMotion
 		s.draftChanged()
@@ -418,6 +424,8 @@ func (h *PanelHost) lockScreenAction(r *Registry, n *ui.Node) bool {
 			cfg.TextEffect = value
 		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-palette:"); ok {
 			cfg.Palette = value
+			follow := false
+			cfg.FollowShell = &follow
 		} else if value, ok := strings.CutPrefix(n.Action, "lockscreen-clockstyle:"); ok {
 			if !slices.Contains(lockconfig.ClockStyles(), value) {
 				s.message = "That presentation choice is unavailable."
