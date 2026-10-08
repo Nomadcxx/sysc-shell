@@ -15,10 +15,17 @@ import (
 // MaxEntries caps one listing so the KindList stays under the wire child limit.
 const MaxEntries = 200
 
-// Entry is one contained directory child the panel may show.
+// Entry is one contained directory child the panel may show. Path is the
+// lexical child of the resolved directory the listing ran in: for a symlink
+// it names the link itself, so selection, delete and rename act on the link
+// and two links to one target stay distinct rows. Target is Path after
+// symlink resolution; follow it to open or preview what the link points at.
+// Children whose resolution escapes the root are omitted, so Target is
+// always in the jail.
 type Entry struct {
 	Name    string
 	Path    string
+	Target  string
 	Dir     bool
 	Size    int64
 	ModTime time.Time
@@ -101,7 +108,7 @@ func list(root, dir string, hidden bool) ([]Entry, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, Entry{Name: name, Path: contained, Dir: st.IsDir(), Size: st.Size(), ModTime: st.ModTime()})
+		out = append(out, Entry{Name: name, Path: child, Target: contained, Dir: st.IsDir(), Size: st.Size(), ModTime: st.ModTime()})
 	}
 	slices.SortFunc(out, func(a, b Entry) int {
 		if a.Dir != b.Dir {

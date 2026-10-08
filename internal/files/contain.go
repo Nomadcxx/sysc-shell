@@ -5,11 +5,34 @@ package files
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
+
+// ContainEntry jails a directory child without following a final symlink.
+// The parent is resolved and must stay under root; the returned path is
+// parent-resolved + base, so os.Lstat, os.Remove and os.Rename act on the
+// link itself instead of on its target. Use Contain for navigation, open and
+// preview, where following the link is the point.
+func ContainEntry(root, path string) (string, error) {
+	clean := filepath.Clean(path)
+	base := filepath.Base(clean)
+	if base == "." || base == ".." || base == string(filepath.Separator) || base == "" {
+		return "", fmt.Errorf("files: %q is not an entry", path)
+	}
+	parent, err := Contain(root, filepath.Dir(clean))
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(parent, base)
+	if _, err := os.Lstat(p); err != nil {
+		return "", fmt.Errorf("files: %s: %w", p, err)
+	}
+	return p, nil
+}
 
 // Contain resolves path and reports the EvalSymlinks result if and only if it
 // stays under root. Both arguments must be absolute.

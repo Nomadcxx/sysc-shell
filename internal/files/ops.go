@@ -1,12 +1,14 @@
 package files
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -85,20 +87,31 @@ func transferInto(root, cwd string, srcs []string, cut bool) ([]string, error) {
 }
 
 func transferOne(root, cwd, src string, cut bool, filesN *int, bytesN *int64) (string, error) {
-	src, err := Contain(root, src)
+	entry, err := ContainEntry(root, src)
 	if err != nil {
 		return "", err
 	}
-	st, err := os.Stat(src)
+	target, err := Contain(root, entry)
 	if err != nil {
 		return "", err
 	}
-	if st.IsDir() && (cwd == src || inside(src, cwd)) {
-		return "", fmt.Errorf("files: copy %s into itself", src)
+	li, err := os.Lstat(entry)
+	if err != nil {
+		return "", err
 	}
-	base := filepath.Base(src)
-	if cut && filepath.Join(cwd, base) == src {
+	base := filepath.Base(entry)
+	if cut && filepath.Join(cwd, base) == entry {
 		return "", nil
+	}
+	if li.Mode()&os.ModeSymlink != 0 && cut {
+		return moveLink(cwd, entry, base)
+	}
+	st, err := os.Stat(target)
+	if err != nil {
+		return "", err
+	}
+	if st.IsDir() && (cwd == target || inside(target, cwd)) {
+		return "", fmt.Errorf("files: copy %s into itself", target)
 	}
 	name := uniqueName(cwd, base)
 	if name == "" {
@@ -106,46 +119,96 @@ func transferOne(root, cwd, src string, cut bool, filesN *int, bytesN *int64) (s
 	}
 	dest := filepath.Join(cwd, name)
 	if cut {
-		if err := os.Rename(src, dest); err == nil {
-			return Contain(root, dest)
+		err := renameFn(entry, dest)
+		if err == nil {
+			return dest, nil
+		}
+		if !errors.Is(err, syscall.EXDEV) {
+			return "", err
+		}
+		if !st.IsDir() && !st.Mode().IsRegular() {
+			return "", fmt.Errorf("files: cannot move special file %q across filesystems", entry)
 		}
 	}
 	if st.IsDir() {
-		if err := copyDir(src, dest, filesN, bytesN); err != nil {
+		if err := copyDir(target, dest, cut, filesN, bytesN); err != nil {
 			_ = os.RemoveAll(dest)
 			return "", err
 		}
 	} else {
-		if err := copyFile(src, dest, st.Size(), filesN, bytesN); err != nil {
+		if err := copyFile(target, dest, st.Size(), st.Mode().Perm(), filesN, bytesN); err != nil {
 			_ = os.Remove(dest)
 			return "", err
 		}
 	}
-	contained, err := Contain(root, dest)
-	if err != nil {
+	if _, err := Contain(root, dest); err != nil {
 		_ = os.RemoveAll(dest)
 		return "", err
 	}
 	if cut {
-		if err := os.RemoveAll(src); err != nil {
-			return contained, err
+		if err := os.RemoveAll(entry); err != nil {
+			return dest, err
 		}
 	}
-	return contained, nil
+	return dest, nil
 }
 
-func copyDir(src, dest string, filesN *int, bytesN *int64) error {
-	if err := os.Mkdir(dest, 0o755); err != nil {
+// moveLink moves a symlink as a link: rename first, and across filesystems
+// recreate the exact target text before removing the original. Copying a
+// symlink entry dereferences it and is handled by the normal copy path.
+func moveLink(cwd, entry, base string) (string, error) {
+	name := uniqueName(cwd, base)
+	if name == "" {
+		return "", fmt.Errorf("files: no unique name for %s", base)
+	}
+	dest := filepath.Join(cwd, name)
+	err := renameFn(entry, dest)
+	if err == nil {
+		return dest, nil
+	}
+	if !errors.Is(err, syscall.EXDEV) {
+		return "", err
+	}
+	text, err := os.Readlink(entry)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Symlink(text, dest); err != nil {
+		return "", err
+	}
+	if err := os.Remove(entry); err != nil {
+		_ = os.Remove(dest)
+		return "", err
+	}
+	return dest, nil
+}
+
+// renameFn is os.Rename; tests substitute it to force the cross-filesystem
+// path without mounting anything.
+var renameFn = os.Rename
+
+type dirMode struct {
+	path string
+	perm os.FileMode
+}
+
+func copyDir(src, dest string, move bool, filesN *int, bytesN *int64) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
 		return err
 	}
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+	// Create every directory 0700 and apply source permissions afterwards,
+	// deepest first: umask would silently trim a perm passed to Mkdir, and
+	// a read-only directory must still be walkable while it is filled.
+	if err := os.Mkdir(dest, 0o700); err != nil {
+		return err
+	}
+	var dirs []dirMode
+	walkErr := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if path == src {
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		rel, err := filepath.Rel(src, path)
@@ -156,21 +219,47 @@ func copyDir(src, dest string, filesN *int, bytesN *int64) error {
 		if !inside(dest, child) && child != dest {
 			return fmt.Errorf("files: copy escaped to %s", child)
 		}
-		if d.IsDir() {
-			return os.Mkdir(child, 0o755)
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		return copyFile(path, child, info.Size(), filesN, bytesN)
+		switch {
+		case d.IsDir():
+			if err := os.Mkdir(child, 0o700); err != nil {
+				return err
+			}
+			dirs = append(dirs, dirMode{child, info.Mode().Perm()})
+			return nil
+		case d.Type()&os.ModeSymlink != 0:
+			if !move {
+				return nil
+			}
+			text, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(text, child)
+		case !d.Type().IsRegular():
+			if move {
+				return fmt.Errorf("files: cannot move special file %q across filesystems", rel)
+			}
+			return nil
+		default:
+			return copyFile(path, child, info.Size(), info.Mode().Perm(), filesN, bytesN)
+		}
 	})
+	if walkErr != nil {
+		return walkErr
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := os.Chmod(dirs[i].path, dirs[i].perm); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(dest, srcInfo.Mode().Perm())
 }
 
-func copyFile(src, dest string, size int64, filesN *int, bytesN *int64) error {
+func copyFile(src, dest string, size int64, perm os.FileMode, filesN *int, bytesN *int64) error {
 	if *filesN+1 > maxCopyFiles {
 		return fmt.Errorf("files: copy exceeds %d files", maxCopyFiles)
 	}
@@ -182,8 +271,13 @@ func copyFile(src, dest string, size int64, filesN *int, bytesN *int64) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 	if err != nil {
+		return err
+	}
+	// OpenFile applies the umask; set the source permission exactly.
+	if err := out.Chmod(perm); err != nil {
+		_ = out.Close()
 		return err
 	}
 	_, copyErr := io.Copy(out, in)
@@ -226,9 +320,10 @@ func inside(parent, child string) bool {
 	return rel != "." && filepath.IsLocal(rel)
 }
 
-// Rename moves src to a sibling named name. name is one path element.
+// Rename moves src to a sibling named name. name is one path element. src is
+// an entry path: a symlink is renamed as a link, not through it.
 func Rename(root, src, name string) (string, error) {
-	src, err := Contain(root, src)
+	src, err := ContainEntry(root, src)
 	if err != nil {
 		return "", err
 	}
@@ -244,21 +339,25 @@ func Rename(root, src, name string) (string, error) {
 	if err := os.Rename(src, dest); err != nil {
 		return "", err
 	}
-	return Contain(root, dest)
+	return ContainEntry(root, dest)
 }
 
-// Remove deletes contained paths. The jail root is refused.
+// Remove deletes contained paths. The jail root is refused. An entry that is
+// a symlink is removed as a link: its target survives.
 func Remove(root string, paths []string) error {
 	rootRes, err := Contain(root, root)
 	if err != nil {
 		return err
 	}
 	for _, p := range paths {
-		p, err := Contain(root, p)
+		p, err := ContainEntry(root, p)
 		if err != nil {
 			return err
 		}
-		if p == rootRes {
+		// A link that points at the jail is still just a link: RemoveAll
+		// unlinks it and the directory survives. The jail named directly is
+		// refused, in both the passed and the resolved spelling.
+		if p == rootRes || filepath.Clean(p) == filepath.Clean(root) {
 			return fmt.Errorf("files: will not delete the jail root")
 		}
 		if err := os.RemoveAll(p); err != nil {
