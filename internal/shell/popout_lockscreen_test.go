@@ -459,8 +459,15 @@ func waitLockPreview(t *testing.T, r *Registry, h *PanelHost) {
 func TestLockSettingsNativeStillPreview(t *testing.T) {
 	requestPath := installLockPreviewHelper(t, "")
 	r, h := openLockSettings(t)
+	if err := os.MkdirAll(filepath.Dir(lockconfig.HeadersPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	headers := "ascii_custom=\"\"\"\nONE CATALOGUE\n\"\"\"\n"
+	if err := os.WriteFile(lockconfig.HeadersPath(), []byte(headers), 0600); err != nil {
+		t.Fatal(err)
+	}
 	r.mu.Lock()
-	h.lockScreen.config = lockconfig.Config{Effect: "fire", Palette: "eldritch", ClockStyle: "plain", Clock24h: true, ReducedMotion: true, EffectFPS: 30}
+	h.lockScreen.config = lockconfig.Config{Header: "ascii_custom", TextEffect: "fire-text", Effect: "fire", Palette: "eldritch", ClockStyle: "plain", Clock24h: true, ReducedMotion: true, EffectFPS: 30}
 	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-preview"})
 	r.mu.Unlock()
 	waitLockPreview(t, r, h)
@@ -469,11 +476,15 @@ func TestLockSettingsNativeStillPreview(t *testing.T) {
 		t.Fatalf("preview did not invoke native --preview command: %v", err)
 	}
 	var request struct {
+		Headers       string            `json:"headers"`
 		Config        lockconfig.Config `json:"config"`
 		Width, Height int
 	}
 	if err := json.Unmarshal(data, &request); err != nil {
 		t.Fatal(err)
+	}
+	if request.Headers != headers {
+		t.Fatal("preview lost raw header conf")
 	}
 	if request.Width != 960 || request.Height != 540 || request.Config != h.lockScreen.config {
 		t.Fatalf("preview request = %+v", request)
