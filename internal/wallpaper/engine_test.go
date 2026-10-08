@@ -29,6 +29,42 @@ func exitedProcess(err error) *fakeProcess {
 	return p
 }
 
+func TestEngineRefreshTerminalCatalogReadsCurrentList(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog")
+	binaryPath := filepath.Join(dir, "sysc-terminal")
+	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\nif [ \"$1\" != \"--list\" ]; then exit 2; fi\nexec /bin/cat \"$SYSC_TERMINAL_TEST_CATALOG\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("SYSC_TERMINAL_TEST_CATALOG", catalogPath)
+	writeCatalog := func(text string) {
+		t.Helper()
+		if err := os.WriteFile(catalogPath, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeCatalog("effect fire 0\ntheme nord\n")
+	engine := NewEngine(t.TempDir(), func(name string) bool { return name == "sysc-terminal" })
+	t.Cleanup(engine.Close)
+
+	if got := engine.Capabilities(); !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0].ID != "fire" {
+		t.Fatalf("initial capabilities = %+v, want fire", got)
+	}
+	writeCatalog("effect rain 0\ntheme dracula\n")
+	got := engine.RefreshTerminalCatalog()
+	if !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0].ID != "rain" || got.Catalog.Themes[0] != "dracula" {
+		t.Fatalf("refreshed capabilities = %+v, want rain and dracula", got)
+	}
+	if err := os.Remove(catalogPath); err != nil {
+		t.Fatal(err)
+	}
+	got = engine.RefreshTerminalCatalog()
+	if !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0].ID != "rain" || got.Catalog.Themes[0] != "dracula" {
+		t.Fatalf("failed refresh lost the last good catalog: %+v", got)
+	}
+}
+
 func (p *fakeProcess) Wait() error {
 	<-p.exit
 	p.mu.Lock()

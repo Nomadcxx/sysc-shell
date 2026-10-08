@@ -20,12 +20,14 @@ type fakeEngine struct {
 	paused     map[string]bool
 	closeCalls int
 
-	gate        map[string]chan struct{}
-	restoreGate map[string]chan struct{}
-	preview     map[string]string
-	fail        map[string]error
-	caps        Capabilities
-	generation  map[string]uint64
+	gate         map[string]chan struct{}
+	restoreGate  map[string]chan struct{}
+	preview      map[string]string
+	fail         map[string]error
+	caps         Capabilities
+	refreshCaps  *Capabilities
+	refreshCalls int
+	generation   map[string]uint64
 }
 
 func newFakeEngine() *fakeEngine {
@@ -98,6 +100,16 @@ func (f *fakeEngine) Capabilities() Capabilities {
 	return f.caps
 }
 
+func (f *fakeEngine) RefreshTerminalCatalog() Capabilities {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshCalls++
+	if f.refreshCaps != nil {
+		f.caps = *f.refreshCaps
+	}
+	return f.caps
+}
+
 func (f *fakeEngine) Close() {
 	f.mu.Lock()
 	f.closeCalls++
@@ -139,6 +151,37 @@ func awaitSnapshot(t *testing.T, svc *Service, want func(Snapshot) bool) Snapsho
 		case <-deadline:
 			t.Fatal("timed out waiting for a snapshot")
 		}
+	}
+}
+
+func TestServiceRefreshesTerminalCatalog(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps = Capabilities{
+		Terminal: true,
+		Catalog:  Catalog{Effects: []EffectInfo{{ID: "fire"}}, Themes: []string{"nord"}},
+	}
+	updated := Capabilities{
+		Terminal: true,
+		Catalog: Catalog{
+			Effects: []EffectInfo{{ID: "fire"}, {ID: "rain"}},
+			Themes:  []string{"nord", "dracula"},
+		},
+	}
+	engine.refreshCaps = &updated
+	svc := newTestService(t, engine)
+
+	svc.RefreshTerminalCatalog()
+	got := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return len(s.Caps.Catalog.Effects) == 2 && len(s.Caps.Catalog.Themes) == 2
+	})
+	if got.Caps.Catalog.Effects[1].ID != "rain" {
+		t.Fatalf("catalog = %+v, want the refreshed rain effect", got.Caps.Catalog)
+	}
+	engine.mu.Lock()
+	calls := engine.refreshCalls
+	engine.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", calls)
 	}
 }
 

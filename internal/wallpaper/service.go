@@ -25,6 +25,8 @@ const (
 	OpDisconnect
 	// OpRefresh rescans the library.
 	OpRefresh
+	// OpRefreshTerminalCatalog re-reads sysc-terminal's installed registry.
+	OpRefreshTerminalCatalog
 )
 
 // Command is one queued request. It is a value, so nothing the panel holds is
@@ -106,6 +108,7 @@ type Engine interface {
 	Restore(connector, still string) error
 	SetPaused(connector string, paused bool) error
 	Capabilities() Capabilities
+	RefreshTerminalCatalog() Capabilities
 }
 
 // Snapshot is an immutable view of everything the picker draws.
@@ -296,6 +299,12 @@ func (s *Service) Enqueue(c Command) {
 	}
 }
 
+// RefreshTerminalCatalog asks the service loop to refresh the installed
+// sysc-terminal registry and publish the updated capabilities.
+func (s *Service) RefreshTerminalCatalog() {
+	s.Enqueue(Command{Op: OpRefreshTerminalCatalog})
+}
+
 // Close stops the loop and waits for in-flight engine work to report back, so
 // no goroutine outlives the service.
 func (s *Service) Close() {
@@ -416,6 +425,10 @@ func (s *Service) handle(c Command) {
 		s.lib = Scan(s.roots)
 		s.refreshCoverage()
 		s.enqueueThumbs()
+	case OpRefreshTerminalCatalog:
+		if s.engine != nil {
+			s.caps = s.engine.RefreshTerminalCatalog()
+		}
 	}
 	s.publish()
 }

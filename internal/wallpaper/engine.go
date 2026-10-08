@@ -118,6 +118,7 @@ const (
 // tests, must never be a candidate (D17/D18).
 type gslapperEngine struct {
 	dir       string
+	lookup    func(string) bool
 	caps      Capabilities
 	readyWait time.Duration
 	poll      time.Duration
@@ -147,6 +148,7 @@ func NewEngine(dir string, lookup func(string) bool) *gslapperEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &gslapperEngine{
 		dir:          dir,
+		lookup:       lookup,
 		caps:         probeCapabilities(lookup),
 		readyWait:    defaultReadyWait,
 		poll:         defaultPoll,
@@ -178,16 +180,45 @@ func probeCapabilities(lookup func(string) bool) Capabilities {
 			caps.GSlapper = helpSupports(help)
 		}
 	}
-	if lookup("sysc-terminal") {
-		if out, err := exec.Command("sysc-terminal", "--list").CombinedOutput(); err == nil {
-			cat := ParseList(string(out))
-			if len(cat.Effects) > 0 {
-				caps.Terminal = true
-				caps.Catalog = cat
-			}
-		}
-	}
+	caps.Terminal, caps.Catalog, _ = probeTerminalCatalog(lookup)
 	caps.Statics = installedFallbacks(lookup)
+	return caps
+}
+
+const terminalCatalogTimeout = 2 * time.Second
+
+// probeTerminalCatalog reports whether an installed sysc-terminal provides a
+// usable catalog. A failed probe is distinct from an absent binary so refresh
+// can preserve the last good catalog during a transient launch failure.
+func probeTerminalCatalog(lookup func(string) bool) (bool, Catalog, bool) {
+	if lookup == nil {
+		lookup = func(name string) bool { _, err := exec.LookPath(name); return err == nil }
+	}
+	if !lookup("sysc-terminal") {
+		return false, Catalog{}, true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), terminalCatalogTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sysc-terminal", "--list").CombinedOutput()
+	if err != nil {
+		return false, Catalog{}, false
+	}
+	cat := ParseList(string(out))
+	if len(cat.Effects) == 0 {
+		return false, Catalog{}, false
+	}
+	return true, cat, true
+}
+
+func (e *gslapperEngine) RefreshTerminalCatalog() Capabilities {
+	terminal, catalog, ok := probeTerminalCatalog(e.lookup)
+	e.mu.Lock()
+	if ok {
+		e.caps.Terminal = terminal
+		e.caps.Catalog = catalog
+	}
+	caps := e.caps
+	e.mu.Unlock()
 	return caps
 }
 

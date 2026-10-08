@@ -273,6 +273,9 @@ func (wallpaperMaskTestEngine) SetPaused(string, bool) error { return nil }
 func (wallpaperMaskTestEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{}
 }
+func (e wallpaperMaskTestEngine) RefreshTerminalCatalog() wallpaper.Capabilities {
+	return e.Capabilities()
+}
 
 type wallpaperMaskFixture struct {
 	r          *Registry

@@ -70,6 +70,7 @@ func (stubWallpaperEngine) SetPaused(string, bool) error                        
 func (stubWallpaperEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww"}}
 }
+func (e stubWallpaperEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
 
 type wallpaperRestoreProbe struct {
 	stubWallpaperEngine
@@ -89,6 +90,9 @@ func (wallpaperRestoreProbe) Capabilities() wallpaper.Capabilities {
 			Themes:  []string{"nord"},
 		},
 	}
+}
+func (e wallpaperRestoreProbe) RefreshTerminalCatalog() wallpaper.Capabilities {
+	return e.Capabilities()
 }
 
 func wallpaperHost(t *testing.T, reg *Registry) *PanelHost {

@@ -1272,9 +1272,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.wallpaperOutput = wallpaper.AllOutputs
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()
-		}
-		if p := r.cfg.TerminalArt.Palette; slices.Contains(h.wallpaperSnap.Caps.Catalog.Themes, p) {
-			h.wallpaperEffectTheme = p
+			if p := r.cfg.TerminalArt.Palette; slices.Contains(h.wallpaperSnap.Caps.Catalog.Themes, p) {
+				h.wallpaperEffectTheme = p
+			}
+			svc.RefreshTerminalCatalog()
 		}
 	}
 	if id == PanelAudio {

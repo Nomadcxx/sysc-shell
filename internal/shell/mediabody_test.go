@@ -198,6 +198,9 @@ func (mediaWallpaperEngine) SetPaused(string, bool) error { return nil }
 func (mediaWallpaperEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{Statics: []string{"stub"}}
 }
+func (e mediaWallpaperEngine) RefreshTerminalCatalog() wallpaper.Capabilities {
+	return e.Capabilities()
+}
 
 func bgImage(n *ui.Node) *ui.Image {
 	if n == nil {
