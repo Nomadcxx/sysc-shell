@@ -376,6 +376,27 @@ func TestLockPreviewCommandHelper(t *testing.T) {
 	if os.Getenv("SYSC_SHELL_PREVIEW_HELPER") != "1" {
 		return
 	}
+	if os.Args[len(os.Args)-1] == "--describe" {
+		data := `{"headers":["ascii_1","ascii_custom"]}`
+		switch os.Getenv("SYSC_SHELL_PREVIEW_MODE") {
+		case "fail":
+			os.Exit(2)
+		case "wait":
+			time.Sleep(time.Minute)
+		case "overflow":
+			data = strings.Repeat("x", (64<<10)+1)
+		case "malformed":
+			data = "invalid JSON"
+		case "duplicate":
+			data = `{"headers":["ascii_1","ascii_1"]}`
+		case "unsafe":
+			data = `{"headers":["ascii_bad\n"]}`
+		case "empty":
+			data = `{"headers":[]}`
+		}
+		os.Stdout.WriteString(data)
+		os.Exit(0)
+	}
 	if os.Args[len(os.Args)-1] != "--preview" {
 		os.Exit(2)
 	}
@@ -644,5 +665,116 @@ func TestLockPreviewInstalledComposition(t *testing.T) {
 	}
 	if bytes.Equal(first.Pix, second.Pix) {
 		t.Fatal("clock style did not change the native composition")
+	}
+}
+
+func TestLockSettingsArtworkSelectorsDraftAndPersist(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	if findAction(h.root, "lockscreen-menu:header") == nil || findAction(h.root, "lockscreen-menu:texteffect") == nil {
+		r.mu.Unlock()
+		t.Fatal("missing artwork selectors")
+	}
+	h.lockScreen.headers = []string{"ascii_1", "ascii_custom"}
+	for _, action := range []string{"lockscreen-header:ascii_custom", "lockscreen-texteffect:fire-text"} {
+		if !h.lockScreenAction(r, &ui.Node{Action: action}) {
+			r.mu.Unlock()
+			t.Fatal("artwork action ignored")
+		}
+	}
+	want := h.lockScreen.config
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-header:ascii_missing"})
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-texteffect:missing"})
+	if h.lockScreen.config != want {
+		r.mu.Unlock()
+		t.Fatal("invalid artwork choice accepted")
+	}
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-apply"})
+	r.mu.Unlock()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		r.mu.Lock()
+		pending := r.lockSettingsSaving
+		r.mu.Unlock()
+		if !pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("save stalled")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	got, err := lockconfig.Load(lockconfig.Path())
+	if err != nil || got.Header != "ascii_custom" || got.TextEffect != "fire-text" {
+		t.Fatalf("preferences not saved: %+v %v", got, err)
+	}
+}
+
+func TestLockSettingsHeaderMenuUsesNativeCatalogue(t *testing.T) {
+	installLockPreviewHelper(t, "")
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	h.lockScreenAction(r, &ui.Node{Action: "lockscreen-menu:header"})
+	r.mu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		pending := h.lockScreen.loadingHeaders
+		found := false
+		if list := findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindVirtualList && n.ItemCount == 2 }); list != nil {
+			for i := range list.ItemCount {
+				found = found || findAction(list.Item(i), "lockscreen-header:ascii_custom") != nil
+			}
+		}
+		r.mu.Unlock()
+		if !pending {
+			if !found {
+				t.Fatalf("native custom header is missing: headers=%v status=%q menu=%q", h.lockScreen.headers, h.lockScreen.headerMessage, h.lockScreen.menu)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("catalogue query stalled")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestLockHeaderCatalogueBoundary(t *testing.T) {
+	for _, mode := range []string{"fail", "overflow", "malformed", "duplicate", "unsafe", "empty", "wait"} {
+		t.Run(mode, func(t *testing.T) {
+			installLockPreviewHelper(t, mode)
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			if ids, err := lockHeaderIDs(ctx); err == nil || ids != nil {
+				t.Fatalf("accepted %s: %v %v", mode, ids, err)
+			}
+		})
+	}
+}
+
+func TestLockHeadersInstalledCatalogue(t *testing.T) {
+	binary := os.Getenv("SYSC_LOCK_CONTRACT_BINARY")
+	if binary == "" {
+		t.Skip("set SYSC_LOCK_CONTRACT_BINARY for native catalogue")
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(binary, filepath.Join(dir, "sysc-lock")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := lockconfig.HeadersPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("ascii_custom=\"\"\"\nCUSTOM\n\"\"\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), lockPreviewTimeout)
+	defer cancel()
+	ids, err := lockHeaderIDs(ctx)
+	if err != nil || !reflect.DeepEqual(ids, []string{"ascii_custom"}) {
+		t.Fatalf("native catalogue: %v %v", ids, err)
 	}
 }

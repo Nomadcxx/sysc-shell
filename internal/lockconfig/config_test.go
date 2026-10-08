@@ -359,3 +359,11 @@ func TestRawHeadersRejectInvalidUTF8BeforeJSON(t *testing.T) {
 		t.Fatal("JSON would silently replace invalid artwork bytes")
 	}
 }
+
+func TestLockConfigRejectsInvalidTextPreference(t *testing.T) {
+	c := Default()
+	c.TextEffect = "missing"
+	if err := Save(filepath.Join(t.TempDir(), "config.json"), c); err == nil {
+		t.Fatal("invalid text effect saved")
+	}
+}
