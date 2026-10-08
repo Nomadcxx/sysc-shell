@@ -56,6 +56,25 @@ func TestSetRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestPolkitAgentSettingRoundTrips(t *testing.T) {
+	t.Parallel()
+	entry := Default().ByPath("session.polkit_agent")
+	if entry == nil || entry.Kind != KindEnum {
+		t.Fatal("missing session.polkit_agent enum")
+	}
+	want := []string{"auto", "on", "off"}
+	if !slices.Equal(entry.Options, want) {
+		t.Fatalf("polkit agent options = %v, want %v", entry.Options, want)
+	}
+	cfg := config.Default()
+	if err := entry.Set(&cfg, "off"); err != nil {
+		t.Fatal(err)
+	}
+	if got := entry.Get(cfg); got != "off" || cfg.Session.PolkitAgent != "off" {
+		t.Fatalf("polkit agent setting = %q / %q, want off", got, cfg.Session.PolkitAgent)
+	}
+}
+
 func TestBarEdgeSettingCanSelectEveryEdge(t *testing.T) {
 	t.Parallel()
 	entry := Default().ByPath("bar.edge")

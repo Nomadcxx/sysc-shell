@@ -18,6 +18,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services/polkit"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -390,6 +391,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		entries = settingsTrayTitles(r, entries)
 	}
 	content := settingsSectionColumn(h, section, entries)
+	if section == "Session" {
+		content.Children = append(content.Children, polkitStatusCard(r, h))
+	}
 	if section == "Templates" {
 		content.Children = append(content.Children, templateRefusals(r)...)
 	}
@@ -789,6 +793,32 @@ func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entr
 		return settingsPageColumn(h, entries, settingsAppearanceIntro(h))
 	}
 	return settingsPageColumn(h, entries)
+}
+
+func polkitStatusLabel(status polkit.Status) string {
+	switch {
+	case status.Policy == polkit.PolicyOff || status.Reason == "disabled":
+		return "Off"
+	case status.Registered:
+		return "Registered"
+	case status.Passive != "":
+		return "Passive · " + status.Passive
+	default:
+		return "Unavailable"
+	}
+}
+
+func polkitStatusCard(r *Registry, h *PanelHost) *ui.Node {
+	label := "Unavailable"
+	if r != nil {
+		label = polkitStatusLabel(r.polkitStatusLocked())
+	}
+	return settingsGroupCard(h, "Authentication status", []*ui.Node{{
+		Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Status", TextRole: theme.RoleLabel},
+			{Kind: ui.KindText, Text: label, TextRole: theme.RoleBody, Tone: ui.ToneSubtle},
+		},
+	}})
 }
 
 func settingsAppearanceIntro(h *PanelHost) *ui.Node {

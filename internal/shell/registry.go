@@ -25,6 +25,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/services/polkit"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
@@ -184,6 +185,11 @@ type Registry struct {
 	lockSettingsSaving  bool
 	managedState        locksession.State
 	lockCancel          context.CancelFunc
+	polkitAgent         *polkit.Agent
+	polkitHost          *polkitHost
+	polkitCancel        context.CancelFunc
+	polkitDone          chan struct{}
+	polkitLifecycleMu   sync.Mutex
 	backgroundHeld      bool
 	backgroundLeasePath string
 	backgroundMu        sync.Mutex
@@ -406,6 +412,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		machineFacts:    readMachineFacts(),
 	}
 	r.depthClocks = newDepthClockHost(r, nil)
+	r.polkitHost = newPolkitHost(r)
 	r.weather.SetCity(cfg.Weather.City)
 	// Construction is single-threaded, so the first snapshot needs no lock.
 	r.palettes = listPalettes(palettes)
@@ -972,6 +979,7 @@ func (r *Registry) Status() map[string]any {
 		panels = append(panels, id.String())
 	}
 	cfg := r.cfg
+	polkitStatus := r.polkitStatusLocked()
 	inhibitors := make([]string, 0, len(r.externalInhibitors))
 	for _, in := range r.externalInhibitors {
 		inhibitors = append(inhibitors, in.App)
@@ -990,6 +998,7 @@ func (r *Registry) Status() map[string]any {
 		"matugen":         err == nil,
 		"templates":       templates,
 		"idle_inhibitors": inhibitors,
+		"polkit":          polkitStatus,
 	}
 }
 
@@ -1723,6 +1732,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		Commit: func() {
 			once.Do(func() {
 				r.mu.Lock()
+				polkitPolicyChanged := r.cfg.Session.PolkitAgent != cfg.Session.PolkitAgent
+				polkitNeedsStart := len(bars) > 0 && r.polkitAgent == nil
 				outgoing := r.leases
 				outgoingBars := r.bars
 				geometryOutputs := make(map[uint32]bool)
@@ -1836,6 +1847,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				if plugins != nil {
 					plugins.syncBars()
 				}
+				if polkitPolicyChanged || polkitNeedsStart {
+					go r.configurePolkit()
+				}
 
 				// Released only after the replacement set holds its own, so
 				// the count never touches zero for a service still in use.
@@ -1934,9 +1948,15 @@ func (r *Registry) Close() {
 	var wallpaperSvc *wallpaper.Service
 	var wallsSvc wallsController
 	var wallpaperThumbCancel context.CancelFunc
+	var polkitCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
 	var depthEffects depthClockEffects
 	if locked {
+		if r.polkitHost != nil && r.polkitHost.open_ {
+			r.polkitHost.finishLocked(true)
+		}
+		polkitCancel = r.polkitCancel
+		r.polkitAgent, r.polkitCancel, r.polkitDone = nil, nil, nil
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
 			r.toasts.stopSlideAnimation()
@@ -1986,6 +2006,9 @@ func (r *Registry) Close() {
 		r.inhibitWanted = false
 		r.pushIdleInputsLocked()
 		r.mu.Unlock()
+	}
+	if polkitCancel != nil {
+		polkitCancel()
 	}
 	for _, bar := range bars {
 		bar.stopAnimation()
@@ -2517,6 +2540,10 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 		if h.open_ {
 			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: windowSwitcherSurfaceID})
 		}
+	}
+	if h := r.polkitHost; h != nil && h.open_ {
+		h.retheme(r.panelThemeForState(h.output, cfg, tokens))
+		pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: polkitSurfaceID})
 	}
 	if r.osd != nil {
 		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)

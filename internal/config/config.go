@@ -274,7 +274,8 @@ type Accessibility struct {
 }
 
 type Session struct {
-	Locker string // external locker command; empty hides the lock action
+	Locker      string // external locker command; empty hides the lock action
+	PolkitAgent string // auto stands down for an existing agent; on retries while one holds the session; off disables
 }
 
 // Idle are the display-power timeouts, resolved to durations. A zero timeout
@@ -574,6 +575,7 @@ func Default() Config {
 			Mode:   "dark",
 		},
 		Panels:  Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
+		Session: Session{PolkitAgent: "auto"},
 		Monitor: defaultMonitor(),
 		Idle:    Idle{MediaExempt: true},
 		Wallpaper: Wallpaper{

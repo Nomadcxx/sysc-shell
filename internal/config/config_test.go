@@ -52,6 +52,25 @@ func TestDefaultBarMatchesLegacyContentBand(t *testing.T) {
 	}
 }
 
+func TestSessionPolkitAgentPoliciesParse(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []string{"auto", "on", "off"} {
+		t.Run(policy, func(t *testing.T) {
+			if _, err := Parse([]byte(`{"session":{"polkit_agent":"` + policy + `"}}`)); err != nil {
+				t.Fatalf("polkit_agent %q: %v", policy, err)
+			}
+		})
+	}
+}
+
+func TestSessionPolkitAgentRejectsUnknownPolicy(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"session":{"polkit_agent":"sometimes"}}`))
+	if err == nil || !strings.Contains(err.Error(), "session.polkit_agent") {
+		t.Fatalf("invalid policy error = %v, want session.polkit_agent validation", err)
+	}
+}
+
 func TestBlurAxesRoundTrip(t *testing.T) {
 	t.Parallel()
 	cfg, err := Parse([]byte(`{"theme":{"blur-behind":true,"blur-radius":32}}`))
