@@ -253,18 +253,6 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	if strings.HasPrefix(n.Action, "media:") {
 		return h.activateMedia(r, n)
 	}
-	if n.Action == "cc:walls-preview" {
-		if !r.lockerAcquired && r.wallsService != nil && r.wallsSnapshot.CanPreview && !r.wallsSnapshot.ActionPending {
-			r.wallsService.Preview()
-		}
-		return true
-	}
-	if n.Action == "cc:walls-stop" {
-		if !r.lockerAcquired && r.wallsService != nil {
-			r.wallsService.StopPreview()
-		}
-		return true
-	}
 	if id, ok := strings.CutPrefix(n.Action, "cc:brightness:"); ok {
 		brightness := r.brightness
 		if brightness == nil {

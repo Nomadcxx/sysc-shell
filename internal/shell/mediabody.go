@@ -2,15 +2,12 @@ package shell
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
-	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
-	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
 const mediaSeekAction = "media:seek:"
@@ -66,19 +63,8 @@ func mediaNotice(m theme.Metrics, title, detail string) *ui.Node {
 
 func mediaNowPlaying(r *Registry, h *PanelHost, state services.MediaState, m theme.Metrics) *ui.Node {
 	var art *ui.Image
-	if r != nil && state.ArtKey != "" {
-		if name, ok := mediaArtRequestName(state.ArtKey); ok {
-			worker := r.mediaArtFor()
-			key := icons.Key{Name: name, W: mediaArtBox, H: mediaArtBox}
-			if image, ok := worker.Lookup(key); ok {
-				art = image
-			} else {
-				_, _ = worker.Request(state.ArtKey, mediaArtBox)
-			}
-		}
-	}
-	if art == nil && r != nil && h != nil {
-		art = mediaWallpaperArtLocked(r, h)
+	if r != nil && h != nil {
+		art = mediaArtImageLocked(r, h.output, state.ArtKey, mediaArtBox)
 	}
 	background := &ui.Node{
 		Kind: ui.KindImage, Width: mediaArtBox, Height: mediaArtBox,
@@ -113,67 +99,10 @@ func mediaNowPlaying(r *Registry, h *PanelHost, state services.MediaState, m the
 	}
 }
 
-// mediaWallpaperArtLocked supplies the cached still assigned to the bar's
-// output when the player has no cover art. Registry.mu is held by the media
-// page builder; decoding remains on the thumbnail worker.
-func mediaWallpaperArtLocked(r *Registry, h *PanelHost) *ui.Image {
-	bar := r.bars[h.output]
-	if bar == nil || r.wallpaperSvc == nil {
-		return nil
-	}
-	assignment, ok := r.wallpaperSvc.Snapshot().Assignments[bar.connector()]
-	if !ok || assignment.Path == "" {
-		return nil
-	}
-	source := wallpaper.CachedStillPath(assignment.Path)
-	if source == "" {
-		return nil
-	}
-	if _, err := os.Stat(source); err != nil {
-		return nil
-	}
-	key := icons.Key{Name: source, W: mediaArtBox, H: mediaArtBox}
-	worker := r.wallpaperThumbsLocked()
-	if image, ok := worker.Lookup(key); ok {
-		return image
-	}
-	_, _, _ = worker.Request(key)
-	return nil
-}
-
 func mediaTransport(state services.MediaState, m theme.Metrics) *ui.Node {
-	playIcon := "play_arrow"
-	if state.Status == services.PlaybackPlaying {
-		playIcon = "pause"
-	}
-	buttons := []*ui.Node{
-		mediaButton("skip_previous", "media:prev", "Previous", state.CanPrev),
-		mediaButton(playIcon, "media:playpause", "Play or pause", state.CanPlay || state.CanPause),
-		mediaButton("skip_next", "media:next", "Next", state.CanNext),
-	}
-	if state.CanLoop {
-		loopIcon := "repeat"
-		if state.LoopStatus == "Track" {
-			loopIcon = "repeat_one"
-		}
-		loop := mediaButton(loopIcon, "media:loop", "Repeat", true)
-		if state.LoopStatus != "None" {
-			loop.State |= ui.StateSelected
-			loop.Fill = ui.FillAccent
-		}
-		buttons = append(buttons, loop)
-	}
-	if state.CanShuffle {
-		shuffle := mediaButton("shuffle", "media:shuffle", "Shuffle", true)
-		if state.Shuffle {
-			shuffle.State |= ui.StateSelected
-			shuffle.Fill = ui.FillAccent
-		}
-		buttons = append(buttons, shuffle)
-	}
 	return monitorCard(m, []*ui.Node{
 		monitorCardTitle("Transport", 0),
-		{Kind: ui.KindRow, Gap: theme.MarginM, Children: buttons},
+		{Kind: ui.KindRow, Gap: theme.MarginM, Children: mediaTransportButtons(state, true)},
 	})
 }
 
@@ -254,17 +183,6 @@ func mediaTime(us int64) string {
 	return fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)
 }
 
-func mediaGlyph(status services.PlaybackStatus) string {
-	switch status {
-	case services.PlaybackPlaying:
-		return "pause"
-	case services.PlaybackPaused:
-		return "play_arrow"
-	default:
-		return "music_note"
-	}
-}
-
 func mediaBodyVisible(h *PanelHost) bool {
 	return h != nil && h.id == PanelControlCenter && h.section == "media"
 }
@@ -317,51 +235,29 @@ func (r *Registry) leaveMediaBodyLocked(h *PanelHost) {
 }
 
 func (h *PanelHost) activateMedia(r *Registry, n *ui.Node) bool {
-	if h == nil || r == nil || n == nil || h.id != PanelControlCenter || h.section != "media" {
+	if h == nil || r == nil || n == nil || h.id != PanelControlCenter || (h.section != "media" && h.section != "home") {
 		return false
 	}
-	media := r.media
-	if media == nil {
+	run, seekTo, ok := mediaControl(r.media, n)
+	if !ok {
 		return false
 	}
-	switch {
-	case n.Action == "media:playpause":
-		r.scheduleControl(h, media.PlayPause)
-	case n.Action == "media:next":
-		r.scheduleControl(h, media.Next)
-	case n.Action == "media:prev":
-		r.scheduleControl(h, media.Previous)
-	case n.Action == "media:loop":
-		r.scheduleControl(h, media.ToggleLoop)
-	case n.Action == "media:shuffle":
-		r.scheduleControl(h, media.ToggleShuffle)
-	case strings.HasPrefix(n.Action, mediaSeekAction):
-		value := int64(n.Value)
-		if rest := strings.TrimPrefix(n.Action, mediaSeekAction); rest != "" {
-			if parsed, err := strconv.ParseInt(rest, 10, 64); err == nil && n.Kind != ui.KindSlider {
-				value = parsed
-			}
+	if seekTo == nil {
+		r.scheduleControl(h, run)
+		return true
+	}
+	value := *seekTo
+	h.mediaSeekPending = &value
+	r.rebuildPanel(h)
+	r.startSurfaceFrames(h)
+	r.scheduleControl(h, func() error {
+		err := run()
+		r.mu.Lock()
+		if r.panelHosts[h.id] == h && h.mediaSeekPending != nil && *h.mediaSeekPending == value {
+			h.mediaSeekPending = nil
 		}
-		h.mediaSeekPending = &value
-		r.rebuildPanel(h)
-		r.startSurfaceFrames(h)
-		r.scheduleControl(h, func() error {
-			err := media.SetPosition(value)
-			r.mu.Lock()
-			if r.panelHosts[h.id] == h && h.mediaSeekPending != nil && *h.mediaSeekPending == value {
-				h.mediaSeekPending = nil
-			}
-			r.mu.Unlock()
-			return err
-		})
-	case strings.HasPrefix(n.Action, "media:player:"):
-		bus := strings.TrimPrefix(n.Action, "media:player:")
-		if bus == "" {
-			return false
-		}
-		media.Prefer(bus)
-	default:
-		return false
-	}
+		r.mu.Unlock()
+		return err
+	})
 	return true
 }

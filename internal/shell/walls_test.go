@@ -385,10 +385,6 @@ func TestScreensaverLockMakesSettingsAndPreviewUnavailable(t *testing.T) {
 		}
 	}
 	activateWallsAction(r, h, preview)
-	ccPreview := &ui.Node{Action: "cc:walls-preview"}
-	hcc := &PanelHost{id: PanelControlCenter, section: "home"}
-	r.wallsSnapshot.CanPreview = true
-	hcc.activateControlCentre(r, ccPreview)
 	r.mu.Unlock()
 	_, previews, _, _ := service.counts()
 	if previews != 0 {
@@ -412,21 +408,12 @@ func TestManagedSnapshotRefreshesScreensaverPane(t *testing.T) {
 	}
 }
 
-func TestMissingUnitDoesNotDisableStandalonePreview(t *testing.T) {
-	snapshot := readyWallsSnapshot()
-	snapshot.LoadState, snapshot.UnitFileState = "not-found", "not-found"
-	snapshot.ServiceAvailable = false
-	snapshot.CanApply = false
-	snapshot.CanPreview = true
-	row := ccWallsRow(240, snapshot, false, false)
-	preview := findNode(row, func(n *ui.Node) bool { return n.Action == "cc:walls-preview" })
-	settings := findNode(row, func(n *ui.Node) bool { return n.Action == "settings-section:Screensaver" })
-	if preview == nil || preview.State.Has(ui.StateDisabled) || settings == nil {
-		t.Fatalf("missing unit removed standalone Preview or Settings navigation: %s", renderText(row))
-	}
-	if !strings.Contains(renderText(row), "Screensaver service is not installed") {
-		t.Fatalf("missing unit state is hidden: %s", renderText(row))
-	}
+// renderTextWithTooltips is renderText plus every tooltip: Home carries the
+// screensaver state on its pill's tooltip, where the page has no row for it.
+func renderTextWithTooltips(n *ui.Node) string {
+	out := renderText(n)
+	walkNodes(n, func(c *ui.Node) { out += " " + c.Tooltip })
+	return out
 }
 
 func TestWallsRelayUpdatesBothPanelsAndClosingOneKeepsService(t *testing.T) {
@@ -444,7 +431,7 @@ func TestWallsRelayUpdatesBothPanelsAndClosingOneKeepsService(t *testing.T) {
 		return r.wallsSnapshot.Theme == "nord"
 	})
 	r.mu.Lock()
-	if !strings.Contains(renderText(settingsHost.root), "nord") || !strings.Contains(renderText(r.panelHosts[PanelControlCenter].root), "Enabled at login") || !strings.Contains(renderText(r.panelHosts[PanelControlCenter].root), "Running") {
+	if !strings.Contains(renderText(settingsHost.root), "nord") || !strings.Contains(renderTextWithTooltips(r.panelHosts[PanelControlCenter].root), "Enabled at login") || !strings.Contains(renderTextWithTooltips(r.panelHosts[PanelControlCenter].root), "Running") {
 		r.mu.Unlock()
 		t.Fatalf("panels do not share the new snapshot: settings=%q control=%q", renderText(settingsHost.root), renderText(r.panelHosts[PanelControlCenter].root))
 	}
@@ -464,8 +451,8 @@ func TestWallsRelayUpdatesBothPanelsAndClosingOneKeepsService(t *testing.T) {
 	})
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !strings.Contains(renderText(r.panelHosts[PanelControlCenter].root), "Failed") {
-		t.Fatalf("remaining Control Centre did not update: %q", renderText(r.panelHosts[PanelControlCenter].root))
+	if !strings.Contains(renderTextWithTooltips(r.panelHosts[PanelControlCenter].root), "Failed") {
+		t.Fatalf("remaining Control Centre did not update: %q", renderTextWithTooltips(r.panelHosts[PanelControlCenter].root))
 	}
 }
 
@@ -478,10 +465,10 @@ func TestCaffeineCaptionDoesNotSubmitWallsCommands(t *testing.T) {
 	r.mu.Lock()
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	offRoot := ccHome(r, h)
-	off := renderText(offRoot)
+	off := renderTextWithTooltips(offRoot)
 	r.inhibitWanted = true
 	onRoot := ccHome(r, h)
-	on := renderText(onRoot)
+	on := renderTextWithTooltips(onRoot)
 	r.mu.Unlock()
 	if strings.Contains(off, "Caffeine does not pause the screensaver") || !strings.Contains(on, "Caffeine does not pause the screensaver") {
 		t.Fatalf("Caffeine caption off/on = %q / %q", off, on)
@@ -651,6 +638,34 @@ func waitFor(t *testing.T, ready func() bool) {
 		case <-deadline.C:
 			t.Fatal("condition did not settle before deadline")
 		case <-ticker.C:
+		}
+	}
+}
+
+func TestMissingUnitKeepsSettingsPreviewAvailable(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.LoadState, snapshot.UnitFileState = "not-found", "not-found"
+	snapshot.ServiceAvailable = false
+	snapshot.CanApply = false
+	snapshot.CanPreview = true
+	r, h, _ := newOpenWallsSettings(t, snapshot)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	preview := findNode(h.root, func(n *ui.Node) bool { return n.Action == "walls:preview" })
+	if preview == nil || preview.State.Has(ui.StateDisabled) {
+		t.Fatalf("missing unit disabled Settings Preview: %s", renderText(h.root))
+	}
+}
+
+func TestHomeNoLongerHandlesScreensaverPreview(t *testing.T) {
+	r := &Registry{wallsSnapshot: readyWallsSnapshot()}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	for _, action := range []string{"cc:walls-preview", "cc:walls-stop"} {
+		if h.activateControlCentre(r, &ui.Node{Action: action}) {
+			t.Errorf("%s is still handled by the Control Centre", action)
+		}
+		if findNode(ccHome(r, h), func(n *ui.Node) bool { return n.Action == action }) != nil {
+			t.Errorf("Home still renders %s", action)
 		}
 	}
 }

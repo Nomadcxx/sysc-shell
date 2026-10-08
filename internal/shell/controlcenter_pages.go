@@ -16,7 +16,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
-	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
 
 const (
@@ -30,13 +29,8 @@ const (
 	// not listed because they are derived from these and the gap between
 	// them -- the two were sized to fit the old gap exactly, so a literal
 	// would silently overflow the moment the ladder moved.
-	ccPageH         = 480
-	ccWallsRowH     = 120
-	ccHomePageH     = ccPageH + theme.MarginL + ccWallsRowH
-	ccIdentityCardH = 96
-	ccTogglePillH   = 48
-	ccCardH         = 88
-	ccSplitH        = 2*ccCardH + theme.MarginS
+	ccPageH = 480
+	ccCardH = 88
 	// The left column is what the body has left once the right column and the
 	// gap between them are taken: ccBodyWidth resolves to 596 at the standard
 	// 700px panel, and 356 + MarginL + 228 came to 597 -- one pixel wider than
@@ -51,7 +45,6 @@ const (
 	ccTileW          = (ccRightColumnW - theme.MarginM) / 2
 	ccGaugeSize      = 40
 	ccSliderCapsuleH = 52
-	ccSlidersH       = 2*ccSliderCapsuleH + theme.MarginM
 	ccSliderW        = 360
 	ccValueW         = 44
 	ccAvatarIconSize = 28
@@ -137,202 +130,6 @@ func ccAvatar(r *Registry, h *PanelHost, identity ccIdentity) *ui.Node {
 		_, _, _ = r.trayIcons.Request(key)
 	}
 	return ccAvatarNode(nil)
-}
-
-func ccHome(r *Registry, h *PanelHost) *ui.Node {
-	m := h.metrics()
-	identity := ccIdentity{}
-	snap := services.Snapshot{}
-	now := time.Time{}
-	reading := services.Reading{}
-	caffeine, dnd := false, false
-	wallsSnapshot := walls.Snapshot{}
-	locked := false
-	var audio services.AudioState
-	var brightness services.BrightnessState
-	var media services.MediaState
-	var displays []services.DisplayInfo
-	audioOK, brightnessOK := false, false
-	if r != nil {
-		identity = r.controlIdentity
-		snap, now, reading = r.sample, r.now, r.reading
-		caffeine = r.inhibitWanted
-		wallsSnapshot = r.wallsSnapshot
-		locked = r.lockerAcquired
-		if r.notify != nil {
-			_, dnd = r.notify.dndState(now)
-		}
-		if r.audio != nil {
-			audio, audioOK = r.audio.CachedState()
-		}
-		if r.brightness != nil {
-			brightness, brightnessOK = r.brightness.CachedState()
-			displays = r.brightness.CachedDisplays()
-		}
-		media = r.mediaState
-	}
-	// External ScreenSaver inhibits (media players, browsers) are shown next
-	// to the manual caffeine toggle so the row never implies caffeine caused
-	// them. Names arrive through Registry.SetExternalInhibitors.
-	var holding []string
-	if r != nil {
-		for _, inh := range r.externalInhibitors {
-			if name := ccText(inh.App); name != ccDash {
-				holding = append(holding, name)
-			}
-		}
-	}
-
-	identityRows := []*ui.Node{
-		{Kind: ui.KindText, Text: ccText(identity.Name), TextRole: theme.RoleTitle},
-		{Kind: ui.KindText, Text: ccText(identity.Account), TextRole: theme.RoleCaption},
-		{Kind: ui.KindText, Text: "Uptime " + ccText(identity.Uptime), TextRole: theme.RoleCaption},
-	}
-	if h != nil && h.errLabel != "" {
-		identityRows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, identityRows...)
-	}
-	mediaTitle := "Nothing playing"
-	if media.Available {
-		mediaTitle = ccText(media.Title)
-	}
-	mediaTile := ccQuickTile(ccRightColumnW, mediaGlyph(media.Status), "Now playing", mediaTitle, "section:media", media.Available)
-	mediaTile.Name = "Now playing"
-	mediaTile.Height = ccIdentityCardH - 2*m.CardPadding
-	mediaTile.Padding = m.CardPadding
-	if !media.Available {
-		ccDisable(mediaTile)
-	}
-	identityCard := monitorCard(m, []*ui.Node{{
-		Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
-			ccAvatar(r, h, identity),
-			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: identityRows},
-			mediaTile,
-		},
-	}})
-	identityCard.Height = ccIdentityCardH
-
-	quickWidth := max((ccBodyWidth(h)-2*theme.MarginM)/3, 0)
-	tileW := ccTileW
-	caffeineButton := ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine)
-	// The page height is fixed, so the idle-held list rides on the tooltip
-	// rather than taking a row of its own or overflowing this one.
-	if len(holding) > 0 {
-		caffeineButton.Tooltip = "Idle held: " + strings.Join(holding, ", ")
-	}
-	togglePill := &ui.Node{Kind: ui.KindRow, Height: ccTogglePillH, Gap: theme.MarginM, Children: []*ui.Node{
-		caffeineButton,
-		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
-		ccQuickAccessButton(quickWidth, "terminal", "Terminal Art", "cc:terminal-art", false),
-	}}
-	wallsRow := ccWallsRow(quickWidth, wallsSnapshot, caffeine, locked)
-
-	weatherSummary, weatherTone := ccWeatherSummary(reading)
-	clockWeather := monitorCard(m, []*ui.Node{
-		monitorCardTitle(ccClock(now), 0),
-		{Kind: ui.KindText, Text: ccDate(now), TextRole: theme.RoleCaption},
-		{Kind: ui.KindText, Text: weatherSummary, Tone: weatherTone},
-	})
-	clockWeather.Height = ccCardH
-	// The clock and date own the leading edge, so the scene sits hard against
-	// the trailing one, where the scrim is enough to keep the summary legible.
-	clockWeather = weatherCardWithEffect(clockWeather, reading, weatherHomeEffectKey, 1)
-	gpuSelector, gpuOK := selectGPU(snap)
-	slotWidth := (ccLeftColumnW - 2*m.CardPadding - 3*theme.MarginM) / 4
-	resourceRow := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
-		ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}, true, slotWidth),
-		ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}, true, slotWidth),
-		ccResourceGroup(snap, "temperature", "Temp", services.Selector{Source: services.SourceCPU, Subject: "temperature"}, true, slotWidth),
-		ccResourceGroup(snap, "gpu", "GPU", gpuSelector, gpuOK, slotWidth),
-	}}
-	sysmon := monitorCard(m, []*ui.Node{resourceRow})
-	sysmon.Name, sysmon.Role = "System", "group"
-	sysmon.Height = ccCardH
-	left := &ui.Node{Kind: ui.KindColumn, Width: ccLeftColumnW, Height: ccSplitH, Gap: theme.MarginS,
-		Children: []*ui.Node{clockWeather, sysmon}}
-
-	battery := ccDash
-	if b := snap.Battery; b != nil && b.Present && b.ChargeValid {
-		battery = fmt.Sprintf("%.0f%%", b.Charge*100)
-	}
-	profile := ccDash
-	if h != nil && h.profileActive != "" {
-		profile = powerProfileLabel(h.profileActive)
-	}
-	mute := ccQuickTile(tileW, "volume_off", "Mute", ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
-	if !audioOK {
-		ccDisable(mute)
-	}
-	nextProfile := hProfileNext(h)
-	profileTile := ccQuickTile(tileW, "balance", "Profile", profile, "cc:profile:"+nextProfile, false)
-	profileTile.Name = "Power profile"
-	if nextProfile == "" {
-		ccDisable(profileTile)
-	}
-	dndTile := ccQuickTile(tileW, "do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
-	dndTile.Name = "Do not disturb"
-	right := &ui.Node{Kind: ui.KindColumn, Width: ccRightColumnW, Height: ccSplitH, Gap: theme.MarginS, Children: []*ui.Node{
-		{Kind: ui.KindRow, Height: ccCardH, Gap: theme.MarginM, Children: []*ui.Node{
-			mute,
-			dndTile,
-		}},
-		{Kind: ui.KindRow, Height: ccCardH, Gap: theme.MarginM, Children: []*ui.Node{
-			profileTile,
-			ccBatteryTile(tileW, battery),
-		}},
-	}}
-	split := &ui.Node{Kind: ui.KindRow, Height: ccSplitH, Gap: theme.MarginL, Children: []*ui.Node{left, right}}
-
-	brightnessSliders := []*ui.Node{}
-	if len(displays) > 1 {
-		for _, d := range displays {
-			brightnessSliders = append(brightnessSliders,
-				ccSlider(m, "brightness_high", "Brightness "+d.Label, "cc:brightness:"+d.ID, d.Level, d.OK))
-		}
-	} else {
-		brightnessSliders = append(brightnessSliders,
-			ccSlider(m, "brightness_high", "Brightness", "cc:brightness", brightness.Level, brightnessOK))
-	}
-	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginM,
-		Children: append([]*ui.Node{ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK)}, brightnessSliders...)}
-	return &ui.Node{Kind: ui.KindColumn, Height: ccHomePageH, Gap: theme.MarginL,
-		Children: []*ui.Node{identityCard, togglePill, wallsRow, split, sliders}}
-}
-
-func ccWallsRow(width int, snapshot walls.Snapshot, caffeine, locked bool) *ui.Node {
-	leftDetail := wallsServiceStatus(snapshot)
-	left := ccQuickTile(width, "schedule", "Screensaver", leftDetail, "settings-section:Screensaver", false)
-	left.Height = ccWallsRowH
-	left.Name = "Screensaver. " + wallsServiceStatus(snapshot)
-	if caffeine && snapshot.Running() {
-		left.Padding = theme.MarginM
-		if len(left.Children) > 0 && left.Children[0].Kind == ui.KindColumn {
-			left.Children[0].Children = append(left.Children[0].Children, &ui.Node{
-				Kind: ui.KindText, Text: "Caffeine does not pause the screensaver.",
-				TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
-			})
-		}
-		left.Name += ". Caffeine does not pause the screensaver."
-	}
-
-	label, icon, detail, action := "Preview", "play_arrow", "Uses saved settings", "cc:walls-preview"
-	if snapshot.Previewing {
-		label, icon, detail, action = "Stop preview", "stop", "Preview session active; display coverage unknown", "cc:walls-stop"
-		if snapshot.PreviewStopping {
-			detail = "Stopping preview"
-		} else if !snapshot.PreviewReady {
-			detail = "Starting preview"
-		}
-	} else if !snapshot.CanPreview {
-		detail = "Unavailable: " + wallsCapabilityReason(snapshot, "preview")
-	}
-	preview := ccQuickTile(width, icon, label, detail, action, false)
-	preview.Height = ccWallsRowH
-	preview.Name = label + ". " + detail
-	if locked || snapshot.ActionPending || (!snapshot.CanPreview && !snapshot.Previewing) || snapshot.PreviewStopping {
-		preview.State |= ui.StateDisabled
-		preview.AriaDisabled = true
-	}
-	return &ui.Node{Kind: ui.KindRow, Height: ccWallsRowH, Gap: theme.MarginM, Children: []*ui.Node{left, preview}}
 }
 
 func ccText(s string) string {
@@ -476,18 +273,6 @@ func ccQuickTile(width int, icon, label, value, action string, selected bool) *u
 		n.Fill = ui.FillAccent
 	}
 	return n
-}
-
-func ccBatteryTile(width int, value string) *ui.Node {
-	return &ui.Node{
-		Kind: ui.KindCapsule, Width: width, Height: ccCardH, Padding: theme.MarginL,
-		Shape: ui.ShapeCard, Stroke: 1, StrokeFill: ui.FillOutline, // token-exempt: a hairline border, not a ladder value
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-			{Kind: ui.KindIcon, Icon: "battery_full"},
-			{Kind: ui.KindText, Text: "Battery", TextRole: theme.RoleLabel},
-			{Kind: ui.KindText, Text: value, TextRole: theme.RoleCaption, Tabular: true},
-		}}},
-	}
 }
 
 func ccDisable(n *ui.Node) {

@@ -75,9 +75,10 @@ func weatherEffectNode(reading services.Reading, key string, bias float64) *ui.N
 }
 
 // weatherCardWithEffect keeps card chrome and accessibility on the original
-// capsule while layering the effect, scrim, and existing foreground in its
-// content box. The current card grammar has one foreground child; malformed
-// cards are left untouched rather than losing content.
+// capsule and makes the effect the card itself: the capsule's padding moves
+// onto the foreground, so the scene fills the card edge to edge while the
+// text keeps its inset. The current card grammar has one foreground child;
+// malformed cards are left untouched rather than losing content.
 func weatherCardWithEffect(card *ui.Node, reading services.Reading, key string, bias float64) *ui.Node {
 	if card == nil || len(card.Children) != 1 || card.Children[0] == nil {
 		return card
@@ -87,13 +88,30 @@ func weatherCardWithEffect(card *ui.Node, reading services.Reading, key string, 
 		return card
 	}
 	effect.Shape = card.Shape
+	foreground := card.Children[0]
+	foreground.Padding += card.Padding
+	card.Padding = 0
 	card.Children = []*ui.Node{{
 		Kind: ui.KindStack,
 		Children: []*ui.Node{
 			effect,
-			{Kind: ui.KindCapsule, Fill: ui.FillScrim, Shape: card.Shape},
-			card.Children[0],
+			{Kind: ui.KindCapsule, Fill: weatherScrimFill(bias), Shape: card.Shape},
+			foreground,
 		},
 	}}
 	return card
+}
+
+// weatherScrimFill darkens the side the text is on. The scene sits toward
+// the bias end, so the text is at the other; a centred scene has the text
+// beneath it and keeps the flat scrim.
+func weatherScrimFill(bias float64) ui.Fill {
+	switch {
+	case bias > 0:
+		return ui.FillScrimFadeLeading
+	case bias < 0:
+		return ui.FillScrimFadeTrailing
+	default:
+		return ui.FillScrim
+	}
 }
