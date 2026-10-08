@@ -28,6 +28,7 @@ commit gate.
 
 ```text
 cmd/sysc-shell/                executable
+cmd/sysc-panel-preview/        paints a plugin panel tree (JSON) to a PNG with the host's own layout and painter
 internal/platform/wayland/     Wayland connection, protocols, outputs, seats, scaling, surfaces
 internal/platform/niri/        Niri socket protocol and state projection
 internal/render/               buffers, rasterisation, damage, frame scheduling
@@ -51,3 +52,24 @@ plugins/reference/             in-tree reference plugin (weather)
 tests/integration/             Niri and Wayland integration checks
 docs/                          architecture, roadmap, designs and plans
 ```
+
+## Panel previews
+
+`cmd/sysc-panel-preview` renders a plugin panel's wire tree to a PNG through the
+host's own converter, layout and painter, for catalog screenshots and
+documentation. It exists as a command, not an importable package, because the
+default theme lives in `internal/shell` and a public package importing it would
+drag the shell's whole dependency graph into every consumer.
+
+```sh
+go install ./cmd/sysc-panel-preview
+sysc-panel-preview -width 360 -height 480 -o panel.png tree.json
+```
+
+`-scale` is in 120ths (120 is 100%; the default 180 is 150%). The output is an
+opaque panel with transparent rounded corners on the default dark theme, with
+no animation, hover or focus state. A tree the host would refuse fails with the
+host's message and writes no file. Image nodes are decoded from their paths as
+the host does, and an image that cannot be decoded is an error rather than an
+empty box. The painted area is capped at 32 million pixels. Text uses the fonts
+installed on the machine, so output can differ between machines.
