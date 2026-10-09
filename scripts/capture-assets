@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# scripts/capture-assets regenerates the documentation and promo images that
+# the shell can paint from fixture state (docs/plans/2026-10-09-assets-capture-design.md),
+# on the laptop test bench, and merges them into the assets folder.
+#
+# It ships the committed tree (git archive HEAD, so the build names what it
+# contains), runs the TestAsset scenes there at the laptop's real scale, pulls
+# the pictures back, and merges the per-image rows into manifest.json. Real
+# session captures (grim stills, the terminal-art video) are made by the
+# recipes in the assets folder and add their own rows.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF2'
+Usage: scripts/capture-assets [--host laptop|local] [--assets DIR] [--backdrop FILE] [--dry-run]
+
+  --host      where the scenes run (default: laptop)
+  --assets    the assets folder (default: ~/sysc-assets)
+  --backdrop  wallpaper still the panels are painted over (default: a built-in gradient)
+  --dry-run   check the tree and print the plan; run nothing
+
+Environment: SYSC_DEPLOY_LAPTOP (default nomadx@192.168.0.64),
+SYSC_DEPLOY_LAPTOP_PORT (default 7777).
+EOF2
+}
+
+host=laptop assets=$HOME/sysc-assets backdrop="" dry=0
+while [ $# -gt 0 ]; do
+	case $1 in
+	--host) host=${2:?--host needs a value}; shift 2 ;;
+	--assets) assets=${2:?--assets needs a directory}; shift 2 ;;
+	--backdrop) backdrop=${2:?--backdrop needs a file}; shift 2 ;;
+	--dry-run) dry=1; shift ;;
+	-h | --help) usage; exit 0 ;;
+	*) usage >&2; exit 2 ;;
+	esac
+done
+case $host in laptop | local) ;; *) echo "capture-assets: unknown host $host" >&2; exit 2 ;; esac
+
+laptop=${SYSC_DEPLOY_LAPTOP:-nomadx@192.168.0.64}
+port=${SYSC_DEPLOY_LAPTOP_PORT:-7777}
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+	echo "capture-assets: refused: the tree has uncommitted changes; commit them so each image names the code that made it" >&2
+	exit 1
+fi
+rev=$(git rev-parse --short=12 HEAD)
+echo "capture-assets: revision $rev, host $host, assets $assets"
+if [ "$dry" = 1 ]; then
+	echo "capture-assets: dry run; nothing was built or written"
+	exit 0
+fi
+
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+backdrop_name=""
+[ -n "$backdrop" ] && backdrop_name=$(basename "$backdrop")
+
+run_scenes='go test -count=1 -p 2 -run "^TestAsset" ./internal/shell/'
+case $host in
+local)
+	work=$(mktemp -d)
+	git archive HEAD | tar -x -C "$work"
+	(cd "$work" && SYSC_ASSETS_DIR="$stage" SYSC_ASSETS_REV="$rev" ${backdrop:+SYSC_ASSETS_BACKDROP="$backdrop"} bash -c "$run_scenes")
+	rm -rf "$work"
+	;;
+laptop)
+	ssh_laptop() { ssh -p "$port" "$laptop" "$@"; }
+	work="sysc-assets-work/shell-$rev"
+	ssh_laptop "mkdir -p sysc-assets-work && find sysc-assets-work -maxdepth 1 -name 'shell-*' -exec rm -rf {} + ; mkdir -p $work sysc-assets-work/out"
+	git archive HEAD | ssh_laptop "tar -x -C $work"
+	if [ -n "$backdrop" ]; then
+		ssh_laptop "cat > sysc-assets-work/$backdrop_name" <"$backdrop"
+	fi
+	ssh_laptop "rm -rf sysc-assets-work/out && mkdir -p sysc-assets-work/out && cd $work && \
+		SYSC_ASSETS_DIR=\$HOME/sysc-assets-work/out SYSC_ASSETS_REV=$rev \
+		${backdrop:+SYSC_ASSETS_BACKDROP=\$HOME/sysc-assets-work/$backdrop_name} $run_scenes"
+	ssh_laptop "tar -C sysc-assets-work/out -c ." | tar -x -C "$stage"
+	;;
+esac
+
+mkdir -p "$assets"
+[ -d "$stage/shell" ] || { echo "capture-assets: the scenes wrote no images" >&2; exit 1; }
+rm -rf "$assets/shell"
+cp -a "$stage/shell" "$assets/shell"
+
+# Merge this run's rows over manifest.json: rows for the images just written are
+# replaced, rows from other sources (real-session recipes) are kept.
+manifest=$assets/manifest.json
+[ -f "$manifest" ] || echo '[]' >"$manifest"
+rows=("$stage"/.manifest.d/*.json)
+jq -n --slurpfile old "$manifest" --slurpfile fresh <(jq -s '.' "${rows[@]}") \
+	'($old[0] | map(select(.path as $p | ($fresh[0] | map(.path) | index($p)) | not))) + $fresh[0] | sort_by(.path)' \
+	>"$manifest.new"
+mv "$manifest.new" "$manifest"
+
+# Every manifest row has a file and every image has a row.
+bad=0
+while IFS= read -r p; do
+	[ -f "$assets/$p" ] || { echo "capture-assets: manifest row without a file: $p" >&2; bad=1; }
+done < <(jq -r '.[].path' "$manifest")
+while IFS= read -r f; do
+	jq -e --arg p "${f#$assets/}" 'map(.path) | index($p)' "$manifest" >/dev/null || { echo "capture-assets: image without a manifest row: ${f#$assets/}" >&2; bad=1; }
+done < <(find "$assets/shell" -name '*.png' | sort)
+[ "$bad" = 0 ] || exit 1
+echo "capture-assets: $(jq 'length' "$manifest") manifest rows, $(find "$assets/shell" -name '*.png' | wc -l) shell images in $assets"
