@@ -52,3 +52,14 @@ func CachedStillPath(path string) string {
 	}
 	return filepath.Join(dir, cacheName(path, info.ModTime().Unix(), info.Size()))
 }
+
+// PreviewFailed reports that the generator recorded this version of path as
+// impossible to preview. A changed file has a different key and reads false.
+func PreviewFailed(path string) bool {
+	still := CachedStillPath(path)
+	if still == "" {
+		return false
+	}
+	_, err := os.Stat(failMarker(still))
+	return err == nil
+}

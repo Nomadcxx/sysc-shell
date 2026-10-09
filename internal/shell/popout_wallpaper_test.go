@@ -267,13 +267,13 @@ func TestWallpaperGridPacksFourTilesPerRow(t *testing.T) {
 	}
 	// Until a thumbnail decodes, the tile keeps the same box and shows the
 	// kind glyph rather than leaving a hole in the grid (D6).
-	thumb := tile.Children[0].Children[0]
+	thumb := wallpaperTileThumb(tile)
 	switch thumb.Kind {
 	case ui.KindImage:
 		if g := wallpaperGridOf(h); thumb.ImageW != g.thumbW || thumb.ImageH != g.thumbH {
 			t.Fatalf("raster box = %dx%d, want %dx%d", thumb.ImageW, thumb.ImageH, g.thumbW, g.thumbH)
 		}
-	case ui.KindRow:
+	case ui.KindStack, ui.KindRow:
 		// The placeholder holds the tile's box so a late preview cannot reflow
 		// the grid. It carries a glyph only where the embedded icon subset has
 		// one, which for media it does not.
@@ -971,15 +971,30 @@ func TestWallpaperReportsPreviewGeneration(t *testing.T) {
 	snap.ThumbsDone, snap.ThumbsTotal = 12, 645
 	h.wallpaperSnap = snap
 	reg.rebuildPanel(h)
-	if !hasText("Generating previews") || !hasText("12 / 645") {
-		t.Error("a library still generating previews must say so")
+	bar := findNode(h.root, func(n *ui.Node) bool { return n.Role == "progressbar" })
+	if bar == nil || bar.Name != "Generating previews" || bar.Value != 12 || bar.Max != 645 {
+		t.Errorf("progress bar = %+v, want 12 of 645", bar)
+	}
+	if !hasText("12/645") || !hasText("\u2591") {
+		t.Error("a library still generating previews must draw its block bar and count")
+	}
+
+	// The open folder's own progress leads; the library's follows.
+	snap.ThumbsFolder, snap.ThumbsFolderDone, snap.ThumbsFolderTotal = h.wallpaperDir, 3, 5
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if !hasText("3/5") || !hasText("library 12/645") {
+		t.Error("the open folder's progress must lead, with the library's after it")
+	}
+	if bar := findNode(h.root, func(n *ui.Node) bool { return n.Role == "progressbar" }); bar == nil || bar.Value != 3 || bar.Max != 5 {
+		t.Errorf("progress bar = %+v, want the folder's 3 of 5", bar)
 	}
 
 	// Finished generation says nothing at all.
 	snap.ThumbsDone = 645
 	h.wallpaperSnap = snap
 	reg.rebuildPanel(h)
-	if hasText("Generating previews") {
+	if findNode(h.root, func(n *ui.Node) bool { return n.Role == "progressbar" }) != nil {
 		t.Error("a finished library must not keep reporting progress")
 	}
 
@@ -1253,7 +1268,7 @@ func TestWallpaperTileGeometry(t *testing.T) {
 				inner.Y += tile.Padding
 				inner.W -= 2 * tile.Padding
 				inner.H -= 2 * tile.Padding
-				thumb := tile.Children[0].Children[0].Bounds
+				thumb := wallpaperTileThumb(tile).Bounds
 				if thumb.X < inner.X || thumb.Y < inner.Y ||
 					thumb.X+thumb.W > inner.X+inner.W || thumb.Y+thumb.H > inner.Y+inner.H {
 					t.Errorf("tile %d thumbnail %+v leaves the padded tile %+v", i, thumb, inner)
@@ -1717,4 +1732,66 @@ func TestWallpaperOpeningAFolderPrioritisesItsPreviews(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// A tile says what its preview is doing: decoding while the preview is
+// missing, and "no preview" once the generator has recorded a failure, instead
+// of an empty box either way (sysc-1069).
+func TestWallpaperTileStates(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := seedWallpaperRoot(t)
+	reg, _, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	g := wallpaperGridOf(h)
+	tileText := func(n *ui.Node) string {
+		var b strings.Builder
+		walkNodes(n, func(c *ui.Node) {
+			if c.Kind == ui.KindText {
+				b.WriteString(c.Text)
+				b.WriteString("|")
+			}
+		})
+		return b.String()
+	}
+	pending := wallpaper.Entry{Name: "a.png", Path: filepath.Join(root, "a.png"), Kind: wallpaper.KindImage}
+	if got := tileText(wallpaperTile(reg, h, g, pending, 1)); !strings.Contains(got, "decoding") {
+		t.Errorf("a tile with no preview reads %q, want it decoding", got)
+	}
+
+	broken := wallpaper.Entry{Name: "b.png", Path: filepath.Join(root, "b.png"), Kind: wallpaper.KindImage}
+	marker := strings.TrimSuffix(wallpaper.CachedStillPath(broken.Path), ".jpg") + ".fail"
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := tileText(wallpaperTile(reg, h, g, broken, 1)); !strings.Contains(got, "no preview") || strings.Contains(got, "decoding") {
+		t.Errorf("a recorded failure reads %q, want no preview", got)
+	}
+
+	// The keyboard selection carries the accent corner brackets.
+	h.wallpaperSel = 1
+	if got := tileText(wallpaperTile(reg, h, g, pending, 1)); !strings.Contains(got, "\u250c") {
+		t.Errorf("the selected tile reads %q, want corner brackets", got)
+	}
+
+	// An applied tile names the output it is on.
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSnap.Assignments = map[string]wallpaper.Assignment{"DP-1": {Path: pending.Path, Kind: wallpaper.KindImage}}
+	if got := tileText(wallpaperTile(reg, h, g, pending, 0)); !strings.Contains(got, "[\u2713] DP-1") {
+		t.Errorf("the applied tile reads %q, want [\u2713] DP-1", got)
+	}
+}
+
+// wallpaperTileThumb is a tile's thumbnail box: the first child of its content
+// column, whether or not the selection overlay wraps that column in a stack.
+func wallpaperTileThumb(tile *ui.Node) *ui.Node {
+	content := tile.Children[0]
+	if content.Kind == ui.KindStack {
+		content = content.Children[0]
+	}
+	return content.Children[0]
 }
