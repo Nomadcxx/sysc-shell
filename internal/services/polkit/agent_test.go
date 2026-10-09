@@ -262,6 +262,7 @@ type testAuthority struct {
 	unregistered chan struct{}
 	registerErr  *dbus.Error
 	onRegister   func()
+	onUnregister func()
 }
 
 func (s *testAuthority) RegisterAuthenticationAgentWithOptions(_ testSubject, _ string, _ dbus.ObjectPath, _ map[string]dbus.Variant) *dbus.Error {
@@ -459,6 +460,154 @@ func TestAgentStopsWhenRegistrationReplyStalls(t *testing.T) {
 	released = true
 }
 
+func TestAgentClosesQueueWhenContextEndsBeforeConnection(t *testing.T) {
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	agent := New(Options{
+		Policy: PolicyAuto,
+		Bus: func() (*dbus.Conn, error) {
+			cancel()
+			return nil, errors.New("bus disconnected")
+		},
+		Helper: HelperSession{SocketPath: listener.Addr().String()},
+	})
+	active := newTestRequest("active-before-connect-failure")
+	if _, err := agent.queue.push(active); err != nil {
+		t.Fatalf("queue active request: %v", err)
+	}
+	if err := agent.Run(ctx); err != nil {
+		t.Fatalf("Agent.Run: %v", err)
+	}
+	select {
+	case <-active.Done():
+	default:
+		t.Fatal("active request survived final shutdown")
+	}
+	if _, err := agent.queue.push(newTestRequest("late-after-connect-failure")); err != errQueueClosed {
+		t.Fatalf("late push after final shutdown = %v, want %v", err, errQueueClosed)
+	}
+}
+
+func TestAgentClosesQueueWhenContextEndsDuringReconnectBackoff(t *testing.T) {
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent := New(Options{
+		Policy: PolicyAuto,
+		Bus:    func() (*dbus.Conn, error) { return nil, errors.New("bus disconnected") },
+		Helper: HelperSession{SocketPath: listener.Addr().String()},
+		Logf:   func(string, ...any) { cancel() },
+	})
+	if err := agent.Run(ctx); err != nil {
+		t.Fatalf("Agent.Run: %v", err)
+	}
+	if _, err := agent.queue.push(newTestRequest("late-during-shutdown")); err != errQueueClosed {
+		t.Fatalf("late push after final shutdown = %v, want %v", err, errQueueClosed)
+	}
+}
+
+func TestAgentRejectsAuthenticationDuringShutdown(t *testing.T) {
+	startPrivatePolkitBus(t)
+	owner, err := dbus.ConnectSessionBus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+	if reply, err := owner.RequestName(authorityName, dbus.NameFlagDoNotQueue); err != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("authority name: reply=%v err=%v", reply, err)
+	}
+	releaseUnregister := make(chan struct{})
+	registeredRelease := false
+	defer func() {
+		if !registeredRelease {
+			close(releaseUnregister)
+		}
+	}()
+	authority := &testAuthority{
+		registered: make(chan struct{}, 1), unregistered: make(chan struct{}, 1),
+		onUnregister: func() { <-releaseUnregister },
+	}
+	if err := owner.Export(authority, authorityPath, authorityIface); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	agent := New(Options{
+		Policy:    PolicyAuto,
+		Bus:       func() (*dbus.Conn, error) { return dbus.ConnectSessionBus() },
+		SessionID: func() (string, error) { return "test-session", nil },
+		Helper:    HelperSession{SocketPath: listener.Addr().String()},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- agent.Run(ctx) }()
+	select {
+	case <-authority.registered:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("agent did not register")
+	}
+	active := newTestRequest("active-before-shutdown")
+	if _, err := agent.queue.push(active); err != nil {
+		t.Fatalf("queue active request: %v", err)
+	}
+	if got := <-agent.Requests(); got.Cookie != active.Cookie {
+		t.Fatalf("active request = %q, want %q", got.Cookie, active.Cookie)
+	}
+	cancel()
+	select {
+	case <-authority.unregistered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not begin unregistering")
+	}
+	select {
+	case <-active.Done():
+	default:
+		t.Fatal("active request was not cancelled before unregistering")
+	}
+	var sender string
+	if err := owner.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, authorityName).Store(&sender); err != nil {
+		t.Fatal(err)
+	}
+	begin := make(chan *dbus.Error, 1)
+	go func() {
+		begin <- agent.BeginAuthentication(dbus.Sender(sender), "org.example.action", "Authenticate", "", nil,
+			"late-shutdown-cookie", []polkitIdentity{{Kind: "unix-user", Values: map[string]dbus.Variant{"uid": dbus.MakeVariant(os.Getuid())}}})
+	}()
+	select {
+	case callErr := <-begin:
+		if callErr == nil || callErr.Name != errCancelled {
+			t.Fatalf("late BeginAuthentication error = %v, want %s", callErr, errCancelled)
+		}
+	case req := <-agent.Requests():
+		req.Cancel()
+		t.Fatal("BeginAuthentication admitted a request during shutdown")
+	case <-time.After(time.Second):
+		t.Fatal("BeginAuthentication did not reject promptly during shutdown")
+	}
+	close(releaseUnregister)
+	registeredRelease = true
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("Agent.Run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not stop")
+	}
+}
+
 func TestAgentReregistersWhenAuthorityChangesDuringRegistration(t *testing.T) {
 	startPrivatePolkitBus(t)
 	firstOwner, err := dbus.ConnectSessionBus()
@@ -561,6 +710,96 @@ func TestAgentReregistersWhenAuthorityChangesDuringRegistration(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("agent did not stop")
+	}
+}
+
+func TestAgentIgnoresForgedAuthorityOwnerChange(t *testing.T) {
+	startPrivatePolkitBus(t)
+	authorityConn, err := dbus.ConnectSessionBus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = authorityConn.Close() })
+	if reply, err := authorityConn.RequestName(authorityName, dbus.NameFlagDoNotQueue); err != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("authority name: reply=%v err=%v", reply, err)
+	}
+	authority := &testAuthority{registered: make(chan struct{}, 1), unregistered: make(chan struct{}, 1)}
+	if err := authorityConn.Export(authority, authorityPath, authorityIface); err != nil {
+		t.Fatal(err)
+	}
+
+	attacker, err := dbus.ConnectSessionBus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = attacker.Close() })
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	agent := New(Options{
+		Policy:    PolicyAuto,
+		Bus:       func() (*dbus.Conn, error) { return dbus.ConnectSessionBus() },
+		SessionID: func() (string, error) { return "test-session", nil },
+		Helper:    HelperSession{SocketPath: listener.Addr().String()},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- agent.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Errorf("Agent.Run: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("agent did not stop")
+		}
+	})
+	select {
+	case <-authority.registered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not register")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !agent.Status().Registered && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !agent.Status().Registered {
+		t.Fatalf("agent status after registration = %+v", agent.Status())
+	}
+	var owner string
+	if err := authorityConn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, authorityName).Store(&owner); err != nil {
+		t.Fatal(err)
+	}
+
+	request := newTestRequest("forged-owner-change")
+	if _, err := agent.queue.push(request); err != nil {
+		t.Fatalf("queue request: %v", err)
+	}
+	select {
+	case <-agent.Requests():
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach the active slot")
+	}
+	if err := attacker.Emit(dbus.ObjectPath("/org/freedesktop/DBus"), "org.freedesktop.DBus.NameOwnerChanged",
+		authorityName, owner, ":1.999"); err != nil {
+		t.Fatalf("emit forged owner change: %v", err)
+	}
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if !agent.Status().Registered {
+			t.Fatalf("forged signal changed registration status: %+v", agent.Status())
+		}
+		select {
+		case <-request.Done():
+			t.Fatal("forged signal cancelled the active authentication request")
+		default:
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -682,6 +921,9 @@ func (s *testAuthority) UnregisterAuthenticationAgent(_ testSubject, _ dbus.Obje
 	select {
 	case s.unregistered <- struct{}{}:
 	default:
+	}
+	if s.onUnregister != nil {
+		s.onUnregister()
 	}
 	return nil
 }

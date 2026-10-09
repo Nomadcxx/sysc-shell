@@ -205,6 +205,63 @@ func TestPolkitPromptWaitsUntilAnOutputIsAvailable(t *testing.T) {
 	}
 }
 
+func TestPolkitPromptIsNotPresentedWhileLockerRuns(t *testing.T) {
+	r := NewRegistry(config.Default())
+	defer r.Close()
+	agent := polkit.New(polkit.Options{})
+	req := polkit.Request{Cookie: "locked", Identities: []polkit.Identity{{Kind: "unix-user", Name: "alice"}}}
+	r.mu.Lock()
+	r.polkitAgent = agent
+	r.lockerRunning = true
+	r.bars[4] = &Bar{conn: "DP-1"}
+	r.mu.Unlock()
+
+	if r.presentPolkitPrompt(agent, req) {
+		t.Fatal("prompt was presented while the session locker was running")
+	}
+	r.mu.Lock()
+	open := r.polkitHost.open_
+	r.lockerRunning = false
+	r.polkitHoldLocked(false)
+	r.mu.Unlock()
+	if open {
+		t.Fatal("prompt host opened while the session locker was running")
+	}
+	select {
+	case <-r.polkitOutputEvents:
+	default:
+		t.Fatal("unlock did not wake a prompt waiting for an output")
+	}
+	if !r.presentPolkitPrompt(agent, req) {
+		t.Fatal("waiting prompt was not presented after unlock")
+	}
+}
+
+func TestPolkitPromptSuspendsAndResumesAcrossLocker(t *testing.T) {
+	r := NewRegistry(config.Default())
+	defer r.Close()
+	agent := polkit.New(polkit.Options{})
+	req := polkit.Request{Cookie: "suspend", Identities: []polkit.Identity{{Kind: "unix-user", Name: "alice"}}}
+	r.mu.Lock()
+	r.polkitAgent = agent
+	r.polkitHost.openLocked(req, 4, "DP-1", 0)
+	r.polkitHost.phase = polkitEnteringResponse
+	r.polkitHost.field = ui.NewField("secret")
+	r.lockerRunning = true
+	r.polkitHoldLocked(true)
+	suspended := r.polkitHost.open_ && r.polkitHost.closed && r.polkitHost.field.Text == ""
+	r.lockerRunning = false
+	r.polkitHoldLocked(false)
+	resumed := r.polkitHost.open_ && !r.polkitHost.closed
+	r.mu.Unlock()
+	if !suspended {
+		t.Fatal("prompt was left visible or retained its response while the locker ran")
+	}
+	if !resumed {
+		t.Fatal("active prompt did not resume after the locker stopped")
+	}
+}
+
 func TestPolkitCancellationToastNamesRequestingProgram(t *testing.T) {
 	r := NewRegistry(config.Default())
 	defer r.Close()

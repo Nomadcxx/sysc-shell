@@ -202,6 +202,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
 		return nil
 	}
+	defer a.queue.shutdown()
 	for {
 		err := a.runConnection(ctx)
 		if ctx.Err() != nil {
@@ -259,6 +260,8 @@ func (a *Agent) runConnection(ctx context.Context) error {
 	owner := make(chan *dbus.Signal, 8)
 	conn.Signal(owner)
 	match := []dbus.MatchOption{
+		dbus.WithMatchSender("org.freedesktop.DBus"),
+		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
 		dbus.WithMatchInterface("org.freedesktop.DBus"),
 		dbus.WithMatchMember("NameOwnerChanged"),
 		dbus.WithMatchArg(0, authorityName),
@@ -289,8 +292,8 @@ func (a *Agent) runConnection(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			a.queue.shutdown()
 			a.unregister(conn, sid)
-			a.queue.cancelAll()
 			return nil
 		case sig, ok := <-owner:
 			if !ok {
@@ -299,7 +302,9 @@ func (a *Agent) runConnection(ctx context.Context) error {
 			// polkitd restarting drops every registration it held. The
 			// prompts it had queued are gone with it, so their sessions must
 			// not wait for an answer that can no longer arrive.
-			if sig != nil && sig.Name == "org.freedesktop.DBus.NameOwnerChanged" && len(sig.Body) == 3 {
+			if sig != nil && sig.Sender == "org.freedesktop.DBus" &&
+				sig.Path == "/org/freedesktop/DBus" &&
+				sig.Name == "org.freedesktop.DBus.NameOwnerChanged" && len(sig.Body) == 3 {
 				name, nameOK := sig.Body[0].(string)
 				oldOwner, oldOK := sig.Body[1].(string)
 				newOwner, newOK := sig.Body[2].(string)
@@ -469,7 +474,7 @@ func (a *Agent) BeginAuthentication(sender dbus.Sender, actionID, message, iconN
 
 	_, err := a.queue.push(req)
 	if err != nil {
-		if errors.Is(err, errQueueCancelled) {
+		if errors.Is(err, errQueueCancelled) || errors.Is(err, errQueueClosed) {
 			return dbus.NewError(errCancelled, []any{err.Error()})
 		}
 		return dbus.NewError(errFailed, []any{err.Error()})

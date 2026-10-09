@@ -668,6 +668,24 @@ func (h *polkitHost) closeSurface() {
 	h.request(wayland.AuxRequest{Output: h.output, ID: polkitSurfaceID})
 }
 
+func (h *polkitHost) suspendForLockerLocked() {
+	if !h.open_ || h.closed {
+		return
+	}
+	h.clearResponseLocked()
+	h.pressed = ""
+	h.rebuild()
+	h.closeSurface()
+}
+
+func (h *polkitHost) resumeAfterLockerLocked() {
+	if !h.open_ || !h.closed || h.output == 0 {
+		return
+	}
+	h.closed = false
+	h.request(wayland.AuxRequest{Output: h.output, Open: h.spec()})
+}
+
 func (h *polkitHost) refreshWaitingLocked(waiting int) {
 	if !h.open_ || h.waiting == waiting {
 		return

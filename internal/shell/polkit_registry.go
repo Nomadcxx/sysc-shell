@@ -160,6 +160,13 @@ func (r *Registry) presentPolkitPrompt(agent *polkit.Agent, req polkit.Request) 
 		req.Cancel()
 		return true
 	}
+	if r.polkitLockerRunningLocked() {
+		return false
+	}
+	if r.polkitHost.open_ && r.polkitHost.request_.Cookie == req.Cookie {
+		r.polkitHost.resumeAfterLockerLocked()
+		return true
+	}
 	output, connector, ok := r.polkitOutputLocked()
 	if !ok {
 		return false
@@ -261,6 +268,16 @@ func (r *Registry) polkitStatusLocked() polkit.Status {
 func (r *Registry) polkitHoldLocked(locked bool) {
 	if r.polkitAgent != nil {
 		r.polkitAgent.Hold(locked)
+	}
+	if h := r.polkitHost; h != nil && h.open_ {
+		if locked {
+			h.suspendForLockerLocked()
+		} else {
+			h.resumeAfterLockerLocked()
+		}
+	}
+	if !locked {
+		r.signalPolkitOutputChange()
 	}
 }
 

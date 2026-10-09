@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
 )
 
 // The helper paths polkit 127 uses. The socket is the path on any install
@@ -23,6 +26,7 @@ const (
 	defaultHelperSocket  = "/run/polkit/agent-helper.socket"
 	defaultHelperBinary  = "/usr/lib/polkit-1/polkit-agent-helper-1"
 	helperMaxResponseLen = 512 // PAM_MAX_RESP_SIZE, the helper's line buffer
+	helperStopGrace      = 2 * time.Second
 )
 
 // Helper tags. polkitagenthelperprivate.h defines these as the whole protocol.
@@ -87,11 +91,15 @@ func (s HelperSession) Run(ctx context.Context, ask func(Prompt) (string, error)
 	}
 
 	var (
-		in         io.WriteCloser
-		out        io.ReadCloser
-		cancel     func()
-		socketMode bool
+		in          io.WriteCloser
+		out         io.ReadCloser
+		cancel      func()
+		socketMode  bool
+		helperCmd   *exec.Cmd
+		processDone chan struct{}
+		killTimer   *time.Timer
 	)
+	var helperCompleted atomic.Bool
 	switch {
 	case isHelperSocket(socket):
 		conn, dialErr := (&net.Dialer{}).DialContext(ctx, "unix", socket)
@@ -113,21 +121,54 @@ func (s HelperSession) Run(ctx context.Context, ask func(Prompt) (string, error)
 		if pipeErr := cmd.Start(); pipeErr != nil {
 			return "", fmt.Errorf("polkit: start helper: %w", pipeErr)
 		}
+		helperCmd = cmd
+		processDone = make(chan struct{})
 		in, out, cancel = stdin, stdout, func() {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			if helperCompleted.Load() {
+				return
+			}
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			killTimer = time.AfterFunc(helperStopGrace, func() {
+				select {
+				case <-processDone:
+				default:
+					_ = cmd.Process.Kill()
+				}
+			})
 		}
 	default:
 		return "", ErrNoHelper
 	}
 
 	// One closer for both paths: the socket reads and writes over the same
-	// connection, and killing the process must also drop its stdin.
+	// connection, while the process path sends SIGTERM and waits for exit.
 	var stopOnce sync.Once
 	stop := func() { stopOnce.Do(cancel) }
-	defer stop()
 	done := make(chan struct{})
-	defer close(done)
+	defer func() {
+		close(done)
+		stop()
+		if helperCmd == nil {
+			return
+		}
+		waitDone := make(chan struct{})
+		go func() {
+			_ = helperCmd.Wait()
+			close(processDone)
+			close(waitDone)
+		}()
+		timer := time.NewTimer(helperStopGrace)
+		select {
+		case <-waitDone:
+			timer.Stop()
+		case <-timer.C:
+			_ = helperCmd.Process.Kill()
+			<-waitDone
+		}
+		if killTimer != nil {
+			killTimer.Stop()
+		}
+	}()
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -163,8 +204,10 @@ func (s HelperSession) Run(ctx context.Context, ask func(Prompt) (string, error)
 		tag, message, _ := strings.Cut(text, " ")
 		switch {
 		case tag == tagSuccess:
+			helperCompleted.Store(true)
 			return tagSuccess, nil
 		case tag == tagFailure:
+			helperCompleted.Store(true)
 			return tagFailure, nil
 		case tag == tagEchoOff || tag == tagEchoOn:
 			answer, aerr := ask(Prompt{Text: message, Secret: true, Echo: tag == tagEchoOn})

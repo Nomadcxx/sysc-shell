@@ -13,6 +13,7 @@ const maxPending = 4
 var errQueueFull = errors.New("too many pending authentication requests")
 var errQueueCancelled = errors.New("authentication request cancelled")
 var errQueueCookie = errors.New("invalid or duplicate authentication cookie")
+var errQueueClosed = errors.New("authentication agent is shutting down")
 
 // newRequest builds a request with the channels its helper session needs. The
 // caller fills in the polkit fields.
@@ -163,6 +164,7 @@ type queue struct {
 	out     chan Request
 	changed chan<- struct{}
 	held    bool
+	closed  bool
 	pending []Request
 	active  *Request
 }
@@ -177,6 +179,10 @@ type withdrawnRequest struct {
 // A refused request is canceled by the caller because nothing else will.
 func (q *queue) push(req Request) (bool, error) {
 	q.mu.Lock()
+	if q.closed {
+		q.mu.Unlock()
+		return false, errQueueClosed
+	}
 	if req.Cookie == "" {
 		q.mu.Unlock()
 		return false, errQueueCookie
@@ -257,7 +263,7 @@ func (q *queue) signalLocked() {
 // dispatchLocked shows the next pending request unless the surface is held.
 // The caller has already cleared active, so out has room.
 func (q *queue) dispatchLocked() {
-	for !q.held && len(q.pending) > 0 {
+	for !q.closed && !q.held && len(q.pending) > 0 {
 		next := q.pending[0]
 		q.pending = q.pending[1:]
 		if next.Cookie == "" {
@@ -312,7 +318,20 @@ func (q *queue) hold(locked bool) {
 // helper that died or a bus that went away: the caller is left without an
 // answer, which polkitd treats as a cancellation.
 func (q *queue) cancelAll() []Request {
+	return q.cancel(false)
+}
+
+// shutdown permanently closes admission before dropping every request. Unlike
+// cancelAll, it is only for final shutdown; a bus reconnect keeps the queue open.
+func (q *queue) shutdown() []Request {
+	return q.cancel(true)
+}
+
+func (q *queue) cancel(closeQueue bool) []Request {
 	q.mu.Lock()
+	if closeQueue {
+		q.closed = true
+	}
 	pending := q.pending
 	active := q.active
 	q.pending, q.active = nil, nil

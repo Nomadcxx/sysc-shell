@@ -40,6 +40,31 @@ func TestHelperSetuidProtocol(t *testing.T) {
 	}
 }
 
+func TestHelperProcessExitsNormallyAfterSuccess(t *testing.T) {
+	dir := t.TempDir()
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "completed")
+	script := "#!/bin/sh\n" +
+		"export POLKIT_HELPER_TEST_CHILD=1\n" +
+		"export POLKIT_HELPER_TEST_USERNAME=alice\n" +
+		"export POLKIT_HELPER_TEST_MARKER=" + shellQuote(marker) + "\n" +
+		"exec " + shellQuote(helper) + " -test.run='^TestHelperProcess$'\n"
+	binary := filepath.Join(dir, "helper")
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	session := HelperSession{SocketPath: filepath.Join(dir, "missing.sock"), BinaryPath: binary, Username: "alice", Cookie: "cookie"}
+	if outcome, err := session.Run(context.Background(), func(Prompt) (string, error) { return "secret", nil }); err != nil || outcome != tagSuccess {
+		t.Fatalf("Run() = %q, %v; want SUCCESS", outcome, err)
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "helper exited" {
+		t.Fatalf("normal helper exit marker = %q, %v", got, err)
+	}
+}
+
 func TestHelperEchoOnPromptIsNotMasked(t *testing.T) {
 	dir := t.TempDir()
 	helper, err := os.Executable()
@@ -251,6 +276,12 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(13)
 	}
 	_, _ = fmt.Fprintln(os.Stdout, tagSuccess)
+	if marker := os.Getenv("POLKIT_HELPER_TEST_MARKER"); marker != "" {
+		time.Sleep(100 * time.Millisecond)
+		if err := os.WriteFile(marker, []byte("helper exited"), 0o600); err != nil {
+			os.Exit(14)
+		}
+	}
 	os.Exit(0)
 }
 
