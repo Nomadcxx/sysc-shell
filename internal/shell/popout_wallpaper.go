@@ -299,6 +299,7 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	h.wallpaperPaletteSource = r.cfg.ThemeGen.Source
 	h.wallpaperPaletteSeed = r.cfg.ThemeGen.Seed
 	h.wallpaperThemeErr = r.themeErr
+	h.wallpaperTreeScale = h.scale120
 
 	inner := max(h.place.Panel.W-2*wallpaperPadding, 0)
 	media := wallpaperMedia(h)
@@ -321,7 +322,7 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	after = append(after, wallpaperFooter(h, inner))
 
-	grid := wallpaperGridFor(inner)
+	grid := wallpaperGridOf(h)
 	grid.dither, grid.noteTop = wallpaperDither(h, grid)
 	rows := (len(media) + wallpaperColumns - 1) / wallpaperColumns
 	used := 0
@@ -742,6 +743,9 @@ type wallpaperGrid struct {
 	// one-line note in the middle of the box.
 	dither  []string
 	noteTop int
+	// keyW and keyH are the thumbnail box in physical pixels: the size a
+	// preview is decoded to, so the painter never scales it up.
+	keyW, keyH int
 }
 
 func wallpaperGridFor(width int) wallpaperGrid {
@@ -749,7 +753,8 @@ func wallpaperGridFor(width int) wallpaperGrid {
 	thumbW := tileW - 2*wallpaperTilePad
 	thumbH := max(thumbW*wallpaper.ThumbHeight/wallpaper.ThumbWidth, 1)
 	tileH := 2*wallpaperTilePad + thumbH + wallpaperTileInnerGap + wallpaperTileCaptionH
-	return wallpaperGrid{tileW: tileW, tileH: tileH, thumbW: thumbW, thumbH: thumbH, pitch: tileH + wallpaperRowGap}
+	return wallpaperGrid{tileW: tileW, tileH: tileH, thumbW: thumbW, thumbH: thumbH, pitch: tileH + wallpaperRowGap,
+		keyW: thumbW, keyH: thumbH}
 }
 
 // wallpaperDither sizes the decoding texture to the thumbnail box: a sparse
@@ -777,7 +782,11 @@ func wallpaperDither(h *PanelHost, g wallpaperGrid) ([]string, int) {
 
 // wallpaperGridOf is the grid for this host's panel width.
 func wallpaperGridOf(h *PanelHost) wallpaperGrid {
-	return wallpaperGridFor(max(h.place.Panel.W-2*wallpaperPadding, 0))
+	g := wallpaperGridFor(max(h.place.Panel.W-2*wallpaperPadding, 0))
+	if s := ui.Scale120(h.scale120); s.Valid() {
+		g.keyW, g.keyH = s.Physical(g.thumbW), s.Physical(g.thumbH)
+	}
+	return g
 }
 
 // wallpaperRow builds one row of up to four tiles. It runs inside layout, on
@@ -1571,7 +1580,7 @@ func wallpaperThumbFor(r *Registry, g wallpaperGrid, entry wallpaper.Entry) (*ui
 // wallpaperThumbKey is the decode request for one cached preview: the
 // preview file scaled to the grid's thumbnail box.
 func wallpaperThumbKey(preview string, g wallpaperGrid) icons.Key {
-	return icons.Key{Name: preview, W: g.thumbW, H: g.thumbH}
+	return icons.Key{Name: preview, W: g.keyW, H: g.keyH}
 }
 
 // wallpaperStartLocked starts the wallpaper service if it is not running.

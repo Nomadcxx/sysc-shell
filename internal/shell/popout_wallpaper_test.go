@@ -1820,3 +1820,34 @@ func TestWallpaperVideoTagSitsOnTheThumbnail(t *testing.T) {
 		t.Error("a still is tagged as a video")
 	}
 }
+
+// On a scaled output the decode asks for the thumbnail box in physical
+// pixels, so the 2x preview is scaled down to it rather than a logical-size
+// raster being blown up by the painter (sysc-1071).
+func TestWallpaperThumbKeyIsPhysical(t *testing.T) {
+	h := &PanelHost{id: PanelWallpaper, scale120: 150}
+	h.place.Panel.W = 980
+	g := wallpaperGridOf(h)
+	key := wallpaperThumbKey("/p.jpg", g)
+	s := ui.Scale120(150)
+	if key.W != s.Physical(g.thumbW) || key.H != s.Physical(g.thumbH) {
+		t.Fatalf("decode key %dx%d, want the physical %dx%d", key.W, key.H, s.Physical(g.thumbW), s.Physical(g.thumbH))
+	}
+}
+
+// The picker's tree measures text and sizes decodes at its build scale, so a
+// configure at another scale rebuilds it, as Settings does.
+func TestAConfigureAtANewScaleRebuildsTheWallpaperPicker(t *testing.T) {
+	// No relay: a snapshot rebuild would mask a configure that never rebuilt.
+	reg, _, reqs := wallpaperPanel(t, []string{seedWallpaperRoot(t)}, false)
+	open := reqs[1].Open
+	if err := open.Callbacks.Configure(int(open.Width), int(open.Height), 150); err != nil {
+		t.Fatal(err)
+	}
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.wallpaperTreeScale != 150 {
+		t.Fatalf("picker tree built at %d after a configure at 150", h.wallpaperTreeScale)
+	}
+}

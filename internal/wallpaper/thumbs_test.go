@@ -84,8 +84,10 @@ func TestThumbGeneratesAtTheTileSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode preview: %v", err)
 	}
-	if cfg.Width != ThumbWidth || cfg.Height != ThumbHeight {
-		t.Fatalf("preview is %dx%d, want %dx%d", cfg.Width, cfg.Height, ThumbWidth, ThumbHeight)
+	// Previews are cached at twice the tile so a scaled output downsamples
+	// them rather than blowing them up.
+	if cfg.Width != PreviewWidth || cfg.Height != PreviewHeight || PreviewWidth != 2*ThumbWidth {
+		t.Fatalf("preview is %dx%d, want %dx%d", cfg.Width, cfg.Height, PreviewWidth, PreviewHeight)
 	}
 
 	// A second pass is a no-op: the cache is keyed by path, mtime, and size.
@@ -340,8 +342,8 @@ func TestCoverScaleMatchesTheSinglePassReference(t *testing.T) {
 		}
 	}
 	got := coverScale(src)
-	want := image.NewRGBA(image.Rect(0, 0, ThumbWidth, ThumbHeight))
-	xdraw.CatmullRom.Scale(want, want.Bounds(), src, coverRect(src.Bounds(), ThumbWidth, ThumbHeight), xdraw.Src, nil)
+	want := image.NewRGBA(image.Rect(0, 0, PreviewWidth, PreviewHeight))
+	xdraw.CatmullRom.Scale(want, want.Bounds(), src, coverRect(src.Bounds(), PreviewWidth, PreviewHeight), xdraw.Src, nil)
 	var sum int
 	for i := range got.Pix {
 		d := int(got.Pix[i]) - int(want.Pix[i])

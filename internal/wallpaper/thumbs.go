@@ -41,8 +41,8 @@ const (
 	// thumbMaxWorkers caps the pool. Generation is background work; the pool
 	// size is its throttle, so it stays well under the machine's cores.
 	thumbMaxWorkers = 4
-	// thumbQuality is the cached JPEG quality. These are 210x96; the file is a
-	// few kilobytes either way, and artefacts would be visible at this size.
+	// thumbQuality is the cached JPEG quality. These are 420x192; the file is
+	// tens of kilobytes either way, and artefacts would be visible at this size.
 	thumbQuality = 88
 	// thumbVideoSeek is how far into a video the still is taken. Frame zero of
 	// a video is very often black.
@@ -385,14 +385,14 @@ func (t *Thumbnailer) renderStill(src, dst string) error {
 // as decoding it; a bilinear pass to twice the target first, then CatmullRom,
 // gives the same result at this size for a few percent of the cost.
 func coverScale(source image.Image) *image.RGBA {
-	crop := coverRect(source.Bounds(), ThumbWidth, ThumbHeight)
+	crop := coverRect(source.Bounds(), PreviewWidth, PreviewHeight)
 	from := source
-	if crop.Dx() > 2*ThumbWidth && crop.Dy() > 2*ThumbHeight {
-		mid := image.NewRGBA(image.Rect(0, 0, 2*ThumbWidth, 2*ThumbHeight))
+	if crop.Dx() > 2*PreviewWidth && crop.Dy() > 2*PreviewHeight {
+		mid := image.NewRGBA(image.Rect(0, 0, 2*PreviewWidth, 2*PreviewHeight))
 		xdraw.ApproxBiLinear.Scale(mid, mid.Bounds(), source, crop, xdraw.Src, nil)
 		from, crop = mid, mid.Bounds()
 	}
-	target := image.NewRGBA(image.Rect(0, 0, ThumbWidth, ThumbHeight))
+	target := image.NewRGBA(image.Rect(0, 0, PreviewWidth, PreviewHeight))
 	xdraw.CatmullRom.Scale(target, target.Bounds(), from, crop, xdraw.Src, nil)
 	return target
 }
@@ -452,7 +452,7 @@ func extractVideoStill(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("%w: %w", errNoExtractor, err)
 	}
 	filter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d",
-		ThumbWidth, ThumbHeight, ThumbWidth, ThumbHeight)
+		PreviewWidth, PreviewHeight, PreviewWidth, PreviewHeight)
 	cmd := exec.CommandContext(ctx, name,
 		"-nostdin", "-v", "error",
 		"-ss", thumbVideoSeek, "-i", src,
