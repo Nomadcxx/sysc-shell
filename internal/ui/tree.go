@@ -289,6 +289,15 @@ type Node struct {
 	// HideScrollbar keeps wheel, keyboard, and programmatic scrolling while
 	// removing both the painted thumb and its pointer track.
 	HideScrollbar bool
+	// ScrollbarGap, when positive, moves the scrollbar out of the content and
+	// into the parent's padding: its left edge sits this many logical pixels
+	// beyond the node's right edge. Zero keeps it inside, against that edge.
+	ScrollbarGap int
+	// ScrollbarEnds, when positive, is the logical inset of the scrollbar's
+	// top and bottom from the node's, replacing the padding-derived default.
+	// A list whose items carry their own outer spacing uses it to start and
+	// stop the bar level with the first and last item rather than the node.
+	ScrollbarEnds int
 	ItemCount     int
 	ItemHeight    int
 	ContentH      int

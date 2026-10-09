@@ -1334,7 +1334,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		// The cards own Enter, so focus starts on them rather than on the
 		// output select that happens to come first.
 		if effects := artEffects(h); len(effects) > 0 {
-			h.focusByName(effects[0].ID)
+			h.focusByName(effects[0])
 		}
 	}
 	if id == PanelAudio {
@@ -3955,6 +3955,12 @@ func (h *PanelHost) flushDraft(r *Registry) {
 
 func (h *PanelHost) applyMenu(r *Registry, path string) {
 	if path == "" {
+		return
+	}
+	if path == artPaletteMenu && h.id == PanelTerminalArt {
+		if m := h.menus[path]; m != nil {
+			h.artSetPalette(r, m.Value())
+		}
 		return
 	}
 	if key, ok := strings.CutPrefix(path, "walls."); ok {

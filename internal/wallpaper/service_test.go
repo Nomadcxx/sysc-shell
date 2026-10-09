@@ -158,12 +158,12 @@ func TestServiceRefreshesTerminalCatalog(t *testing.T) {
 	engine := newFakeEngine()
 	engine.caps = Capabilities{
 		Terminal: true,
-		Catalog:  Catalog{Effects: []EffectInfo{{ID: "fire"}}, Themes: []string{"nord"}},
+		Catalog:  Catalog{Effects: []string{"fire"}, Themes: []string{"nord"}},
 	}
 	updated := Capabilities{
 		Terminal: true,
 		Catalog: Catalog{
-			Effects: []EffectInfo{{ID: "fire"}, {ID: "rain"}},
+			Effects: []string{"fire", "rain"},
 			Themes:  []string{"nord", "dracula"},
 		},
 	}
@@ -174,7 +174,7 @@ func TestServiceRefreshesTerminalCatalog(t *testing.T) {
 	got := awaitSnapshot(t, svc, func(s Snapshot) bool {
 		return len(s.Caps.Catalog.Effects) == 2 && len(s.Caps.Catalog.Themes) == 2
 	})
-	if got.Caps.Catalog.Effects[1].ID != "rain" {
+	if got.Caps.Catalog.Effects[1] != "rain" {
 		t.Fatalf("catalog = %+v, want the refreshed rain effect", got.Caps.Catalog)
 	}
 	engine.mu.Lock()
@@ -766,7 +766,7 @@ func TestServiceRestartsExitedWallpaperOnce(t *testing.T) {
 	for _, kind := range []Kind{KindEffect, KindImage} {
 		t.Run(map[Kind]string{KindEffect: "effect", KindImage: "image"}[kind], func(t *testing.T) {
 			h := newEngineHarness(t)
-			h.eng.caps.Terminal = true
+			h.withTerminal()
 			svc := newTestService(t, h.eng)
 			svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: kind, Path: h.media("still.png"), Effect: "fire", Theme: "nord"})
 			awaitSnapshot(t, svc, func(s Snapshot) bool { return len(s.Assignments) == 1 && s.Runtime["DP-1"].State != StateStarting })

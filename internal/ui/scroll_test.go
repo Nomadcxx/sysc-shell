@@ -78,3 +78,25 @@ func TestVirtualListCentresAnExplicitlyShorterItemInItsPitch(t *testing.T) {
 		t.Fatalf("second row bounds = %+v, want the next 32px pitch", rows[1].Bounds)
 	}
 }
+
+func TestScrollBarPlacement(t *testing.T) {
+	t.Parallel()
+	base := Node{Kind: KindVirtualList, Bounds: Rect{X: 10, Y: 20, W: 400, H: 200}, ContentH: 800}
+
+	inside := base
+	if got, want := ScrollBar(&inside), (Rect{X: 404, Y: 22, W: 4, H: 196}); got != want {
+		t.Fatalf("default bar = %+v, want %+v against the inside of the right edge", got, want)
+	}
+	if got, want := ScrollTrack(&inside), (Rect{X: 400, Y: 22, W: 8, H: 196}); got != want {
+		t.Fatalf("default track = %+v, want %+v", got, want)
+	}
+
+	gutter := base
+	gutter.ScrollbarGap, gutter.ScrollbarEnds = 4, 6
+	if got, want := ScrollBar(&gutter), (Rect{X: 414, Y: 26, W: 4, H: 188}); got != want {
+		t.Fatalf("gutter bar = %+v, want %+v beyond the right edge", got, want)
+	}
+	if got := ScrollTrack(&gutter); got.X+got.W != 418 || got.Y != 26 || got.H != 188 {
+		t.Fatalf("gutter track = %+v, want it to share the bar's right edge and span", got)
+	}
+}
