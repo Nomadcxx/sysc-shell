@@ -451,7 +451,7 @@ func (e *gslapperEngine) clearActive(connector string) {
 func (e *gslapperEngine) rememberApply(job Job, preview, engine string, state State) {
 	assignment := Assignment{
 		Kind: job.Kind, Path: job.Path, Effect: job.Effect, Theme: job.Theme,
-		Artwork: job.Artwork, PreviewPath: preview, DesiredPlayback: state,
+		PreviewPath: preview, DesiredPlayback: state,
 	}
 	if job.Kind == KindEffect {
 		assignment.PreviewPath = stillFor(job.Previous)

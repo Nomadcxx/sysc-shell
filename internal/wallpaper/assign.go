@@ -31,13 +31,11 @@ const (
 type Assignment struct {
 	Kind Kind
 	Path string
-	// Effect and Theme name the sysc-Go registry ids for KindEffect.
-	// Artwork is an optional allowlisted file for text effects. Path stays
-	// empty for an effect: stuffing the id into Path would look like a
+	// Effect and Theme name the sysc-Go registry ids for KindEffect. Path
+	// stays empty for an effect: stuffing the id into Path would look like a
 	// missing image on disk.
-	Effect  string
-	Theme   string
-	Artwork string
+	Effect string
+	Theme  string
 	// PreviewPath is a still for a video, used for the theme seed and the
 	// static fallback on Restore. Empty when we could not extract one.
 	PreviewPath string
@@ -76,7 +74,6 @@ type Job struct {
 	Kind        Kind
 	Effect      string
 	Theme       string
-	Artwork     string
 	// Previous captures the output assignment before this apply marks its
 	// runtime as starting. The engine uses it to roll back a failed replacement.
 	Previous       Assignment
@@ -222,7 +219,7 @@ func (s *Store) Commit(j Job, preview, engine string) bool {
 			desired = StatePaused
 		}
 	}
-	a := Assignment{Kind: j.Kind, Path: j.Path, Effect: j.Effect, Theme: j.Theme, Artwork: j.Artwork, PreviewPath: preview, DesiredPlayback: desired}
+	a := Assignment{Kind: j.Kind, Path: j.Path, Effect: j.Effect, Theme: j.Theme, PreviewPath: preview, DesiredPlayback: desired}
 	s.assigned[j.Connector] = a
 
 	rt := s.runtime[j.Connector]
@@ -314,7 +311,6 @@ func (s *Store) Reconnect(connector string) []Job {
 	for i := range jobs {
 		jobs[i].Effect = a.Effect
 		jobs[i].Theme = a.Theme
-		jobs[i].Artwork = a.Artwork
 	}
 	return jobs
 }
