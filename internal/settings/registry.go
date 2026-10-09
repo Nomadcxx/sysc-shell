@@ -382,6 +382,14 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setString(func(c *config.Config, v string) { c.Session.Locker = v }),
 		},
 		{
+			Path: "session.polkit_agent", Label: "Authentication agent", Section: "Session", Group: "Authentication",
+			Describe: "Whether sysc-shell registers as the session's polkit authentication agent.",
+			Kind:     KindEnum, Options: []string{"auto", "on", "off"},
+			Get: func(c config.Config) string { return c.Session.PolkitAgent },
+			Set: setEnum("session.polkit_agent", []string{"auto", "on", "off"},
+				func(c *config.Config, v string) { c.Session.PolkitAgent = v }),
+		},
+		{
 			Path: "idle.after", Label: "After idle", Section: "Session", Group: "When idle",
 			Describe: "One action after idle. Screensaver and lock cannot run from the same timer.",
 			Kind:     KindEnum, Options: []string{"nothing", "screensaver", "lock"},

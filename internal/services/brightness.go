@@ -291,14 +291,15 @@ func (b *Brightness) stopIfUnusedLocked() chan struct{} {
 
 func (b *Brightness) run(stop, done chan struct{}) {
 	defer close(done)
+	// External backlight edits must reach the shell without waiting a full
+	// poll: watch the sysfs tree and wake early on any change. DDC displays
+	// have no inotify surface; they ride the poll interval. Arm the watcher
+	// before the initial poll so startup changes are queued for another poll.
+	watcher := newBacklightWatcher(b.root, b.poke)
+	defer watcher.close()
 	b.poll(true)
 	tick := time.NewTicker(b.interval)
 	defer tick.Stop()
-	// External backlight edits must reach the shell without waiting a full
-	// poll: watch the sysfs tree and wake early on any change. DDC displays
-	// have no inotify surface; they ride the poll interval.
-	watcher := newBacklightWatcher(b.root, b.poke)
-	defer watcher.close()
 	watcher.sync(b.sysfsNames())
 	for {
 		select {

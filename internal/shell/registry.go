@@ -26,6 +26,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/services/polkit"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
@@ -194,6 +195,12 @@ type Registry struct {
 	lockSettingsSaving  bool
 	managedState        locksession.State
 	lockCancel          context.CancelFunc
+	polkitAgent         *polkit.Agent
+	polkitHost          *polkitHost
+	polkitCancel        context.CancelFunc
+	polkitDone          chan struct{}
+	polkitLifecycleMu   sync.Mutex
+	polkitOutputEvents  chan struct{}
 	backgroundHeld      bool
 	backgroundLeasePath string
 	backgroundMu        sync.Mutex
@@ -384,36 +391,37 @@ func NewRegistry(cfg config.Config) *Registry {
 	weather.SetLocationLabel(cfg.Weather.Location)
 	weather.SetCity(cfg.Weather.City)
 	r := &Registry{
-		cfg:              cfg,
-		now:              time.Now(),
-		outputs:          make(map[string]outputState),
-		bars:             make(map[uint32]*Bar),
-		leases:           make(map[uint32][]*services.Lease),
-		clock:            services.NewClock(),
-		metrics:          services.NewMetrics(),
-		weather:          weather,
-		gammaEvents:      make(chan wayland.GammaEvent, 16),
-		themeGen:         gen,
-		paletteStore:     palettes,
-		paletteLister:    listPalettes,
-		paletteImportDir: paletteImportDir(),
-		invalidations:    make(chan wayland.Invalidation, 8),
-		aux:              make(chan wayland.AuxRequest, 8),
-		selections:       make(chan wayland.SelectionRequest, 8),
-		panelHosts:       make(map[PanelID]*PanelHost),
-		panelShields:     make(map[uint32]*PanelHost),
-		closed:           make(chan struct{}),
-		dwell:            newDwell(defaultDwell),
-		runArgv:          runArgvDefault,
-		lookPath:         exec.LookPath,
-		runArgvOutput:    runArgvOutputDefault,
-		startInhibit:     startInhibitDefault,
-		signalProcess:    signalProcessDefault,
-		notify:           newNotifyState(),
-		batteryWarning:   newBatteryWarning(),
-		clipboard:        newClipboardProjection(),
-		tray:             newTrayState(),
-		trayCh:           make(chan trayclient.Message, 32),
+		cfg:                cfg,
+		now:                time.Now(),
+		outputs:            make(map[string]outputState),
+		bars:               make(map[uint32]*Bar),
+		leases:             make(map[uint32][]*services.Lease),
+		clock:              services.NewClock(),
+		metrics:            services.NewMetrics(),
+		weather:            weather,
+		gammaEvents:        make(chan wayland.GammaEvent, 16),
+		themeGen:           gen,
+		paletteStore:       palettes,
+		paletteLister:      listPalettes,
+		paletteImportDir:   paletteImportDir(),
+		invalidations:      make(chan wayland.Invalidation, 8),
+		aux:                make(chan wayland.AuxRequest, 8),
+		selections:         make(chan wayland.SelectionRequest, 8),
+		polkitOutputEvents: make(chan struct{}, 1),
+		panelHosts:         make(map[PanelID]*PanelHost),
+		panelShields:       make(map[uint32]*PanelHost),
+		closed:             make(chan struct{}),
+		dwell:              newDwell(defaultDwell),
+		runArgv:            runArgvDefault,
+		lookPath:           exec.LookPath,
+		runArgvOutput:      runArgvOutputDefault,
+		startInhibit:       startInhibitDefault,
+		signalProcess:      signalProcessDefault,
+		notify:             newNotifyState(),
+		batteryWarning:     newBatteryWarning(),
+		clipboard:          newClipboardProjection(),
+		tray:               newTrayState(),
+		trayCh:             make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
 		trayCloses:      newTrayCloseTracker(),
@@ -422,6 +430,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		machineFacts:    readMachineFacts(),
 	}
 	r.depthClocks = newDepthClockHost(r, nil)
+	r.polkitHost = newPolkitHost(r)
 	r.nightLight = services.NewNightLight(services.NightLightOptions{
 		Location:        r.weather.ResolvedLocation,
 		LocationPending: r.weather.LocationPending,
@@ -603,7 +612,8 @@ func (r *Registry) setMedia(m *services.Media) {
 		r.mediaPlayers = nil
 		return
 	}
-	r.mediaState = m.CachedState()
+	state := mediaStartupSnapshot(m.CachedState, m.Changes())
+	r.mediaState = state
 	r.mediaPlayers = m.Players()
 	cancel := make(chan struct{})
 	r.mediaRelayCancel = cancel
@@ -611,11 +621,31 @@ func (r *Registry) setMedia(m *services.Media) {
 	r.pushIdleInputs()
 }
 
+// mediaStartupSnapshot drops queued snapshots covered by the current cache.
+// The media channel coalesces updates, but its construction snapshot can be
+// older than an interpolated cache read; retry if a new update races with it.
+func mediaStartupSnapshot(cached func() services.MediaState, changes <-chan services.MediaState) services.MediaState {
+	for {
+		select {
+		case <-changes:
+		default:
+		}
+		state := cached()
+		select {
+		case <-changes:
+			continue
+		default:
+			return state
+		}
+	}
+}
+
 func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 	if media == nil {
 		return
 	}
-	r.publishMediaSnapshot(media, media.CachedState())
+	// setMedia installs the initial cache before starting this relay. Replaying
+	// it here could overwrite a newer snapshot if relay startup is delayed.
 	prev := media.CachedState()
 	for {
 		select {
@@ -1038,6 +1068,7 @@ func (r *Registry) Status() map[string]any {
 		panels = append(panels, id.String())
 	}
 	cfg := r.cfg
+	polkitStatus := r.polkitStatusLocked()
 	inhibitors := make([]string, 0, len(r.externalInhibitors))
 	for _, in := range r.externalInhibitors {
 		inhibitors = append(inhibitors, in.App)
@@ -1056,6 +1087,7 @@ func (r *Registry) Status() map[string]any {
 		"matugen":         err == nil,
 		"templates":       templates,
 		"idle_inhibitors": inhibitors,
+		"polkit":          polkitStatus,
 	}
 }
 
@@ -1632,6 +1664,7 @@ func (r *Registry) adoptBar(
 	// it once. An invalidation here would be a second frame for a first paint,
 	// and this call is on the owner goroutine, which drains that channel.
 	r.syncTrayLocked()
+	r.signalPolkitOutputChange()
 	return r.outputGlobalsLocked(), r.plugins
 }
 
@@ -1860,6 +1893,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		Commit: func() {
 			once.Do(func() {
 				r.mu.Lock()
+				polkitPolicyChanged := r.cfg.Session.PolkitAgent != cfg.Session.PolkitAgent
+				polkitNeedsStart := len(bars) > 0 && r.polkitAgent == nil
 				outgoing := r.leases
 				outgoingBars := r.bars
 				geometryOutputs := make(map[uint32]bool)
@@ -1958,6 +1993,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				r.signalPolkitOutputChange()
 				if !runningAsTest() && genErr == nil {
 					go r.publishCommittedThemeSelection(cfg, tok)
 				}
@@ -1977,6 +2013,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
 					plugins.syncBars()
+				}
+				if polkitPolicyChanged || polkitNeedsStart {
+					go r.configurePolkit()
 				}
 
 				// Released only after the replacement set holds its own, so
@@ -2018,6 +2057,7 @@ func (r *Registry) DropHost(global uint32) {
 	toastOutputs := r.outputGlobalsLocked()
 	plugins := r.plugins
 	r.mu.Unlock()
+	r.signalPolkitOutputChange()
 	if bar != nil {
 		bar.stopAnimation()
 	}
@@ -2078,9 +2118,15 @@ func (r *Registry) Close() {
 	var wallpaperSvc *wallpaper.Service
 	var wallsSvc wallsController
 	var wallpaperThumbCancel context.CancelFunc
+	var polkitCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
 	var depthEffects depthClockEffects
 	if locked {
+		if r.polkitHost != nil && r.polkitHost.open_ {
+			r.polkitHost.finishLocked(true)
+		}
+		polkitCancel = r.polkitCancel
+		r.polkitAgent, r.polkitCancel, r.polkitDone = nil, nil, nil
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
 			r.toasts.stopSlideAnimation()
@@ -2134,6 +2180,9 @@ func (r *Registry) Close() {
 		r.inhibitWanted = false
 		r.pushIdleInputsLocked()
 		r.mu.Unlock()
+	}
+	if polkitCancel != nil {
+		polkitCancel()
 	}
 	for _, bar := range bars {
 		bar.stopAnimation()
@@ -2673,6 +2722,10 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 		if h.open_ {
 			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: windowSwitcherSurfaceID})
 		}
+	}
+	if h := r.polkitHost; h != nil && h.open_ {
+		h.retheme(r.panelThemeForState(h.output, cfg, tokens))
+		pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: polkitSurfaceID})
 	}
 	if r.osd != nil {
 		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)

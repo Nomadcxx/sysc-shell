@@ -173,6 +173,7 @@ flowchart LR
 - [Blur on Niri](docs/niri-blur.md)
 - [Night light](docs/night-light.md)
 - [Metrics widgets and Intel GPU usage](docs/metrics-widgets.md)
+- [PolicyKit authentication](docs/polkit-authentication.md)
 - [Running under systemd](packaging/systemd/README.md)
 - [Development](docs/development.md)
 

@@ -177,26 +177,34 @@ func realLockerSpawn(argv []string) (io.ReadCloser, <-chan int, error) {
 func (r *Registry) LockTracked() error {
 	r.mu.Lock()
 	argv := sessionArgv("session-lock", r.cfg.Session.Locker)
+	if len(argv) == 0 {
+		r.mu.Unlock()
+		return errors.New("no locker configured")
+	}
 	managed := r.managedLock
 	native := isManagedLocker(argv) && r.lockerSpawn == nil
+	if native && managed == nil {
+		r.mu.Unlock()
+		return errors.New("managed locker unavailable")
+	}
+	r.polkitHoldLocked(true)
 	var m *lockerManager
 	if !native {
 		m = r.lockerLocked()
 	}
 	r.mu.Unlock()
+	var err error
 	if native {
-		if managed == nil {
-			return errors.New("managed locker unavailable")
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_, err := managed.Lock(ctx)
-		return err
+		_, err = managed.Lock(ctx)
+	} else {
+		err = m.request(argv)
 	}
-	if len(argv) == 0 {
-		return errors.New("no locker configured")
+	if err != nil {
+		r.syncPolkitLockHold()
 	}
-	return m.request(argv)
+	return err
 }
 
 // notifyLocked publishes cached state for lock-held readers (panel rebuild).
@@ -237,6 +245,7 @@ func (r *Registry) lockerLocked() *lockerManager {
 			stateCB: func(running, acquired bool) {
 				r.mu.Lock()
 				r.lockerRunning, r.lockerAcquired = running, false
+				r.polkitHoldLocked(running)
 				if h := r.panelHosts[PanelControlCenter]; h != nil {
 					r.rebuildPanel(h)
 					r.publishSurface(h.output, panelSurfaceID(h.id))

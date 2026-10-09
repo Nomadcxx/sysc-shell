@@ -106,6 +106,13 @@ func toWire(c Config) wireConfig {
 		v := c.Session.Locker
 		w.Session = &wireSession{Locker: &v}
 	}
+	if c.Session.PolkitAgent != "" && c.Session.PolkitAgent != d.Session.PolkitAgent {
+		v := c.Session.PolkitAgent
+		if w.Session == nil {
+			w.Session = &wireSession{}
+		}
+		w.Session.PolkitAgent = &v
+	}
 	if idle := idleDiff(c.Idle, d.Idle); idle != nil {
 		w.Idle = idle
 	}

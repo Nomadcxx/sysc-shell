@@ -23,6 +23,7 @@ const (
 	rootTrayDrawer
 	rootRunningApps
 	rootWindowSwitcher
+	rootPolkit
 	rootMediaStrip
 )
 
@@ -56,6 +57,10 @@ func runningAppsMenuRoot(outputGlobal uint32) rootID {
 
 func windowSwitcherRoot(outputGlobal uint32) rootID {
 	return rootID{kind: rootWindowSwitcher, key: uint64(outputGlobal)}
+}
+
+func polkitAuthRoot(outputGlobal uint32) rootID {
+	return rootID{kind: rootPolkit, key: uint64(outputGlobal)}
 }
 
 func mediaStripRoot(outputGlobal uint32) rootID {

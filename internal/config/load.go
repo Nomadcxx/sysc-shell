@@ -127,7 +127,8 @@ type wireAccessibility struct {
 }
 
 type wireSession struct {
-	Locker *string `json:"locker,omitempty"`
+	Locker      *string `json:"locker,omitempty"`
+	PolkitAgent *string `json:"polkit_agent,omitempty"`
 }
 
 type wireIdle struct {
@@ -342,7 +343,11 @@ func Parse(data []byte) (Config, error) {
 		cfg.Accessibility = applyAccessibility(cfg.Accessibility, *wire.Accessibility)
 	}
 	if wire.Session != nil {
-		cfg.Session = applySession(cfg.Session, *wire.Session)
+		session, err := applySession(cfg.Session, *wire.Session)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Session = session
 	}
 	if wire.Idle != nil {
 		idle, err := applyIdle(cfg.Idle, *wire.Idle)
@@ -1595,11 +1600,19 @@ func applyAccessibility(base Accessibility, w wireAccessibility) Accessibility {
 	return base
 }
 
-func applySession(base Session, w wireSession) Session {
+func applySession(base Session, w wireSession) (Session, error) {
 	if w.Locker != nil {
 		base.Locker = *w.Locker
 	}
-	return base
+	if w.PolkitAgent != nil {
+		switch *w.PolkitAgent {
+		case "auto", "on", "off":
+			base.PolkitAgent = *w.PolkitAgent
+		default:
+			return Session{}, pathErr("session.polkit_agent", "%q is not auto, on, or off", *w.PolkitAgent)
+		}
+	}
+	return base, nil
 }
 
 func applyIdle(base Idle, w wireIdle) (Idle, error) {

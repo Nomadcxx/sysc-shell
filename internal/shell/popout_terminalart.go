@@ -197,8 +197,9 @@ func artPaletteControl(h *PanelHost) *ui.Node {
 	n := m.Node()
 	n.Action = artPaletteMenu
 	n.Name = "Palette"
-	n.Padding = wallpaperControlPad
+	n.Padding = theme.MarginXS
 	n.Width = wallpaperPaletteWidth
+	n.Height = h.theme.Metrics.StandardControl
 	return n
 }
 

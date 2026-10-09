@@ -254,6 +254,7 @@ func (r *Registry) applyManagedSnapshot(state locksession.State) {
 	r.managedState = state
 	r.lockerRunning = state.Phase != "idle" && state.Phase != "failed-before-acquisition" && state.Phase != "unavailable"
 	r.lockerAcquired = state.Known && state.Phase == "sealed"
+	r.polkitHoldLocked(r.lockerRunning)
 	var publish []waylandSurface
 	for _, id := range []PanelID{PanelControlCenter, PanelSettings} {
 		if h := r.panelHosts[id]; h != nil {

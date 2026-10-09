@@ -329,6 +329,23 @@ func TestThemeDefaultWritesPresetGeneration(t *testing.T) {
 	}
 }
 
+func TestPolkitAgentPolicyRoundTripsThroughWrite(t *testing.T) {
+	t.Parallel()
+	c := Default()
+	c.Session.PolkitAgent = "on"
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(p, c); err != nil {
+		t.Fatal(err)
+	}
+	back, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Session.PolkitAgent != "on" {
+		t.Fatalf("polkit agent policy = %q, want on", back.Session.PolkitAgent)
+	}
+}
+
 func TestThemeSelectorFreeRoundTripKeepsLegacyDensity(t *testing.T) {
 	t.Parallel()
 	c, err := Parse([]byte(`{}`))

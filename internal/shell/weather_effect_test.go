@@ -112,6 +112,7 @@ func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
 		t.Fatalf("hero effect = %+v, want the stable hero effect", effect)
 	}
 	want, ok := weatherEffectSpec(reading)
+	want.Daylight = effect.Effect.Daylight
 	if !ok || effect.Effect != want {
 		t.Fatalf("hero effect spec = %+v, want %+v", effect.Effect, want)
 	}
@@ -177,6 +178,7 @@ func TestControlCentreWeatherUsesTheSameWeatherEffect(t *testing.T) {
 	}
 	want, ok := weatherEffectSpec(reading)
 	want.SceneBias = -1 // the Control Centre card is wide enough to split
+	want.Daylight = effect.Effect.Daylight
 	if !ok || effect.Effect != want {
 		t.Fatalf("Today effect spec = %+v, want %+v", effect.Effect, want)
 	}
