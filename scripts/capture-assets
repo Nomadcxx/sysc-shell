@@ -69,7 +69,7 @@ local)
 laptop)
 	ssh_laptop() { ssh -p "$port" "$laptop" "$@"; }
 	work="sysc-assets-work/shell-$rev"
-	ssh_laptop "rm -rf sysc-assets-work/shell-* && mkdir -p $work sysc-assets-work/out"
+	ssh_laptop "mkdir -p sysc-assets-work && find sysc-assets-work -maxdepth 1 -name 'shell-*' -exec rm -rf {} + ; mkdir -p $work sysc-assets-work/out"
 	git archive HEAD | ssh_laptop "tar -x -C $work"
 	if [ -n "$backdrop" ]; then
 		ssh_laptop "cat > sysc-assets-work/$backdrop_name" <"$backdrop"
