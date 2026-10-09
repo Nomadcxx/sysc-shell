@@ -814,3 +814,63 @@ func TestWezTermDirectiveRefusesReturnedTable(t *testing.T) {
 		t.Fatalf("unsupported WezTerm config changed: %q, err=%v", got, err)
 	}
 }
+
+// A line with the directive's key that the user wrote for their own config is
+// not the shell's: an empty Alacritty import array made every theme apply fail
+// with "unowned directive" while the template was off (sysc-1082). A line that
+// names the shell's theme is still refused, multi-line arrays included.
+func TestRemoveDirectiveLeavesTheUsersOwnSameKeyLine(t *testing.T) {
+	cases := []struct {
+		name    string
+		config  string
+		refused bool
+	}{
+		{"own empty import", "[general]\nimport = [\n]\n", false},
+		{"own import of another file", "[general]\nimport = [\"~/.config/alacritty/colors.toml\"]\n", false},
+		{"array naming the shell theme", "[general]\nimport = [\n  \"~/.config/alacritty/themes/sysc-shell.toml\",\n]\n", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			home := t.TempDir()
+			dd := templateTargets["alacritty"].directives(home)[0]
+			if err := os.MkdirAll(filepath.Dir(dd.file), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dd.file, []byte(c.config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := RemoveDirective(dd)
+			if c.refused != errors.Is(err, ErrUserModified) {
+				t.Fatalf("RemoveDirective = %v, refused want %v", err, c.refused)
+			}
+			if !c.refused && err != nil {
+				t.Fatalf("RemoveDirective = %v, want nil", err)
+			}
+			if got, _ := os.ReadFile(dd.file); string(got) != c.config {
+				t.Fatalf("config rewritten to %q", got)
+			}
+		})
+	}
+}
+
+// The owner's WezTerm config names its own colour scheme on the directive's
+// key. With the template off that is the user's setting, not a conflict.
+func TestRemoveDirectiveLeavesTheUsersOwnColourScheme(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	dd := templateTargets["wezterm"].directives(home)[0]
+	if err := os.MkdirAll(filepath.Dir(dd.file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := "local config = {}\nconfig.color_scheme = \"Catppuccin Mocha\"\nreturn config\n"
+	if err := os.WriteFile(dd.file, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveDirective(dd); err != nil {
+		t.Fatalf("RemoveDirective = %v, want nil for the user's own scheme", err)
+	}
+	if got, _ := os.ReadFile(dd.file); string(got) != config {
+		t.Fatalf("config rewritten to %q", got)
+	}
+}

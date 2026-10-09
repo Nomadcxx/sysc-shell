@@ -174,7 +174,11 @@ func TestDisablePreservesSidecarAfterWhitespaceDirectiveEdit(t *testing.T) {
 	}
 }
 
-func TestApplyEnabledSkipsForeignKitty(t *testing.T) {
+// kitty takes the last value of each setting, so the shell's include, written
+// last, themes the terminal without displacing the user's own includes. The
+// owner chose this on 2026-10-09 over reporting every foreign include, which
+// left kitty unthemed beside an ordinary tab-style include (sysc-1077).
+func TestApplyEnabledAppendsKittyBesideUserIncludes(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "kitty")
@@ -187,12 +191,12 @@ func TestApplyEnabledSkipsForeignKitty(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "kitty" }
-	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err == nil {
-		t.Fatal("user-written include must be reported")
+	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
+		t.Fatalf("apply beside a user include = %v", err)
 	}
 	got, _ := os.ReadFile(p)
-	if string(got) != user {
-		t.Fatalf("rewrote user kitty.conf: %q", got)
+	if want := user + "include themes/sysc-shell.conf\n"; string(got) != want {
+		t.Fatalf("kitty.conf = %q, want %q", got, want)
 	}
 }
 

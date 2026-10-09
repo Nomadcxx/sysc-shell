@@ -47,16 +47,19 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu           sync.Mutex
-	cfg          config.Config
-	outputs      map[string]outputState
-	bars         map[uint32]*Bar
-	leases       map[uint32][]*services.Lease
-	niriSnapshot niri.Snapshot
-	now          time.Time
-	focused      string
-	layouts      niri.KeyboardLayouts
-	layoutsSeen  bool
+	mu      sync.Mutex
+	cfg     config.Config
+	outputs map[string]outputState
+	bars    map[uint32]*Bar
+	// effectOutputs names the connectors whose wallpaper is a playing or
+	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
+	effectOutputs map[string]bool
+	leases        map[uint32][]*services.Lease
+	niriSnapshot  niri.Snapshot
+	now           time.Time
+	focused       string
+	layouts       niri.KeyboardLayouts
+	layoutsSeen   bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -1212,11 +1215,12 @@ func (r *Registry) panelTheme() Theme {
 	return t.WithCompositor(r.caps.Blur)
 }
 
-// resolveOutputTheme is one output's theme, with the compositor's blur applied
-// so the bar and the panels that join it agree about its ground.
-func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, blur bool) (Theme, error) {
+// resolveOutputTheme is one output's theme, with the compositor's blur and any
+// terminal effect behind it applied, so the bar and the panels that join it
+// agree about its ground.
+func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, blur, effectBehind bool) (Theme, error) {
 	t, err := ResolveTheme(cfg, cfg.ForConnector(connector), tok)
-	return t.WithCompositor(blur), err
+	return t.WithEffectBehind(effectBehind, blur), err
 }
 
 func (r *Registry) panelThemeFor(output uint32) Theme {
@@ -1250,7 +1254,7 @@ func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens t
 	if bar, ok := r.bars[output]; ok {
 		connector = bar.connector()
 	}
-	t, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur)
+	t, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector])
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -1565,7 +1569,7 @@ func (r *Registry) adoptBar(
 	// theme before adoption so a preview or commit that arrived during the
 	// build cannot install a bar with stale colors.
 	cfg, tokens := r.effectiveThemeLocked()
-	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur); err == nil {
+	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector]); err == nil {
 		bar.retheme(next)
 	}
 	r.attachRunningIconsAtLocked(bar.scale120())
@@ -2454,9 +2458,9 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 ) {
 	policy := cfg.ForConnector(connector)
 	r.mu.Lock()
-	blur := r.caps.Blur
+	blur, effect := r.caps.Blur, r.effectOutputs[connector]
 	r.mu.Unlock()
-	th, err := resolveOutputTheme(cfg, connector, tok, blur)
+	th, err := resolveOutputTheme(cfg, connector, tok, blur, effect)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}

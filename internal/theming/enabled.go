@@ -302,10 +302,13 @@ var templateTargets = map[string]templateTarget{
 	"kitty": {
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "kitty", "themes", "sysc-shell.conf")} },
 		directives: func(h string) []directive {
+			// kitty configs hold many includes; only one naming our own file is
+			// ours or a conflicting copy of it. A bare "include" key refused to
+			// wire the theme beside every ordinary tab or colour include.
 			return []directive{{
 				file:   joined(h, ".config", "kitty", "kitty.conf"),
 				line:   "include themes/sysc-shell.conf",
-				key:    "include",
+				key:    "include themes/sysc-shell.conf",
 				create: true,
 			}}
 		},
