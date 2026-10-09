@@ -74,6 +74,7 @@ type polkitHost struct {
 	connector string
 	rootGen   uint64
 	request_  polkit.Request
+	requester string
 
 	phase         polkitPromptPhase
 	identities    []polkit.Identity
@@ -116,6 +117,10 @@ func (h *polkitHost) openLocked(req polkit.Request, output uint32, connector str
 	h.open_, h.closed = true, false
 	h.output, h.connector = output, connector
 	h.request_ = req
+	h.requester = polkitCallerProgram(req.Details["polkit.caller-pid"])
+	if h.requester == "unknown" {
+		h.requester = "Unknown application"
+	}
 	h.phase = polkitChoosingIdentity
 	h.selected, h.waiting = polkitSelectedIdentity(h.identities, strconv.Itoa(os.Getuid())), waiting
 	h.prompt = polkit.Prompt{}
@@ -250,32 +255,52 @@ func (h *polkitHost) rebuild() {
 	}
 	innerWidth := max(cardWidth-2*theme.MarginL, 1)
 	children := []*ui.Node{
-		{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
-			h.appIcon(),
-			{Kind: ui.KindText, Text: "Authentication required", TextRole: theme.RoleTitle, Name: "Authentication required", Role: "heading"},
-		}},
+		{Kind: ui.KindText, Text: "////// AUTH //////", TextRole: theme.RoleMono, Tone: ui.ToneAccent},
+		{Kind: ui.KindText, Text: "Authentication required", TextRole: theme.RoleTitle, Name: "Authentication required", Role: "heading"},
 	}
-	children = append(children, &ui.Node{Kind: ui.KindText, Text: h.request_.Message, TextRole: theme.RoleBody, MaxWidth: innerWidth})
+	if h.request_.Message != "" {
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.request_.Message, TextRole: theme.RoleBody, MaxWidth: innerWidth})
+	}
+	requester := h.requester
+	if requester == "" {
+		requester = "Unknown application"
+	}
+	children = append(children,
+		&ui.Node{Kind: ui.KindText, Text: "REQUESTED BY", TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
+		&ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{
+			h.appIcon(),
+			{Kind: ui.KindText, Text: requester, TextRole: theme.RoleLabel, MaxWidth: max(innerWidth-h.metrics.IconLarge-theme.MarginS, 1)},
+		}},
+		&ui.Node{Kind: ui.KindSeparator, Width: innerWidth},
+	)
+	if h.phase != polkitChoosingIdentity && h.selected >= 0 && h.selected < len(h.identities) {
+		children = append(children,
+			&ui.Node{Kind: ui.KindText, Text: "ACCOUNT", TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
+			&ui.Node{Kind: ui.KindText, Text: h.identities[h.selected].Name, TextRole: theme.RoleLabel},
+		)
+	}
 
 	h.nodes = make(map[string]*ui.Node)
 	switch h.phase {
 	case polkitChoosingIdentity:
 		identity := h.identities[h.selected]
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: "ACCOUNT", TextRole: theme.RoleMono, Tone: ui.ToneSubtle})
 		if len(h.identities) > 1 {
 			label := fmt.Sprintf("%s  ·  %d of %d", identity.Name, h.selected+1, len(h.identities))
-			h.nodes["identity"] = h.buttonNode("identity", label, "Choose identity", h.focus == "identity", innerWidth)
-			children = append(children,
-				&ui.Node{Kind: ui.KindText, Text: "Authenticate as", TextRole: theme.RoleLabel},
-				h.nodes["identity"],
-			)
+			h.nodes["identity"] = h.buttonNode("identity", label, "Choose account", h.focus == "identity", innerWidth)
+			children = append(children, h.nodes["identity"])
 		} else {
-			children = append(children, &ui.Node{Kind: ui.KindText, Text: "Authenticate as " + identity.Name, TextRole: theme.RoleLabel})
+			children = append(children, &ui.Node{Kind: ui.KindText, Text: identity.Name, TextRole: theme.RoleLabel})
 		}
 	case polkitAwaitingPrompt:
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: "Waiting for the authentication prompt…", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: "Waiting for the authentication prompt…", TextRole: theme.RoleMono, Tone: ui.ToneSubtle})
 	case polkitEnteringResponse:
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.prompt.Text, TextRole: theme.RoleLabel, MaxWidth: innerWidth})
-		node := h.field.Node("Response")
+		promptLabel := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(h.prompt.Text), ":"))
+		if promptLabel == "" {
+			promptLabel = "Authentication response"
+		}
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.prompt.Text, TextRole: theme.RoleMono, Tone: ui.ToneSubtle, MaxWidth: innerWidth})
+		node := h.field.Node(promptLabel)
 		node.Width, node.Height = innerWidth, h.metrics.InputHeight
 		node.Placeholder = "Enter your response"
 		node.Editing = h.focus == "password"
@@ -286,7 +311,18 @@ func (h *polkitHost) rebuild() {
 		h.nodes["password"] = node
 		children = append(children, node)
 	case polkitShowingInfo:
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.prompt.Text, TextRole: theme.RoleBody, Tone: ui.ToneSubtle, MaxWidth: innerWidth})
+		if h.wrongPassword {
+			children = append(children, &ui.Node{
+				Kind: ui.KindCapsule, Width: innerWidth, Padding: theme.MarginS,
+				Shape: ui.ShapeMedium, Fill: ui.FillErrorContainer,
+				Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{
+					{Kind: ui.KindText, Text: "!", TextRole: theme.RoleTitle, Tone: ui.ToneError},
+					{Kind: ui.KindText, Text: h.prompt.Text, TextRole: theme.RoleBody, MaxWidth: max(innerWidth-4*theme.MarginS-16, 1)},
+				}}},
+			})
+		} else {
+			children = append(children, &ui.Node{Kind: ui.KindText, Text: h.prompt.Text, TextRole: theme.RoleBody, Tone: ui.ToneSubtle, MaxWidth: innerWidth})
+		}
 	}
 
 	if h.waiting > 0 {
@@ -299,25 +335,25 @@ func (h *polkitHost) rebuild() {
 	}
 	if h.detailsOpen {
 		for _, line := range h.detailLines() {
-			children = append(children, &ui.Node{Kind: ui.KindText, Text: line, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: innerWidth})
+			children = append(children, &ui.Node{Kind: ui.KindText, Text: line, TextRole: theme.RoleMono, Tone: ui.ToneSubtle, MaxWidth: innerWidth})
 		}
 	}
 
 	buttons := []*ui.Node{}
 	switch h.phase {
 	case polkitChoosingIdentity:
-		buttons = append(buttons, h.buttonNode("continue", "Authenticate", "Authenticate", h.focus == "continue", h.metrics.StandardControl*4))
+		buttons = append(buttons, h.buttonNode("continue", "Authenticate", "Authenticate", h.focus == "continue", 0))
 	case polkitEnteringResponse:
-		buttons = append(buttons, h.buttonNode("submit", "Authenticate", "Authenticate", h.focus == "submit", h.metrics.StandardControl*3))
+		buttons = append(buttons, h.buttonNode("submit", "Authenticate", "Authenticate", h.focus == "submit", 0))
 	case polkitShowingInfo:
-		buttons = append(buttons, h.buttonNode("continue", "Continue", "Continue", h.focus == "continue", h.metrics.StandardControl*4))
+		buttons = append(buttons, h.buttonNode("continue", "Continue", "Continue", h.focus == "continue", 0))
 	}
-	buttons = append(buttons, h.buttonNode("cancel", "Cancel", "Cancel", h.focus == "cancel", h.metrics.StandardControl*3))
+	buttons = append(buttons, h.buttonNode("cancel", "Cancel", "Cancel", h.focus == "cancel", 0))
 	children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: buttons})
 	if h.hasDetails() {
-		label, name := "Details", "Show request details"
+		label, name := "+ REQUEST DETAILS", "Show request details"
 		if h.detailsOpen {
-			label, name = "Hide details", "Hide request details"
+			label, name = "− REQUEST DETAILS", "Hide request details"
 		}
 		h.nodes["details"] = h.buttonNode("details", label, name, h.focus == "details", innerWidth)
 		children = append(children, h.nodes["details"])
@@ -345,7 +381,10 @@ func (h *polkitHost) appIcon() *ui.Node {
 
 func (h *polkitHost) buttonNode(id, label, name string, focused bool, width int) *ui.Node {
 	fill := ui.FillNone
-	if focused || id == "identity" {
+	primary := id == "continue" || id == "submit"
+	if primary {
+		fill = ui.FillAccent
+	} else if focused || id == "identity" {
 		fill = ui.FillSoft
 	}
 	node := &ui.Node{
@@ -353,6 +392,19 @@ func (h *polkitHost) buttonNode(id, label, name string, focused bool, width int)
 		Name: name, Role: "button", Focusable: true,
 		Width: width, Height: h.metrics.StandardControl, Padding: theme.MarginS,
 		Shape: ui.ShapeMedium, Fill: fill,
+	}
+	if width <= 0 {
+		if measured, _, err := ui.Measure(node, h.measure()); err == nil {
+			width = measured
+		}
+		width = max(width, h.metrics.StandardControl*2)
+		node.Width = width
+	}
+	if focused {
+		node.Stroke, node.StrokeFill = 1, ui.FillOutline
+	}
+	if id == "details" {
+		node.TextRole = theme.RoleMono
 	}
 	h.nodes[id] = node
 	return node
@@ -647,6 +699,7 @@ func (h *polkitHost) finishLocked(cancel bool) {
 	h.open_, h.rootGen = false, 0
 	h.clearResponseLocked()
 	h.request_ = polkit.Request{}
+	h.requester = ""
 	h.identities = nil
 	h.prompt = polkit.Prompt{}
 	h.root, h.nodes = &ui.Node{Kind: ui.KindColumn}, nil
