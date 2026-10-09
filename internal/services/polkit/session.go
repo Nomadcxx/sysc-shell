@@ -1,6 +1,7 @@
 package polkit
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -15,12 +16,12 @@ import (
 // XDG_SESSION_ID comes from the graphical session and is present in the
 // shell's systemd user service environment. logind is the fallback for a
 // shell started outside that environment.
-func sessionID(conn *dbus.Conn) (string, error) {
+func sessionID(ctx context.Context, conn *dbus.Conn) (string, error) {
 	if id := os.Getenv("XDG_SESSION_ID"); id != "" {
 		return id, nil
 	}
 	var path dbus.ObjectPath
-	call := conn.Object(logindName, logindPath).Call(logindManager+".GetSessionByPID", 0, uint32(os.Getpid()))
+	call := callWithTimeout(ctx, conn.Object(logindName, logindPath), logindManager+".GetSessionByPID", uint32(os.Getpid()))
 	if call.Err != nil {
 		return "", fmt.Errorf("polkit: session of pid %d: %w", os.Getpid(), call.Err)
 	}
@@ -28,7 +29,7 @@ func sessionID(conn *dbus.Conn) (string, error) {
 		return "", fmt.Errorf("polkit: session of pid %d: %w", os.Getpid(), err)
 	}
 	var id string
-	if err := conn.Object(logindName, path).Call(logindSession+".GetId", 0).Store(&id); err != nil {
+	if err := callWithTimeout(ctx, conn.Object(logindName, path), logindSession+".GetId").Store(&id); err != nil {
 		return "", fmt.Errorf("polkit: session id: %w", err)
 	}
 	return id, nil

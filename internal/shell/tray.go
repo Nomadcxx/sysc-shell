@@ -394,6 +394,16 @@ func (r *Registry) applyTrayIcon(key icons.Key, image *ui.Image) {
 		r.toasts.recompute()
 	}
 	r.mu.Unlock()
+	r.mu.Lock()
+	polkitOutput := uint32(0)
+	if h := r.polkitHost; h != nil && h.open_ && h.request_.IconName == key.Name {
+		h.rebuild()
+		polkitOutput = h.output
+	}
+	r.mu.Unlock()
+	if polkitOutput != 0 {
+		r.publishSurface(polkitOutput, polkitSurfaceID)
+	}
 }
 
 // monitorIconBatch is how long the system monitor waits for more icons

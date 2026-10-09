@@ -808,6 +808,8 @@ func polkitStatusLabel(status polkit.Status) string {
 	switch {
 	case status.Policy == polkit.PolicyOff || status.Reason == "disabled":
 		return "Off"
+	case status.Reason == polkit.ErrNoHelper.Error():
+		return "Helper missing"
 	case status.Registered:
 		return "Registered"
 	case status.Passive != "":

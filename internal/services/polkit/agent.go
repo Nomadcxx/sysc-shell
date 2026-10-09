@@ -5,7 +5,9 @@
 // requesting session. The agent's BeginAuthentication call blocks until the
 // user answers or polkitd withdraws the request; the answer itself is
 // delivered to polkitd by the PAM helper over a private socket, never over
-// this agent's connection.
+// this agent's connection. The shell necessarily holds the typed response in
+// an immutable Go string while editing; the helper zeroes its byte copy after
+// writing it.
 package polkit
 
 import (
@@ -33,6 +35,16 @@ const (
 
 // retryInterval is how often PolicyOn retries a registration polkitd refused.
 const retryInterval = 30 * time.Second
+
+// busRetryInterval bounds how long registration stays offline after the bus
+// disconnects or is unavailable.
+const busRetryInterval = 2 * time.Second
+
+// dbusCallTimeout bounds a request to a connected service that stops replying.
+const dbusCallTimeout = 5 * time.Second
+
+// ponytail: FAILURE omits the PAM status, so three helper attempts bound retries; use a classified status if the protocol exposes one.
+const maxHelperAttempts = 3
 
 // The polkitd wire names. RegisterAuthenticationAgentWithOptions takes no
 // reply value, so a registration is one call and its error.
@@ -82,19 +94,27 @@ type Status struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// CancelledRequest is an authentication request that polkit withdrew or lost
+// during an authority restart. It omits the cookie and response state.
+type CancelledRequest struct {
+	ActionID string
+	Details  map[string]string
+}
+
 // Agent is the session's authentication agent.
 type Agent struct {
 	opts    Options
 	queue   *queue
 	reqs    chan Request
-	cancel  chan string
+	cancel  chan CancelledRequest
 	notice  chan string
 	changes chan struct{}
 
-	mu     sync.Mutex
-	conn   *dbus.Conn
-	status Status
-	held   bool
+	mu              sync.Mutex
+	conn            *dbus.Conn
+	status          Status
+	registeredOwner string
+	held            bool
 }
 
 // New builds an agent. Nothing is registered until Run is called.
@@ -103,7 +123,7 @@ func New(opts Options) *Agent {
 		opts.Policy = PolicyAuto
 	}
 	if opts.Bus == nil {
-		opts.Bus = dbus.SystemBus
+		opts.Bus = func() (*dbus.Conn, error) { return dbus.ConnectSystemBus() }
 	}
 	if opts.ProcRoot == "" {
 		opts.ProcRoot = "/proc"
@@ -116,7 +136,7 @@ func New(opts Options) *Agent {
 	a := &Agent{
 		opts:    opts,
 		reqs:    reqs,
-		cancel:  make(chan string, 1),
+		cancel:  make(chan CancelledRequest, maxPending+1),
 		notice:  make(chan string, 1),
 		changes: changes,
 	}
@@ -135,9 +155,9 @@ func (a *Agent) Requests() <-chan Request { return a.reqs }
 // Changes is a coalesced notification that queue depth or registration status changed.
 func (a *Agent) Changes() <-chan struct{} { return a.changes }
 
-// Withdrawn reports the cookie polkitd cancelled, so the surface can close a
-// prompt whose caller has gone.
-func (a *Agent) Withdrawn() <-chan string { return a.cancel }
+// Withdrawn reports requests polkit cancelled, so the shell can tell the user
+// which prompt or waiting request disappeared.
+func (a *Agent) Withdrawn() <-chan CancelledRequest { return a.cancel }
 
 // Notice reports once that another agent holds the session and is named.
 func (a *Agent) Notice() <-chan string { return a.notice }
@@ -178,10 +198,38 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.setStatus(Status{Policy: PolicyOff, Reason: "disabled"})
 		return nil
 	}
+	if err := a.opts.Helper.available(); err != nil {
+		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
+		return nil
+	}
+	for {
+		err := a.runConnection(ctx)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil {
+			err = errors.New("polkit: system bus disconnected")
+		}
+		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
+		a.cancelAllRequests()
+		a.logf("polkit: connection unavailable, retrying in %s: %v", busRetryInterval, err)
+		timer := time.NewTimer(busRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+}
+
+func (a *Agent) runConnection(ctx context.Context) error {
 	conn, err := a.opts.Bus()
 	if err != nil {
-		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
 		return err
+	}
+	if conn == nil {
+		return errors.New("polkit: system bus returned no connection")
 	}
 	a.mu.Lock()
 	a.conn = conn
@@ -189,12 +237,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer func() {
 		a.mu.Lock()
 		a.conn = nil
+		a.registeredOwner = ""
 		a.mu.Unlock()
 		_ = conn.Close()
 	}()
 
 	if err := conn.Export(a, agentPath, agentIface); err != nil {
-		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
 		return err
 	}
 	defer conn.Export(nil, agentPath, agentIface)
@@ -202,11 +250,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	sid := ""
 	if a.opts.SessionID != nil {
 		if sid, err = a.opts.SessionID(); err != nil {
-			a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
 			return err
 		}
-	} else if sid, err = sessionID(conn); err != nil {
-		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
+	} else if sid, err = sessionID(ctx, conn); err != nil {
 		return err
 	}
 
@@ -217,11 +263,17 @@ func (a *Agent) Run(ctx context.Context) error {
 		dbus.WithMatchMember("NameOwnerChanged"),
 		dbus.WithMatchArg(0, authorityName),
 	}
-	if err := conn.AddMatchSignal(match...); err != nil {
-		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
+	matchCtx, cancelMatch := context.WithTimeout(ctx, dbusCallTimeout)
+	err = conn.AddMatchSignalContext(matchCtx, match...)
+	cancelMatch()
+	if err != nil {
 		return err
 	}
-	defer conn.RemoveMatchSignal(match...)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), dbusCallTimeout)
+		defer cancel()
+		_ = conn.RemoveMatchSignalContext(cleanupCtx, match...)
+	}()
 	defer conn.RemoveSignal(owner)
 
 	// A retry timer only for PolicyOn; nil means the select waits on ctx only.
@@ -232,7 +284,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		retry = ticker.C
 	}
 	for {
-		a.register(conn, sid)
+		if err := a.register(ctx, conn, sid); err != nil {
+			return err
+		}
 		select {
 		case <-ctx.Done():
 			a.unregister(conn, sid)
@@ -240,7 +294,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			return nil
 		case sig, ok := <-owner:
 			if !ok {
-				return nil
+				return errors.New("polkit: system bus disconnected")
 			}
 			// polkitd restarting drops every registration it held. The
 			// prompts it had queued are gone with it, so their sessions must
@@ -250,7 +304,7 @@ func (a *Agent) Run(ctx context.Context) error {
 				oldOwner, oldOK := sig.Body[1].(string)
 				newOwner, newOK := sig.Body[2].(string)
 				if nameOK && name == authorityName && oldOK && newOK && oldOwner != newOwner {
-					a.queue.cancelAll()
+					a.handleAuthorityOwnerChange(oldOwner, newOwner)
 				}
 			}
 		case <-retry:
@@ -258,25 +312,82 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
-// register tries once and records the outcome.
-func (a *Agent) register(conn *dbus.Conn, sid string) {
-	err := conn.Object(authorityName, authorityPath).Call(registerName, 0,
-		subject(sid), locale(), agentPath, map[string]dbus.Variant{}).Err
+func (a *Agent) cancelAllRequests() {
+	for _, request := range a.queue.cancelAll() {
+		a.cancel <- CancelledRequest{ActionID: request.ActionID, Details: request.Details}
+	}
+}
+
+func (a *Agent) handleAuthorityOwnerChange(oldOwner, newOwner string) bool {
+	if oldOwner == newOwner {
+		return false
+	}
+	// Signals already queued when registration succeeds can describe the
+	// change that led to this registered owner, not a later authority restart.
+	// Only a change from the owner we registered with invalidates the state.
+	a.mu.Lock()
+	if a.status.Registered && a.registeredOwner != "" && oldOwner != a.registeredOwner {
+		a.mu.Unlock()
+		return false
+	}
+	a.registeredOwner = ""
+	a.mu.Unlock()
+	a.setStatus(Status{Policy: a.opts.Policy})
+	a.cancelAllRequests()
+	return true
+}
+
+// register tries unless this connection already registered successfully.
+func (a *Agent) register(ctx context.Context, conn *dbus.Conn, sid string) error {
+	if a.Status().Registered {
+		return nil
+	}
+	owner, err := authorityOwner(ctx, conn)
+	if isNameHasNoOwner(err) {
+		// GetNameOwner does not activate a service. Start polkitd explicitly so
+		// the registration call can target the unique owner we just discovered.
+		err = callWithTimeout(ctx, conn.BusObject(), "org.freedesktop.DBus.StartServiceByName", authorityName, uint32(0)).Err
+		if err == nil {
+			owner, err = authorityOwner(ctx, conn)
+		}
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	if err == nil {
+		// Pin the call to the unique owner from GetNameOwner. If that process
+		// loses the well-known name while handling the request, the queued
+		// NameOwnerChanged signal invalidates this exact registration below.
+		err = callWithTimeout(ctx, conn.Object(owner, authorityPath), registerName,
+			subject(sid), locale(), agentPath, map[string]dbus.Variant{}).Err
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	switch {
 	case err == nil:
+		a.mu.Lock()
+		a.registeredOwner = owner
+		a.mu.Unlock()
 		a.setStatus(Status{Policy: a.opts.Policy, Registered: true})
 		a.logf("polkit: registered as the authentication agent for session %s", sid)
 	case strings.Contains(err.Error(), alreadyExistsText):
 		holder := nameExisting(a.opts.ProcRoot)
-		reason := "another authentication agent holds this session"
-		if holder != "" {
-			reason = holder + " holds this session"
+		if holder == "" {
+			holder = "an unknown authentication agent"
 		}
+		reason := holder + " holds this session"
+		previous := a.Status()
 		a.setStatus(Status{Policy: a.opts.Policy, Passive: holder, Reason: reason})
 		a.logf("polkit: standing down, %s", reason)
-		select {
-		case a.notice <- holder:
-		default:
+		if previous.Reason != reason {
+			select {
+			case a.notice <- holder:
+			default:
+			}
 		}
 	case a.opts.Policy == PolicyAuto:
 		// auto does not compete: a failure leaves the shell as it was.
@@ -286,12 +397,43 @@ func (a *Agent) register(conn *dbus.Conn, sid string) {
 		a.setStatus(Status{Policy: a.opts.Policy, Reason: err.Error()})
 		a.logf("polkit: registration refused, retrying in %s: %v", retryInterval, err)
 	}
+	return nil
+}
+
+func authorityOwner(ctx context.Context, conn *dbus.Conn) (string, error) {
+	var owner string
+	err := callWithTimeout(ctx, conn.BusObject(), "org.freedesktop.DBus.GetNameOwner", authorityName).Store(&owner)
+	if err == nil && owner == "" {
+		return "", errors.New("polkit: authority has no bus owner")
+	}
+	return owner, err
+}
+
+func callWithTimeout(ctx context.Context, object dbus.BusObject, method string, args ...any) *dbus.Call {
+	callCtx, cancel := context.WithTimeout(ctx, dbusCallTimeout)
+	defer cancel()
+	return object.CallWithContext(callCtx, method, 0, args...)
+}
+
+func isNameHasNoOwner(err error) bool {
+	var busErr dbus.Error
+	return errors.As(err, &busErr) && busErr.Name == "org.freedesktop.DBus.Error.NameHasNoOwner"
 }
 
 func (a *Agent) unregister(conn *dbus.Conn, sid string) {
-	if err := conn.Object(authorityName, authorityPath).Call(unregisterName, 0, subject(sid), agentPath).Err; err != nil {
+	a.mu.Lock()
+	owner := a.registeredOwner
+	a.mu.Unlock()
+	destination := authorityName
+	if owner != "" {
+		destination = owner
+	}
+	if err := callWithTimeout(context.Background(), conn.Object(destination, authorityPath), unregisterName, subject(sid), agentPath).Err; err != nil {
 		a.logf("polkit: unregister: %v", err)
 	}
+	a.mu.Lock()
+	a.registeredOwner = ""
+	a.mu.Unlock()
 	a.setStatus(Status{Policy: a.opts.Policy, Reason: "stopped"})
 }
 
@@ -377,16 +519,29 @@ func (a *Agent) run(req Request) *dbus.Error {
 		}
 	}()
 
-	outcome, err := a.session(req, username).Run(ctx, req.ask)
-	switch {
-	case err == nil:
-		a.logf("polkit: session %s finished: %s", req.Cookie, outcome)
-		return nil
-	case err == ErrHelperCancelled:
-		return dbus.NewError(errCancelled, []any{"request withdrawn"})
-	default:
-		a.logf("polkit: session %s: %v", req.Cookie, err)
-		return dbus.NewError(errFailed, []any{err.Error()})
+	attempts := 0
+	for {
+		outcome, err := a.session(req, username).Run(ctx, req.ask)
+		switch {
+		case err == nil && outcome == tagFailure:
+			attempts++
+			if attempts >= maxHelperAttempts {
+				a.logf("polkit: authentication failed after %d helper attempts", attempts)
+				return dbus.NewError(errFailed, []any{"authentication failed"})
+			}
+			a.logf("polkit: authentication attempt failed")
+			if _, askErr := req.ask(Prompt{Text: "Authentication failed. Try again."}); askErr != nil {
+				return dbus.NewError(errCancelled, []any{"request withdrawn"})
+			}
+		case err == nil:
+			a.logf("polkit: authentication request finished: %s", outcome)
+			return nil
+		case err == ErrHelperCancelled:
+			return dbus.NewError(errCancelled, []any{"request withdrawn"})
+		default:
+			a.logf("polkit: authentication request failed: %v", err)
+			return dbus.NewError(errFailed, []any{err.Error()})
+		}
 	}
 }
 
@@ -409,15 +564,15 @@ func (a *Agent) CancelAuthentication(sender dbus.Sender, cookie string) *dbus.Er
 	if cookie == "" || len(cookie) > 256 {
 		return dbus.NewError(errFailed, []any{"invalid authentication cookie"})
 	}
-	if !a.queue.withdraw(cookie) {
+	withdrawn, ok := a.queue.withdraw(cookie)
+	if !ok {
 		// Not one of ours. polkitd only cancels what it asked us for, so this
 		// is a duplicate call rather than an error worth surfacing.
-		a.logf("polkit: cancel for unknown cookie %s", cookie)
+		a.logf("polkit: cancel for unknown authentication request")
 		return nil
 	}
-	select {
-	case a.cancel <- cookie:
-	default:
+	if withdrawn.queued {
+		a.cancel <- CancelledRequest{ActionID: withdrawn.request.ActionID, Details: withdrawn.request.Details}
 	}
 	return nil
 }
@@ -429,8 +584,8 @@ func (a *Agent) authorized(sender dbus.Sender) bool {
 	if conn == nil || sender == "" {
 		return false
 	}
-	var owner string
-	if err := conn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, authorityName).Store(&owner); err != nil {
+	owner, err := authorityOwner(context.Background(), conn)
+	if err != nil {
 		return false
 	}
 	return string(sender) == owner

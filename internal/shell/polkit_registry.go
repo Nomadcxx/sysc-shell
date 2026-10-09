@@ -2,7 +2,10 @@ package shell
 
 import (
 	"context"
+	"fmt"
 	"log"
+
+	"github.com/Nomadcxx/sysc-notify/protocol"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services/polkit"
 )
@@ -83,6 +86,7 @@ func (r *Registry) runPolkitAgent(ctx context.Context, cancel context.CancelFunc
 		hasActive   bool
 		prompts     <-chan polkit.Prompt
 		requestDone <-chan struct{}
+		presented   bool
 		runErr      error
 		runFinished bool
 	)
@@ -102,7 +106,7 @@ func (r *Registry) runPolkitAgent(ctx context.Context, cancel context.CancelFunc
 			}
 			active, hasActive = req, true
 			prompts, requestDone = req.Prompts(), req.Done()
-			r.presentPolkitPrompt(agent, req)
+			presented = r.presentPolkitPrompt(agent, req)
 		case prompt, ok := <-prompts:
 			if !ok {
 				prompts = nil
@@ -119,6 +123,15 @@ func (r *Registry) runPolkitAgent(ctx context.Context, cancel context.CancelFunc
 			}
 			active, hasActive = polkit.Request{}, false
 			prompts, requestDone = nil, nil
+			presented = false
+		case cancelled := <-agent.Withdrawn():
+			r.showPolkitCancellation(cancelled)
+		case holder := <-agent.Notice():
+			r.showPolkitAgentNotice(holder)
+		case <-r.polkitOutputEvents:
+			if hasActive && !presented {
+				presented = r.presentPolkitPrompt(agent, active)
+			}
 		case <-agent.Changes():
 			r.polkitChanged(agent)
 		}
@@ -140,19 +153,51 @@ stopped:
 	}
 }
 
-func (r *Registry) presentPolkitPrompt(agent *polkit.Agent, req polkit.Request) {
+func (r *Registry) presentPolkitPrompt(agent *polkit.Agent, req polkit.Request) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.polkitAgent != agent || r.polkitHost == nil {
 		req.Cancel()
-		return
+		return true
 	}
 	output, connector, ok := r.polkitOutputLocked()
 	if !ok {
-		req.Cancel()
-		return
+		return false
 	}
 	r.polkitHost.openLocked(req, output, connector, agent.Waiting())
+	return true
+}
+
+func (r *Registry) signalPolkitOutputChange() {
+	if r == nil {
+		return
+	}
+	select {
+	case r.polkitOutputEvents <- struct{}{}:
+	default:
+	}
+}
+
+func (r *Registry) showPolkitCancellation(cancelled polkit.CancelledRequest) {
+	program := polkitCallerProgram(cancelled.Details["polkit.caller-pid"])
+	r.showPolkitToast("Authentication request cancelled", fmt.Sprintf("Authentication request from %s was cancelled", program))
+}
+
+func (r *Registry) showPolkitAgentNotice(holder string) {
+	if holder == "" {
+		holder = "an unknown authentication agent"
+	}
+	r.showPolkitToast("Another authentication agent is active", "Using "+holder)
+}
+
+func (r *Registry) showPolkitToast(summary, body string) {
+	if r == nil || r.producerSender == nil {
+		return
+	}
+	key := fmt.Sprintf("sysc-shell:polkit:%d", r.pluginNotifySeq.Add(1))
+	if _, err := r.publishToast(key, summary, body, protocol.UrgencyNormal, -1); err != nil {
+		log.Printf("shell: polkit toast: %v", err)
+	}
 }
 
 func (r *Registry) finishPolkitPrompt(agent *polkit.Agent, cookie string) {

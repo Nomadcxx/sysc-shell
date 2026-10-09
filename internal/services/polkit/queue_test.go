@@ -132,9 +132,21 @@ func TestQueueWithdrawPendingCancelsItsCaller(t *testing.T) {
 	out := make(chan Request, 1)
 	q := &queue{out: out}
 	active := pushActive(t, q, out, "active")
-	queued, result := enqueueBehind(t, q, "queued")
-	if !q.withdraw("queued") {
+	queued := newTestRequest("queued")
+	queued.ActionID = "org.example.Queued"
+	queued.Details = map[string]string{"polkit.caller-pid": "42"}
+	result := make(chan error, 1)
+	go func() {
+		_, err := q.push(queued)
+		result <- err
+	}()
+	waitForWaiting(t, q, 1)
+	withdrawn, ok := q.withdraw("queued")
+	if !ok {
 		t.Fatal("withdraw of a queued request reported nothing withdrawn")
+	}
+	if !withdrawn.queued || withdrawn.request.ActionID != queued.ActionID || withdrawn.request.Details["polkit.caller-pid"] != "42" {
+		t.Fatalf("queued withdrawal = %+v", withdrawn)
 	}
 	if err := <-result; err != errQueueCancelled {
 		t.Fatalf("queued push after withdrawal = %v, want cancellation", err)
@@ -154,18 +166,41 @@ func TestQueueWithdrawDisplayedSignalsCaller(t *testing.T) {
 	out := make(chan Request, 1)
 	q := &queue{out: out}
 	active := pushActive(t, q, out, "active")
-	if !q.withdraw(active.Cookie) {
+	withdrawn, ok := q.withdraw(active.Cookie)
+	if !ok {
 		t.Fatal("withdraw of displayed request reported nothing withdrawn")
+	}
+	if withdrawn.queued || withdrawn.request.Cookie != active.Cookie {
+		t.Fatalf("displayed withdrawal = %+v", withdrawn)
 	}
 	select {
 	case <-active.Done():
 	default:
 		t.Fatal("displayed request was not signalled")
 	}
-	if q.withdraw("no such cookie") {
+	if _, ok := q.withdraw("no such cookie"); ok {
 		t.Fatal("withdraw of unknown cookie reported a withdrawal")
 	}
 	q.finish(active.Cookie)
+}
+
+func TestWaitStartedPrefersDispatchWhenCancelled(t *testing.T) {
+	for range 256 {
+		started := make(chan struct{})
+		cancelled := make(chan struct{})
+		close(started)
+		close(cancelled)
+		if !waitStarted(started, cancelled) {
+			t.Fatal("a dispatched request was reported cancelled")
+		}
+	}
+
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	close(cancelled)
+	if waitStarted(started, cancelled) {
+		t.Fatal("a request cancelled before dispatch was reported started")
+	}
 }
 
 func TestQueueCancelAllUnblocksEveryRequest(t *testing.T) {
@@ -187,6 +222,33 @@ func TestQueueCancelAllUnblocksEveryRequest(t *testing.T) {
 	}
 	if got := displayed(t, out); got.Cookie != "after" {
 		t.Fatalf("displayed %q after cancelAll, want after", got.Cookie)
+	}
+}
+
+func TestQueueCancelAllReturnsRequestsForNotifications(t *testing.T) {
+	out := make(chan Request, 1)
+	q := &queue{out: out}
+	active := newTestRequest("active")
+	active.ActionID = "org.example.Active"
+	active.Details = map[string]string{"polkit.caller-pid": "41"}
+	if _, err := q.push(active); err != nil {
+		t.Fatal(err)
+	}
+	_ = displayed(t, out)
+	queued := newTestRequest("queued")
+	queued.ActionID = "org.example.Queued"
+	result := make(chan error, 1)
+	go func() {
+		_, err := q.push(queued)
+		result <- err
+	}()
+	waitForWaiting(t, q, 1)
+	withdrawn := q.cancelAll()
+	if len(withdrawn) != 2 || withdrawn[0].ActionID != active.ActionID || withdrawn[1].ActionID != queued.ActionID {
+		t.Fatalf("cancelled requests = %+v", withdrawn)
+	}
+	if err := <-result; err != errQueueCancelled {
+		t.Fatalf("queued request after cancellation = %v", err)
 	}
 }
 

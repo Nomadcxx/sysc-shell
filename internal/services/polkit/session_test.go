@@ -1,6 +1,7 @@
 package polkit
 
 import (
+	"context"
 	"testing"
 
 	"github.com/godbus/dbus/v5"
@@ -16,7 +17,7 @@ func (testLogind) GetId() (string, *dbus.Error) { return "test-session", nil }
 
 func TestSessionIDUsesEnvironment(t *testing.T) {
 	t.Setenv("XDG_SESSION_ID", "42")
-	got, err := sessionID(nil)
+	got, err := sessionID(context.Background(), nil)
 	if err != nil || got != "42" {
 		t.Fatalf("sessionID() = %q, %v", got, err)
 	}
@@ -39,7 +40,7 @@ func TestSessionIDFallsBackToLogind(t *testing.T) {
 	if err := conn.Export(testLogind{}, dbus.ObjectPath("/org/freedesktop/login1/session/_1"), logindSession); err != nil {
 		t.Fatal(err)
 	}
-	got, err := sessionID(conn)
+	got, err := sessionID(context.Background(), conn)
 	if err != nil || got != "test-session" {
 		t.Fatalf("sessionID() = %q, %v", got, err)
 	}

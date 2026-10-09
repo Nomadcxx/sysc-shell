@@ -200,6 +200,7 @@ type Registry struct {
 	polkitCancel        context.CancelFunc
 	polkitDone          chan struct{}
 	polkitLifecycleMu   sync.Mutex
+	polkitOutputEvents  chan struct{}
 	backgroundHeld      bool
 	backgroundLeasePath string
 	backgroundMu        sync.Mutex
@@ -390,37 +391,38 @@ func NewRegistry(cfg config.Config) *Registry {
 	weather.SetLocationLabel(cfg.Weather.Location)
 	weather.SetCity(cfg.Weather.City)
 	r := &Registry{
-		cfg:              cfg,
-		now:              time.Now(),
-		outputs:          make(map[string]outputState),
-		bars:             make(map[uint32]*Bar),
-		leases:           make(map[uint32][]*services.Lease),
-		clock:            services.NewClock(),
-		metrics:          services.NewMetrics(),
-		weather:          weather,
-		gammaEvents:      make(chan wayland.GammaEvent, 16),
-		themeGen:         gen,
-		paletteStore:     palettes,
-		paletteLister:    listPalettes,
-		paletteImportDir: paletteImportDir(),
-		templateForce:    map[string]bool{},
-		invalidations:    make(chan wayland.Invalidation, 8),
-		aux:              make(chan wayland.AuxRequest, 8),
-		selections:       make(chan wayland.SelectionRequest, 8),
-		panelHosts:       make(map[PanelID]*PanelHost),
-		panelShields:     make(map[uint32]*PanelHost),
-		closed:           make(chan struct{}),
-		dwell:            newDwell(defaultDwell),
-		runArgv:          runArgvDefault,
-		lookPath:         exec.LookPath,
-		runArgvOutput:    runArgvOutputDefault,
-		startInhibit:     startInhibitDefault,
-		signalProcess:    signalProcessDefault,
-		notify:           newNotifyState(),
-		batteryWarning:   newBatteryWarning(),
-		clipboard:        newClipboardProjection(),
-		tray:             newTrayState(),
-		trayCh:           make(chan trayclient.Message, 32),
+		cfg:                cfg,
+		now:                time.Now(),
+		outputs:            make(map[string]outputState),
+		bars:               make(map[uint32]*Bar),
+		leases:             make(map[uint32][]*services.Lease),
+		clock:              services.NewClock(),
+		metrics:            services.NewMetrics(),
+		weather:            weather,
+		gammaEvents:        make(chan wayland.GammaEvent, 16),
+		themeGen:           gen,
+		paletteStore:       palettes,
+		paletteLister:      listPalettes,
+		paletteImportDir:   paletteImportDir(),
+		templateForce:      map[string]bool{},
+		invalidations:      make(chan wayland.Invalidation, 8),
+		aux:                make(chan wayland.AuxRequest, 8),
+		selections:         make(chan wayland.SelectionRequest, 8),
+		polkitOutputEvents: make(chan struct{}, 1),
+		panelHosts:         make(map[PanelID]*PanelHost),
+		panelShields:       make(map[uint32]*PanelHost),
+		closed:             make(chan struct{}),
+		dwell:              newDwell(defaultDwell),
+		runArgv:            runArgvDefault,
+		lookPath:           exec.LookPath,
+		runArgvOutput:      runArgvOutputDefault,
+		startInhibit:       startInhibitDefault,
+		signalProcess:      signalProcessDefault,
+		notify:             newNotifyState(),
+		batteryWarning:     newBatteryWarning(),
+		clipboard:          newClipboardProjection(),
+		tray:               newTrayState(),
+		trayCh:             make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
 		trayCloses:      newTrayCloseTracker(),
@@ -430,7 +432,6 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.polkitHost = newPolkitHost(r)
-	r.weather.SetCity(cfg.Weather.City)
 	r.nightLight = services.NewNightLight(services.NightLightOptions{
 		Location:        r.weather.ResolvedLocation,
 		LocationPending: r.weather.LocationPending,
@@ -612,7 +613,8 @@ func (r *Registry) setMedia(m *services.Media) {
 		r.mediaPlayers = nil
 		return
 	}
-	r.mediaState = m.CachedState()
+	state := mediaStartupSnapshot(m.CachedState, m.Changes())
+	r.mediaState = state
 	r.mediaPlayers = m.Players()
 	cancel := make(chan struct{})
 	r.mediaRelayCancel = cancel
@@ -620,11 +622,31 @@ func (r *Registry) setMedia(m *services.Media) {
 	r.pushIdleInputs()
 }
 
+// mediaStartupSnapshot drops queued snapshots covered by the current cache.
+// The media channel coalesces updates, but its construction snapshot can be
+// older than an interpolated cache read; retry if a new update races with it.
+func mediaStartupSnapshot(cached func() services.MediaState, changes <-chan services.MediaState) services.MediaState {
+	for {
+		select {
+		case <-changes:
+		default:
+		}
+		state := cached()
+		select {
+		case <-changes:
+			continue
+		default:
+			return state
+		}
+	}
+}
+
 func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 	if media == nil {
 		return
 	}
-	r.publishMediaSnapshot(media, media.CachedState())
+	// setMedia installs the initial cache before starting this relay. Replaying
+	// it here could overwrite a newer snapshot if relay startup is delayed.
 	prev := media.CachedState()
 	for {
 		select {
@@ -1564,6 +1586,7 @@ func (r *Registry) adoptBar(
 	// it once. An invalidation here would be a second frame for a first paint,
 	// and this call is on the owner goroutine, which drains that channel.
 	r.syncTrayLocked()
+	r.signalPolkitOutputChange()
 	return r.outputGlobalsLocked(), r.plugins
 }
 
@@ -1892,6 +1915,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				r.signalPolkitOutputChange()
 				if !runningAsTest() && generatedTheme(genErr) {
 					go r.publishCommittedThemeSelection(cfg, tok)
 				}
@@ -1955,6 +1979,7 @@ func (r *Registry) DropHost(global uint32) {
 	toastOutputs := r.outputGlobalsLocked()
 	plugins := r.plugins
 	r.mu.Unlock()
+	r.signalPolkitOutputChange()
 	if bar != nil {
 		bar.stopAnimation()
 	}

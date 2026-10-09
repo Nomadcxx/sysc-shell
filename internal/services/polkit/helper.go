@@ -40,7 +40,7 @@ var (
 	// withdrawn, not because the helper finished.
 	ErrHelperCancelled = errors.New("polkit: helper session cancelled")
 	// ErrNoHelper means neither helper path is available.
-	ErrNoHelper = errors.New("polkit: no authentication helper available")
+	ErrNoHelper = errors.New("polkit authentication helper not found")
 )
 
 // HelperSession is one conversation with the PAM helper.
@@ -72,7 +72,12 @@ type Prompt struct {
 //
 // Cancelling ctx closes the connection or kills the process; Run then returns
 // ErrHelperCancelled, which is how a withdrawn request ends its session.
-func (s HelperSession) Run(ctx context.Context, ask func(Prompt) (string, error)) (string, error) {
+func (s HelperSession) Run(ctx context.Context, ask func(Prompt) (string, error)) (outcome string, runErr error) {
+	defer func() {
+		if runErr != nil && ctx.Err() != nil {
+			outcome, runErr = "", ErrHelperCancelled
+		}
+	}()
 	socket, binary := s.SocketPath, s.BinaryPath
 	if socket == "" {
 		socket = defaultHelperSocket
@@ -88,14 +93,14 @@ func (s HelperSession) Run(ctx context.Context, ask func(Prompt) (string, error)
 		socketMode bool
 	)
 	switch {
-	case fileExists(socket):
+	case isHelperSocket(socket):
 		conn, dialErr := (&net.Dialer{}).DialContext(ctx, "unix", socket)
 		if dialErr != nil {
 			return "", fmt.Errorf("polkit: dial helper socket: %w", dialErr)
 		}
 		in, out, cancel = conn, conn, func() { _ = conn.Close() }
 		socketMode = true
-	case fileExists(binary):
+	case helperBinaryAvailable(binary, s.BinaryPath != ""):
 		cmd := exec.Command(binary, s.Username)
 		stdin, pipeErr := cmd.StdinPipe()
 		if pipeErr != nil {
@@ -185,6 +190,20 @@ func (s HelperSession) Run(ctx context.Context, ask func(Prompt) (string, error)
 	}
 }
 
+func (s HelperSession) available() error {
+	socket, binary := s.SocketPath, s.BinaryPath
+	if socket == "" {
+		socket = defaultHelperSocket
+	}
+	if binary == "" {
+		binary = defaultHelperBinary
+	}
+	if isHelperSocket(socket) || helperBinaryAvailable(binary, s.BinaryPath != "") {
+		return nil
+	}
+	return ErrNoHelper
+}
+
 // writeLine sends one protocol line. It is only ever the username or the
 // cookie, neither of which is a secret.
 func writeLine(w io.Writer, line string) error {
@@ -268,7 +287,15 @@ func unescapeHelper(s string) string {
 	return out.String()
 }
 
-func fileExists(path string) bool {
+func isHelperSocket(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	return err == nil && info.Mode()&os.ModeSocket != 0
+}
+
+func helperBinaryAvailable(path string, allowNonSetuid bool) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	return allowNonSetuid || info.Mode()&os.ModeSetuid != 0
 }

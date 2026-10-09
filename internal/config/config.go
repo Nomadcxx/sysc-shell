@@ -599,7 +599,7 @@ func Default() Config {
 			Mode:   "dark",
 		},
 		Panels:     Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
-		Session: Session{PolkitAgent: "auto"},
+		Session:    Session{PolkitAgent: "auto"},
 		Monitor:    defaultMonitor(),
 		Idle:       Idle{MediaExempt: true},
 		NightLight: defaultNightLight(),

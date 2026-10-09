@@ -90,3 +90,26 @@ func TestMediaStripClosesWithItsOutput(t *testing.T) {
 		t.Fatalf("closes = %v, want strip and shield", harness.closes)
 	}
 }
+
+func TestMediaStartupSnapshotUsesCurrentCacheAndFoldsRacingChanges(t *testing.T) {
+	stale := services.MediaState{Available: true, Title: "stale", PositionUS: 10}
+	current := services.MediaState{Available: true, Title: "current", PositionUS: 20}
+	latest := services.MediaState{Available: true, Title: "latest", PositionUS: 30}
+	changes := make(chan services.MediaState, 1)
+	changes <- stale
+	cacheReads := 0
+	got := mediaStartupSnapshot(func() services.MediaState {
+		cacheReads++
+		if cacheReads == 1 {
+			changes <- latest
+			return current
+		}
+		return latest
+	}, changes)
+	if got != latest {
+		t.Fatalf("startup snapshot = %+v, want latest %+v", got, latest)
+	}
+	if cacheReads < 2 {
+		t.Fatalf("cache reads = %d, want retry after a change raced with the cache read", cacheReads)
+	}
+}

@@ -26,6 +26,20 @@ func newRequest() Request {
 	}
 }
 
+func waitStarted(started, cancelled <-chan struct{}) bool {
+	select {
+	case <-started:
+		return true
+	case <-cancelled:
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}
+}
+
 // Identity is one identity polkitd will accept the response for.
 type Identity struct {
 	Kind   string
@@ -153,6 +167,11 @@ type queue struct {
 	active  *Request
 }
 
+type withdrawnRequest struct {
+	request Request
+	queued  bool
+}
+
 // push waits until the request reaches the display slot. The D-Bus method that
 // called it therefore cannot return success while its request is still queued.
 // A refused request is canceled by the caller because nothing else will.
@@ -174,12 +193,10 @@ func (q *queue) push(req Request) (bool, error) {
 		q.pending = append(q.pending, req)
 		q.signalLocked()
 		q.mu.Unlock()
-		select {
-		case <-req.started:
-			return true, nil
-		case <-req.done.ch:
+		if !waitStarted(req.started, req.done.ch) {
 			return false, errQueueCancelled
 		}
+		return true, nil
 	}
 	q.active = &req
 	q.out <- req
@@ -256,7 +273,7 @@ func (q *queue) dispatchLocked() {
 // withdraw is polkitd cancelling a request that has not been answered. A
 // pending one is dropped and answered canceled; the displayed one is signalled
 // so the surface closes it and the session stops.
-func (q *queue) withdraw(cookie string) bool {
+func (q *queue) withdraw(cookie string) (withdrawnRequest, bool) {
 	q.mu.Lock()
 	for i, pending := range q.pending {
 		if pending.Cookie != cookie {
@@ -266,15 +283,17 @@ func (q *queue) withdraw(cookie string) bool {
 		q.signalLocked()
 		q.mu.Unlock()
 		pending.done.stop()
-		return true
+		return withdrawnRequest{request: pending, queued: true}, true
 	}
-	displayed := q.active != nil && q.active.Cookie == cookie
-	if displayed {
+	if q.active != nil && q.active.Cookie == cookie {
+		active := *q.active
 		q.active.done.stop()
 		q.signalLocked()
+		q.mu.Unlock()
+		return withdrawnRequest{request: active}, true
 	}
 	q.mu.Unlock()
-	return displayed
+	return withdrawnRequest{}, false
 }
 
 // hold defers dispatch while the session is locked, so a prompt waits behind
@@ -292,7 +311,7 @@ func (q *queue) hold(locked bool) {
 // cancelAll drops every request, displayed or waiting. It is the answer for a
 // helper that died or a bus that went away: the caller is left without an
 // answer, which polkitd treats as a cancellation.
-func (q *queue) cancelAll() {
+func (q *queue) cancelAll() []Request {
 	q.mu.Lock()
 	pending := q.pending
 	active := q.active
@@ -308,6 +327,11 @@ func (q *queue) cancelAll() {
 	for _, req := range pending {
 		req.done.stop()
 	}
+	cancelled := make([]Request, 0, len(pending)+1)
+	if active != nil {
+		cancelled = append(cancelled, *active)
+	}
+	return append(cancelled, pending...)
 }
 
 // waiting reports how many prompts are queued behind the displayed one, for

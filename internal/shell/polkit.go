@@ -3,7 +3,10 @@ package shell
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -29,11 +32,14 @@ const (
 	polkitShowingInfo
 )
 
-func polkitFocusOrder(phase polkitPromptPhase, hasDetails bool) []string {
+func polkitFocusOrder(phase polkitPromptPhase, hasDetails, hasIdentityChooser bool) []string {
 	var order []string
 	switch phase {
 	case polkitChoosingIdentity:
-		order = []string{"identity", "continue", "cancel"}
+		if hasIdentityChooser {
+			order = append(order, "identity")
+		}
+		order = append(order, "continue", "cancel")
 	case polkitEnteringResponse:
 		order = []string{"password", "submit", "cancel"}
 	case polkitShowingInfo:
@@ -49,6 +55,15 @@ func polkitFocusOrder(phase polkitPromptPhase, hasDetails bool) []string {
 
 func polkitPromptMasked(prompt polkit.Prompt) bool { return prompt.Secret && !prompt.Echo }
 
+func polkitSelectedIdentity(identities []polkit.Identity, currentUID string) int {
+	for i, identity := range identities {
+		if identity.Kind == "unix-user" && identity.Values["uid"] == currentUID {
+			return i
+		}
+	}
+	return 0
+}
+
 type polkitHost struct {
 	r       *Registry
 	request func(wayland.AuxRequest)
@@ -60,15 +75,16 @@ type polkitHost struct {
 	rootGen   uint64
 	request_  polkit.Request
 
-	phase       polkitPromptPhase
-	identities  []polkit.Identity
-	selected    int
-	prompt      polkit.Prompt
-	field       *ui.Field
-	detailsOpen bool
-	waiting     int
-	focus       string
-	pressed     string
+	phase         polkitPromptPhase
+	identities    []polkit.Identity
+	selected      int
+	prompt        polkit.Prompt
+	field         *ui.Field
+	wrongPassword bool
+	detailsOpen   bool
+	waiting       int
+	focus         string
+	pressed       string
 
 	logicalW, logicalH, scale120 int
 	text                         *render.TextRenderer
@@ -101,11 +117,14 @@ func (h *polkitHost) openLocked(req polkit.Request, output uint32, connector str
 	h.output, h.connector = output, connector
 	h.request_ = req
 	h.phase = polkitChoosingIdentity
-	h.selected, h.waiting = 0, waiting
+	h.selected, h.waiting = polkitSelectedIdentity(h.identities, strconv.Itoa(os.Getuid())), waiting
 	h.prompt = polkit.Prompt{}
 	h.field = nil
 	h.detailsOpen = false
-	h.focus, h.pressed = "identity", ""
+	h.focus, h.pressed = "continue", ""
+	if len(h.identities) > 1 {
+		h.focus = "identity"
+	}
 	currentTheme := h.r.panelThemeFor(output)
 	h.style = currentTheme.OverlayStyle()
 	h.metrics = currentTheme.Metrics
@@ -231,27 +250,27 @@ func (h *polkitHost) rebuild() {
 	}
 	innerWidth := max(cardWidth-2*theme.MarginL, 1)
 	children := []*ui.Node{
-		{Kind: ui.KindText, Text: "Authentication required", TextRole: theme.RoleTitle, Name: "Authentication required", Role: "heading"},
+		{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
+			h.appIcon(),
+			{Kind: ui.KindText, Text: "Authentication required", TextRole: theme.RoleTitle, Name: "Authentication required", Role: "heading"},
+		}},
 	}
-	message := strings.TrimSpace(h.request_.Message)
-	if message == "" {
-		message = "A program needs permission to continue."
-	}
-	children = append(children, &ui.Node{Kind: ui.KindText, Text: message, TextRole: theme.RoleBody, MaxWidth: innerWidth})
+	children = append(children, &ui.Node{Kind: ui.KindText, Text: h.request_.Message, TextRole: theme.RoleBody, MaxWidth: innerWidth})
 
 	h.nodes = make(map[string]*ui.Node)
 	switch h.phase {
 	case polkitChoosingIdentity:
 		identity := h.identities[h.selected]
-		label := identity.Name
 		if len(h.identities) > 1 {
-			label = fmt.Sprintf("%s  ·  %d of %d", label, h.selected+1, len(h.identities))
+			label := fmt.Sprintf("%s  ·  %d of %d", identity.Name, h.selected+1, len(h.identities))
+			h.nodes["identity"] = h.buttonNode("identity", label, "Choose identity", h.focus == "identity", innerWidth)
+			children = append(children,
+				&ui.Node{Kind: ui.KindText, Text: "Authenticate as", TextRole: theme.RoleLabel},
+				h.nodes["identity"],
+			)
+		} else {
+			children = append(children, &ui.Node{Kind: ui.KindText, Text: "Authenticate as " + identity.Name, TextRole: theme.RoleLabel})
 		}
-		h.nodes["identity"] = h.buttonNode("identity", label, "Choose identity", h.focus == "identity", innerWidth)
-		children = append(children,
-			&ui.Node{Kind: ui.KindText, Text: "Authenticate as", TextRole: theme.RoleLabel},
-			h.nodes["identity"],
-		)
 	case polkitAwaitingPrompt:
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: "Waiting for the authentication prompt…", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	case polkitEnteringResponse:
@@ -261,6 +280,9 @@ func (h *polkitHost) rebuild() {
 		node.Placeholder = "Enter your response"
 		node.Editing = h.focus == "password"
 		node.TextRole = theme.RoleBody
+		if h.wrongPassword {
+			node.Tone = ui.ToneError
+		}
 		h.nodes["password"] = node
 		children = append(children, node)
 	case polkitShowingInfo:
@@ -284,15 +306,15 @@ func (h *polkitHost) rebuild() {
 	buttons := []*ui.Node{}
 	switch h.phase {
 	case polkitChoosingIdentity:
-		buttons = append(buttons, h.buttonNode("continue", "Continue", "Continue", h.focus == "continue", h.metrics.StandardControl*4))
+		buttons = append(buttons, h.buttonNode("continue", "Authenticate", "Authenticate", h.focus == "continue", h.metrics.StandardControl*4))
 	case polkitEnteringResponse:
-		buttons = append(buttons, h.buttonNode("submit", "Submit", "Submit", h.focus == "submit", h.metrics.StandardControl*3))
+		buttons = append(buttons, h.buttonNode("submit", "Authenticate", "Authenticate", h.focus == "submit", h.metrics.StandardControl*3))
 	case polkitShowingInfo:
 		buttons = append(buttons, h.buttonNode("continue", "Continue", "Continue", h.focus == "continue", h.metrics.StandardControl*4))
 	}
 	buttons = append(buttons, h.buttonNode("cancel", "Cancel", "Cancel", h.focus == "cancel", h.metrics.StandardControl*3))
 	children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: buttons})
-	if len(h.request_.Details) > 0 {
+	if h.hasDetails() {
 		label, name := "Details", "Show request details"
 		if h.detailsOpen {
 			label, name = "Hide details", "Hide request details"
@@ -310,6 +332,15 @@ func (h *polkitHost) rebuild() {
 	if h.logicalW > 0 && h.logicalH > 0 {
 		_ = h.relayout()
 	}
+}
+
+func (h *polkitHost) appIcon() *ui.Node {
+	if h.r != nil {
+		if image := h.r.lookupNotifyIcon(h.request_.IconName); image != nil {
+			return &ui.Node{Kind: ui.KindImage, Image: image, ImageSize: h.metrics.IconLarge}
+		}
+	}
+	return &ui.Node{Kind: ui.KindIcon, Icon: "shield", IconSize: h.metrics.IconLarge}
 }
 
 func (h *polkitHost) buttonNode(id, label, name string, focused bool, width int) *ui.Node {
@@ -330,11 +361,16 @@ func (h *polkitHost) buttonNode(id, label, name string, focused bool, width int)
 func (h *polkitHost) detailLines() []string {
 	keys := make([]string, 0, len(h.request_.Details))
 	for key := range h.request_.Details {
-		keys = append(keys, key)
+		if key != "polkit.caller-pid" {
+			keys = append(keys, key)
+		}
 	}
 	sort.Strings(keys)
 	limit := min(len(keys), 8)
-	lines := make([]string, 0, limit+1)
+	lines := []string{
+		"Action ID: " + h.request_.ActionID,
+		"Program: " + polkitCallerProgram(h.request_.Details["polkit.caller-pid"]),
+	}
 	for _, key := range keys[:limit] {
 		lines = append(lines, key+": "+strings.TrimSpace(h.request_.Details[key]))
 	}
@@ -342,6 +378,22 @@ func (h *polkitHost) detailLines() []string {
 		lines = append(lines, fmt.Sprintf("and %d more details", len(keys)-limit))
 	}
 	return lines
+}
+
+func (h *polkitHost) hasDetails() bool {
+	return h.request_.ActionID != "" || len(h.request_.Details) > 0
+}
+
+func polkitCallerProgram(pid string) string {
+	parsed, err := strconv.ParseUint(pid, 10, 32)
+	if err != nil || parsed == 0 {
+		return "unknown"
+	}
+	executable, err := os.Readlink(filepath.Join("/proc", strconv.FormatUint(parsed, 10), "exe"))
+	if err != nil || executable == "" {
+		return "unknown"
+	}
+	return filepath.Base(executable)
 }
 
 func (h *polkitHost) handleLocked(event wayland.Event) bool {
@@ -381,6 +433,12 @@ func (h *polkitHost) handleLocked(event wayland.Event) bool {
 		}
 		if h.field != nil && h.focus == "password" {
 			result := h.field.HandleKey(ui.KeyInput{Code: key, Sym: sym, Text: text, Mods: event.Mods, Serial: event.Serial})
+			if h.r != nil {
+				h.r.requestClipboard(result, event.Serial)
+			}
+			if result.Changed {
+				h.wrongPassword = false
+			}
 			if result.Submit {
 				h.submitLocked()
 				return true
@@ -403,6 +461,9 @@ func (h *polkitHost) handleLocked(event wayland.Event) bool {
 		if h.field == nil || h.focus != "password" {
 			return false
 		}
+		if event.IMECommit != "" {
+			h.wrongPassword = false
+		}
 		if event.IMEPreedit != "" {
 			h.field.Preedit(event.IMEPreedit)
 		}
@@ -419,6 +480,7 @@ func (h *polkitHost) handleLocked(event wayland.Event) bool {
 		if h.field == nil || h.focus != "password" {
 			return false
 		}
+		h.wrongPassword = false
 		h.field.Commit(strings.ReplaceAll(flattenPaste(event.Paste), "\x00", ""))
 		h.rebuild()
 		h.repaintLocked()
@@ -463,7 +525,7 @@ func (h *polkitHost) hitAction(x, y int) string {
 }
 
 func (h *polkitHost) cycleFocus(direction int) {
-	order := polkitFocusOrder(h.phase, len(h.request_.Details) > 0)
+	order := polkitFocusOrder(h.phase, h.hasDetails(), len(h.identities) > 1)
 	index := 0
 	for i, name := range order {
 		if name == h.focus {
@@ -541,6 +603,7 @@ func (h *polkitHost) setPromptLocked(prompt polkit.Prompt) {
 		h.field.SubmitOnEnter = true
 		h.focus = "password"
 	} else {
+		h.wrongPassword = prompt.Text == "Authentication failed. Try again."
 		h.phase = polkitShowingInfo
 		h.field = nil
 		h.focus = "continue"
@@ -562,6 +625,7 @@ func (h *polkitHost) submitLocked() {
 		return
 	}
 	h.phase, h.focus = polkitAwaitingPrompt, "cancel"
+	h.wrongPassword = false
 	h.prompt = polkit.Prompt{}
 	h.rebuild()
 	h.repaintLocked()
@@ -571,6 +635,7 @@ func (h *polkitHost) clearResponseLocked() {
 	if h.field != nil {
 		h.field = ui.NewField("")
 	}
+	h.wrongPassword = false
 }
 
 func (h *polkitHost) finishLocked(cancel bool) {
