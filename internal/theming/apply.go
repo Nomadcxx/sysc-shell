@@ -59,7 +59,11 @@ func applyWriteForce(path, rendered string) error {
 	// Keep the FIRST backup: it holds the bytes the shell never rendered. A
 	// second forced overwrite replaces a file the shell itself wrote, and
 	// clobbering that backup would destroy the only record of the user's.
-	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+	//
+	// Bytes the shell itself last wrote are not the user's, so they get no
+	// backup: an adopting pass can follow a guarded one that already wrote
+	// the sidecar, and a .bak of that would read as the user's file.
+	if current, err := os.ReadFile(path); err == nil && len(current) > 0 && stateHash(path) != hash(current) {
 		if _, err := os.Stat(path + ".bak"); errors.Is(err, os.ErrNotExist) {
 			if err := os.Rename(path, path+".bak"); err != nil {
 				return err

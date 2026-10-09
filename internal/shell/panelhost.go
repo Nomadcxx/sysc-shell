@@ -3262,24 +3262,6 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "bar-") && h.barActivate(r, n.Action) {
 		return true
 	}
-	if name, ok := strings.CutPrefix(n.Action, "template-overwrite:"); ok {
-		r.templateMu.Lock()
-		if r.templateForce == nil {
-			r.templateForce = map[string]bool{}
-		}
-		r.templateForce[name] = true
-		r.templateMu.Unlock()
-		// A config rewrite is the one path that re-runs every template
-		// apply; the force flag is consumed there, off this goroutine.
-		// Persist the draft, not the committed config: the refusal row is
-		// shown inside the settings view, and overwriting must not throw
-		// away the edits the user is looking at.
-		if err := r.writeConfig(h.draft); err != nil {
-			h.errLabel = err.Error()
-		}
-		r.rebuildPanel(h)
-		return true
-	}
 	if strings.HasPrefix(n.Action, "section:") {
 		section := strings.TrimPrefix(n.Action, "section:")
 		if h.id == PanelControlCenter {

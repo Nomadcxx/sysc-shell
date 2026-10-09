@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,11 +10,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
-
-// Template failures do not invalidate the palette committed by the shell.
-var errThemeTemplates = errors.New("theme: external templates")
-
-func generatedTheme(err error) bool { return err == nil || errors.Is(err, errThemeTemplates) }
 
 const greeterThemeDir = "/var/lib/sysc-greet/shell-theme"
 

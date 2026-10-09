@@ -1,7 +1,6 @@
 package theming
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +31,7 @@ func TestStarshipManagesPaletteBlockInUserConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "starship" }
-	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(cfg)
@@ -50,28 +49,27 @@ func TestStarshipManagesPaletteBlockInUserConfig(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); !errors.Is(err, ErrUserModified) {
-		t.Fatalf("edited managed block refusal = %v", err)
+	// An edited managed block is adopted: the shell's block is restored and
+	// the edit kept in the backup (owner decision, 2026-10-09).
+	if _, adopted, err := ApplyEnabled(home, only, theme.Fallback); err != nil || len(adopted) != 1 || adopted[0] != "starship" {
+		t.Fatalf("edited managed block: adopted %v, err %v", adopted, err)
 	}
-	if current, _ := os.ReadFile(cfg); !strings.Contains(string(current), "# user edit") {
-		t.Fatal("apply overwrote an edited managed block")
-	}
-	if _, err := ApplyEnabled(home, only, theme.Fallback, only); err != nil {
-		t.Fatalf("confirmed block overwrite: %v", err)
+	if current, _ := os.ReadFile(cfg); strings.Contains(string(current), "# user edit") {
+		t.Fatal("the edited block was not restored")
 	}
 	backup, err := os.ReadFile(cfg + ".bak")
 	if err != nil || !strings.Contains(string(backup), "# user edit") {
 		t.Fatalf("managed block backup = %q, %v", backup, err)
 	}
 	// Re-apply must be idempotent.
-	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(cfg)
 	if strings.Count(string(b2), blockOpen) != 1 || strings.Count(string(b2), `palette = "sysc-shell"`) != 1 {
 		t.Fatalf("re-apply duplicated: %s", b2)
 	}
-	if _, err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b3, _ := os.ReadFile(cfg)

@@ -2,9 +2,9 @@ package shell
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -49,11 +49,39 @@ func TestCommittedThemeSelection(t *testing.T) {
 	check("")
 }
 
-func TestTemplateFailureDoesNotInvalidateSelection(t *testing.T) {
-	if !generatedTheme(fmt.Errorf("%w: modified template", errThemeTemplates)) {
-		t.Fatal("template error blocked palette following")
+// Template outcomes are reported in a sysc-notify toast, not the theme error
+// the wallpaper picker paints: an adoption says where the user's file went, a
+// failure says why, and an unchanged report is not posted again (sysc-1084).
+func TestTemplateOutcomesAreToasts(t *testing.T) {
+	home := t.TempDir()
+	rec := &pluginToastRecorder{}
+	r := &Registry{}
+	r.producerSender = rec
+
+	r.reportTemplates(home, map[string]error{"btop": nil}, []string{"btop"})
+	got := rec.commands()
+	if len(got) != 1 || got[0].Producer == nil || got[0].Producer.Summary != "Theme applied to btop" {
+		t.Fatalf("adoption toasts = %+v, want one naming btop", got)
 	}
-	if generatedTheme(errors.New("generation failed")) {
-		t.Fatal("generation failure allowed export")
+	if !strings.Contains(got[0].Producer.Body, "replaced") {
+		t.Errorf("adoption body = %q, want it to say the user's setting was replaced", got[0].Producer.Body)
+	}
+
+	fail := map[string]error{"kitty": errors.New("theming: permission denied")}
+	r.reportTemplates(home, fail, nil)
+	r.reportTemplates(home, fail, nil)
+	got = rec.commands()
+	if len(got) != 2 {
+		t.Fatalf("toasts = %d, want the failure posted once", len(got))
+	}
+	if p := got[1].Producer; p.Summary != "Could not theme kitty" || !strings.Contains(p.Body, "permission denied") {
+		t.Fatalf("failure toast = %+v", p)
+	}
+
+	// A clean apply clears the memory, so the same failure later is news.
+	r.reportTemplates(home, map[string]error{"kitty": nil}, nil)
+	r.reportTemplates(home, fail, nil)
+	if n := len(rec.commands()); n != 3 {
+		t.Fatalf("toasts = %d, want the recurring failure posted again", n)
 	}
 }
