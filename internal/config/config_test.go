@@ -52,6 +52,25 @@ func TestDefaultBarMatchesLegacyContentBand(t *testing.T) {
 	}
 }
 
+func TestSessionPolkitAgentPoliciesParse(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []string{"auto", "on", "off"} {
+		t.Run(policy, func(t *testing.T) {
+			if _, err := Parse([]byte(`{"session":{"polkit_agent":"` + policy + `"}}`)); err != nil {
+				t.Fatalf("polkit_agent %q: %v", policy, err)
+			}
+		})
+	}
+}
+
+func TestSessionPolkitAgentRejectsUnknownPolicy(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"session":{"polkit_agent":"sometimes"}}`))
+	if err == nil || !strings.Contains(err.Error(), "session.polkit_agent") {
+		t.Fatalf("invalid policy error = %v, want session.polkit_agent validation", err)
+	}
+}
+
 func TestBlurAxesRoundTrip(t *testing.T) {
 	t.Parallel()
 	cfg, err := Parse([]byte(`{"theme":{"blur-behind":true,"blur-radius":32}}`))
@@ -665,6 +684,54 @@ func TestTheWeatherBlockResolves(t *testing.T) {
 	item := cfg.Bar.Right[0]
 	if item.ID != "weather" || item.MaxWidth != 160 || !item.ShowCondition {
 		t.Fatalf("item = %+v, want a weather widget with a cap and its condition", item)
+	}
+}
+
+func TestNightLightBlockLoadsAndRoundTrips(t *testing.T) {
+	cfg, err := Parse([]byte(`{"night-light":{"mode":"custom","night_kelvin":3500,"day_kelvin":6200,"transition_minutes":15,"start":"21:30","end":"06:45"}}`))
+	if err != nil {
+		t.Fatalf("Parse night-light: %v", err)
+	}
+	if cfg.NightLight != (NightLight{Mode: NightLightModeCustom, NightKelvin: 3500, DayKelvin: 6200,
+		TransitionMinutes: 15, Start: "21:30", End: "06:45"}) {
+		t.Fatalf("night-light = %+v", cfg.NightLight)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.NightLight != cfg.NightLight {
+		t.Fatalf("round-trip = %+v, want %+v", loaded.NightLight, cfg.NightLight)
+	}
+}
+
+func TestNightLightDefaults(t *testing.T) {
+	if got := Default().NightLight; got != (NightLight{Mode: NightLightModeOff, NightKelvin: 4000,
+		DayKelvin: 6500, TransitionMinutes: 30, Start: "20:00", End: "07:00"}) {
+		t.Fatalf("night-light defaults = %+v", got)
+	}
+}
+
+func TestNightLightValidationReportsFieldPaths(t *testing.T) {
+	cases := []struct{ body, path string }{
+		{`{"night-light":{"mode":"night"}}`, "night-light.mode"},
+		{`{"night-light":{"night_kelvin":4101}}`, "night-light.night_kelvin"},
+		{`{"night-light":{"day_kelvin":4400}}`, "night-light.day_kelvin"},
+		{`{"night-light":{"night_kelvin":5000,"day_kelvin":4900}}`, "night-light.day_kelvin"},
+		{`{"night-light":{"transition_minutes":20}}`, "night-light.transition_minutes"},
+		{`{"night-light":{"start":"9:00"}}`, "night-light.start"},
+		{`{"night-light":{"start":"20:00","end":"20:00"}}`, "night-light.end"},
+	}
+	for _, tc := range cases {
+		_, err := Parse([]byte(tc.body))
+		if err == nil || !strings.Contains(err.Error(), tc.path) {
+			t.Errorf("Parse(%s) error = %v, want path %q", tc.body, err, tc.path)
+		}
 	}
 }
 

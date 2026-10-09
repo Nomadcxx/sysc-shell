@@ -1,7 +1,7 @@
 package shell
 
 import (
-	"os"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/files"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -25,7 +24,7 @@ func (artWallpaperEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{
 		GSlapper: true, Terminal: true, Statics: []string{"awww"},
 		Catalog: wallpaper.Catalog{
-			Effects: []wallpaper.EffectInfo{{ID: "fire"}, {ID: "rain"}, {ID: "fire-text", Text: true}},
+			Effects: []string{"fire", "rain"},
 			Themes:  []string{"nord", "dracula"},
 		},
 	}
@@ -188,8 +187,8 @@ func TestTerminalArtStatusReportsUnassignedOutput(t *testing.T) {
 			Assignments: map[string]wallpaper.Assignment{},
 		},
 	}
-	if got, want := artStatusText(h), "DP-1 · nothing assigned"; got != want {
-		t.Fatalf("artStatusText() = %q, want %q", got, want)
+	if texts := artTexts(artPlayingRow(h, "DP-1", "DP-1")); !slices.Equal(texts, []string{"DP-1", "Nothing assigned"}) {
+		t.Fatalf("row texts = %v, want the connector and Nothing assigned", texts)
 	}
 }
 
@@ -218,7 +217,7 @@ func TestTerminalArtCardsFromCatalog(t *testing.T) {
 	defer reg.mu.Unlock()
 	var cards []string
 	collectActions(h.root, "art-apply:", &cards)
-	if !slices.Equal(cards, []string{"art-apply:fire", "art-apply:rain", "art-apply:fire-text"}) {
+	if !slices.Equal(cards, []string{"art-apply:fire", "art-apply:rain"}) {
 		t.Fatalf("cards = %v, want every catalog effect", cards)
 	}
 	for _, action := range cards {
@@ -227,11 +226,22 @@ func TestTerminalArtCardsFromCatalog(t *testing.T) {
 			t.Errorf("card %s = name %q focusable %v state %v", action, card.Name, card.Focusable, card.State)
 		}
 	}
-	if !strings.Contains(strings.Join(artTexts(h.root), " "), "requires artwork") {
-		t.Error("the text effect does not say that it requires artwork")
+	if texts := artTexts(h.root); !slices.Contains(texts, "Effects") || !slices.Contains(texts, "2") {
+		t.Errorf("effects header missing its count; texts = %v", texts)
 	}
-	if !slices.Contains(artTexts(h.root), "3 effects") {
-		t.Errorf("footer missing; texts = %v", artTexts(h.root))
+}
+
+func TestTerminalArtEffectsHeaderFitsTallFontMetrics(t *testing.T) {
+	metrics := standardMetrics()
+	h := &PanelHost{
+		theme: Theme{Metrics: metrics},
+		wallpaperSnap: wallpaper.Snapshot{
+			Caps: wallpaper.Capabilities{Catalog: wallpaper.Catalog{Themes: []string{"nord", "dracula"}}},
+		},
+	}
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 24 }
+	if err := ui.Layout(artEffectsHeader(h, 2), ui.Rect{W: 608, H: metrics.StandardControl}, measure); err != nil {
+		t.Fatalf("effects header with 24 px font metrics: %v", err)
 	}
 }
 
@@ -251,7 +261,7 @@ func (e *catalogRefreshArtEngine) RefreshTerminalCatalog() wallpaper.Capabilitie
 func TestTerminalArtRefreshesCatalogOnOpen(t *testing.T) {
 	initial := artWallpaperEngine{}.Capabilities()
 	updated := initial
-	updated.Catalog.Effects = append(updated.Catalog.Effects, wallpaper.EffectInfo{ID: "sonar"})
+	updated.Catalog.Effects = append(slices.Clone(updated.Catalog.Effects), "sonar")
 	engine := &catalogRefreshArtEngine{initial: initial, refreshed: updated}
 	reg, svc := artRegistry(t, engine)
 	go reg.relayWallpaper(svc)
@@ -273,54 +283,6 @@ func TestTerminalArtRefreshesCatalogOnOpen(t *testing.T) {
 	t.Fatal("new terminal effect did not appear after opening the panel")
 }
 
-func TestTerminalArtTextEffectPicksArtwork(t *testing.T) {
-	home := t.TempDir()
-	configDir := filepath.Join(home, ".config")
-	if err := os.Mkdir(configDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	artwork := filepath.Join(configDir, "text.txt")
-	if err := os.WriteFile(artwork, []byte("SYSC"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-
-	reg, svc := artRegistry(t, artWallpaperEngine{})
-	h := openArtPanel(t, reg)
-	reg.mu.Lock()
-	action := findAction(h.root, "art-apply:fire-text")
-	if action == nil || !h.artAction(reg, action) {
-		reg.mu.Unlock()
-		t.Fatal("text effect did not open the artwork picker")
-	}
-	reg.mu.Unlock()
-
-	deadline := time.Now().Add(2 * time.Second)
-	var sess *filesSession
-	for time.Now().Before(deadline) {
-		reg.mu.Lock()
-		sess = reg.files
-		ready := sess != nil && sess.mode == files.ModePickFile && sess.root == configDir
-		reg.mu.Unlock()
-		if ready {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if sess == nil || sess.mode != files.ModePickFile || sess.root != configDir {
-		t.Fatalf("file picker = %+v; want a file picker rooted at %s", sess, configDir)
-	}
-	reg.mu.Lock()
-	// The picker opened asynchronously so path validation and its wait do not
-	// hold Registry.mu.
-	reg.finishFilesPickLocked(sess, artwork, nil)
-	reg.mu.Unlock()
-
-	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool {
-		return a.Kind == wallpaper.KindEffect && a.Effect == "fire-text" && a.Artwork == artwork
-	})
-}
-
 func TestTerminalArtUnavailableExplains(t *testing.T) {
 	reg, _ := artRegistry(t, stubWallpaperEngine{})
 	h := openArtPanel(t, reg)
@@ -335,8 +297,8 @@ func TestTerminalArtUnavailableExplains(t *testing.T) {
 	if !found {
 		t.Fatalf("no install banner; texts = %v", artTexts(h.root))
 	}
-	if findAction(h.root, "art-menu:palette") != nil {
-		t.Error("the palette combo must be hidden without sysc-terminal")
+	if findAction(h.root, artPaletteMenu) != nil {
+		t.Error("the palette menu must be hidden without sysc-terminal")
 	}
 }
 
@@ -379,6 +341,32 @@ func awaitArt(t *testing.T, svc *wallpaper.Service, connector string, ok func(wa
 func runningEffect(effect, palette string) func(wallpaper.Assignment) bool {
 	return func(a wallpaper.Assignment) bool {
 		return a.Kind == wallpaper.KindEffect && a.Effect == effect && a.Theme == palette && a.Path == ""
+	}
+}
+
+// artPickPalette opens the palette menu and picks name with the keyboard,
+// through the same activation and menu routing a user's keys take.
+func artPickPalette(t *testing.T, reg *Registry, h *PanelHost, name string) {
+	t.Helper()
+	menu := findAction(h.root, artPaletteMenu)
+	if menu == nil {
+		t.Fatal("no palette menu in the tree")
+	}
+	h.setFocus(menu)
+	if !h.activate(reg) || !h.menus[artPaletteMenu].Opened() {
+		t.Fatal("activating the palette menu did not open it")
+	}
+	m := h.menus[artPaletteMenu]
+	for m.options[m.cursor] != name {
+		before := m.cursor
+		h.keyPress(reg, keyDown)
+		if m.cursor == before {
+			t.Fatalf("palette %q is not in the menu %v", name, m.options)
+		}
+	}
+	h.keyPress(reg, keyEnter)
+	if m.Opened() {
+		t.Fatal("Enter did not close the palette menu")
 	}
 }
 
@@ -428,9 +416,9 @@ func TestTerminalArtPaletteFollowsRunningEffect(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	artAct(t, reg, h, "art-output:DP-1")
-	combo := findAction(h.root, "art-menu:palette")
-	if got := artPalette(h); got != "dracula" || combo == nil || !strings.Contains(combo.Name, "dracula") {
-		t.Fatalf("palette = %q, combo %+v; want the running dracula, not the catalog's first theme", got, combo)
+	menu := findAction(h.root, artPaletteMenu)
+	if got := artPalette(h); got != "dracula" || menu == nil || menu.Text != "dracula" {
+		t.Fatalf("palette = %q, menu %+v; want the running dracula, not the catalog's first theme", got, menu)
 	}
 }
 
@@ -442,11 +430,9 @@ func TestTerminalArtPaletteChangeReappliesRunningEffect(t *testing.T) {
 	reg.mu.Lock()
 	// DP-3 runs nothing: a palette pick there only sets the next click's palette.
 	artAct(t, reg, h, "art-output:DP-3")
-	artAct(t, reg, h, "art-menu:palette")
-	artAct(t, reg, h, "art-palette:dracula")
+	artPickPalette(t, reg, h, "dracula")
 	artAct(t, reg, h, "art-output:DP-1")
-	artAct(t, reg, h, "art-menu:palette")
-	artAct(t, reg, h, "art-palette:dracula")
+	artPickPalette(t, reg, h, "dracula")
 	reg.mu.Unlock()
 	awaitArt(t, svc, "DP-1", runningEffect("fire", "dracula"))
 	// Commands run in order, so a DP-3 apply would have landed by now.
@@ -463,16 +449,16 @@ func TestTerminalArtRestoreDisabledWithoutStill(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	artAct(t, reg, h, "art-output:DP-1")
-	if findAction(h.root, "art-pause") == nil {
+	if findAction(h.root, "art-pause:DP-1") == nil {
 		t.Error("a running effect offers Pause")
 	}
-	restore := findAction(h.root, "art-restore")
+	restore := findAction(h.root, "art-restore:DP-1")
 	if restore == nil || restore.State&ui.StateDisabled == 0 || restore.Tooltip != "No previous still recorded" {
 		t.Fatalf("Restore still = %+v, want disabled with a reason", restore)
 	}
 	artAct(t, reg, h, "art-output:DP-3")
-	if findAction(h.root, "art-restore") != nil || findAction(h.root, "art-pause") != nil {
-		t.Error("an output showing a wallpaper offers no effect controls")
+	if findAction(h.root, "art-restore:DP-3") != nil || findAction(h.root, "art-pause:DP-3") != nil {
+		t.Error("an output showing nothing offers no effect controls")
 	}
 }
 
@@ -487,7 +473,7 @@ func TestTerminalArtRestoredWithoutStillReportsBlankOutput(t *testing.T) {
 			Runtime: map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StateStatic}},
 		},
 	}
-	if got := artStatusText(h); got != "DP-1 \u00b7 no wallpaper displayed" {
+	if got := artIdleText(h, "DP-1"); got != "No wallpaper displayed" {
 		t.Fatalf("restored effect status = %q, want a blank-output message", got)
 	}
 }
@@ -503,17 +489,19 @@ func TestTerminalArtFailedEffectCanRestoreWithoutPause(t *testing.T) {
 		"DP-1": {State: wallpaper.StateError, Err: "terminal failed"},
 	}
 
-	row := artStatusRow(h)
-	if findAction(row, "art-pause") != nil || findAction(row, "art-resume") != nil {
+	row := artPlayingRow(h, "DP-1", "DP-1")
+	if findAction(row, "art-pause:DP-1") != nil || findAction(row, "art-resume:DP-1") != nil {
 		t.Fatal("a failed effect offers playback controls")
 	}
-	restore := findAction(row, "art-restore")
+	restore := findAction(row, "art-restore:DP-1")
 	if restore == nil || restore.State&ui.StateDisabled != 0 {
 		t.Fatalf("Restore still = %+v, want an enabled recovery action", restore)
 	}
 }
 
-func TestTerminalArtMixedRestoreSkipsOutputsWithoutStills(t *testing.T) {
+// Each output's controls act on that output alone: restoring DP-1 leaves DP-3
+// playing, and DP-3, with no still recorded, cannot be restored at all.
+func TestTerminalArtRestoreActsOnItsOwnOutput(t *testing.T) {
 	reg, svc := artRegistry(t, artWallpaperEngine{})
 	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/still.png"})
 	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindImage })
@@ -526,15 +514,18 @@ func TestTerminalArtMixedRestoreSkipsOutputsWithoutStills(t *testing.T) {
 
 	h := openArtPanel(t, reg)
 	reg.mu.Lock()
-	restore := findAction(h.root, "art-restore")
-	if restore == nil || restore.State&ui.StateDisabled != 0 ||
-		!strings.Contains(restore.Tooltip, "DP-3") || !strings.Contains(restore.Tooltip, "previous still") {
+	if other := findAction(h.root, "art-restore:DP-3"); other == nil || other.State&ui.StateDisabled == 0 {
 		reg.mu.Unlock()
-		t.Fatalf("mixed Restore = %+v, want its skipped output explained", restore)
+		t.Fatalf("DP-3 Restore = %+v, want disabled without a still", other)
+	}
+	restore := findAction(h.root, "art-restore:DP-1")
+	if restore == nil || restore.State&ui.StateDisabled != 0 {
+		reg.mu.Unlock()
+		t.Fatalf("DP-1 Restore = %+v, want enabled", restore)
 	}
 	if !h.artAction(reg, restore) {
 		reg.mu.Unlock()
-		t.Fatal("mixed Restore was not handled")
+		t.Fatal("DP-1 Restore was not handled")
 	}
 	reg.mu.Unlock()
 
@@ -544,7 +535,7 @@ func TestTerminalArtMixedRestoreSkipsOutputsWithoutStills(t *testing.T) {
 	}
 	snap := svc.Snapshot()
 	if snap.Runtime["DP-1"].State != wallpaper.StateStatic || snap.Runtime["DP-3"].State != wallpaper.StatePlaying {
-		t.Fatalf("runtimes after mixed Restore: DP-1=%+v DP-3=%+v", snap.Runtime["DP-1"], snap.Runtime["DP-3"])
+		t.Fatalf("runtimes after DP-1 Restore: DP-1=%+v DP-3=%+v", snap.Runtime["DP-1"], snap.Runtime["DP-3"])
 	}
 }
 
@@ -561,7 +552,7 @@ func TestTerminalArtStalePlaybackActionRefreshesSnapshot(t *testing.T) {
 
 	reg.mu.Lock()
 	h.wallpaperSnap = stale
-	if !h.artAction(reg, &ui.Node{Action: "art-pause"}) {
+	if !h.artAction(reg, &ui.Node{Action: "art-pause:DP-1"}) {
 		reg.mu.Unlock()
 		t.Fatal("stale Pause was not handled")
 	}
@@ -570,7 +561,7 @@ func TestTerminalArtStalePlaybackActionRefreshesSnapshot(t *testing.T) {
 		t.Fatalf("Pause used stale assignment kind %v", got)
 	}
 	h.wallpaperSnap = stale
-	if !h.artAction(reg, &ui.Node{Action: "art-restore"}) {
+	if !h.artAction(reg, &ui.Node{Action: "art-restore:DP-1"}) {
 		reg.mu.Unlock()
 		t.Fatal("stale Restore was not handled")
 	}
@@ -584,36 +575,14 @@ func TestTerminalArtStalePlaybackActionRefreshesSnapshot(t *testing.T) {
 	}
 }
 
-func TestTerminalArtPaletteChangePreservesArtwork(t *testing.T) {
-	reg, svc := artRegistry(t, artWallpaperEngine{}, "DP-1")
-	const artwork = "/w/poem.txt"
-	svc.Enqueue(wallpaper.Command{
-		Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect,
-		Effect: "fire-text", Theme: "nord", Artwork: artwork,
-	})
-	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Artwork == artwork })
-	h := openArtPanel(t, reg)
-	reg.mu.Lock()
-	if !h.artAction(reg, &ui.Node{Action: "art-palette:dracula"}) {
-		reg.mu.Unlock()
-		t.Fatal("palette change was not handled")
-	}
-	reg.mu.Unlock()
-	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool {
-		return a.Kind == wallpaper.KindEffect && a.Effect == "fire-text" && a.Theme == "dracula" && a.Artwork == artwork
-	})
-}
-
 type sevenArtEngine struct{ stubWallpaperEngine }
 
 func (sevenArtEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{
 		Terminal: true,
 		Catalog: wallpaper.Catalog{
-			Effects: []wallpaper.EffectInfo{
-				{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "words", Text: true}, {ID: "d"}, {ID: "e"}, {ID: "f"},
-			},
-			Themes: []string{"nord"},
+			Effects: []string{"a", "b", "c", "d", "e", "f", "g"},
+			Themes:  []string{"nord"},
 		},
 	}
 }
@@ -639,13 +608,13 @@ func TestTerminalArtArrowKeysWalkThreeColumns(t *testing.T) {
 		}
 	}
 	h.keyPress(reg, keyRight)
-	h.keyPress(reg, keyDown) // d is the first card on the next row.
+	h.keyPress(reg, keyDown) // e is the middle card on the next row.
 	if !h.keyPress(reg, keyEnter) {
 		reg.mu.Unlock()
 		t.Fatal("Enter on the grid was not handled")
 	}
 	reg.mu.Unlock()
-	awaitArt(t, svc, "DP-1", runningEffect("d", "nord"))
+	awaitArt(t, svc, "DP-1", runningEffect("e", "nord"))
 }
 
 func TestTerminalArtArrowKeysRequireCardFocus(t *testing.T) {
@@ -673,8 +642,8 @@ func TestTerminalArtFocusedCardOwnsGridNavigation(t *testing.T) {
 	if !h.artKeyPress(reg, keyRight) {
 		t.Fatal("right arrow was not handled by a focused card")
 	}
-	if h.wallpaperSel != 5 || h.focused() == nil || h.focused().Action != "art-apply:e" {
-		t.Fatalf("selection=%d focused=%+v, want e at index 5", h.wallpaperSel, h.focused())
+	if h.wallpaperSel != 4 || h.focused() == nil || h.focused().Action != "art-apply:e" {
+		t.Fatalf("selection=%d focused=%+v, want e at index 4", h.wallpaperSel, h.focused())
 	}
 }
 
@@ -921,7 +890,7 @@ func TestTerminalArtRestoreTouchesOnlyEffects(t *testing.T) {
 	}
 	h := openArtPanel(t, reg)
 	reg.mu.Lock()
-	artAct(t, reg, h, "art-restore")
+	artAct(t, reg, h, "art-restore:DP-1")
 	reg.mu.Unlock()
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -940,10 +909,154 @@ func TestTerminalArtRestoreTouchesOnlyEffects(t *testing.T) {
 	defer reg.mu.Unlock()
 	h.wallpaperSnap = snap
 	reg.rebuildPanel(h)
-	if got := strings.Join(artTexts(h.root), "\n"); !strings.Contains(got, "DP-1 \u00b7 showing a wallpaper") {
+	if got := artTexts(artPlayingRow(h, "DP-1", "DP-1")); !slices.Equal(got, []string{"DP-1", "Showing a wallpaper"}) {
 		t.Fatalf("restored output status = %q, want the still currently shown", got)
 	}
-	if findAction(h.root, "art-pause") != nil || len(artRunningOn(h, "fire")) > 0 {
+	if findAction(h.root, "art-pause:DP-1") != nil || len(artRunningOn(h, "fire")) > 0 {
 		t.Fatalf("a restored output still reads as running: %q", artTexts(h.root))
+	}
+}
+
+// longArtEngine carries the installed catalog's long effect names, which
+// short fixture names hid from the status row width.
+type longArtEngine struct{ stubWallpaperEngine }
+
+func (longArtEngine) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{
+		GSlapper: true, Terminal: true, Statics: []string{"awww"},
+		Catalog: wallpaper.Catalog{
+			Effects: []string{"justice-cross"},
+			Themes:  []string{"catppuccin-mocha"},
+		},
+	}
+}
+func (e longArtEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
+
+// An effect playing on every output must not make the panel unopenable: the
+// status and its playback controls once overflowed the 608 interior, the
+// first configure failed, and every reopen closed the surface again.
+func TestTerminalArtReopensWhileEffectsPlayOnEveryOutput(t *testing.T) {
+	reg, svc := artRegistry(t, longArtEngine{})
+	for _, connector := range []string{"DP-1", "DP-3"} {
+		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: connector, Kind: wallpaper.KindEffect, Effect: "justice-cross", Theme: "catppuccin-mocha"})
+		awaitArt(t, svc, connector, runningEffect("justice-cross", "catppuccin-mocha"))
+	}
+	for range 2 {
+		h := openArtPanel(t, reg)
+		reg.mu.Lock()
+		if findAction(h.root, "art-pause:DP-1") == nil || findAction(h.root, "art-pause:DP-3") == nil {
+			t.Error("each playing output offers its own Pause")
+		}
+		reg.closePanelLocked(PanelTerminalArt)
+		reg.mu.Unlock()
+		drainAuxQueue(reg)
+	}
+}
+
+func TestTerminalArtPauseActsOnItsOwnOutput(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	for _, connector := range []string{"DP-1", "DP-3"} {
+		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: connector, Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+		awaitArt(t, svc, connector, runningEffect("fire", "nord"))
+	}
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	artAct(t, reg, h, "art-pause:DP-1")
+	reg.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.Snapshot().Runtime["DP-1"].State != wallpaper.StatePaused {
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap := svc.Snapshot()
+	if snap.Runtime["DP-1"].State != wallpaper.StatePaused || snap.Runtime["DP-3"].State != wallpaper.StatePlaying {
+		t.Fatalf("after DP-1 Pause: DP-1=%v DP-3=%v, want paused and playing", snap.Runtime["DP-1"].State, snap.Runtime["DP-3"].State)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if findAction(h.root, "art-resume:DP-1") == nil || findAction(h.root, "art-pause:DP-3") == nil {
+		t.Fatal("each row should offer the control its own state supports")
+	}
+}
+
+// The palette list is an overlay: opening it must not push the grid down,
+// which the inline list it replaced did.
+func TestTerminalArtPaletteMenuDoesNotMoveTheGrid(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	before := findAction(h.root, "art-apply:fire").Bounds
+	h.setFocus(findAction(h.root, artPaletteMenu))
+	if !h.activate(reg) || !h.menus[artPaletteMenu].Opened() {
+		t.Fatal("the palette menu did not open")
+	}
+	if after := findAction(h.root, "art-apply:fire").Bounds; after != before {
+		t.Fatalf("fire card moved from %+v to %+v when the palette opened", before, after)
+	}
+}
+
+// longNamesArtEngine is a catalog of long names on outputs with long
+// connectors: what the panel's fixed widths have to absorb.
+type longNamesArtEngine struct{ stubWallpaperEngine }
+
+func (longNamesArtEngine) Capabilities() wallpaper.Capabilities {
+	effects := []string{"an-effect-name-far-longer-than-any-card-is-wide"}
+	for i := range 30 {
+		effects = append(effects, fmt.Sprintf("effect-%02d", i))
+	}
+	return wallpaper.Capabilities{
+		GSlapper: true, Terminal: true, Statics: []string{"awww"},
+		Catalog: wallpaper.Catalog{Effects: effects, Themes: []string{"a-palette-with-an-unreasonably-long-name"}},
+	}
+}
+func (e longNamesArtEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
+
+// A fit error closes the panel, so every state the data can put it in must
+// lay out and paint at the desktop's 1.0 and the laptop's 1.25.
+func TestTerminalArtLongNamesNeverFailLayout(t *testing.T) {
+	connectors := []string{"HDMI-A-1", "DP-1", "eDP-1"}
+	for _, scale := range []int{120, 150} {
+		t.Run(fmt.Sprint(scale), func(t *testing.T) {
+			reg, svc := artRegistry(t, longNamesArtEngine{}, connectors...)
+			long := longNamesArtEngine{}.Capabilities().Catalog
+			for i, connector := range connectors {
+				svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: connector, Kind: wallpaper.KindEffect, Effect: long.Effects[i%2], Theme: long.Themes[0]})
+				awaitArt(t, svc, connector, runningEffect(long.Effects[i%2], long.Themes[0]))
+			}
+			if err := reg.OpenPanel(PanelTerminalArt, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
+				t.Fatal(err)
+			}
+			panel := drainAux(t, reg, 2)[1].Open
+			paintPluginStorePNG(t, panel, scale, filepath.Join(t.TempDir(), "art.png"))
+			reg.mu.Lock()
+			h := reg.panelHosts[PanelTerminalArt]
+			h.setFocus(findAction(h.root, artPaletteMenu))
+			h.activate(reg)
+			reg.mu.Unlock()
+			paintPluginStorePNG(t, panel, scale, filepath.Join(t.TempDir(), "art-menu.png"))
+		})
+	}
+}
+
+// Walking the grid past the bottom of its viewport scrolls the focused card
+// into view rather than leaving focus on a card the user cannot see.
+func TestTerminalArtArrowKeysKeepFocusInView(t *testing.T) {
+	reg, _ := artRegistry(t, longNamesArtEngine{}, "DP-1")
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	grid := keyedScroll(h.root, artGridKey)
+	for range 10 {
+		if !h.keyPress(reg, keyDown) {
+			t.Fatal("down arrow was not handled by the grid")
+		}
+	}
+	grid = keyedScroll(h.root, artGridKey)
+	card := h.focused()
+	if grid.ScrollOffset == 0 || card == nil ||
+		card.Bounds.Y < grid.Bounds.Y || card.Bounds.Y+card.Bounds.H > grid.Bounds.Y+grid.Bounds.H {
+		t.Fatalf("focused %+v outside grid %+v at offset %d", card.Bounds, grid.Bounds, grid.ScrollOffset)
 	}
 }

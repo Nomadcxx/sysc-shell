@@ -106,3 +106,22 @@ func TestPersistEffectRoundTrip(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got["DP-1"], want["DP-1"])
 	}
 }
+
+// A table saved while text effects took artwork still loads: the old key is
+// ignored, and the engine refuses the effect itself if the catalog no longer
+// offers it.
+func TestPersistIgnoresRetiredArtworkKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	body := `{"DP-1":{"kind":"effect","effect":"fire-text","theme":"nord","artwork":"/home/u/.config/logo.txt","desired_playback":"playing"}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := Assignment{Kind: KindEffect, Effect: "fire-text", Theme: "nord", DesiredPlayback: StatePlaying}
+	if got["DP-1"] != want {
+		t.Fatalf("got %+v, want %+v", got["DP-1"], want)
+	}
+}

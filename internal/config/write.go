@@ -37,6 +37,9 @@ func Write(path string, c Config) error {
 	if _, err := applyMonitor(*monitorWire(c.Monitor), "monitor"); err != nil {
 		return err
 	}
+	if err := ValidateNightLight(c.NightLight); err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("config: mkdir %s: %w", dir, err)
@@ -103,6 +106,13 @@ func toWire(c Config) wireConfig {
 		v := c.Session.Locker
 		w.Session = &wireSession{Locker: &v}
 	}
+	if c.Session.PolkitAgent != "" && c.Session.PolkitAgent != d.Session.PolkitAgent {
+		v := c.Session.PolkitAgent
+		if w.Session == nil {
+			w.Session = &wireSession{}
+		}
+		w.Session.PolkitAgent = &v
+	}
 	if idle := idleDiff(c.Idle, d.Idle); idle != nil {
 		w.Idle = idle
 	}
@@ -128,6 +138,9 @@ func toWire(c Config) wireConfig {
 	if c.Weather.Configured {
 		w.Weather = weatherWire(c.Weather)
 	}
+	if n := nightLightDiff(c.NightLight, d.NightLight); n != nil {
+		w.NightLight = n
+	}
 	if c.Media.Preferred != "" || len(c.Media.Blacklist) > 0 {
 		w.Media = &wireMedia{Blacklist: append([]string(nil), c.Media.Blacklist...)}
 		if c.Media.Preferred != "" {
@@ -149,7 +162,43 @@ func toWire(c Config) wireConfig {
 	if len(c.Templates) > 0 {
 		w.Templates = c.Templates
 	}
+	if c.TerminalOpacity != TerminalOpacityMax {
+		v := c.TerminalOpacity
+		w.TerminalOpacity = &v
+	}
 	w.Plugins = pluginsDiff(c.Plugins)
+	return w
+}
+
+func nightLightDiff(got, base NightLight) *wireNightLight {
+	if got == base {
+		return nil
+	}
+	w := &wireNightLight{}
+	if got.Mode != base.Mode {
+		v := got.Mode
+		w.Mode = &v
+	}
+	if got.NightKelvin != base.NightKelvin {
+		v := got.NightKelvin
+		w.NightKelvin = &v
+	}
+	if got.DayKelvin != base.DayKelvin {
+		v := got.DayKelvin
+		w.DayKelvin = &v
+	}
+	if got.TransitionMinutes != base.TransitionMinutes {
+		v := got.TransitionMinutes
+		w.TransitionMinutes = &v
+	}
+	if got.Start != base.Start {
+		v := got.Start
+		w.Start = &v
+	}
+	if got.End != base.End {
+		v := got.End
+		w.End = &v
+	}
 	return w
 }
 

@@ -24,6 +24,28 @@ func TestRegistryCoversAllSections(t *testing.T) {
 	}
 }
 
+func TestNightLightSettingsValidateAndUseHundredKelvinSteps(t *testing.T) {
+	r := Default()
+	for _, path := range []string{"night-light.night-kelvin", "night-light.day-kelvin"} {
+		e := r.ByPath(path)
+		if e == nil || e.Step != 100 || e.Kind != KindInt || e.Present != PresentSlider {
+			t.Fatalf("%s entry = %+v, want a 100 K slider", path, e)
+		}
+	}
+	if e := r.ByPath("night-light.mode"); e == nil || e.Section != "Night Light" || e.Present != PresentAuto || !slices.Equal(e.Options,
+		[]string{config.NightLightModeOff, config.NightLightModeSunset, config.NightLightModeCustom, config.NightLightModeAlways}) {
+		t.Fatalf("night-light.mode entry = %+v", e)
+	}
+	cfg := config.Default()
+	if err := r.ByPath("night-light.night-kelvin").Set(&cfg, "3501"); err == nil {
+		t.Fatal("night temperature accepted a value outside the 100 K steps")
+	}
+	cfg.NightLight.DayKelvin = 4500
+	if err := r.ByPath("night-light.night-kelvin").Set(&cfg, "5000"); err == nil {
+		t.Fatal("night temperature exceeded the configured day temperature")
+	}
+}
+
 func TestEntryGetSetRoundTrip(t *testing.T) {
 	t.Parallel()
 	r := Default()
@@ -53,6 +75,25 @@ func TestSetRejectsInvalidValues(t *testing.T) {
 	e2 := Default().ByPath("bar.height")
 	if err := e2.Set(&cfg, "not-a-number"); err == nil {
 		t.Fatal("int must reject")
+	}
+}
+
+func TestPolkitAgentSettingRoundTrips(t *testing.T) {
+	t.Parallel()
+	entry := Default().ByPath("session.polkit_agent")
+	if entry == nil || entry.Kind != KindEnum {
+		t.Fatal("missing session.polkit_agent enum")
+	}
+	want := []string{"auto", "on", "off"}
+	if !slices.Equal(entry.Options, want) {
+		t.Fatalf("polkit agent options = %v, want %v", entry.Options, want)
+	}
+	cfg := config.Default()
+	if err := entry.Set(&cfg, "off"); err != nil {
+		t.Fatal(err)
+	}
+	if got := entry.Get(cfg); got != "off" || cfg.Session.PolkitAgent != "off" {
+		t.Fatalf("polkit agent setting = %q / %q, want off", got, cfg.Session.PolkitAgent)
 	}
 }
 
@@ -330,9 +371,9 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Sixteen sections include locker presentation alongside Session policy.
-	if len(names) != 16 {
-		t.Fatalf("SectionNames = %d sections, want sixteen", len(names))
+	// Night Light adds one section to the Look cluster.
+	if len(names) != 17 {
+		t.Fatalf("SectionNames = %d sections, want seventeen", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
@@ -1137,5 +1178,22 @@ func TestBarThicknessAllowsReadableSideText(t *testing.T) {
 	}
 	if cfg.Bar.Height != 96 || cfg.ForConnector("eDP-1").Height != 96 {
 		t.Fatalf("thickness was not retained: shared=%d output=%d", cfg.Bar.Height, cfg.ForConnector("eDP-1").Height)
+	}
+}
+
+func TestTerminalOpacityEntry(t *testing.T) {
+	e := Default().ByPath("theme.terminal-opacity")
+	if e == nil {
+		t.Fatal("no theme.terminal-opacity entry")
+	}
+	if e.Section != "Templates" || e.Group != "Terminals" || e.Min != 50 || e.Max != 100 {
+		t.Fatalf("entry = section %q group %q range %d..%d", e.Section, e.Group, e.Min, e.Max)
+	}
+	cfg := config.Default()
+	if err := e.Set(&cfg, "85"); err != nil || cfg.TerminalOpacity != 85 {
+		t.Fatalf("set 85 = %v, value %d", err, cfg.TerminalOpacity)
+	}
+	if err := e.Set(&cfg, "40"); err == nil {
+		t.Fatal("40 is below the floor and must be refused")
 	}
 }

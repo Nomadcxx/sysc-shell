@@ -260,7 +260,7 @@ func (n *Network) Close() {
 	n.CancelSecret()
 	n.mu.Lock()
 	for _, l := range n.leases.clear() {
-		l.network = nil
+		l.forget()
 	}
 	n.stopIfUnusedLocked()
 	be := n.be

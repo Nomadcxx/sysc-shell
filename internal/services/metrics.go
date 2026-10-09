@@ -326,7 +326,7 @@ func (m *Metrics) Close() {
 	m.mu.Lock()
 	for sel, set := range m.leases {
 		for _, l := range set.clear() {
-			l.metrics = nil
+			l.forget()
 		}
 		delete(m.leases, sel)
 		delete(m.history, sel)

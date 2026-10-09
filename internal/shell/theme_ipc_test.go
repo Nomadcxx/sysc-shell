@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -249,7 +250,7 @@ func TestThemePreviewRepaintsOpenPanelsWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(cfg, "", tokens, false)
+	want, err := resolveOutputTheme(cfg, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +288,7 @@ func TestThemePreviewRepaintsOpenOSDWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(candidate, "", tokens, false)
+	want, err := resolveOutputTheme(candidate, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +364,7 @@ func TestThemePreviewRepaintsOpenWindowSwitcher(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	wantTheme, err := resolveOutputTheme(candidate, "DP-1", tokens, false)
+	wantTheme, err := resolveOutputTheme(candidate, "DP-1", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +463,7 @@ func TestThemePreviewOpensPanelsWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(candidate, "", tokens, false)
+	want, err := resolveOutputTheme(candidate, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +499,7 @@ func TestThemePreviewHotpluggedBarUsesCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(candidate, "DP-1", tokens, false)
+	want, err := resolveOutputTheme(candidate, "DP-1", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,7 +656,7 @@ func TestThemePreviewRepaintsOpenToastsWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	wantTheme, err := resolveOutputTheme(candidate, "", tokens, false)
+	wantTheme, err := resolveOutputTheme(candidate, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -818,11 +819,17 @@ func TestThemeTemplatesApplyReportsUserModifiedRefusal(t *testing.T) {
 	if err := os.WriteFile(sidecar, []byte("user edit\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := apply(); got["status"] != "refused" || got["error"] == "" {
-		t.Fatalf("edited foot result = %v, want refused with a reason", got)
+	// An enabled template is themed over the edit (owner decision,
+	// 2026-10-09); the edit survives in the backup the reply names.
+	got := apply()
+	if got["status"] != "adopted" {
+		t.Fatalf("edited foot result = %v, want adopted", got)
 	}
-	if got, err := os.ReadFile(sidecar); err != nil || string(got) != "user edit\n" {
-		t.Fatalf("sidecar = %q, err = %v; user edit must be preserved", got, err)
+	if backups, _ := got["backups"].([]string); !slices.Contains(backups, sidecar+".bak") {
+		t.Fatalf("edited foot backups = %v, want %s", got["backups"], sidecar+".bak")
+	}
+	if b, err := os.ReadFile(sidecar + ".bak"); err != nil || string(b) != "user edit\n" {
+		t.Fatalf("backup = %q, err = %v; the user's edit must be kept", b, err)
 	}
 }
 

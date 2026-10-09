@@ -127,7 +127,8 @@ type wireAccessibility struct {
 }
 
 type wireSession struct {
-	Locker *string `json:"locker,omitempty"`
+	Locker      *string `json:"locker,omitempty"`
+	PolkitAgent *string `json:"polkit_agent,omitempty"`
 }
 
 type wireIdle struct {
@@ -164,6 +165,15 @@ type wireWeather struct {
 	Unit      *string  `json:"unit,omitempty"`
 	Interval  *string  `json:"interval,omitempty"`
 	Location  *string  `json:"location,omitempty"`
+}
+
+type wireNightLight struct {
+	Mode              *string `json:"mode,omitempty"`
+	NightKelvin       *int    `json:"night_kelvin,omitempty"`
+	DayKelvin         *int    `json:"day_kelvin,omitempty"`
+	TransitionMinutes *int    `json:"transition_minutes,omitempty"`
+	Start             *string `json:"start,omitempty"`
+	End               *string `json:"end,omitempty"`
 }
 
 type wireMedia struct {
@@ -206,13 +216,16 @@ type wireConfig struct {
 	Panels        *wirePanels          `json:"panels,omitempty"`
 	Tray          *wireTrayPreferences `json:"tray,omitempty"`
 	Weather       *wireWeather         `json:"weather,omitempty"`
+	NightLight    *wireNightLight      `json:"night-light,omitempty"`
 	Media         *wireMedia           `json:"media,omitempty"`
 	Monitor       *wireMonitor         `json:"monitor,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
 	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
 	Templates     map[string]bool      `json:"templates,omitempty"`
-	Plugins       *wirePlugins         `json:"plugins,omitempty"`
+	// TerminalOpacity is Config.TerminalOpacity; absent means 100.
+	TerminalOpacity *int         `json:"terminal-opacity,omitempty"`
+	Plugins         *wirePlugins `json:"plugins,omitempty"`
 }
 
 type wirePlugins struct {
@@ -330,7 +343,11 @@ func Parse(data []byte) (Config, error) {
 		cfg.Accessibility = applyAccessibility(cfg.Accessibility, *wire.Accessibility)
 	}
 	if wire.Session != nil {
-		cfg.Session = applySession(cfg.Session, *wire.Session)
+		session, err := applySession(cfg.Session, *wire.Session)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Session = session
 	}
 	if wire.Idle != nil {
 		idle, err := applyIdle(cfg.Idle, *wire.Idle)
@@ -387,6 +404,13 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Weather = weather
 	}
+	if wire.NightLight != nil {
+		nightLight, err := applyNightLight(cfg.NightLight, *wire.NightLight, "night-light")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.NightLight = nightLight
+	}
 	if wire.Media != nil {
 		media, err := applyMedia(*wire.Media, "media")
 		if err != nil {
@@ -427,6 +451,12 @@ func Parse(data []byte) (Config, error) {
 	}
 	if len(wire.Templates) > 0 {
 		cfg.Templates = wire.Templates
+	}
+	if v := wire.TerminalOpacity; v != nil {
+		if *v < TerminalOpacityMin || *v > TerminalOpacityMax {
+			return Config{}, pathErr("terminal-opacity", "%d is outside %d..%d", *v, TerminalOpacityMin, TerminalOpacityMax)
+		}
+		cfg.TerminalOpacity = *v
 	}
 	if wire.Plugins != nil {
 		plugins, err := applyPlugins(*wire.Plugins, "plugins")
@@ -671,6 +701,76 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		out.Location = label
 	}
 	return out, nil
+}
+
+func applyNightLight(base NightLight, w wireNightLight, path string) (NightLight, error) {
+	out := base
+	if w.Mode != nil {
+		out.Mode = *w.Mode
+	}
+	if w.NightKelvin != nil {
+		out.NightKelvin = *w.NightKelvin
+	}
+	if w.DayKelvin != nil {
+		out.DayKelvin = *w.DayKelvin
+	}
+	if w.TransitionMinutes != nil {
+		out.TransitionMinutes = *w.TransitionMinutes
+	}
+	if w.Start != nil {
+		out.Start = *w.Start
+	}
+	if w.End != nil {
+		out.End = *w.End
+	}
+	if err := validateNightLight(out, path); err != nil {
+		return NightLight{}, err
+	}
+	return out, nil
+}
+
+// ValidateNightLight applies the same trust-boundary rules used by config
+// loading to a Settings or IPC candidate.
+func ValidateNightLight(n NightLight) error { return validateNightLight(n, "night-light") }
+
+func validateNightLight(n NightLight, path string) error {
+	switch n.Mode {
+	case NightLightModeOff, NightLightModeSunset, NightLightModeCustom, NightLightModeAlways:
+	default:
+		return pathErr(path+".mode", "%q is not off, sunset, custom or always", n.Mode)
+	}
+	if n.NightKelvin < 2500 || n.NightKelvin > 6000 || n.NightKelvin%100 != 0 {
+		return pathErr(path+".night_kelvin", "%d is outside 2500 through 6000 in steps of 100", n.NightKelvin)
+	}
+	if n.DayKelvin < 4500 || n.DayKelvin > 6500 || n.DayKelvin%100 != 0 {
+		return pathErr(path+".day_kelvin", "%d is outside 4500 through 6500 in steps of 100", n.DayKelvin)
+	}
+	if n.DayKelvin < n.NightKelvin {
+		return pathErr(path+".day_kelvin", "%d must be at least night_kelvin (%d)", n.DayKelvin, n.NightKelvin)
+	}
+	switch n.TransitionMinutes {
+	case 0, 15, 30, 60:
+	default:
+		return pathErr(path+".transition_minutes", "%d is not 0, 15, 30 or 60", n.TransitionMinutes)
+	}
+	if !validClock(n.Start) {
+		return pathErr(path+".start", "%q must be HH:MM in 24-hour time", n.Start)
+	}
+	if !validClock(n.End) {
+		return pathErr(path+".end", "%q must be HH:MM in 24-hour time", n.End)
+	}
+	if n.Start == n.End {
+		return pathErr(path+".end", "must differ from start")
+	}
+	return nil
+}
+
+func validClock(v string) bool {
+	if len(v) != len("15:04") {
+		return false
+	}
+	_, err := time.Parse("15:04", v)
+	return err == nil
 }
 
 // weatherPlaceLabel validates a free-text place label: bounded, and free of
@@ -1500,11 +1600,19 @@ func applyAccessibility(base Accessibility, w wireAccessibility) Accessibility {
 	return base
 }
 
-func applySession(base Session, w wireSession) Session {
+func applySession(base Session, w wireSession) (Session, error) {
 	if w.Locker != nil {
 		base.Locker = *w.Locker
 	}
-	return base
+	if w.PolkitAgent != nil {
+		switch *w.PolkitAgent {
+		case "auto", "on", "off":
+			base.PolkitAgent = *w.PolkitAgent
+		default:
+			return Session{}, pathErr("session.polkit_agent", "%q is not auto, on, or off", *w.PolkitAgent)
+		}
+	}
+	return base, nil
 }
 
 func applyIdle(base Idle, w wireIdle) (Idle, error) {

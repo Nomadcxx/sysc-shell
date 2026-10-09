@@ -27,18 +27,20 @@ const (
 	OpRefresh
 	// OpRefreshTerminalCatalog re-reads sysc-terminal's installed registry.
 	OpRefreshTerminalCatalog
+	// OpFocusFolder names the folder the picker has open (Path), so its
+	// previews are generated first.
+	OpFocusFolder
 )
 
 // Command is one queued request. It is a value, so nothing the panel holds is
 // shared with the service after the send.
 type Command struct {
-	Op      Op
-	Token   string
-	Path    string
-	Kind    Kind
-	Effect  string
-	Theme   string
-	Artwork string
+	Op     Op
+	Token  string
+	Path   string
+	Kind   Kind
+	Effect string
+	Theme  string
 }
 
 // Capabilities is what is installed, probed once at start and projected into
@@ -120,11 +122,15 @@ type Snapshot struct {
 	Caps        Capabilities
 	Seed        string
 	Err         string
-	// ThumbsDone and ThumbsTotal report preview generation. A first run over a
-	// real library takes minutes; without them the picker is a wall of glyphs
-	// with no explanation.
-	ThumbsDone  int
-	ThumbsTotal int
+	// ThumbsDone and ThumbsTotal report preview generation over the library;
+	// the Folder counts cover ThumbsFolder, the folder the picker had open
+	// when the walk started, which is generated first. Without them a first
+	// run reads as a broken picker.
+	ThumbsDone        int
+	ThumbsTotal       int
+	ThumbsFolder      string
+	ThumbsFolderDone  int
+	ThumbsFolderTotal int
 	// Scanning is true while the library index is being built.
 	Scanning bool
 	// Covered maps an output to the namespace of a foreign Background surface
@@ -146,9 +152,6 @@ type ServiceConfig struct {
 	Coverage func() (map[string]string, error)
 	// CacheDir holds the generated previews. Empty disables the generator.
 	CacheDir string
-	// ThumbPace is the gap between two generated previews. Zero uses the
-	// package default.
-	ThumbPace time.Duration
 	// ConfigHook is the theme write-back, given here rather than installed
 	// afterwards so the seed that startup reconcile produces cannot be
 	// published before anyone is listening.
@@ -187,11 +190,13 @@ type Service struct {
 	stopWork context.CancelFunc
 
 	// store, lib, caps, and covered are touched only by the loop goroutine.
-	store     Store
-	lib       *Library
-	caps      Capabilities
-	covered   map[string]string
-	restarted map[string]bool
+	store Store
+	lib   *Library
+	// thumbFolder is the folder the picker has open; its previews go first.
+	thumbFolder string
+	caps        Capabilities
+	covered     map[string]string
+	restarted   map[string]bool
 
 	mu   sync.Mutex
 	snap Snapshot
@@ -245,7 +250,7 @@ func NewService(cfg ServiceConfig) *Service {
 	if cfg.CacheDir != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.stopWork = cancel
-		s.thumbs = NewThumbnailer(cfg.CacheDir, cfg.ThumbPace)
+		s.thumbs = NewThumbnailer(cfg.CacheDir)
 		go s.thumbs.Run(ctx)
 		s.enqueueThumbs()
 	}
@@ -263,7 +268,7 @@ func (s *Service) reconcile() {
 		if !slices.Contains(s.store.Connectors(), connector) {
 			continue
 		}
-		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme, Artwork: a.Artwork})
+		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme})
 	}
 }
 
@@ -383,7 +388,7 @@ func (s *Service) enqueueThumbs() {
 	if s.thumbs == nil || s.lib == nil {
 		return
 	}
-	s.thumbs.Enqueue(s.lib.All())
+	s.thumbs.Enqueue(s.lib.All(), s.thumbFolder)
 }
 
 func (s *Service) handle(c Command) {
@@ -398,7 +403,6 @@ func (s *Service) handle(c Command) {
 		for i := range jobs {
 			jobs[i].Effect = c.Effect
 			jobs[i].Theme = c.Theme
-			jobs[i].Artwork = c.Artwork
 		}
 		s.dispatch(jobs)
 		return
@@ -424,6 +428,12 @@ func (s *Service) handle(c Command) {
 	case OpRefresh:
 		s.lib = Scan(s.roots)
 		s.refreshCoverage()
+		s.enqueueThumbs()
+	case OpFocusFolder:
+		if c.Path == s.thumbFolder {
+			return
+		}
+		s.thumbFolder = c.Path
 		s.enqueueThumbs()
 	case OpRefreshTerminalCatalog:
 		if s.engine != nil {
@@ -595,7 +605,9 @@ func (s *Service) publish() {
 		Covered:     maps.Clone(s.covered),
 	}
 	if s.thumbs != nil {
-		snap.ThumbsDone, snap.ThumbsTotal = s.thumbs.Counts()
+		c := s.thumbs.Counts()
+		snap.ThumbsDone, snap.ThumbsTotal = c.Done, c.Total
+		snap.ThumbsFolder, snap.ThumbsFolderDone, snap.ThumbsFolderTotal = c.Folder, c.FolderDone, c.FolderTotal
 	}
 	s.mu.Lock()
 	s.snap = snap

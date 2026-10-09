@@ -15,7 +15,7 @@ require (
 	github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf
 	github.com/Nomadcxx/sysc-metrics v0.7.0
 	github.com/Nomadcxx/sysc-notify v0.1.0-rc.4.0.20260928141411-254ec5732728
-	github.com/Nomadcxx/sysc-terminal v0.1.1-0.20261008043618-9d72a796e922
+	github.com/Nomadcxx/sysc-terminal v0.1.1-0.20261008172631-0157cbfe0ea0
 	github.com/Nomadcxx/sysc-tray v0.1.1
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
@@ -26,7 +26,7 @@ require (
 )
 
 require (
-	github.com/Nomadcxx/sysc-Go v1.0.6-0.20261008011707-798d897d33ab // indirect
+	github.com/Nomadcxx/sysc-Go v1.0.6-0.20261008172414-1ff1f6c3c8d0 // indirect
 	github.com/charmbracelet/colorprofile v0.3.2 // indirect
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.3.0.20250917201909-41ff0bf215ea // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20250915111650-81d4262876ef // indirect

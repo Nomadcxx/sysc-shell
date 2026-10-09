@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
@@ -44,11 +45,7 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 	case "theme.mode.set":
 		return r.themeSet("appearance.mode", p.Mode)
 	case "theme.mode.toggle":
-		next := "light"
-		if r.themeSnapshot().ThemeGen.Mode == "light" {
-			next = "dark"
-		}
-		return r.themeSet("appearance.mode", next)
+		return r.themeModeToggle()
 	case "theme.palette.set":
 		return r.themePaletteSet(p.Source, p.Seed)
 	case "theme.preview.show":
@@ -132,25 +129,35 @@ func (r *Registry) themeSnapshot() config.Config {
 }
 
 func (r *Registry) themeSet(path, value string) (map[string]any, error) {
-	cfg := r.themeSnapshot()
-	if err := themeEntrySet(r.settingsFor(cfg), &cfg, path, value); err != nil {
-		return nil, err
-	}
-	if err := r.writeConfig(cfg); err != nil {
+	if _, err := r.updateConfig(func(cfg *config.Config, registryFor func(config.Config) *settings.Registry) error {
+		return themeEntrySet(registryFor(*cfg), cfg, path, value)
+	}); err != nil {
 		return nil, err
 	}
 	return map[string]any{"path": path, "value": value}, nil
+}
+
+func (r *Registry) themeModeToggle() (map[string]any, error) {
+	next := "light"
+	if _, err := r.updateConfig(func(cfg *config.Config, registryFor func(config.Config) *settings.Registry) error {
+		if cfg.ThemeGen.Mode == "light" {
+			next = "dark"
+		}
+		return themeEntrySet(registryFor(*cfg), cfg, "appearance.mode", next)
+	}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"path": "appearance.mode", "value": next}, nil
 }
 
 func (r *Registry) themePaletteSet(source, seed string) (map[string]any, error) {
 	if source == "" && seed == "" {
 		return nil, errors.New("theme.palette.set needs source or seed")
 	}
-	cfg := r.themeSnapshot()
-	if err := themeApplyOverrides(r.settingsFor, &cfg, "", source, seed); err != nil {
-		return nil, err
-	}
-	if err := r.writeConfig(cfg); err != nil {
+	cfg, err := r.updateConfig(func(cfg *config.Config, registryFor func(config.Config) *settings.Registry) error {
+		return themeApplyOverrides(registryFor, cfg, "", source, seed)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"source": cfg.ThemeGen.Source, "seed": cfg.ThemeGen.Seed}, nil
@@ -196,33 +203,27 @@ func themeEntrySet(reg *settings.Registry, cfg *config.Config, path, value strin
 
 func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, error) {
 	resultNames := theming.Catalog().Names()
-	var cfg config.Config
-	if name == "" {
-		// No target: rewrite every template from the committed tokens and poke
-		// the normal reload so the live shell state catches up too.
-		cfg = r.themeSnapshot()
-		if err := r.writeConfig(cfg); err != nil {
-			return nil, err
+	cfg, err := r.updateConfig(func(cfg *config.Config, registryFor func(config.Config) *settings.Registry) error {
+		if name == "" {
+			// No target rewrites the current config through the normal reload.
+			return nil
 		}
-	} else {
-		cfg = r.themeSnapshot()
-		e, ok := r.settingsFor(cfg).Lookup("theme.templates." + name)
+		e, ok := registryFor(*cfg).Lookup("theme.templates." + name)
 		if !ok {
-			return nil, fmt.Errorf("unknown template %s", name)
+			return fmt.Errorf("unknown template %s", name)
 		}
 		value := "true"
 		if on != nil && !*on {
 			value = "false"
 		}
-		if err := e.Set(&cfg, value); err != nil {
-			return nil, err
-		}
-		if err := r.writeConfig(cfg); err != nil {
-			return nil, err
-		}
+		return e.Set(cfg, value)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	var outcomes map[string]error
+	var adopted []string
 	var applyErr, genErr error
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -239,10 +240,10 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 		// palette that reads as a plain success is the shape of failure #101.
 		tok, err := r.tokensFor(cfg)
 		genErr = err
-		outcomes, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok, nil)
-	}
-	if outcomes != nil {
-		r.recordTemplateOutcomes(outcomes, false)
+		outcomes, adopted, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok, cfg.TerminalOpacity)
+		if outcomes != nil {
+			r.reportTemplates(home, outcomes, adopted)
+		}
 	}
 	if outcomes == nil && applyErr == nil {
 		applyErr = errors.New("template apply completed without per-template outcomes")
@@ -261,6 +262,10 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 			}
 		}
 		result := map[string]any{"status": "applied"}
+		if templateErr == nil && slices.Contains(adopted, template) {
+			// Applied over the user's own setting, which was backed up.
+			result = map[string]any{"status": "adopted", "backups": theming.Backups(home, template)}
+		}
 		if templateErr != nil {
 			status := "error"
 			if errors.Is(templateErr, theming.ErrUserModified) {

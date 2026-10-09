@@ -419,7 +419,11 @@ func TestControlCentreHomeFitsTheViewportWithoutScrolling(t *testing.T) {
 			cfg := config.Default()
 			cfg.Theme.FontScale = scale
 			h := &PanelHost{id: PanelControlCenter, section: "home", theme: ThemeFrom(cfg, cfg.Bar)}
+			nightLight := services.NewNightLight(services.NightLightOptions{ReducedMotion: true})
+			nightLight.Schedule(services.NightLightSchedule{Mode: services.NightLightAlways, NightK: 4000, DayK: 6500})
+			nightLight.GammaEvent(wayland.GammaEvent{Global: 1, State: wayland.GammaReady})
 			r := &Registry{sample: fixtureSnapshot(), reading: observedWeather(),
+				nightLight: nightLight,
 				mediaState: services.MediaState{Available: true, Title: "A very long track title that will not fit", Artist: "An equally long artist name", Identity: "mpv",
 					Status: services.PlaybackPlaying, CanPause: true, LengthUS: 100, PositionUS: 25}}
 			root := controlCentreTree(r, h)
@@ -1485,7 +1489,7 @@ func TestTheWeatherPageUsesTheNocturnalForm(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
 
 	effect := findNode(ccWeather(r, h), func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
-	if effect == nil || !effect.Effect.Night {
+	if effect == nil || effect.Effect.Daylight != 0 {
 		t.Fatalf("night Control Centre hero effect = %+v, want the nocturnal form", effect)
 	}
 }

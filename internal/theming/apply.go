@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -59,7 +60,11 @@ func applyWriteForce(path, rendered string) error {
 	// Keep the FIRST backup: it holds the bytes the shell never rendered. A
 	// second forced overwrite replaces a file the shell itself wrote, and
 	// clobbering that backup would destroy the only record of the user's.
-	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+	//
+	// Bytes the shell itself last wrote are not the user's, so they get no
+	// backup: an adopting pass can follow a guarded one that already wrote
+	// the sidecar, and a .bak of that would read as the user's file.
+	if current, err := os.ReadFile(path); err == nil && len(current) > 0 && stateHash(path) != hash(current) {
 		if _, err := os.Stat(path + ".bak"); errors.Is(err, os.ErrNotExist) {
 			if err := os.Rename(path, path+".bak"); err != nil {
 				return err
@@ -333,6 +338,20 @@ type directive struct {
 	create       bool   // invent the file if it does not exist
 	top          bool   // root-key zone: insert before the first table header
 	returnConfig bool   // Lua assignment must precede a final `return config`
+	// themes marks a key a config repeats (foot's include=). Only a line
+	// naming this themes directory competes with ours; any other include is
+	// the user's own setting and is never counted or removed.
+	themes string
+}
+
+// conflicts reports whether a config line is a competing value for d: one
+// with d's key that is not d's own line, and for a repeated key, one that
+// points into the app's themes directory.
+func (d directive) conflicts(trim string) bool {
+	if trim == strings.TrimSpace(d.line) || !directiveKeyMatches(trim, d.key) {
+		return false
+	}
+	return d.themes == "" || strings.Contains(trim, d.themes)
 }
 
 // EnsureDirective appends, updates or creates exactly one directive line.
@@ -377,7 +396,7 @@ func ensureDirective(d directive, force bool) error {
 			ownCount++
 			continue
 		}
-		if directiveKeyMatches(trim, d.key) {
+		if d.conflicts(trim) {
 			conflictCount++
 		}
 	}
@@ -410,6 +429,16 @@ func ensureDirective(d directive, force bool) error {
 		return recordDirectiveOwned(d, b, content, true)
 	}
 	if force {
+		// Replacing a line that opens a value spanning several lines (an
+		// Alacritty import array) would leave the rest of it dangling and
+		// break the file. That is not a theme the shell can take over by
+		// line; say what to add instead.
+		for _, ln := range lines {
+			trim := strings.TrimSpace(ln)
+			if d.conflicts(trim) && opensMultiline(trim) {
+				return fmt.Errorf("theming: %s: %q spans several lines; add %s to it", d.file, trim, d.line)
+			}
+		}
 		if err := backupUserFileOnce(d.file, b); err != nil {
 			return err
 		}
@@ -417,7 +446,7 @@ func ensureDirective(d directive, force bool) error {
 	remaining := make([]string, 0, len(lines))
 	for _, ln := range lines {
 		trim := strings.TrimSpace(ln)
-		if trim == own || directiveKeyMatches(trim, d.key) {
+		if trim == own || d.conflicts(trim) {
 			continue
 		}
 		remaining = append(remaining, ln)
@@ -452,6 +481,12 @@ func directiveOwnershipKey(d directive) string {
 
 func directiveKeyMatches(line, key string) bool {
 	trim := strings.TrimSpace(line)
+	// "name " is a key separated from its value by whitespace, as kitty
+	// writes them: a longer option sharing the prefix is another setting.
+	if name, ok := strings.CutSuffix(key, " "); ok {
+		rest, found := strings.CutPrefix(trim, name)
+		return found && name != "" && (rest == "" || rest[0] == ' ' || rest[0] == '\t')
+	}
 	if strings.HasSuffix(key, "=") {
 		name := strings.TrimSpace(strings.TrimSuffix(key, "="))
 		if name == "" || !strings.HasPrefix(trim, name) {
@@ -461,6 +496,21 @@ func directiveKeyMatches(line, key string) bool {
 	}
 	return strings.HasPrefix(trim, key)
 }
+
+// opensMultiline reports a config line whose value continues on later lines:
+// an unclosed array, table or list.
+func opensMultiline(line string) bool {
+	for _, open := range []string{"[", "{", "("} {
+		if strings.HasSuffix(line, open) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellThemeName is the name every template's directive and sidecar uses for
+// the shell's theme.
+const shellThemeName = "sysc-shell"
 
 func directiveOwned(d directive) bool {
 	return stateHash(directiveOwnershipKey(d)) == "owned"
@@ -532,7 +582,7 @@ func directiveContent(body []byte, lines []string, d directive) []byte {
 	}
 	header := "[" + d.section + "]"
 	for i, ln := range lines {
-		if strings.TrimSpace(ln) == header {
+		if name, ok := sectionHeader(ln); ok && name == d.section {
 			out := make([]string, 0, len(lines)+1)
 			out = append(out, lines[:i+1]...)
 			out = append(out, d.line)
@@ -547,18 +597,64 @@ func directiveContent(body []byte, lines []string, d directive) []byte {
 	return []byte(out)
 }
 
+// sectionHeader reports the section a header line opens. A trailing comment
+// and spaces inside the brackets do not change the section: "[window] # x"
+// is [window], and missing it would append a second table that TOML refuses.
+func sectionHeader(line string) (string, bool) {
+	trim := strings.TrimSpace(line)
+	if i := strings.Index(trim, "#"); i >= 0 {
+		trim = strings.TrimSpace(trim[:i])
+	}
+	if len(trim) < 2 || trim[0] != '[' || trim[len(trim)-1] != ']' {
+		return "", false
+	}
+	return strings.TrimSpace(trim[1 : len(trim)-1]), true
+}
+
 // backupUserFileOnce preserves the complete user config before a confirmed
 // replacement, retaining its mode and the first backup.
 func backupUserFileOnce(path string, data []byte) error {
+	if err := writeBackup(path, path+".bak", data); !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
+}
+
+// backupUserFile keeps every distinct user file an adoption replaces: the
+// first in <path>.bak, later ones in <path>.bak.2, .bak.3 and on. Bytes a
+// backup already holds are not written again. A shell-owned value is adopted
+// again each time the user edits it, and each edit is theirs to recover.
+func backupUserFile(path string, data []byte) error {
+	for n := 1; ; n++ {
+		backup := numberedBackup(path, n)
+		held, err := os.ReadFile(backup)
+		if errors.Is(err, os.ErrNotExist) {
+			return writeBackup(path, backup, data)
+		}
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(held, data) {
+			return nil
+		}
+	}
+}
+
+func numberedBackup(path string, n int) string {
+	if n == 1 {
+		return path + ".bak"
+	}
+	return path + ".bak." + strconv.Itoa(n)
+}
+
+// writeBackup creates backup, which must not exist, holding data with the
+// mode of path.
+func writeBackup(path, backup string, data []byte) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	backup := path + ".bak"
 	f, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
-	if errors.Is(err, os.ErrExist) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
@@ -626,7 +722,11 @@ func RemoveDirective(d directive) error {
 		keep = append(keep, ln)
 	}
 	if !owned {
-		if matchingKey {
+		// A same-key line only blocks when the file refers to the shell's
+		// theme. Without that it is the user's own setting -- an empty
+		// Alacritty import array, an include of another file -- and there is
+		// nothing of the shell's to remove or protect.
+		if matchingKey && strings.Contains(string(b), shellThemeName) {
 			return fmt.Errorf("%w: unowned directive in %s", ErrUserModified, d.file)
 		}
 		return nil

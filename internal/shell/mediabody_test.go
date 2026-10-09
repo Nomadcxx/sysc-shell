@@ -472,3 +472,17 @@ func TestPanelSectionMediaIPCUnblocked(t *testing.T) {
 		t.Fatalf("panelSection media = %q, %v", got, err)
 	}
 }
+
+func TestMediaTimeShowsHoursPastAnHour(t *testing.T) {
+	for _, tc := range []struct {
+		us   int64
+		want string
+	}{
+		{0, "00:00"}, {-5, "00:00"}, {61_000_000, "01:01"}, {3_599_000_000, "59:59"},
+		{3_600_000_000, "1:00:00"}, {7_384_000_000, "2:03:04"},
+	} {
+		if got := mediaTime(tc.us); got != tc.want {
+			t.Errorf("mediaTime(%d) = %q, want %q", tc.us, got, tc.want)
+		}
+	}
+}

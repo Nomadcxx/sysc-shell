@@ -99,6 +99,8 @@ type Weather struct {
 
 	latitude, longitude float64
 	unit                Unit
+	locationConfigured  bool
+	locationLabel       string
 
 	client *http.Client
 	// endpoint is overridden by tests to point at an httptest server.
@@ -123,15 +125,16 @@ const openMeteoEndpoint = weather.DefaultEndpoint
 
 func NewWeather(latitude, longitude float64, unit Unit) *Weather {
 	return &Weather{
-		rearm:             make(chan struct{}, 1),
-		updates:           make(chan Reading, 1),
-		latitude:          latitude,
-		longitude:         longitude,
-		unit:              unit,
-		client:            &http.Client{Timeout: connectAndReadBudget},
-		endpoint:          openMeteoEndpoint,
-		geocodingEndpoint: weather.DefaultGeocodingEndpoint,
-		minInterval:       minFetchInterval,
+		rearm:              make(chan struct{}, 1),
+		updates:            make(chan Reading, 1),
+		latitude:           latitude,
+		longitude:          longitude,
+		locationConfigured: true,
+		unit:               unit,
+		client:             &http.Client{Timeout: connectAndReadBudget},
+		endpoint:           openMeteoEndpoint,
+		geocodingEndpoint:  weather.DefaultGeocodingEndpoint,
+		minInterval:        minFetchInterval,
 	}
 }
 
@@ -185,7 +188,7 @@ func (w *Weather) Acquire(interval time.Duration) (*Lease, error) {
 func (w *Weather) Close() {
 	w.mu.Lock()
 	for _, l := range w.leases.clear() {
-		l.weather = nil
+		l.forget()
 	}
 	done := w.stopIfUnusedLocked()
 	w.mu.Unlock()
@@ -264,6 +267,48 @@ func (w *Weather) Reconfigure(latitude, longitude float64, unit Unit) {
 	case w.rearm <- struct{}{}:
 	default:
 	}
+}
+
+// SetLocationConfigured distinguishes valid coordinates (including 0,0)
+// from the zero-valued fields of an unconfigured weather block.
+func (w *Weather) SetLocationConfigured(configured bool) {
+	w.mu.Lock()
+	w.locationConfigured = configured
+	w.mu.Unlock()
+}
+
+// SetLocationLabel supplies the human-readable source used by Settings. It is
+// descriptive only and never changes the coordinates sent to the forecast API.
+func (w *Weather) SetLocationLabel(label string) {
+	w.mu.Lock()
+	w.locationLabel = label
+	w.mu.Unlock()
+}
+
+// LocationPending reports whether a configured city is still being resolved.
+func (w *Weather) LocationPending() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.city != "" && !w.resolved
+}
+
+// LocationSource names the place used by sunrise/sunset schedules.
+func (w *Weather) LocationSource() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.city != "" {
+		if w.resolved && w.placeName != "" {
+			return w.placeName
+		}
+		return w.city
+	}
+	if !w.locationConfigured {
+		return ""
+	}
+	if w.locationLabel != "" {
+		return w.locationLabel
+	}
+	return fmt.Sprintf("%.4f, %.4f", w.latitude, w.longitude)
 }
 
 func (w *Weather) requestURL() string {
@@ -459,4 +504,19 @@ func sendReading(updates chan Reading, reading Reading) {
 	case updates <- reading:
 	default:
 	}
+}
+
+// ResolvedLocation reports the coordinates the weather service is actually
+// using. It is false until a configured city has been geocoded, which is how
+// a caller tells "no location configured" from "a city is still resolving".
+func (w *Weather) ResolvedLocation() (lat, lon float64, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.resolved {
+		return w.resolvedLat, w.resolvedLon, true
+	}
+	if w.city == "" {
+		return w.latitude, w.longitude, w.locationConfigured
+	}
+	return 0, 0, false
 }

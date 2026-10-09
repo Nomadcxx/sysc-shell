@@ -24,18 +24,26 @@ import (
 
 // Wallpaper picker chrome. The plugin's layout with a virtualized grid in place
 // of its page buttons: pagination was a plugin-API ceiling, not a preference
-// (D4/D8). Four 210px columns plus three 10px gaps and the padding come to 902,
-// inside the 980 panel.
+// (D4/D8). The grid's tile size is derived from the panel width (wallpaperGrid).
 const (
-	wallpaperColumns    = 4
-	wallpaperTileWidth  = wallpaper.ThumbWidth
-	wallpaperThumbH     = wallpaper.ThumbHeight
-	wallpaperGridGap    = 10
-	wallpaperPadding    = 16
-	wallpaperFieldH     = 44
-	wallpaperCaptionH   = 22
-	wallpaperTileHeight = wallpaperThumbH + wallpaperCaptionH
-	wallpaperRowHeight  = wallpaperTileHeight + wallpaperGridGap
+	wallpaperColumns  = 4
+	wallpaperGridGap  = 10
+	wallpaperPadding  = 16
+	wallpaperFieldH   = 44
+	wallpaperCaptionH = 22
+
+	// The tile grid. The gaps are what keep rows apart: the virtual list
+	// centres a row of tile height inside the row pitch, so the pitch minus
+	// the tile is empty space. The scroll strip is the 4 px scrollbar the list
+	// paints over its right edge, plus clearance from the last column. The
+	// row pitch these give (144 at the 980 panel) is what still fits four rows
+	// in the laptop's 580 px grid.
+	wallpaperColGap       = 12
+	wallpaperRowGap       = 12
+	wallpaperTilePad      = 5
+	wallpaperTileInnerGap = 5
+	wallpaperTileCaptionH = 20
+	wallpaperScrollStrip  = 12
 
 	// Chrome controls. The output select is D4's 170px minimum.
 	wallpaperOutputWidth     = 170
@@ -90,17 +98,55 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 				h.wallpaperSnap = snap
 				h.wallpaperOutput = wallpaperOutputSelection(snap, h.wallpaperOutput)
 				if id == PanelWallpaper && h.wallpaperDir == "" {
-					h.wallpaperDir = firstRoot(snap)
+					h.wallpaperOpenDir(r, firstRoot(snap))
 				}
 				r.rebuildPanel(h)
 				hosts = append(hosts, h)
+			}
+			bars := r.noteEffectOutputsLocked(snap)
+			var surfacePubs []wayland.Invalidation
+			if len(bars) > 0 {
+				// Panels attached to a rethemed bar share its ground.
+				cfg, tokens := r.effectiveThemeLocked()
+				surfacePubs = r.retheThemeOpenSurfacesLocked(cfg, tokens)
 			}
 			r.mu.Unlock()
 			for _, h := range hosts {
 				r.publishSurface(h.output, panelSurfaceID(h.id))
 			}
+			for _, global := range bars {
+				r.publishSurface(global, "")
+			}
+			for _, p := range surfacePubs {
+				r.publishSurface(p.Global, p.SurfaceID)
+			}
 		}
 	}
+}
+
+// noteEffectOutputsLocked records which outputs play a terminal effect and
+// rethemes each bar whose answer changed, returning those bars' outputs.
+// Paused counts: the frozen frame is still the wallpaper behind the bar.
+func (r *Registry) noteEffectOutputsLocked(snap wallpaper.Snapshot) []uint32 {
+	next := map[string]bool{}
+	for _, connector := range snap.Connectors {
+		state := snap.Runtime[connector].State
+		if snap.Assignments[connector].Kind == wallpaper.KindEffect &&
+			(state == wallpaper.StatePlaying || state == wallpaper.StatePaused) {
+			next[connector] = true
+		}
+	}
+	var changed []uint32
+	for global, bar := range r.bars {
+		connector := bar.connector()
+		if next[connector] == r.effectOutputs[connector] {
+			continue
+		}
+		bar.retheme(bar.themeSnapshot().WithEffectBehind(next[connector], r.caps.Blur))
+		changed = append(changed, global)
+	}
+	r.effectOutputs = next
+	return changed
 }
 
 // firstRoot is the directory the picker opens on.
@@ -158,10 +204,34 @@ func wallpaperDirs(h *PanelHost) []wallpaper.Entry {
 	return out
 }
 
-// wallpaperChromeH is the height of one chrome control. The chrome is compact
-// even at standard density: these rows frame the grid rather than being the
-// thing you came for, and section labels above them cost height of their own.
-func wallpaperChromeH(h *PanelHost) int { return h.theme.Metrics.CompactControl }
+// wallpaperChromeH is the height of one chrome control. The Wallpaper panel
+// sizes it with its chrome metrics; Terminal Art shares the helpers and keeps
+// the compact size.
+func wallpaperChromeH(h *PanelHost) int {
+	if h.id == PanelWallpaper {
+		return wallpaperChromeOf(h).control
+	}
+	return h.theme.Metrics.CompactControl
+}
+
+// wallpaperChrome is the picker's section metrics. A short panel (the laptop)
+// uses the compact set, so the sectioned chrome still leaves three and a half
+// rows of tiles (owner decision, 2026-10-09).
+type wallpaperChrome struct {
+	headerH, control, cardPad, footerH int
+}
+
+// wallpaperCompactBelow is the panel height under which the chrome goes
+// compact. The laptop's panel is about 820; the desktop's 1100.
+const wallpaperCompactBelow = 960
+
+func wallpaperChromeOf(h *PanelHost) wallpaperChrome {
+	m := h.theme.Metrics
+	if h.place.Panel.H > 0 && h.place.Panel.H < wallpaperCompactBelow {
+		return wallpaperChrome{headerH: 48, control: m.CompactControl, cardPad: 8, footerH: 40}
+	}
+	return wallpaperChrome{headerH: 56, control: m.StandardControl, cardPad: 12, footerH: 48}
+}
 
 // wallpaperCombo is a closed dropdown: the current value and a chevron. It is
 // a button rather than a ui.KindMenu because KindMenu renders its options
@@ -254,9 +324,10 @@ func wallpaperPaletteOptions(h *PanelHost) []wallpaperOption {
 	return out
 }
 
-// wallpaperTree projects the last snapshot as the D4 chrome: title and close,
-// search with an output select, the kind filter with Up, the folder strip,
-// banners, the active strip, the virtualized grid, and the media count.
+// wallpaperTree projects the last snapshot as the sectioned SYSC chrome: a
+// header band carrying the rail, a controls card (what is showing and where,
+// then how to find something), the path rule, the virtualized grid, and a
+// footer band (owner decisions, 2026-10-09 audit).
 func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
@@ -266,28 +337,31 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	h.wallpaperPaletteSource = r.cfg.ThemeGen.Source
 	h.wallpaperPaletteSeed = r.cfg.ThemeGen.Seed
 	h.wallpaperThemeErr = r.themeErr
+	h.wallpaperTreeScale = h.scale120
 
 	inner := max(h.place.Panel.W-2*wallpaperPadding, 0)
+	media := wallpaperMedia(h)
 
 	children := []*ui.Node{
-		wallpaperTitleRow(h),
-		wallpaperActiveStrip(h),
-		wallpaperToolbar(h, inner),
+		wallpaperHeader(h, inner),
+		wallpaperControls(h, inner),
 	}
 	if h.wallpaperMenu == "folder" {
 		children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
 	}
 	children = append(children, wallpaperBanners(r, h)...)
+	children = append(children, wallpaperRule(h, inner, len(media)))
 
-	media := wallpaperMedia(h)
 	// The theme list opens beside its combo in the footer, so it sits under
 	// the grid and the grid gives up the height.
 	var after []*ui.Node
 	if h.wallpaperMenu == "palette" {
 		after = append(after, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
 	}
-	after = append(after, wallpaperFooter(h, media))
+	after = append(after, wallpaperFooter(h, inner))
 
+	grid := wallpaperGridOf(h)
+	grid.dither, grid.noteTop = wallpaperDither(h, grid)
 	rows := (len(media) + wallpaperColumns - 1) / wallpaperColumns
 	used := 0
 	for _, child := range append(slices.Clone(children), after...) {
@@ -296,10 +370,10 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	list := &ui.Node{
 		Kind:       ui.KindVirtualList,
 		ItemCount:  rows,
-		ItemHeight: wallpaperRowHeight,
+		ItemHeight: grid.pitch,
 		Height:     max(h.place.Panel.H-2*wallpaperPadding-used, 0),
 		Item: func(row int) *ui.Node {
-			return wallpaperRow(r, h, media, row)
+			return wallpaperRow(r, h, grid, media, row)
 		},
 	}
 	if len(media) == 0 {
@@ -370,25 +444,249 @@ func wallpaperEmptyState(r *Registry, h *PanelHost) *ui.Node {
 		wallpaperButton(h, "wallpaper-library-settings", "Library settings", false))
 }
 
-// wallpaperTitleRow is the panel's name, the outputs it acts on, and its
-// controls.
-func wallpaperTitleRow(h *PanelHost) *ui.Node {
-	return &ui.Node{
-		Kind:   ui.KindRow,
-		Gap:    wallpaperGridGap,
-		Height: h.theme.Metrics.StandardControl,
+// wallpaperHeader is the header band: the SYSC rail centred on the band, with
+// Refresh and Close pinned to its right edge. The rail is measured so a
+// leading spacer can centre it on the whole band rather than on what the
+// buttons leave.
+func wallpaperHeader(h *PanelHost, inner int) *ui.Node {
+	c := wallpaperChromeOf(h)
+	pad := (c.headerH - c.control) / 2
+	measure := h.measureText()
+	title := ui.TextAttrs{Role: theme.RoleTitle}
+	slashW, _ := measure(launcherSlashRun, title)
+	wordW, _ := measure("WALLPAPER", title)
+	railW := 2*slashW + wordW + 2*theme.MarginM
+	lead := max((inner-2*pad-railW)/2, 0)
+
+	slashes := func() *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: launcherSlashRun, TextRole: theme.RoleTitle, Tone: ui.ToneAccent}
+	}
+	rail := &ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginM, Height: c.control,
 		Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "Wallpaper", TextRole: theme.RoleTitle},
-			wallpaperOutputSelect(h, "wallpaper-output:"),
-			wallpaperButton(h, "wallpaper-refresh", "Refresh", false),
-			{
-				Kind: ui.KindButton, Action: "wallpaper-close", Name: "Close",
-				Role: "button", Focusable: true, Padding: wallpaperControlPad,
-				Height:   h.theme.Metrics.StandardControl,
-				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: wallpaperIconSize}},
-			},
+			// An empty column is the spacer: a nested row measures from its
+			// children and ignores Width, a column honours it.
+			{Kind: ui.KindColumn, Width: max(lead-theme.MarginM, 0), Height: c.control},
+			slashes(),
+			{Kind: ui.KindText, Text: "WALLPAPER", Name: "Wallpaper", Role: "heading",
+				TextRole: theme.RoleTitle, Tone: ui.ToneAccent},
+			slashes(),
 		},
 	}
+	iconButton := func(action, name, icon string) *ui.Node {
+		return &ui.Node{
+			Kind: ui.KindButton, Action: action, Name: name,
+			Role: "button", Focusable: true, Padding: wallpaperControlPad,
+			Width: c.control, Height: c.control,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: wallpaperIconSize}},
+		}
+	}
+	buttons := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Height: c.control, Children: []*ui.Node{
+		iconButton("wallpaper-refresh", "Refresh", "restart_alt"),
+		iconButton("wallpaper-close", "Close", "close"),
+	}}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Height: c.headerH, Padding: pad,
+		Children: []*ui.Node{{
+			Kind: ui.KindRow, PinEnd: true, Height: c.control, Children: []*ui.Node{rail, buttons},
+		}},
+	}
+}
+
+// wallpaperLabel is a mono section label in the SYSC style: accent slashes,
+// then the name in the muted foreground. A positive width fixes the label's
+// column, so the controls after it line up across rows; the column carries the
+// width because a nested row measures from its children.
+func wallpaperLabel(name string, width, height int) *ui.Node {
+	// The slashes sit in their own row: a two-child row led by text pins its
+	// second child to the right edge, which split a short label across the
+	// column.
+	label := &ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginXS, Height: height,
+		Children: []*ui.Node{
+			{Kind: ui.KindRow, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: "//", TextRole: theme.RoleMono, Tone: ui.ToneAccent},
+			}},
+			{Kind: ui.KindText, Text: name, TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
+		},
+	}
+	if width <= 0 {
+		return label
+	}
+	return &ui.Node{Kind: ui.KindColumn, Width: width, Height: height, Children: []*ui.Node{label}}
+}
+
+// wallpaperSearchName names the search field. The picker opens with it
+// focused, by this name, and the painter draws the search glyph and the clear
+// affordance only for a field named exactly "Search".
+const wallpaperSearchName = "Search"
+
+// wallpaperHairline is the rule between the controls card's two rows.
+const wallpaperHairline = 1
+
+// wallpaperLabelW is the width of a controls-card label column.
+const wallpaperLabelW = 76
+
+// wallpaperPinned is a row whose right group is pinned to the right edge.
+func wallpaperPinned(height int, left, right []*ui.Node) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindRow, PinEnd: true, Height: height,
+		Children: []*ui.Node{
+			{Kind: ui.KindRow, Gap: wallpaperGridGap, Height: height, Children: left},
+			{Kind: ui.KindRow, Gap: wallpaperGridGap, Height: height, Children: right},
+		},
+	}
+}
+
+// wallpaperControls is the controls card. The first row is where an apply
+// lands and what is there now, with the controls that act on it; the second
+// is how to find something. The output select lives here rather than in the
+// header: it picks the target of an apply, beside Pause and Restore.
+func wallpaperControls(h *PanelHost, inner int) *ui.Node {
+	c := wallpaperChromeOf(h)
+	width := inner - 2*c.cardPad
+	measure := h.measureText()
+
+	// Row one: display, now showing, then the actions pinned right.
+	var actions []*ui.Node
+	if paused, ok := wallpaperPlaybackState(h); ok {
+		action, label := "wallpaper-pause", "Pause"
+		if paused {
+			action, label = "wallpaper-resume", "Resume"
+		}
+		actions = append(actions, wallpaperButton(h, action, label, false))
+	}
+	for _, connector := range wallpaperTargets(h) {
+		if h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindEffect {
+			actions = append(actions, wallpaperButton(h, "wallpaper-open-art", "Open Terminal Art", false))
+			break
+		}
+	}
+	targets, hasEffects := wallpaperRestoreTargets(h)
+	restore := wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false)
+	if len(targets) == 0 {
+		restore.State |= ui.StateDisabled
+		if hasEffects {
+			restore.Tooltip = "Restore effects in Terminal Art"
+		} else {
+			restore.Tooltip = "No wallpaper assigned"
+		}
+	} else if hasEffects {
+		restore.Tooltip = "Terminal Art outputs are skipped"
+	}
+	actions = append(actions, restore)
+	actionsW := 0
+	for _, a := range actions {
+		w, _ := measure(a.Name, ui.TextAttrs{})
+		actionsW += w + 2*wallpaperControlPad + wallpaperGridGap
+	}
+	output := wallpaperOutputSelect(h, "wallpaper-output:")
+	outputW := output.Width
+	if outputW == 0 {
+		outputW, _ = measure(output.Text, ui.TextAttrs{Role: theme.RoleMono})
+	}
+	nowW := max(width-wallpaperLabelW-outputW-actionsW-3*wallpaperGridGap, 0)
+	now := &ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginXS, Height: c.control,
+		Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "\u25b8", TextRole: theme.RoleMono, Tone: ui.ToneAccent},
+			{Kind: ui.KindText, Text: "now: " + wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput),
+				Name: "Now showing", TextRole: theme.RoleMono, Tone: ui.ToneSubtle,
+				MaxWidth: max(nowW-wallpaperIconSize, 0)},
+		},
+	}
+	display := wallpaperPinned(c.control,
+		[]*ui.Node{wallpaperLabel("display", wallpaperLabelW, c.control), output, now}, actions)
+
+	// Row two: search, kind filter, folder, and Up once below a root.
+	filters := []struct {
+		label string
+		value wallpaper.Filter
+	}{
+		{"All", wallpaper.FilterAll},
+		{"Images", wallpaper.FilterImages},
+		{"Videos", wallpaper.FilterVideos},
+	}
+	segments := make([]*ui.Node, 0, len(filters))
+	for _, f := range filters {
+		segments = append(segments, wallpaperSegment(h,
+			fmt.Sprintf("wallpaper-filter:%d", f.value), f.label, f.value == h.wallpaperFilter))
+	}
+	show := &ui.Node{
+		Kind: ui.KindSegmented, Key: "wallpaper-filter", Gap: theme.MarginXXS,
+		Width: wallpaperFilterWidth, Height: c.control, Children: segments,
+	}
+	tail := []*ui.Node{show, wallpaperCombo(h, "folder", wallpaperFolderLabel(h), wallpaperFolderWidth)}
+	used := wallpaperLabelW + wallpaperFilterWidth + wallpaperFolderWidth + 3*wallpaperGridGap
+	if h.wallpaperSnap.Library != nil {
+		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
+			up := wallpaperButton(h, "wallpaper-up", "Up", false)
+			tail = append(tail, up)
+			upW, _ := measure("Up", ui.TextAttrs{})
+			used += wallpaperGridGap + upW + 2*wallpaperControlPad
+		}
+	}
+	// The field draws its own search glyph, so the row carries no second one.
+	field := h.search.Node(wallpaperSearchName)
+	field.Height = c.control
+	// One padded line has to fit the compact row: 8 overflowed it.
+	field.Padding = 6
+	field.Width = max(width-used, 0)
+	find := &ui.Node{
+		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: c.control,
+		Children: append([]*ui.Node{wallpaperLabel("find", wallpaperLabelW, c.control), field}, tail...),
+	}
+
+	sep := &ui.Node{Kind: ui.KindSeparator, Height: wallpaperHairline}
+	gap := theme.MarginM
+	cardH := 2*c.cardPad + 2*c.control + wallpaperHairline + 2*gap
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Padding: c.cardPad,
+		Height: cardH,
+		Children: []*ui.Node{{
+			Kind: ui.KindColumn, Gap: gap, Children: []*ui.Node{display, sep, find},
+		}},
+	}
+}
+
+// wallpaperRule is the line over the grid, drawn in box characters: the
+// folder on the left, the count on the right, rule between.
+func wallpaperRule(h *PanelHost, inner, count int) *ui.Node {
+	measure := h.measureText()
+	mono := ui.TextAttrs{Role: theme.RoleMono}
+	dir := wallpaperRulePath(h.wallpaperDir)
+	tail := plural(count, "item")
+	glyphW, lineH := measure("\u2500", mono)
+	if glyphW <= 0 {
+		glyphW = 8
+	}
+	leftW, _ := measure("\u2500\u2500 "+dir+" ", mono)
+	rightW, _ := measure(" "+tail+" \u2500\u2500", mono)
+	fill := max((inner-leftW-rightW)/glyphW, 2)
+	text := func(s string, tone ui.Tone) *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: s, TextRole: theme.RoleMono, Tone: tone}
+	}
+	return &ui.Node{
+		Kind: ui.KindRow, Height: max(lineH, 16), Name: "Folder " + dir + ", " + tail,
+		Children: []*ui.Node{
+			text("\u2500\u2500 ", ui.ToneSubtle),
+			text(dir, ui.ToneNormal),
+			text(" "+strings.Repeat("\u2500", fill)+" ", ui.ToneSubtle),
+			text(tail, ui.ToneNormal),
+			text(" \u2500\u2500", ui.ToneSubtle),
+		},
+	}
+}
+
+// wallpaperRulePath shortens the open folder for the rule: the home directory
+// reads as ~.
+func wallpaperRulePath(dir string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rest, ok := strings.CutPrefix(dir, home); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+			return "~" + rest
+		}
+	}
+	return dir
 }
 
 // wallpaperOutputSelect is All plus one segment per connector, each acting
@@ -419,60 +717,6 @@ func wallpaperOutputLabel(token string) string {
 		return "All"
 	}
 	return token
-}
-
-// wallpaperToolbar is how to find something: search, the kind filter, the
-// folder dropdown, and Up once the picker has descended out of a root. The
-// search field's role is unambiguous, so it carries a search icon rather than
-// a caption label above it.
-//
-// The folder control replaces a two-row band of chips. That band showed 8 of
-// 26 folders and, being a scrollable region above the grid, quietly took every
-// wheel event the grid was meant to get.
-func wallpaperToolbar(h *PanelHost, inner int) *ui.Node {
-	ch := wallpaperChromeH(h)
-	filters := []struct {
-		label string
-		value wallpaper.Filter
-	}{
-		{"All", wallpaper.FilterAll},
-		{"Images", wallpaper.FilterImages},
-		{"Videos", wallpaper.FilterVideos},
-	}
-	segments := make([]*ui.Node, 0, len(filters))
-	for _, f := range filters {
-		segments = append(segments, wallpaperSegment(h,
-			fmt.Sprintf("wallpaper-filter:%d", f.value), f.label, f.value == h.wallpaperFilter))
-	}
-	show := &ui.Node{
-		Kind: ui.KindSegmented, Key: "wallpaper-filter", Gap: theme.MarginXXS,
-		Width: wallpaperFilterWidth, Height: ch, Children: segments,
-	}
-
-	folder := []*ui.Node{wallpaperCombo(h, "folder", wallpaperFolderLabel(h), wallpaperFolderWidth)}
-	used := wallpaperFilterWidth + wallpaperFolderWidth + 3*wallpaperGridGap + wallpaperIconSize
-	if h.wallpaperSnap.Library != nil {
-		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
-			up := wallpaperButton(h, "wallpaper-up", "Up", false)
-			up.Height = ch
-			folder = append(folder, up)
-			used += wallpaperGridGap + 64
-		}
-	}
-	field := h.search.Node("Search")
-	field.Height = ch
-	// One padded line has to fit the compact row: 8 overflowed it.
-	field.Padding = 6
-	field.Width = max(inner-used, 0)
-
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: ch,
-		Children: append([]*ui.Node{
-			{Kind: ui.KindIcon, Icon: "search", IconSize: wallpaperIconSize},
-			field,
-			show,
-		}, folder...),
-	}
 }
 
 // wallpaperRootLabel names a library root by its directory.
@@ -523,61 +767,134 @@ func wallpaperButton(h *PanelHost, action, label string, selected bool) *ui.Node
 	return n
 }
 
+// wallpaperGrid is the tile geometry for one grid width. Tiles share the width
+// left beside the scroll strip, the thumbnail fills the tile inside its
+// padding, and its height keeps the preview cache's aspect: the painter scales
+// a raster to its box without preserving aspect, so a box off that ratio would
+// stretch every preview.
+type wallpaperGrid struct {
+	tileW, tileH   int
+	thumbW, thumbH int
+	pitch          int
+	// dither is the texture a decoding tile shows, sized to the thumbnail
+	// box; empty when there is nothing to measure it with. noteTop places a
+	// one-line note in the middle of the box.
+	dither  []string
+	noteTop int
+	// keyW and keyH are the thumbnail box in physical pixels: the size a
+	// preview is decoded to, so the painter never scales it up.
+	keyW, keyH int
+}
+
+func wallpaperGridFor(width int) wallpaperGrid {
+	tileW := max((width-wallpaperScrollStrip-(wallpaperColumns-1)*wallpaperColGap)/wallpaperColumns, 2*wallpaperTilePad+1)
+	thumbW := tileW - 2*wallpaperTilePad
+	thumbH := max(thumbW*wallpaper.ThumbHeight/wallpaper.ThumbWidth, 1)
+	tileH := 2*wallpaperTilePad + thumbH + wallpaperTileInnerGap + wallpaperTileCaptionH
+	return wallpaperGrid{tileW: tileW, tileH: tileH, thumbW: thumbW, thumbH: thumbH, pitch: tileH + wallpaperRowGap,
+		keyW: thumbW, keyH: thumbH}
+}
+
+// wallpaperDither sizes the decoding texture to the thumbnail box: a sparse
+// scatter of light shade, so it reads as a field rather than a pattern and
+// stays behind the note. It also reports where a one-line note centres.
+func wallpaperDither(h *PanelHost, g wallpaperGrid) ([]string, int) {
+	glyphW, lineH := h.measureText()("\u2591", ui.TextAttrs{Role: theme.RoleMono})
+	if glyphW <= 0 || lineH <= 0 {
+		return nil, 0
+	}
+	cols, lines := g.thumbW/glyphW, g.thumbH/lineH
+	out := make([]string, 0, lines)
+	for i := range lines {
+		row := []rune(strings.Repeat(" ", cols))
+		for j := range row {
+			// A fixed scatter, about one cell in five, different per line.
+			if (j*7+i*13)%11 < 2 {
+				row[j] = '\u2591'
+			}
+		}
+		out = append(out, string(row))
+	}
+	return out, max((g.thumbH-lineH)/2, 0)
+}
+
+// wallpaperGridOf is the grid for this host's panel width.
+func wallpaperGridOf(h *PanelHost) wallpaperGrid {
+	g := wallpaperGridFor(max(h.place.Panel.W-2*wallpaperPadding, 0))
+	if s := ui.Scale120(h.scale120); s.Valid() {
+		g.keyW, g.keyH = s.Physical(g.thumbW), s.Physical(g.thumbH)
+	}
+	return g
+}
+
 // wallpaperRow builds one row of up to four tiles. It runs inside layout, on
 // the Wayland owner, so it only ever reads already-decoded rasters.
-func wallpaperRow(r *Registry, h *PanelHost, media []wallpaper.Entry, row int) *ui.Node {
+//
+// The row carries the tile height, so the virtual list centres it in the row
+// pitch and the difference stays empty: that is the gap between rows.
+func wallpaperRow(r *Registry, h *PanelHost, g wallpaperGrid, media []wallpaper.Entry, row int) *ui.Node {
 	start := row * wallpaperColumns
 	tiles := make([]*ui.Node, 0, wallpaperColumns)
 	for i := start; i < start+wallpaperColumns && i < len(media); i++ {
-		tiles = append(tiles, wallpaperTile(r, h, media[i], i))
+		tiles = append(tiles, wallpaperTile(r, h, g, media[i], i))
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: wallpaperGridGap, Children: tiles}
+	return &ui.Node{Kind: ui.KindRow, Gap: wallpaperColGap, Height: g.tileH, Children: tiles}
 }
 
 // wallpaperTile is a capsule around a thumbnail and a caption. The capsule
 // supplies the tile chrome and takes its radius from the theme's CardRadius,
 // so the tile follows the user's configured radius.
-func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) *ui.Node {
-	raster := wallpaperThumbFor(r, entry)
-	thumb := &ui.Node{
-		Kind:   ui.KindImage,
-		ImageW: wallpaperTileWidth,
-		ImageH: wallpaperThumbH,
-		Image:  raster,
+//
+// A thumbnail that is not ready keeps its box and says why, in the SYSC mono
+// voice: a dither field with "decoding" while the preview is coming, or
+// "no preview" once the generator has recorded that it cannot make one (D6).
+func wallpaperTile(r *Registry, h *PanelHost, g wallpaperGrid, entry wallpaper.Entry, index int) *ui.Node {
+	raster, state := wallpaperThumbFor(r, g, entry)
+	var thumb *ui.Node
+	switch {
+	case raster != nil:
+		thumb = &ui.Node{Kind: ui.KindImage, ImageW: g.thumbW, ImageH: g.thumbH, Image: raster}
+	case state == wallpaperPreviewFailed:
+		thumb = wallpaperThumbNote(g, nil, "\u2717", ui.ToneError, "no preview")
+	case entry.IsDir:
+		thumb = &ui.Node{Kind: ui.KindRow, Width: g.thumbW, Height: g.thumbH, Children: []*ui.Node{{
+			Kind: ui.KindIcon, Icon: wallpaperPlaceholderGlyph(entry), IconSize: wallpaperPlaceholderIcon,
+		}}}
+	default:
+		thumb = wallpaperThumbNote(g, g.dither, wallpaperSpinFrame(index), ui.ToneAccent, "decoding")
 	}
-	// A thumbnail that has not decoded yet, or cannot be decoded at all, keeps
-	// its box and shows the kind glyph rather than a hole in the grid (D6).
-	var body []*ui.Node
-	if raster == nil {
-		placeholder := &ui.Node{
-			Kind: ui.KindRow, Width: wallpaperTileWidth, Height: wallpaperThumbH,
-		}
-		if glyph := wallpaperPlaceholderGlyph(entry); glyph != "" {
-			placeholder.Children = []*ui.Node{{
-				Kind: ui.KindIcon, Icon: glyph, IconSize: wallpaperPlaceholderIcon,
-			}}
-		}
-		body = append(body, placeholder)
-	} else {
-		body = append(body, thumb)
+	if entry.Kind == wallpaper.KindVideo && !entry.IsDir {
+		thumb = wallpaperVideoTag(g, thumb)
 	}
-	body = append(body, &ui.Node{
-		Kind:     ui.KindText,
-		Text:     wallpaperCaption(h, entry),
-		MaxWidth: wallpaperTileWidth,
-	})
 
+	caption := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Height: wallpaperTileCaptionH}
+	name := &ui.Node{Kind: ui.KindText, Text: wallpaperCaption(entry), MaxWidth: g.thumbW, Height: wallpaperTileCaptionH}
+	caption.Children = []*ui.Node{name}
+	if tag := wallpaperAppliedTag(h, entry); tag != "" {
+		chip := &ui.Node{Kind: ui.KindText, Text: tag, Name: "Applied", TextRole: theme.RoleMono, Tone: ui.ToneAccent}
+		tagW, _ := h.measureText()(tag, ui.TextAttrsOf(chip))
+		name.MaxWidth = max(g.thumbW-tagW-theme.MarginXS, 0)
+		caption.Children = append(caption.Children, chip)
+	}
+
+	content := &ui.Node{Kind: ui.KindColumn, Gap: wallpaperTileInnerGap, Children: []*ui.Node{thumb, caption}}
+	child := content
+	// The keyboard selection is a muted wash plus the accent corner brackets.
+	// StateSelected on a capsule paints a solid accent slab, which reads as
+	// "applied" rather than "focused" and drowns the thumbnail.
+	if index == h.wallpaperSel {
+		child = &ui.Node{Kind: ui.KindStack, Children: []*ui.Node{content, wallpaperCorners(g)}}
+	}
 	tile := &ui.Node{
 		Kind:      ui.KindCapsule,
 		Fill:      ui.FillContainerHigh,
-		Width:     wallpaperTileWidth,
-		Padding:   theme.MarginXS,
+		Width:     g.tileW,
+		Height:    g.tileH,
+		Padding:   wallpaperTilePad,
 		Action:    "wallpaper-tile",
 		Name:      entry.Path,
 		Focusable: true,
-		Children: []*ui.Node{{
-			Kind: ui.KindColumn, Gap: theme.MarginXS, Children: body,
-		}},
+		Children:  []*ui.Node{child},
 	}
 	// The output's current wallpaper is outlined, so the picker says what is
 	// already applied rather than only what could be (D6).
@@ -585,9 +902,6 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 		tile.Stroke = wallpaperSelectedStroke
 		tile.StrokeFill = ui.FillAccent
 	}
-	// The keyboard selection is a muted wash. StateSelected on a capsule paints
-	// a solid accent slab, which reads as "applied" rather than "focused" and
-	// drowns the thumbnail it is supposed to be highlighting.
 	if index == h.wallpaperSel {
 		tile.Fill = ui.FillSoft
 	}
@@ -597,6 +911,66 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 		tile.State |= ui.StateDisabled
 	}
 	return tile
+}
+
+// wallpaperThumbNote fills a thumbnail box that has no raster: an optional
+// dither field behind a centred mono line, a glyph then a word.
+func wallpaperThumbNote(g wallpaperGrid, dither []string, glyph string, tone ui.Tone, word string) *ui.Node {
+	field := &ui.Node{Kind: ui.KindColumn, Width: g.thumbW, Height: g.thumbH}
+	for _, line := range dither {
+		field.Children = append(field.Children, &ui.Node{
+			Kind: ui.KindText, Text: line, TextRole: theme.RoleMono, Tone: ui.ToneSubtle, MaxWidth: g.thumbW,
+		})
+	}
+	note := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, CenterX: true, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: glyph, TextRole: theme.RoleMono, Tone: tone},
+		{Kind: ui.KindText, Text: word, TextRole: theme.RoleMono},
+	}}
+	return &ui.Node{Kind: ui.KindStack, Width: g.thumbW, Height: g.thumbH, Children: []*ui.Node{
+		field,
+		{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindColumn, Height: g.noteTop}, note}},
+	}}
+}
+
+// wallpaperCorners is the keyboard selection's accent corner brackets, drawn
+// in box characters at the tile's four inner corners.
+func wallpaperCorners(g wallpaperGrid) *ui.Node {
+	corner := func(s string) *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: s, TextRole: theme.RoleMono, Tone: ui.ToneAccent}
+	}
+	pair := func(left, right string) *ui.Node {
+		return &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{corner(left), corner(right)}}
+	}
+	inner := g.tileH - 2*wallpaperTilePad
+	return &ui.Node{Kind: ui.KindColumn, Height: inner, Children: []*ui.Node{
+		pair("\u250c", "\u2510"),
+		{Kind: ui.KindColumn, Height: max(inner-2*wallpaperTileCaptionH, 0)},
+		pair("\u2514", "\u2518"),
+	}}
+}
+
+// wallpaperSpinFrames is the braille spinner sysc-greet draws.
+var wallpaperSpinFrames = []string{"\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"}
+
+// wallpaperSpinFrame is a spinner frame. It is picked rather than animated:
+// the frame moves when the grid repaints for a landed preview, so it turns
+// while work is actually landing and stops when it is not.
+func wallpaperSpinFrame(n int) string {
+	return wallpaperSpinFrames[((n%len(wallpaperSpinFrames))+len(wallpaperSpinFrames))%len(wallpaperSpinFrames)]
+}
+
+// wallpaperAppliedTag names where a tile is applied: the output, or how many
+// of the selected outputs show it when the select is All.
+func wallpaperAppliedTag(h *PanelHost, entry wallpaper.Entry) string {
+	matched, total := wallpaperMatchCount(h, entry)
+	switch {
+	case matched == 0:
+		return ""
+	case total == 1:
+		return "[\u2713] " + wallpaperTargets(h)[0]
+	default:
+		return fmt.Sprintf("[\u2713] %d/%d", matched, total)
+	}
 }
 
 // wallpaperCanApply reports whether a tile is activatable.
@@ -622,20 +996,25 @@ func wallpaperPlaceholderGlyph(entry wallpaper.Entry) string {
 	return ""
 }
 
-// wallpaperCaption is the filename, prefixed for a video and marked when the
-// tile is what the selected outputs already show.
-func wallpaperCaption(h *PanelHost, entry wallpaper.Entry) string {
-	if entry.IsDir {
-		return entry.Name
+// wallpaperCaption is the filename. A video is marked on its thumbnail
+// (wallpaperVideoTag), so the caption keeps its whole width for the name.
+func wallpaperCaption(entry wallpaper.Entry) string {
+	return entry.Name
+}
+
+// wallpaperVideoTag lays a small "\u25b6 VID" plate over a video's thumbnail
+// corner. The plate is the scrim, so the tag stays legible over any frame.
+func wallpaperVideoTag(g wallpaperGrid, thumb *ui.Node) *ui.Node {
+	plate := &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillScrim, Padding: theme.MarginXXS, PaddingX: theme.MarginXS,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "\u25b6 VID", Name: "Video", TextRole: theme.RoleMono}},
 	}
-	name := entry.Name
-	if entry.Kind == wallpaper.KindVideo {
-		name = "VIDEO \u00b7 " + name
-	}
-	if matched, total := wallpaperMatchCount(h, entry); total > 1 && matched > 0 {
-		return fmt.Sprintf("%s  %d / %d", name, matched, total)
-	}
-	return name
+	// The thumbnail rides in a column: a stack only lays out column and row
+	// layers, and a still-decoding thumbnail is a stack of its own.
+	return &ui.Node{Kind: ui.KindStack, Width: g.thumbW, Height: g.thumbH, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Children: []*ui.Node{thumb}},
+		{Kind: ui.KindColumn, Padding: theme.MarginXS, Children: []*ui.Node{{Kind: ui.KindRow, Children: []*ui.Node{plate}}}},
+	}}
 }
 
 // wallpaperTargets resolves the output select to the connectors it acts on.
@@ -696,7 +1075,11 @@ func wallpaperBanners(r *Registry, h *PanelHost) []*ui.Node {
 	// The palette is the other half of applying a wallpaper. A generator that
 	// cannot produce a usable one leaves the old colours up, which is correct
 	// but looks exactly like nothing having happened unless it says so.
-	add(h.wallpaperThemeErr, ui.ToneError)
+	if h.wallpaperThemeErr == theme.ErrAwaitingWallpaper.Error() {
+		add(h.wallpaperThemeErr, ui.ToneSubtle)
+	} else {
+		add(h.wallpaperThemeErr, ui.ToneError)
+	}
 	for _, connector := range wallpaperTargets(h) {
 		if owner := h.wallpaperSnap.Covered[connector]; owner != "" {
 			add(fmt.Sprintf("%s is already painted by %s - a wallpaper set here will not be visible until that surface goes away",
@@ -711,17 +1094,19 @@ func wallpaperBanners(r *Registry, h *PanelHost) []*ui.Node {
 	return out
 }
 
-// wallpaperFooter is the rest: what the grid holds, preview progress, the
-// shell theme, and the one engine painting the selected outputs.
-func wallpaperFooter(h *PanelHost, media []wallpaper.Entry) *ui.Node {
-	count := plural(len(media), "item")
-	if done, total := h.wallpaperSnap.ThumbsDone, h.wallpaperSnap.ThumbsTotal; total > 0 && done < total {
-		// Previews are generated slowly on purpose. Saying so is the
-		// difference between a library that is still filling in and one that
-		// looks broken.
-		count += fmt.Sprintf(" \u00b7 Generating previews \u00b7 %d / %d", done, total)
+// wallpaperFooter is the footer band: the key legend (or, while previews are
+// generating, their progress) on the left; the shell theme and the engine
+// painting the selected outputs pinned right.
+func wallpaperFooter(h *PanelHost, inner int) *ui.Node {
+	c := wallpaperChromeOf(h)
+	pad := (c.footerH - c.control) / 2
+
+	left := []*ui.Node{{Kind: ui.KindText, Text: wallpaperHints, TextRole: theme.RoleMono, Tone: ui.ToneSubtle}}
+	if progress := wallpaperProgress(h); progress != nil {
+		left = []*ui.Node{progress}
 	}
-	engine := &ui.Node{Kind: ui.KindText, Role: "status", Name: "Engine", TextRole: theme.RoleCaption}
+
+	engine := &ui.Node{Kind: ui.KindText, Role: "status", Name: "Engine", TextRole: theme.RoleMono}
 	if name := wallpaperActiveEngine(h); name == wallpaper.EngineGSlapper {
 		engine.Text = "gSlapper"
 	} else if name != "" {
@@ -729,16 +1114,86 @@ func wallpaperFooter(h *PanelHost, media []wallpaper.Entry) *ui.Node {
 	} else if wallpaperNoEngine(h) {
 		engine.Text, engine.Tone = "no wallpaper engine installed", ui.ToneError
 	}
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperChromeH(h),
-		Children: []*ui.Node{
-			{Kind: ui.KindText, Text: count, TextRole: theme.RoleCaption},
-			{Kind: ui.KindText, Text: "Shell theme", TextRole: theme.RoleCaption},
-			wallpaperCombo(h, "palette", wallpaperPaletteLabel(h), wallpaperPaletteWidth),
+	right := []*ui.Node{
+		wallpaperLabel("theme", 0, c.control),
+		wallpaperCombo(h, "palette", wallpaperPaletteLabel(h), wallpaperPaletteWidth),
+		{Kind: ui.KindRow, Height: c.control, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "[", TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
 			engine,
-		},
+			{Kind: ui.KindText, Text: "]", TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
+		}},
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Height: c.footerH, Padding: pad,
+		PaddingX: wallpaperPadding,
+		Children: []*ui.Node{wallpaperPinned(c.control, left, right)},
 	}
 }
+
+// wallpaperBarCells is the progress bar's width in block characters.
+const wallpaperBarCells = 20
+
+// wallpaperProgress is the footer's preview progress while generation runs,
+// or nil when it is done: a braille spinner, a block-character bar and the
+// count. The open folder's progress leads when the walk is reporting it, since
+// that is the grid being waited on; the library's follows.
+func wallpaperProgress(h *PanelHost) *ui.Node {
+	snap := h.wallpaperSnap
+	done, total := snap.ThumbsDone, snap.ThumbsTotal
+	if total <= 0 || done >= total {
+		return nil
+	}
+	shown, of, library := done, total, ""
+	if snap.ThumbsFolder != "" && snap.ThumbsFolder == h.wallpaperDir && snap.ThumbsFolderTotal > 0 {
+		shown, of = snap.ThumbsFolderDone, snap.ThumbsFolderTotal
+		library = fmt.Sprintf("\u00b7 library %d/%d", done, total)
+	}
+	filled, rest := wallpaperBar(shown, of, wallpaperBarCells)
+	text := func(s string, tone ui.Tone) *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: s, TextRole: theme.RoleMono, Tone: tone}
+	}
+	bar := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+		text("\u2595", ui.ToneSubtle), text(filled, ui.ToneAccent), text(rest, ui.ToneSubtle), text("\u258f", ui.ToneSubtle),
+	}}
+	row := &ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginM, Role: "progressbar", Name: "Generating previews",
+		Value: float64(shown), Max: float64(of),
+		Children: []*ui.Node{
+			text(wallpaperSpinFrame(done), ui.ToneAccent),
+			text("previews", ui.ToneNormal),
+			bar,
+			text(fmt.Sprintf("%d/%d", shown, of), ui.ToneNormal),
+		},
+	}
+	if library != "" {
+		row.Children = append(row.Children, text(library, ui.ToneSubtle))
+	}
+	return row
+}
+
+// wallpaperBar draws done of total as cells of full block, a shaded edge where
+// the work is, and light shade for the rest.
+func wallpaperBar(done, total, cells int) (filled, rest string) {
+	if total <= 0 || cells <= 0 {
+		return "", strings.Repeat("\u2591", max(cells, 0))
+	}
+	full := min(done*cells/total, cells)
+	filled = strings.Repeat("\u2588", full)
+	left := cells - full
+	edge := ""
+	switch {
+	case left >= 2:
+		edge = "\u2593\u2592"
+	case left == 1:
+		edge = "\u2593"
+	}
+	return filled, edge + strings.Repeat("\u2591", left-len([]rune(edge)))
+}
+
+// wallpaperHints is the key legend, in the form sysc-greet and the launcher
+// use. The left and right arrows are spaced: Fira Code joins an adjacent pair
+// into one double-headed arrow.
+const wallpaperHints = "\u2191\u2193 \u2190 \u2192 Navigate \u2022 Enter Apply \u2022 / Search \u2022 Esc Close"
 
 // wallpaperNoEngine reports that nothing installed can paint a wallpaper.
 func wallpaperNoEngine(h *PanelHost) bool {
@@ -771,45 +1226,6 @@ func wallpaperActiveEngine(h *PanelHost) string {
 		agreed = name
 	}
 	return agreed
-}
-
-// wallpaperActiveStrip is what the selected output is showing, with the
-// controls that act on it. Pause is video-only because an image has no
-// pipeline to hold (D7).
-func wallpaperActiveStrip(h *PanelHost) *ui.Node {
-	children := []*ui.Node{
-		{Kind: ui.KindText, Text: wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput)},
-	}
-	if paused, ok := wallpaperPlaybackState(h); ok {
-		action, label := "wallpaper-pause", "Pause"
-		if paused {
-			action, label = "wallpaper-resume", "Resume"
-		}
-		children = append(children, wallpaperButton(h, action, label, false))
-	}
-	for _, connector := range wallpaperTargets(h) {
-		if h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindEffect {
-			children = append(children, wallpaperButton(h, "wallpaper-open-art", "Open Terminal Art", false))
-			break
-		}
-	}
-	targets, hasEffects := wallpaperRestoreTargets(h)
-	restore := wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false)
-	if len(targets) == 0 {
-		restore.State |= ui.StateDisabled
-		if hasEffects {
-			restore.Tooltip = "Restore effects in Terminal Art"
-		} else {
-			restore.Tooltip = "No wallpaper assigned"
-		}
-	} else if hasEffects {
-		restore.Tooltip = "Terminal Art outputs are skipped"
-	}
-	children = append(children, restore)
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap,
-		Height: h.theme.Metrics.StandardControl, Children: children,
-	}
 }
 
 func wallpaperRestoreLabel(h *PanelHost) string {
@@ -964,7 +1380,7 @@ func (h *PanelHost) wallpaperActivate(r *Registry) {
 // dismiss: the banner already says why (D6).
 func (h *PanelHost) wallpaperApply(r *Registry, entry wallpaper.Entry) {
 	if entry.IsDir {
-		h.wallpaperDir = entry.Path
+		h.wallpaperOpenDir(r, entry.Path)
 		h.wallpaperSel = 0
 		r.rebuildPanel(h)
 		return
@@ -1049,13 +1465,23 @@ func (h *PanelHost) wallpaperSetPaused(r *Registry, paused bool) {
 	r.rebuildPanel(h)
 }
 
+// wallpaperOpenDir shows dir in the grid and tells the service, which
+// generates that folder's previews before the rest of the library.
+// Registry.mu is held.
+func (h *PanelHost) wallpaperOpenDir(r *Registry, dir string) {
+	h.wallpaperDir = dir
+	if r != nil && r.wallpaperSvc != nil && dir != "" {
+		r.wallpaperSvc.Enqueue(wallpaper.Command{Op: wallpaper.OpFocusFolder, Path: dir})
+	}
+}
+
 // wallpaperUp leaves the current directory, stopping at a library root.
 func (h *PanelHost) wallpaperUp(r *Registry) {
 	if h.wallpaperSnap.Library == nil {
 		return
 	}
 	if parent, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
-		h.wallpaperDir = parent
+		h.wallpaperOpenDir(r, parent)
 		h.wallpaperSel = 0
 		r.rebuildPanel(h)
 	}
@@ -1124,6 +1550,13 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 	mediaOpen := false
 	if picker != nil {
 		pickerOut = picker.output
+		// Painting reuses the laid-out tree, and the grid's rows are built
+		// during layout, so the raster only reaches its tile once the panel is
+		// laid out again. That is a layout pass, not a rebuild: the tree, the
+		// scroll offset and the focus all stay as they are.
+		if picker.logicalW > 0 {
+			_ = picker.configure(picker.logicalW, picker.logicalH, picker.scale120)
+		}
 	}
 	if media != nil && media.section == "media" {
 		mediaOut = media.output
@@ -1131,8 +1564,7 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 		r.rebuildPanel(media)
 	}
 	r.mu.Unlock()
-	// The picker only needs a repaint: its virtual-list item builder looks up
-	// the newly decoded raster during the next frame. The Media page must
+	// The picker, laid out again above, only needs a repaint. The Media page must
 	// rebuild because its fallback art is retained in the tree itself.
 	if picker != nil {
 		r.publishSurface(pickerOut, panelSurfaceID(PanelWallpaper))
@@ -1142,35 +1574,51 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 	}
 }
 
+// wallpaperPreviewState is what a tile can say about its preview.
+type wallpaperPreviewState int
+
+const (
+	wallpaperPreviewPending wallpaperPreviewState = iota
+	wallpaperPreviewReady
+	wallpaperPreviewFailed
+)
+
 // wallpaperThumbFor returns an already-decoded thumbnail, queueing a decode
-// when there is not one yet.
+// when there is not one yet, and says why there is none.
 //
 // This runs inside the virtual list's Item builder, which layout calls on the
 // Wayland owner, so it must never decode here: it looks the raster up and asks
-// for it, and the next snapshot picks up the result.
-func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
+// for it, and the arrival lays the panel out again.
+func wallpaperThumbFor(r *Registry, g wallpaperGrid, entry wallpaper.Entry) (*ui.Image, wallpaperPreviewState) {
 	if r == nil || entry.IsDir {
-		return nil
+		return nil, wallpaperPreviewPending
 	}
 	// Always the generated preview, never the original. A wallpaper library is
 	// tens of gigabytes of pixels; decoding a 4K still on the tile path would
-	// stall the picker and blow the decoder's own file bound. The generator
-	// fills the cache slowly in the background, and until it reaches this file
-	// the tile keeps its kind glyph.
+	// stall the picker and blow the decoder's own file bound.
 	source := wallpaper.CachedStillPath(entry.Path)
 	if source == "" {
-		return nil
+		return nil, wallpaperPreviewPending
 	}
 	if _, err := os.Stat(source); err != nil {
-		return nil
+		if wallpaper.PreviewFailed(entry.Path) {
+			return nil, wallpaperPreviewFailed
+		}
+		return nil, wallpaperPreviewPending
 	}
-	key := icons.Key{Name: source, W: wallpaperTileWidth, H: wallpaperThumbH}
+	key := wallpaperThumbKey(source, g)
 	worker := r.wallpaperThumbsLocked()
 	if image, ok := worker.Lookup(key); ok {
-		return image
+		return image, wallpaperPreviewReady
 	}
 	_, _, _ = worker.Request(key)
-	return nil
+	return nil, wallpaperPreviewPending
+}
+
+// wallpaperThumbKey is the decode request for one cached preview: the
+// preview file scaled to the grid's thumbnail box.
+func wallpaperThumbKey(preview string, g wallpaperGrid) icons.Key {
+	return icons.Key{Name: preview, W: g.keyW, H: g.keyH}
 }
 
 // wallpaperStartLocked starts the wallpaper service if it is not running.
@@ -1322,6 +1770,9 @@ func (r *Registry) republishTheme(cfg config.Config) {
 		themeErr = genErr.Error()
 	}
 	r.paintTheme(cfg, tokens, themeErr, true)
+	if !runningAsTest() && genErr == nil {
+		go r.publishCommittedThemeSelection(cfg, tokens)
+	}
 }
 
 // paintTheme repaints every surface with tokens. commit is true for the
@@ -1348,7 +1799,7 @@ func (r *Registry) paintTheme(cfg config.Config, tokens theme.Tokens, themeErr s
 func (r *Registry) paintThemeLocked(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) (map[string]uint32, []wayland.Invalidation) {
 	nextBars := make(map[*Bar]Theme, len(r.bars))
 	for _, bar := range r.bars {
-		next, err := resolveOutputTheme(cfg, bar.connector(), tokens, r.caps.Blur)
+		next, err := resolveOutputTheme(cfg, bar.connector(), tokens, r.caps.Blur, r.effectOutputs[bar.connector()])
 		if err != nil {
 			if commit {
 				r.themeErr = err.Error()
@@ -1501,7 +1952,7 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	if dir, ok := strings.CutPrefix(n.Action, "wallpaper-dir:"); ok {
-		h.wallpaperDir = dir
+		h.wallpaperOpenDir(r, dir)
 		h.wallpaperSel = 0
 		h.wallpaperMenu = ""
 		r.rebuildPanel(h)

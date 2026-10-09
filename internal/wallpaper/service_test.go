@@ -2,6 +2,7 @@ package wallpaper
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -158,12 +159,12 @@ func TestServiceRefreshesTerminalCatalog(t *testing.T) {
 	engine := newFakeEngine()
 	engine.caps = Capabilities{
 		Terminal: true,
-		Catalog:  Catalog{Effects: []EffectInfo{{ID: "fire"}}, Themes: []string{"nord"}},
+		Catalog:  Catalog{Effects: []string{"fire"}, Themes: []string{"nord"}},
 	}
 	updated := Capabilities{
 		Terminal: true,
 		Catalog: Catalog{
-			Effects: []EffectInfo{{ID: "fire"}, {ID: "rain"}},
+			Effects: []string{"fire", "rain"},
 			Themes:  []string{"nord", "dracula"},
 		},
 	}
@@ -174,7 +175,7 @@ func TestServiceRefreshesTerminalCatalog(t *testing.T) {
 	got := awaitSnapshot(t, svc, func(s Snapshot) bool {
 		return len(s.Caps.Catalog.Effects) == 2 && len(s.Caps.Catalog.Themes) == 2
 	})
-	if got.Caps.Catalog.Effects[1].ID != "rain" {
+	if got.Caps.Catalog.Effects[1] != "rain" {
 		t.Fatalf("catalog = %+v, want the refreshed rain effect", got.Caps.Catalog)
 	}
 	engine.mu.Lock()
@@ -634,18 +635,26 @@ func TestServicePersistsActualAssignmentAfterFailedApplyRollback(t *testing.T) {
 	engine := newFakeEngine()
 	engine.caps.Terminal = true
 	path := filepath.Join(t.TempDir(), "assignments.json")
+	seeded := make(chan string, 1)
 	svc := NewService(ServiceConfig{
 		Engine:      engine,
 		Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
 		Connectors:  []string{"DP-1"},
 		PersistPath: path,
+		ConfigHook:  func(_, seed string) { seeded <- seed },
 	})
 	t.Cleanup(svc.Close)
 
 	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindImage, Path: "/w/first.png"})
 	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/first.png" })
-	seeded := make(chan string, 1)
-	svc.SetConfigHook(func(_, seed string) { seeded <- seed })
+	select {
+	case seed := <-seeded:
+		if seed != "/w/first.png" {
+			t.Fatalf("initial seed = %q, want the applied image", seed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("applied image did not update the theme seed")
+	}
 	engine.mu.Lock()
 	engine.fail[""] = &restoredApplyError{
 		cause: errors.New("new effect failed"), state: StateStatic, engine: EngineGSlapper,
@@ -766,7 +775,7 @@ func TestServiceRestartsExitedWallpaperOnce(t *testing.T) {
 	for _, kind := range []Kind{KindEffect, KindImage} {
 		t.Run(map[Kind]string{KindEffect: "effect", KindImage: "image"}[kind], func(t *testing.T) {
 			h := newEngineHarness(t)
-			h.eng.caps.Terminal = true
+			h.withTerminal()
 			svc := newTestService(t, h.eng)
 			svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: kind, Path: h.media("still.png"), Effect: "fire", Theme: "nord"})
 			awaitSnapshot(t, svc, func(s Snapshot) bool { return len(s.Assignments) == 1 && s.Runtime["DP-1"].State != StateStarting })
@@ -798,5 +807,34 @@ func TestServiceRestartsExitedWallpaperOnce(t *testing.T) {
 				return len(h.argvs()) == 3 && s.Runtime["DP-1"].State == original.DesiredPlayback
 			})
 		})
+	}
+}
+
+// Opening a folder in the picker moves its previews to the front, and the
+// snapshot reports that folder's own progress next to the library's.
+func TestServiceReportsTheOpenFolderProgress(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(root, "a.png"), filepath.Join(sub, "x.png"), filepath.Join(sub, "y.png")} {
+		writePNG(t, p, 320, 180)
+	}
+	svc := NewService(ServiceConfig{
+		Engine:      newFakeEngine(),
+		Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+		Connectors:  []string{"DP-1"},
+		PersistPath: filepath.Join(t.TempDir(), "assignments.json"),
+		Roots:       []string{root},
+		CacheDir:    t.TempDir(),
+	})
+	t.Cleanup(svc.Close)
+	svc.Enqueue(Command{Op: OpFocusFolder, Path: sub})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.ThumbsFolder == sub && s.ThumbsFolderTotal == 2 && s.ThumbsFolderDone == 2 && s.ThumbsDone == s.ThumbsTotal
+	})
+	if snap.ThumbsTotal != 3 {
+		t.Fatalf("library total %d, want 3 files", snap.ThumbsTotal)
 	}
 }

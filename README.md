@@ -171,7 +171,9 @@ flowchart LR
 - [The sysc ecosystem](docs/ecosystem.md) — how the projects fit together
 - [Niri hotkeys](docs/niri-hotkeys.md)
 - [Blur on Niri](docs/niri-blur.md)
+- [Night light](docs/night-light.md)
 - [Metrics widgets and Intel GPU usage](docs/metrics-widgets.md)
+- [PolicyKit authentication](docs/polkit-authentication.md)
 - [Running under systemd](packaging/systemd/README.md)
 - [Development](docs/development.md)
 
@@ -183,3 +185,11 @@ BSD-3-Clause. [NOTICE](NOTICE) covers the app-theming template catalog.
 
 <a href="https://github.com/Nomadcxx"><img src="https://raw.githubusercontent.com/Nomadcxx/Nomadcxx/main/assets/rama-mark.svg" height="22" alt="RAMA"></a> — terminal-native tooling for the linux desktop.
 [More projects →](https://github.com/Nomadcxx) · [Sponsor](https://github.com/sponsors/Nomadcxx) ❤️
+
+## Theme following in the greeter and locker
+
+Named palette changes publish an atomic selection to `sysc-shell/shell-theme` under your XDG config directory. Sysc-lock follows this selection by default at the next lock; the Lock Screen settings switch or `"follow_shell": false` keeps its palette independent. Choosing a locker palette also disables following.
+
+The account selected during sysc-greet installation also publishes to `/var/lib/sysc-greet/shell-theme/theme`, when the installer has assigned that directory to it. Sysc-greet follows the selection at its next start. Other accounts control their own lockers without changing the machine greeter.
+
+Previews do not publish. Failed or superseded theme changes retain the previous selection. Wallpaper-generated, hex and custom palettes publish no named selection, so each consumer retains its configured fallback.

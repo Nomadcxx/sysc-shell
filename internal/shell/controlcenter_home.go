@@ -163,7 +163,17 @@ func ccHomeMediaCard(r *Registry, h *PanelHost, media services.MediaState, width
 }
 
 func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string) *ui.Node {
-	w := (body - 3*ccHomeGap) / 4
+	supported := false
+	nightState := services.NightLightState{}
+	if r != nil && r.nightLight != nil {
+		nightState = r.nightLight.State()
+		supported = nightState.Supported
+	}
+	count := 4
+	if supported {
+		count++
+	}
+	w := (body - (count-1)*ccHomeGap) / count
 	caffeineButton := ccHomePill(w, "coffee", "Caffeine", "cc:caffeine", caffeine)
 	var holding []string
 	if r != nil {
@@ -181,12 +191,18 @@ func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string) *ui
 	if caffeine && r != nil && r.wallsSnapshot.Running() {
 		screensaver.Tooltip += ". Caffeine does not pause the screensaver."
 	}
-	return &ui.Node{Kind: ui.KindRow, Height: ccHomeToggleH, Gap: ccHomeGap, Children: []*ui.Node{
+	children := []*ui.Node{
 		caffeineButton,
 		ccHomePill(w, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 		ccHomePill(w, "terminal", "Terminal Art", "cc:terminal-art", false),
 		screensaver,
-	}}
+	}
+	if supported {
+		night := ccHomePill(w, "bedtime", "Night", "cc:nightlight", nightState.Active)
+		night.Tooltip = nightLightTooltip(nightState)
+		children = append(children, night)
+	}
+	return &ui.Node{Kind: ui.KindRow, Height: ccHomeToggleH, Gap: ccHomeGap, Children: children}
 }
 
 func ccHomePill(width int, icon, label, action string, selected bool) *ui.Node {

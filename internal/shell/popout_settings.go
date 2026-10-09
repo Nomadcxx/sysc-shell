@@ -3,6 +3,7 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services/polkit"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -49,6 +51,7 @@ var settingsSectionIcons = map[string]string{
 	"Wallpaper":     "wallpaper",
 	"Terminal Art":  "terminal",
 	"Screensaver":   "schedule",
+	"Night Light":   "bedtime",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
 	"Tray":          "apps",
@@ -354,7 +357,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if searching {
 		var hits []settings.Entry
 		if h.set != nil {
-			hits = overlayIdleGets(r, h.set.Search(h.query))
+			hits = overlayIdleGets(r, h.draft.Session.Locker, h.set.Search(h.query))
 		}
 		return body(settingsSearchColumn(h, hits))
 	}
@@ -384,14 +387,14 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	var entries []settings.Entry
 	if h.set != nil {
-		entries = overlayIdleGets(r, h.set.Section(section))
+		entries = overlayIdleGets(r, h.draft.Session.Locker, h.set.Section(section))
 	}
 	if section == "Tray" {
 		entries = settingsTrayTitles(r, entries)
 	}
-	content := settingsSectionColumn(h, section, entries)
-	if section == "Templates" {
-		content.Children = append(content.Children, templateRefusals(r)...)
+	content := settingsSectionColumn(r, h, section, entries)
+	if section == "Session" {
+		content.Children = append(content.Children, polkitStatusCard(r, h))
 	}
 	if section == "Appearance" && r != nil {
 		// The source may say custom while a saved palette is not what is
@@ -452,37 +455,6 @@ func settingsSectionHeading(h *PanelHost, section string) *ui.Node {
 		},
 		slashes(),
 	}}
-}
-
-// templateRefusals reports, under the toggle rows, every template whose file
-// the shell refused to write because the user edited it, each with the
-// explicit overwrite that backs the file up to <path>.bak.
-func templateRefusals(r *Registry) []*ui.Node {
-	if r == nil {
-		return nil
-	}
-	r.templateMu.Lock()
-	refused := make([]string, 0, len(r.templateRefusals))
-	for name := range r.templateRefusals {
-		refused = append(refused, name)
-	}
-	r.templateMu.Unlock()
-	if len(refused) == 0 {
-		return nil
-	}
-	sort.Strings(refused)
-	notes := make([]*ui.Node, 0, len(refused))
-	for _, name := range refused {
-		notes = append(notes, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true,
-			Children: []*ui.Node{
-				{Kind: ui.KindText, Name: name + " refusal",
-					Text:     name + " is user-modified; its theme file was not written",
-					TextRole: theme.RoleCaption, Tone: ui.ToneError},
-				{Kind: ui.KindButton, Text: "Overwrite", Action: "template-overwrite:" + name,
-					Name: "Overwrite " + name, Role: "button", Focusable: true},
-			}})
-	}
-	return notes
 }
 
 // settingsContentHeight is what the scrolling body gets once the title, the
@@ -781,14 +753,49 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 // at ItemHeight and advances by exactly that — so a caption beneath a label
 // and a heading above a run of rows cannot exist under it. Sections bound the
 // row count, which is what keeps laying the whole thing out cheap.
-func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entry) *ui.Node {
+func settingsSectionColumn(r *Registry, h *PanelHost, section string, entries []settings.Entry) *ui.Node {
 	if len(entries) == 0 {
 		return settingsBody(h, theme.MarginXL, settingsEmptyNote(section))
 	}
 	if section == "Appearance" {
 		return settingsPageColumn(h, entries, settingsAppearanceIntro(h))
 	}
+	if section == "Night Light" && r != nil && r.nightLight != nil {
+		status := &ui.Node{
+			Kind: ui.KindText, Name: "Night Light status", Role: "status",
+			Text: nightLightStatusText(r.nightLight.State()), TextRole: theme.RoleCaption,
+		}
+		return settingsPageColumn(h, entries, settingsGroupCard(h, "Status", []*ui.Node{status}))
+	}
 	return settingsPageColumn(h, entries)
+}
+
+func polkitStatusLabel(status polkit.Status) string {
+	switch {
+	case status.Policy == polkit.PolicyOff || status.Reason == "disabled":
+		return "Off"
+	case status.Reason == polkit.ErrNoHelper.Error():
+		return "Helper missing"
+	case status.Registered:
+		return "Registered"
+	case status.Passive != "":
+		return "Passive · " + status.Passive
+	default:
+		return "Unavailable"
+	}
+}
+
+func polkitStatusCard(r *Registry, h *PanelHost) *ui.Node {
+	label := "Unavailable"
+	if r != nil {
+		label = polkitStatusLabel(r.polkitStatusLocked())
+	}
+	return settingsGroupCard(h, "Authentication status", []*ui.Node{{
+		Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Status", TextRole: theme.RoleLabel},
+			{Kind: ui.KindText, Text: label, TextRole: theme.RoleBody, Tone: ui.ToneSubtle},
+		},
+	}})
 }
 
 func settingsAppearanceIntro(h *PanelHost) *ui.Node {
@@ -1017,7 +1024,7 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		valueW, _ := settingsMeasure(h)(strconv.Itoa(max(e.Max, -e.Min))+e.Unit, ui.TextAttrs{Tabular: true})
 		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
 			{
-				Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
+				Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: float64(max(e.Step, 1)),
 				Action: action, Width: max(width-valueW-theme.MarginS, 0), Focusable: true, Name: e.Label, Role: "slider",
 			},
 			{Kind: ui.KindText, Text: strconv.Itoa(n) + e.Unit, Tabular: true, Width: valueW},
@@ -1360,7 +1367,10 @@ func settingsBrowseOptions(current string) []string {
 	return out
 }
 
-func overlayIdleGets(r *Registry, entries []settings.Entry) []settings.Entry {
+// overlayIdleGets swaps in the idle getters that read live walls state, and
+// says why Lock is unavailable while no locker is configured, since the option
+// is otherwise greyed out without a reason.
+func overlayIdleGets(r *Registry, locker string, entries []settings.Entry) []settings.Entry {
 	if r == nil {
 		return entries
 	}
@@ -1368,6 +1378,9 @@ func overlayIdleGets(r *Registry, entries []settings.Entry) []settings.Entry {
 	for i := range entries {
 		switch entries[i].Path {
 		case "idle.after":
+			if strings.TrimSpace(locker) == "" {
+				entries[i].Describe += " Lock needs a Locker: set it under Lock, e.g. sysc-lock."
+			}
 			entries[i].Get = func(c config.Config) string {
 				return settings.WhenIdleMode(c.Idle.Lock, snap.EnabledAtLogin())
 			}
@@ -1586,6 +1599,14 @@ func (h *PanelHost) persistDraft(r *Registry) {
 }
 
 func (r *Registry) writeConfig(c config.Config) error {
+	r.configWriteMu.Lock()
+	defer r.configWriteMu.Unlock()
+	return r.writeConfigLocked(c)
+}
+
+// writeConfigLocked is writeConfig while configWriteMu is held by a config
+// transaction or writeConfig itself.
+func (r *Registry) writeConfigLocked(c config.Config) error {
 	if r.configPath == "" {
 		return nil
 	}
@@ -1599,4 +1620,33 @@ func (r *Registry) writeConfig(c config.Config) error {
 		}
 	}
 	return nil
+}
+
+// updateConfig applies one persisted edit against the latest file contents.
+// The same mutex covers the read, mutation and write, and writeConfig uses it
+// too so other in-process whole-config writes cannot land in the middle.
+func (r *Registry) updateConfig(update func(*config.Config, func(config.Config) *settings.Registry) error) (config.Config, error) {
+	r.mu.Lock()
+	path, cfg := r.configPath, r.cfg
+	palettes := append([]theme.PaletteInfo(nil), r.palettes...)
+	r.mu.Unlock()
+
+	r.configWriteMu.Lock()
+	defer r.configWriteMu.Unlock()
+	if path != "" {
+		if loaded, err := config.Load(path); err == nil {
+			cfg = loaded
+		}
+	}
+	cfg.Templates = maps.Clone(cfg.Templates)
+	registryFor := func(cfg config.Config) *settings.Registry {
+		return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)))
+	}
+	if err := update(&cfg, registryFor); err != nil {
+		return config.Config{}, err
+	}
+	if err := r.writeConfigLocked(cfg); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
 }

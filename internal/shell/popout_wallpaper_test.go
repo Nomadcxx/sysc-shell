@@ -2,6 +2,8 @@ package shell
 
 import (
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"slices"
@@ -86,7 +88,7 @@ func (wallpaperRestoreProbe) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{
 		Terminal: true,
 		Catalog: wallpaper.Catalog{
-			Effects: []wallpaper.EffectInfo{{ID: "fire"}},
+			Effects: []string{"fire"},
 			Themes:  []string{"nord"},
 		},
 	}
@@ -265,18 +267,18 @@ func TestWallpaperGridPacksFourTilesPerRow(t *testing.T) {
 	}
 	// Until a thumbnail decodes, the tile keeps the same box and shows the
 	// kind glyph rather than leaving a hole in the grid (D6).
-	thumb := tile.Children[0].Children[0]
+	thumb := wallpaperTileThumb(tile)
 	switch thumb.Kind {
 	case ui.KindImage:
-		if thumb.ImageW != wallpaperTileWidth || thumb.ImageH != wallpaperThumbH {
-			t.Fatalf("raster box = %dx%d, want %dx%d", thumb.ImageW, thumb.ImageH, wallpaperTileWidth, wallpaperThumbH)
+		if g := wallpaperGridOf(h); thumb.ImageW != g.thumbW || thumb.ImageH != g.thumbH {
+			t.Fatalf("raster box = %dx%d, want %dx%d", thumb.ImageW, thumb.ImageH, g.thumbW, g.thumbH)
 		}
-	case ui.KindRow:
+	case ui.KindStack, ui.KindRow:
 		// The placeholder holds the tile's box so a late preview cannot reflow
 		// the grid. It carries a glyph only where the embedded icon subset has
 		// one, which for media it does not.
-		if thumb.Width != wallpaperTileWidth || thumb.Height != wallpaperThumbH {
-			t.Fatalf("placeholder box = %dx%d, want %dx%d", thumb.Width, thumb.Height, wallpaperTileWidth, wallpaperThumbH)
+		if g := wallpaperGridOf(h); thumb.Width != g.thumbW || thumb.Height != g.thumbH {
+			t.Fatalf("placeholder box = %dx%d, want %dx%d", thumb.Width, thumb.Height, g.thumbW, g.thumbH)
 		}
 		for _, c := range thumb.Children {
 			if c.Kind == ui.KindIcon && !render.ValidMaterialIcon(c.Icon) {
@@ -741,7 +743,7 @@ func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
 }
 
 func TestWallpaperTitleOffersRefresh(t *testing.T) {
-	if findAction(wallpaperTitleRow(&PanelHost{}), "wallpaper-refresh") == nil {
+	if findAction(wallpaperHeader(&PanelHost{id: PanelWallpaper}, 900), "wallpaper-refresh") == nil {
 		t.Fatal("wallpaper title has no refresh action")
 	}
 }
@@ -969,15 +971,30 @@ func TestWallpaperReportsPreviewGeneration(t *testing.T) {
 	snap.ThumbsDone, snap.ThumbsTotal = 12, 645
 	h.wallpaperSnap = snap
 	reg.rebuildPanel(h)
-	if !hasText("Generating previews") || !hasText("12 / 645") {
-		t.Error("a library still generating previews must say so")
+	bar := findNode(h.root, func(n *ui.Node) bool { return n.Role == "progressbar" })
+	if bar == nil || bar.Name != "Generating previews" || bar.Value != 12 || bar.Max != 645 {
+		t.Errorf("progress bar = %+v, want 12 of 645", bar)
+	}
+	if !hasText("12/645") || !hasText("\u2591") {
+		t.Error("a library still generating previews must draw its block bar and count")
+	}
+
+	// The open folder's own progress leads; the library's follows.
+	snap.ThumbsFolder, snap.ThumbsFolderDone, snap.ThumbsFolderTotal = h.wallpaperDir, 3, 5
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if !hasText("3/5") || !hasText("library 12/645") {
+		t.Error("the open folder's progress must lead, with the library's after it")
+	}
+	if bar := findNode(h.root, func(n *ui.Node) bool { return n.Role == "progressbar" }); bar == nil || bar.Value != 3 || bar.Max != 5 {
+		t.Errorf("progress bar = %+v, want the folder's 3 of 5", bar)
 	}
 
 	// Finished generation says nothing at all.
 	snap.ThumbsDone = 645
 	h.wallpaperSnap = snap
 	reg.rebuildPanel(h)
-	if hasText("Generating previews") {
+	if findNode(h.root, func(n *ui.Node) bool { return n.Role == "progressbar" }) != nil {
 		t.Error("a finished library must not keep reporting progress")
 	}
 
@@ -1175,7 +1192,7 @@ func TestWallpaperOnlyNamesIconsTheSubsetCarries(t *testing.T) {
 	walk(h.root)
 	// The grid's rows are built on demand, so check the tiles too.
 	for _, entry := range wallpaperMedia(h) {
-		walk(wallpaperTile(reg, h, entry, 0))
+		walk(wallpaperTile(reg, h, wallpaperGridOf(h), entry, 0))
 	}
 	if len(bad) > 0 {
 		t.Fatalf("icons not in the embedded subset: %v (have %v)", bad, render.MaterialIconNames())
@@ -1209,6 +1226,63 @@ func TestWallpaperColumnFitsAShortPanel(t *testing.T) {
 	last := h.root.Children[len(h.root.Children)-1]
 	if bottom := last.Bounds.Y + last.Bounds.H; bottom > short {
 		t.Errorf("last row ends at %d, past the %d-tall panel", bottom, short)
+	}
+}
+
+// The grid's tiles keep visible gaps on both axes, hold their thumbnail inside
+// the tile padding, and use the width beside the scrollbar. The rows used to
+// touch because the tile stretched to the whole row pitch, and the 210 px
+// image sat in a 210 px tile with 4 px padding (sysc-1066).
+func TestWallpaperTileGeometry(t *testing.T) {
+	for _, width := range []int{980, 760} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			t.Parallel()
+			reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
+			h := wallpaperHost(t, reg)
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			h.place.Panel.W = width
+			reg.rebuildPanel(h)
+			if err := ui.LayoutColumn(h.root, ui.Rect{W: width, H: h.place.Panel.H}, h.measureText()); err != nil {
+				t.Fatalf("layout: %v", err)
+			}
+			list := wallpaperListNode(t, h)
+			if len(list.Children) < 2 {
+				t.Fatalf("laid out %d rows, want the seeded two", len(list.Children))
+			}
+			first, second := list.Children[0].Children, list.Children[1].Children
+			if len(first) != wallpaperColumns {
+				t.Fatalf("first row holds %d tiles, want %d", len(first), wallpaperColumns)
+			}
+			if gap := second[0].Bounds.Y - (first[0].Bounds.Y + first[0].Bounds.H); gap < wallpaperRowGap {
+				t.Errorf("rows are %d px apart, want at least %d", gap, wallpaperRowGap)
+			}
+			for i := 1; i < len(first); i++ {
+				if gap := first[i].Bounds.X - (first[i-1].Bounds.X + first[i-1].Bounds.W); gap != wallpaperColGap {
+					t.Errorf("tiles %d and %d are %d px apart, want %d", i-1, i, gap, wallpaperColGap)
+				}
+			}
+			for i, tile := range first {
+				inner := tile.Bounds
+				inner.X += tile.Padding
+				inner.Y += tile.Padding
+				inner.W -= 2 * tile.Padding
+				inner.H -= 2 * tile.Padding
+				thumb := wallpaperTileThumb(tile).Bounds
+				if thumb.X < inner.X || thumb.Y < inner.Y ||
+					thumb.X+thumb.W > inner.X+inner.W || thumb.Y+thumb.H > inner.Y+inner.H {
+					t.Errorf("tile %d thumbnail %+v leaves the padded tile %+v", i, thumb, inner)
+				}
+			}
+			content := list.Bounds.X + list.Bounds.W - list.Padding
+			right := first[len(first)-1].Bounds.X + first[len(first)-1].Bounds.W
+			if right > content-wallpaperScrollStrip {
+				t.Errorf("last tile ends at %d, inside the scrollbar strip (list ends %d)", right, content)
+			}
+			if slack := content - wallpaperScrollStrip - right; slack >= wallpaperColumns {
+				t.Errorf("grid leaves %d px unused beside the scrollbar", slack)
+			}
+		})
 	}
 }
 
@@ -1368,6 +1442,103 @@ func TestThumbArrivalDoesNotRebuildTheTree(t *testing.T) {
 	}
 }
 
+// A thumbnail that decodes after its tile was laid out has to reach that
+// tile. Painting reuses the laid-out tree, and the virtual list only asks for
+// rasters while laying out, so a repaint alone left the tile blank until a
+// scroll or a snapshot happened to lay the panel out again (sysc-1065).
+func TestDecodedThumbReachesItsLaidOutTile(t *testing.T) {
+	// Not parallel: the preview cache follows XDG_CACHE_HOME.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := seedWallpaperRoot(t)
+	still := wallpaper.CachedStillPath(filepath.Join(root, "a.png"))
+	if still == "" {
+		t.Fatal("no preview path for the seeded still")
+	}
+	// No relay, so no snapshot rebuild can lay the panel out behind the test.
+	reg, svc, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.Snapshot().Library == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the library never indexed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Lay the grid out while the preview does not exist yet, so the tile is
+	// built blank and nothing has asked for a decode.
+	reg.mu.Lock()
+	h.wallpaperSnap = svc.Snapshot()
+	h.wallpaperDir = root
+	reg.rebuildPanel(h)
+	before := h.root
+	if n := laidOutWallpaperRasters(h.root); n != 0 {
+		reg.mu.Unlock()
+		t.Fatalf("%d rasters before any preview existed", n)
+	}
+	worker := reg.wallpaperThumbsLocked()
+	reg.mu.Unlock()
+
+	// The preview lands and decodes. The worker publishes through
+	// applyWallpaperThumb, which is the path under test.
+	if err := os.MkdirAll(filepath.Dir(still), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeWallpaperJPEG(t, still)
+	if _, _, err := worker.Request(wallpaperThumbKey(still, wallpaperGridOf(h))); err != nil {
+		t.Fatal(err)
+	}
+
+	for {
+		reg.mu.Lock()
+		painted := laidOutWallpaperRasters(h.root)
+		rebuilt := h.root != before
+		reg.mu.Unlock()
+		if rebuilt {
+			t.Fatal("the tree was rebuilt; a raster arrival should only lay it out again")
+		}
+		if painted > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the decoded preview never reached its laid-out tile")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// laidOutWallpaperRasters counts tiles in the laid-out grid that hold a
+// raster. It reads the list's current children, which layout produced, not
+// Item, which would build fresh rows and hide the defect.
+func laidOutWallpaperRasters(n *ui.Node) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if n.Kind == ui.KindImage && n.Image != nil {
+		count++
+	}
+	for _, c := range n.Children {
+		count += laidOutWallpaperRasters(c)
+	}
+	return count
+}
+
+func writeWallpaperJPEG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, wallpaper.ThumbWidth, wallpaper.ThumbHeight))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = 0x30, 0x70, 0xc0, 0xff
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := jpeg.Encode(f, img, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWallpaperOurNamespaceIncludesTerminal(t *testing.T) {
 	if !wallpaperOurNamespace("sysc-terminal") {
 		t.Fatal("sysc-terminal on Background must be ours")
@@ -1380,8 +1551,9 @@ func TestWallpaperOurNamespaceIncludesTerminal(t *testing.T) {
 	}
 }
 
-// The rows are in the order a user scans them, which is also the focus order:
-// where am I, what is showing, how do I find something, the grid, the rest.
+// The panel reads top to bottom as the scan path: the header band, the
+// controls card (where an apply lands, then how to find something), any
+// banners, the path rule, the grid, and the footer band.
 func TestWallpaperRowOrderIsTheScanPath(t *testing.T) {
 	t.Parallel()
 
@@ -1390,28 +1562,35 @@ func TestWallpaperRowOrderIsTheScanPath(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	// Banners, when there are any, sit between the toolbar and the grid.
 	all := h.root.Children
 	if len(all) < 5 {
-		t.Fatalf("%d rows, want header, strip, toolbar, grid, footer", len(all))
+		t.Fatalf("%d rows, want header, controls, rule, grid, footer", len(all))
 	}
-	rows := append(slices.Clone(all[:3]), all[len(all)-2:]...)
-	for _, action := range []string{"wallpaper-refresh", "wallpaper-close", "wallpaper-output:all"} {
-		if findAction(rows[0], action) == nil {
+	header, controls := all[0], all[1]
+	rule, grid, footer := all[len(all)-3], all[len(all)-2], all[len(all)-1]
+	for _, action := range []string{"wallpaper-refresh", "wallpaper-close"} {
+		if findAction(header, action) == nil {
 			t.Errorf("header lacks %s", action)
 		}
 	}
-	if findAction(rows[1], "wallpaper-restore") == nil {
-		t.Error("the now-showing strip lacks Restore")
+	if findNode(header, func(n *ui.Node) bool { return n.Text == "WALLPAPER" && n.Tone == ui.ToneAccent }) == nil {
+		t.Error("header lacks the SYSC rail")
 	}
-	if findNode(rows[2], func(n *ui.Node) bool { return n.Kind == ui.KindTextField }) == nil ||
-		findAction(rows[2], "wallpaper-filter:0") == nil || findAction(rows[2], "wallpaper-menu:folder") == nil {
-		t.Error("the toolbar must carry search, the kind filter and the folder")
+	for _, action := range []string{"wallpaper-output:all", "wallpaper-restore", "wallpaper-filter:0", "wallpaper-menu:folder"} {
+		if findAction(controls, action) == nil {
+			t.Errorf("controls card lacks %s", action)
+		}
 	}
-	if rows[3].Kind != ui.KindVirtualList {
-		t.Errorf("row 3 is %v, want the grid", rows[3].Kind)
+	if findNode(controls, func(n *ui.Node) bool { return n.Kind == ui.KindTextField }) == nil {
+		t.Error("controls card lacks the search field")
 	}
-	if findAction(rows[4], "wallpaper-menu:palette") == nil {
+	if !strings.HasPrefix(rule.Name, "Folder ") {
+		t.Errorf("row before the grid is %q, want the path rule", rule.Name)
+	}
+	if grid.Kind != ui.KindVirtualList {
+		t.Errorf("row before the footer is %v, want the grid", grid.Kind)
+	}
+	if findAction(footer, "wallpaper-menu:palette") == nil {
 		t.Error("the footer lacks the shell theme")
 	}
 }
@@ -1431,8 +1610,9 @@ func TestWallpaperChromeHasNoCaptionLabels(t *testing.T) {
 	})
 }
 
-// The laptop's panel is about 820 tall. The labelled chrome left 3.4 rows of
-// tiles there; the compact chrome has to leave at least four.
+// The laptop's panel is about 820 tall. The sectioned chrome goes compact
+// there and has to leave at least three and a half rows of tiles (owner
+// decision, 2026-10-09; it was four before the chrome gained its sections).
 func TestWallpaperGridRowsOnLaptop(t *testing.T) {
 	t.Parallel()
 
@@ -1442,8 +1622,8 @@ func TestWallpaperGridRowsOnLaptop(t *testing.T) {
 	defer reg.mu.Unlock()
 	h.place.Panel.W, h.place.Panel.H = 980, 820
 	reg.rebuildPanel(h)
-	if got := wallpaperListNode(t, h).Height; got < 4*wallpaperRowHeight {
-		t.Fatalf("grid is %d tall, want at least four %d rows", got, wallpaperRowHeight)
+	if pitch := wallpaperGridOf(h).pitch; 2*wallpaperListNode(t, h).Height < 7*pitch {
+		t.Fatalf("grid is %d tall, want at least three and a half %d rows", wallpaperListNode(t, h).Height, pitch)
 	}
 	if err := ui.LayoutColumn(h.root, ui.Rect{W: 980, H: 820}, h.measureText()); err != nil {
 		t.Fatalf("layout: %v", err)
@@ -1465,9 +1645,9 @@ func TestWallpaperOutputSelectCollapsesOnOneOutput(t *testing.T) {
 	h := reg.panelHosts[PanelWallpaper]
 	var outputs []string
 	collectActions(h.root, "wallpaper-output:", &outputs)
-	header := h.root.Children[0]
-	if len(outputs) != 0 || findNode(header, func(n *ui.Node) bool { return n.Text == "eDP-1" }) == nil {
-		t.Fatalf("one output: select %v; want a caption naming eDP-1 in the header", outputs)
+	controls := h.root.Children[1]
+	if len(outputs) != 0 || findNode(controls, func(n *ui.Node) bool { return n.Text == "eDP-1" }) == nil {
+		t.Fatalf("one output: select %v; want a caption naming eDP-1 in the controls card", outputs)
 	}
 }
 
@@ -1507,5 +1687,167 @@ func TestWallpaperPickerExplainsAHeldBackground(t *testing.T) {
 	}
 	if n := findNodeKey(h.root, "wallpaper-indexing"); n != nil {
 		t.Fatal("picker still spins while the background is held")
+	}
+}
+
+// Choosing a folder in the picker moves preview generation to it, so the grid
+// on screen fills first.
+func TestWallpaperOpeningAFolderPrioritisesItsPreviews(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(root, "a.png"), filepath.Join(sub, "x.png")} {
+		writeWallpaperJPEG(t, p)
+	}
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	svc := wallpaper.NewService(wallpaper.ServiceConfig{
+		Engine:     stubWallpaperEngine{},
+		Settings:   wallpaper.Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: wallpaper.HiddenNone},
+		Connectors: []string{"DP-1"},
+		Roots:      []string{root},
+		CacheDir:   t.TempDir(),
+	})
+	t.Cleanup(svc.Close)
+	reg.mu.Lock()
+	reg.wallpaperSvc = svc
+	reg.mu.Unlock()
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAux(t, reg, 2)
+	h := wallpaperHost(t, reg)
+
+	reg.mu.Lock()
+	h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-dir:" + sub})
+	reg.mu.Unlock()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.Snapshot().ThumbsFolder != sub {
+		if time.Now().After(deadline) {
+			t.Fatalf("generation never moved to %s; folder is %q", sub, svc.Snapshot().ThumbsFolder)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A tile says what its preview is doing: decoding while the preview is
+// missing, and "no preview" once the generator has recorded a failure, instead
+// of an empty box either way (sysc-1069).
+func TestWallpaperTileStates(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := seedWallpaperRoot(t)
+	reg, _, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	g := wallpaperGridOf(h)
+	tileText := func(n *ui.Node) string {
+		var b strings.Builder
+		walkNodes(n, func(c *ui.Node) {
+			if c.Kind == ui.KindText {
+				b.WriteString(c.Text)
+				b.WriteString("|")
+			}
+		})
+		return b.String()
+	}
+	pending := wallpaper.Entry{Name: "a.png", Path: filepath.Join(root, "a.png"), Kind: wallpaper.KindImage}
+	if got := tileText(wallpaperTile(reg, h, g, pending, 1)); !strings.Contains(got, "decoding") {
+		t.Errorf("a tile with no preview reads %q, want it decoding", got)
+	}
+
+	broken := wallpaper.Entry{Name: "b.png", Path: filepath.Join(root, "b.png"), Kind: wallpaper.KindImage}
+	marker := strings.TrimSuffix(wallpaper.CachedStillPath(broken.Path), ".jpg") + ".fail"
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := tileText(wallpaperTile(reg, h, g, broken, 1)); !strings.Contains(got, "no preview") || strings.Contains(got, "decoding") {
+		t.Errorf("a recorded failure reads %q, want no preview", got)
+	}
+
+	// The keyboard selection carries the accent corner brackets.
+	h.wallpaperSel = 1
+	if got := tileText(wallpaperTile(reg, h, g, pending, 1)); !strings.Contains(got, "\u250c") {
+		t.Errorf("the selected tile reads %q, want corner brackets", got)
+	}
+
+	// An applied tile names the output it is on.
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSnap.Assignments = map[string]wallpaper.Assignment{"DP-1": {Path: pending.Path, Kind: wallpaper.KindImage}}
+	if got := tileText(wallpaperTile(reg, h, g, pending, 0)); !strings.Contains(got, "[\u2713] DP-1") {
+		t.Errorf("the applied tile reads %q, want [\u2713] DP-1", got)
+	}
+}
+
+// wallpaperTileThumb is a tile's thumbnail box: the first child of its content
+// column, whether or not the selection overlay wraps that column in a stack.
+func wallpaperTileThumb(tile *ui.Node) *ui.Node {
+	content := tile.Children[0]
+	if content.Kind == ui.KindStack {
+		content = content.Children[0]
+	}
+	return content.Children[0]
+}
+
+// A video is marked by a tag over its thumbnail, so the caption has its whole
+// width for the name (sysc-1070).
+func TestWallpaperVideoTagSitsOnTheThumbnail(t *testing.T) {
+	t.Parallel()
+	root := seedWallpaperRoot(t)
+	reg, _, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.wallpaperSel = -1
+	clip := wallpaper.Entry{Name: "clip.mp4", Path: filepath.Join(root, "clip.mp4"), Kind: wallpaper.KindVideo}
+	tile := wallpaperTile(reg, h, wallpaperGridOf(h), clip, 0)
+	thumb := wallpaperTileThumb(tile)
+	if findNode(thumb, func(n *ui.Node) bool { return n.Text == "▶ VID" }) == nil {
+		t.Error("a video thumbnail carries no ▶ VID tag")
+	}
+	if findNode(tile, func(n *ui.Node) bool { return strings.Contains(n.Text, "VIDEO") }) != nil {
+		t.Error("the caption still spends its width on a VIDEO prefix")
+	}
+	still := wallpaper.Entry{Name: "a.png", Path: filepath.Join(root, "a.png"), Kind: wallpaper.KindImage}
+	if findNode(wallpaperTile(reg, h, wallpaperGridOf(h), still, 0), func(n *ui.Node) bool { return n.Text == "▶ VID" }) != nil {
+		t.Error("a still is tagged as a video")
+	}
+}
+
+// On a scaled output the decode asks for the thumbnail box in physical
+// pixels, so the 2x preview is scaled down to it rather than a logical-size
+// raster being blown up by the painter (sysc-1071).
+func TestWallpaperThumbKeyIsPhysical(t *testing.T) {
+	h := &PanelHost{id: PanelWallpaper, scale120: 150}
+	h.place.Panel.W = 980
+	g := wallpaperGridOf(h)
+	key := wallpaperThumbKey("/p.jpg", g)
+	s := ui.Scale120(150)
+	if key.W != s.Physical(g.thumbW) || key.H != s.Physical(g.thumbH) {
+		t.Fatalf("decode key %dx%d, want the physical %dx%d", key.W, key.H, s.Physical(g.thumbW), s.Physical(g.thumbH))
+	}
+}
+
+// The picker's tree measures text and sizes decodes at its build scale, so a
+// configure at another scale rebuilds it, as Settings does.
+func TestAConfigureAtANewScaleRebuildsTheWallpaperPicker(t *testing.T) {
+	// No relay: a snapshot rebuild would mask a configure that never rebuilt.
+	reg, _, reqs := wallpaperPanel(t, []string{seedWallpaperRoot(t)}, false)
+	open := reqs[1].Open
+	if err := open.Callbacks.Configure(int(open.Width), int(open.Height), 150); err != nil {
+		t.Fatal(err)
+	}
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.wallpaperTreeScale != 150 {
+		t.Fatalf("picker tree built at %d after a configure at 150", h.wallpaperTreeScale)
 	}
 }

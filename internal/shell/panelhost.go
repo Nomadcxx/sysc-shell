@@ -179,6 +179,10 @@ type PanelHost struct {
 	// configure at another scale rebuilds it (its measured widths and the bar
 	// pictures depend on it).
 	settingsTreeScale int
+	// wallpaperTreeScale is the same for the wallpaper picker, which measures
+	// its rail, path rule and decoding texture as it builds, and sizes its
+	// preview decodes in physical pixels.
+	wallpaperTreeScale int
 	// pluginStoreTreeScale is the same for the plugin store, whose cards,
 	// chip rows and wrapped text are measured as they are built.
 	pluginStoreTreeScale int
@@ -835,6 +839,12 @@ func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 }
 
 func (r *Registry) DropAux(output uint32, surfaceID string) {
+	r.mu.Lock()
+	dropped := r.mediaStrip != nil && r.mediaStrip.dropAuxLocked(output, surfaceID)
+	r.mu.Unlock()
+	if dropped {
+		return
+	}
 	if r.DropTrayAux(output, surfaceID) {
 		return
 	}
@@ -1265,7 +1275,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.wallpaperOutput = wallpaper.AllOutputs
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()
-			h.wallpaperDir = firstRoot(h.wallpaperSnap)
+			h.wallpaperOpenDir(r, firstRoot(h.wallpaperSnap))
 		}
 	}
 	if id == PanelTerminalArt {
@@ -1321,14 +1331,14 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelWallpaper {
 		// The picker opens on its search box rather than on the Close button
 		// that happens to be first in the tree.
-		h.focusByName("Search")
+		h.focusByName(wallpaperSearchName)
 		h.wallpaperFocused = true
 	}
 	if id == PanelTerminalArt {
 		// The cards own Enter, so focus starts on them rather than on the
 		// output select that happens to come first.
 		if effects := artEffects(h); len(effects) > 0 {
-			h.focusByName(effects[0].ID)
+			h.focusByName(effects[0])
 		}
 	}
 	if id == PanelAudio {
@@ -2583,25 +2593,23 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 	delta := 0
 	switch {
 	case e.AxisDiscrete != 0:
-		delta = int(e.AxisDiscrete) * 40
+		delta = int(e.AxisDiscrete) * wheelStepPixels
 	case e.AxisValue120 != 0:
-		delta = int(e.AxisValue120) * 40 / 120
+		delta = int(e.AxisValue120) * wheelStepPixels / 120
 	default:
 		delta = int(e.AxisValue)
 	}
 	if delta == 0 {
 		return false
 	}
-	if h.id == PanelLauncher {
-		rows := delta / launcherSlotHeight
-		if rows == 0 {
-			if delta > 0 {
-				rows = 1
-			} else {
-				rows = -1
-			}
+	if h.menuPopupAtPointer() {
+		if h.menu.wheel(wheelRows(delta, wheelStepPixels)) {
+			r.rebuildPanel(h)
 		}
-		h.launcherMoveSel(r, rows)
+		return true
+	}
+	if h.id == PanelLauncher {
+		h.launcherMoveSel(r, wheelRows(delta, launcherSlotHeight))
 		return true
 	}
 	if !h.scrollBy(delta) {
@@ -2609,6 +2617,38 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 	}
 	h.afterPluginStoreScroll(r)
 	return true
+}
+
+const wheelStepPixels = 40
+
+func wheelRows(delta, rowHeight int) int {
+	if delta == 0 || rowHeight <= 0 {
+		return 0
+	}
+	rows := delta / rowHeight
+	if rows == 0 {
+		if delta > 0 {
+			return 1
+		}
+		return -1
+	}
+	return rows
+}
+
+func (h *PanelHost) menuPopupAtPointer() bool {
+	if h == nil || h.menu == nil || !h.menu.Opened() || h.menuPath == "" {
+		return false
+	}
+	for _, n := range h.focus {
+		if n == nil || n.Kind != ui.KindMenu ||
+			(n.Action != h.menuPath && n.Action != "set:"+h.menuPath) {
+			continue
+		}
+		if ui.MenuPopupBounds(n).Contains(h.hoverX, h.hoverY) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *PanelHost) scrollBy(delta int) bool {
@@ -3220,24 +3260,6 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return h.activateNotify(r, n)
 	}
 	if strings.HasPrefix(n.Action, "bar-") && h.barActivate(r, n.Action) {
-		return true
-	}
-	if name, ok := strings.CutPrefix(n.Action, "template-overwrite:"); ok {
-		r.templateMu.Lock()
-		if r.templateForce == nil {
-			r.templateForce = map[string]bool{}
-		}
-		r.templateForce[name] = true
-		r.templateMu.Unlock()
-		// A config rewrite is the one path that re-runs every template
-		// apply; the force flag is consumed there, off this goroutine.
-		// Persist the draft, not the committed config: the refusal row is
-		// shown inside the settings view, and overwriting must not throw
-		// away the edits the user is looking at.
-		if err := r.writeConfig(h.draft); err != nil {
-			h.errLabel = err.Error()
-		}
-		r.rebuildPanel(h)
 		return true
 	}
 	if strings.HasPrefix(n.Action, "section:") {
@@ -3951,6 +3973,12 @@ func (h *PanelHost) applyMenu(r *Registry, path string) {
 	if path == "" {
 		return
 	}
+	if path == artPaletteMenu && h.id == PanelTerminalArt {
+		if m := h.menus[path]; m != nil {
+			h.artSetPalette(r, m.Value())
+		}
+		return
+	}
 	if key, ok := strings.CutPrefix(path, "walls."); ok {
 		if r.lockerAcquired {
 			return
@@ -4400,6 +4428,8 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 		return h.settingsTreeScale, true
 	case PanelPluginStore:
 		return h.pluginStoreTreeScale, true
+	case PanelWallpaper:
+		return h.wallpaperTreeScale, true
 	}
 	return 0, false
 }

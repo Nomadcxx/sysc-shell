@@ -382,6 +382,14 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setString(func(c *config.Config, v string) { c.Session.Locker = v }),
 		},
 		{
+			Path: "session.polkit_agent", Label: "Authentication agent", Section: "Session", Group: "Authentication",
+			Describe: "Whether sysc-shell registers as the session's polkit authentication agent.",
+			Kind:     KindEnum, Options: []string{"auto", "on", "off"},
+			Get: func(c config.Config) string { return c.Session.PolkitAgent },
+			Set: setEnum("session.polkit_agent", []string{"auto", "on", "off"},
+				func(c *config.Config, v string) { c.Session.PolkitAgent = v }),
+		},
+		{
 			Path: "idle.after", Label: "After idle", Section: "Session", Group: "When idle",
 			Describe: "One action after idle. Screensaver and lock cannot run from the same timer.",
 			Kind:     KindEnum, Options: []string{"nothing", "screensaver", "lock"},
@@ -463,6 +471,71 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Get:      getBool(func(c config.Config) bool { return c.Accessibility.HighContrast }),
 			Set: setBool("accessibility.high-contrast",
 				func(c *config.Config, b bool) { c.Accessibility.HighContrast = b }),
+		},
+		{
+			Path: "night-light.mode", Label: "Mode", Section: "Night Light", Group: "Schedule",
+			Describe: "Follow sunset, custom times, or hold one temperature all day.",
+			Kind:     KindEnum, Present: PresentAuto,
+			Options: []string{config.NightLightModeOff, config.NightLightModeSunset, config.NightLightModeCustom, config.NightLightModeAlways},
+			Get:     func(c config.Config) string { return c.NightLight.Mode },
+			Set:     setNightLight("night-light.mode", func(n *config.NightLight, v string) error { n.Mode = v; return nil }),
+		},
+		{
+			Path: "night-light.night-kelvin", Label: "Night temperature", Section: "Night Light", Group: "Temperature",
+			Describe: "Colour temperature during the night schedule.",
+			Kind:     KindInt, Present: PresentSlider, Min: 2500, Max: 6000, Step: 100, Unit: " K",
+			Get: func(c config.Config) string { return strconv.Itoa(c.NightLight.NightKelvin) },
+			Set: setNightLight("night-light.night-kelvin", func(n *config.NightLight, v string) error {
+				value, err := strconv.Atoi(v)
+				if err != nil {
+					return fmt.Errorf("%q is not an integer", v)
+				}
+				n.NightKelvin = value
+				return nil
+			}),
+		},
+		{
+			Path: "night-light.day-kelvin", Label: "Day temperature", Section: "Night Light", Group: "Temperature",
+			Describe: "Colour temperature during the day schedule.",
+			Kind:     KindInt, Present: PresentSlider, Min: 4500, Max: 6500, Step: 100, Unit: " K",
+			Get: func(c config.Config) string { return strconv.Itoa(c.NightLight.DayKelvin) },
+			Set: setNightLight("night-light.day-kelvin", func(n *config.NightLight, v string) error {
+				value, err := strconv.Atoi(v)
+				if err != nil {
+					return fmt.Errorf("%q is not an integer", v)
+				}
+				n.DayKelvin = value
+				return nil
+			}),
+		},
+		{
+			Path: "night-light.transition", Label: "Transition", Section: "Night Light", Group: "Schedule",
+			Describe: "Fade duration centred on sunrise, sunset, or the custom times.",
+			Kind:     KindEnum, Present: PresentMenu,
+			Options: []string{"0", "15", "30", "60"}, OptionLabels: []string{"Off", "15 minutes", "30 minutes", "60 minutes"},
+			Get: func(c config.Config) string { return strconv.Itoa(c.NightLight.TransitionMinutes) },
+			Set: setNightLight("night-light.transition", func(n *config.NightLight, v string) error {
+				value, err := strconv.Atoi(v)
+				if err != nil {
+					return fmt.Errorf("%q is not an integer", v)
+				}
+				n.TransitionMinutes = value
+				return nil
+			}),
+		},
+		{
+			Path: "night-light.start", Label: "Start", Section: "Night Light", Group: "Custom times",
+			Describe: "Local time when the night schedule begins (HH:MM).",
+			Kind:     KindString,
+			Get:      func(c config.Config) string { return c.NightLight.Start },
+			Set:      setNightLight("night-light.start", func(n *config.NightLight, v string) error { n.Start = v; return nil }),
+		},
+		{
+			Path: "night-light.end", Label: "End", Section: "Night Light", Group: "Custom times",
+			Describe: "Local time when the night schedule ends (HH:MM).",
+			Kind:     KindString,
+			Get:      func(c config.Config) string { return c.NightLight.End },
+			Set:      setNightLight("night-light.end", func(n *config.NightLight, v string) error { n.End = v; return nil }),
 		},
 		{
 			Path: "weather.city", Label: "City", Section: "Weather", Group: "Place", Kind: KindString,
@@ -710,7 +783,7 @@ func SectionClusters() []Cluster {
 		// Captions name the group, never one of its items (owner decision,
 		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
 		// duplicates, and Plugins is not a panel.
-		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver"}},
+		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver", "Night Light"}},
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
@@ -919,6 +992,16 @@ func (r *Registry) addTemplateEntries() {
 			}),
 		})
 	}
+	r.entries = append(r.entries, Entry{
+		Path: "theme.terminal-opacity", Present: PresentSlider, Unit: "%",
+		Label: "Terminal opacity", Section: "Templates", Group: "Terminals",
+		Describe: "Background opacity written into kitty, ghostty, alacritty, foot and wezterm when their template is on. Open windows update, except foot and kitty windows started before the first change, which take it when reopened. 100 leaves each terminal's own setting alone.",
+		Kind:     KindInt,
+		Min:      config.TerminalOpacityMin, Max: config.TerminalOpacityMax,
+		Get: getInt(func(c config.Config) int { return c.TerminalOpacity }),
+		Set: setInt("theme.terminal-opacity", config.TerminalOpacityMin, config.TerminalOpacityMax,
+			func(c *config.Config, n int) { c.TerminalOpacity = n }),
+	})
 }
 
 // conciseDuration prints a duration the way it is typed: 15m, 1h30m, 90s.
@@ -1128,6 +1211,20 @@ func setEnum(path string, options []string, assign func(*config.Config, string))
 			}
 		}
 		return fmt.Errorf("settings: %s: %q is not a valid option", path, v)
+	})
+}
+
+func setNightLight(path string, update func(*config.NightLight, string) error) Setter {
+	return write(func(c *config.Config, value string) error {
+		candidate := c.NightLight
+		if err := update(&candidate, value); err != nil {
+			return fmt.Errorf("settings: %s: %w", path, err)
+		}
+		if err := config.ValidateNightLight(candidate); err != nil {
+			return err
+		}
+		c.NightLight = candidate
+		return nil
 	})
 }
 

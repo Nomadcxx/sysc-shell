@@ -111,7 +111,7 @@ func (a *Audio) release(l *Lease) {
 func (a *Audio) Close() {
 	a.mu.Lock()
 	for _, l := range a.leases.clear() {
-		l.audio = nil
+		l.forget()
 	}
 	done := a.stopIfUnusedLocked()
 	a.mixerN = 0

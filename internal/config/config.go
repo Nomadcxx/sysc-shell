@@ -274,7 +274,8 @@ type Accessibility struct {
 }
 
 type Session struct {
-	Locker string // external locker command; empty hides the lock action
+	Locker      string // external locker command; empty hides the lock action
+	PolkitAgent string // auto stands down for an existing agent; on retries while one holds the session; off disables
 }
 
 // Idle are the display-power timeouts, resolved to durations. A zero timeout
@@ -388,6 +389,29 @@ type Weather struct {
 	Configured bool
 }
 
+const (
+	NightLightModeOff    = "off"
+	NightLightModeSunset = "sunset"
+	NightLightModeCustom = "custom"
+	NightLightModeAlways = "always"
+)
+
+// NightLight is the validated schedule stored under the night-light config
+// key. Manual on/off overrides live only in the service and never persist.
+type NightLight struct {
+	Mode              string
+	NightKelvin       int
+	DayKelvin         int
+	TransitionMinutes int
+	Start             string
+	End               string
+}
+
+func defaultNightLight() NightLight {
+	return NightLight{Mode: NightLightModeOff, NightKelvin: 4000, DayKelvin: 6500,
+		TransitionMinutes: 30, Start: "20:00", End: "07:00"}
+}
+
 // Media selects the active MPRIS player. Names are full well-known bus names,
 // so a browser tab can be blacklisted without hiding an unrelated player.
 type Media struct {
@@ -424,14 +448,24 @@ type Config struct {
 	Panels        Panels
 	Tray          TrayPreferences
 	Weather       Weather
+	NightLight    NightLight
 	Media         Media
 	Monitor       Monitor
 	Wallpaper     Wallpaper
 	TerminalArt   TerminalArt
 	Outputs       []OutputOverride
 	Templates     map[string]bool
-	Plugins       Plugins
+	// TerminalOpacity is the background opacity, in percent, the shell writes
+	// into each enabled terminal template's config. 100 leaves it unmanaged.
+	TerminalOpacity int
+	Plugins         Plugins
 }
+
+// The terminal-opacity range. Below 50 text over a busy effect stops reading.
+const (
+	TerminalOpacityMin = 50
+	TerminalOpacityMax = 100
+)
 
 // knownItems is the Milestone 3 widget vocabulary through Tranche 3B. The
 // Milestone 2 fixture ids are deliberately absent: there is no compatibility
@@ -573,9 +607,11 @@ func Default() Config {
 			Scheme: "scheme-tonal-spot",
 			Mode:   "dark",
 		},
-		Panels:  Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
-		Monitor: defaultMonitor(),
-		Idle:    Idle{MediaExempt: true},
+		Panels:     Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
+		Session:    Session{PolkitAgent: "auto"},
+		Monitor:    defaultMonitor(),
+		Idle:       Idle{MediaExempt: true},
+		NightLight: defaultNightLight(),
 		Wallpaper: Wallpaper{
 			// Stills and video share one directory by default, which D9
 			// allows: that is how the library on this machine is laid out, and
@@ -588,6 +624,7 @@ func Default() Config {
 			FadeDuration:   0.5,
 			Hidden:         "none",
 		},
+		TerminalOpacity: TerminalOpacityMax,
 	}
 	// The bar's geometry is derived, not written twice: height, padding,
 	// spacing, radius, and text size all follow the resolved composition, and

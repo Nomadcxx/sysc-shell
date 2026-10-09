@@ -17,6 +17,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
@@ -25,6 +26,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/services/polkit"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
@@ -46,16 +48,19 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu           sync.Mutex
-	cfg          config.Config
-	outputs      map[string]outputState
-	bars         map[uint32]*Bar
-	leases       map[uint32][]*services.Lease
-	niriSnapshot niri.Snapshot
-	now          time.Time
-	focused      string
-	layouts      niri.KeyboardLayouts
-	layoutsSeen  bool
+	mu      sync.Mutex
+	cfg     config.Config
+	outputs map[string]outputState
+	bars    map[uint32]*Bar
+	// effectOutputs names the connectors whose wallpaper is a playing or
+	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
+	effectOutputs map[string]bool
+	leases        map[uint32][]*services.Lease
+	niriSnapshot  niri.Snapshot
+	now           time.Time
+	focused       string
+	layouts       niri.KeyboardLayouts
+	layoutsSeen   bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -63,13 +68,18 @@ type Registry struct {
 	// matches the zero value.
 	capsKnown bool
 
-	clock        *services.Clock
-	metrics      *services.Metrics
-	weather      *services.Weather
-	sample       services.Snapshot
-	reading      services.Reading
-	mediaState   services.MediaState
-	mediaPlayers []services.Player
+	clock      *services.Clock
+	metrics    *services.Metrics
+	weather    *services.Weather
+	nightLight *services.NightLightService
+	// The night light holds a weather lease only when a city must be resolved
+	// for sunset scheduling and no widget or panel already needs it.
+	nightLightWeatherLease    *services.Lease
+	nightLightWeatherInterval time.Duration
+	sample                    services.Snapshot
+	reading                   services.Reading
+	mediaState                services.MediaState
+	mediaPlayers              []services.Player
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
 	controlIdentity ccIdentity
@@ -90,20 +100,16 @@ type Registry struct {
 	previewPrevErr string
 	previewTheme   *themePreviewState
 	previewRequest uint64
-	// templateRefusals names templates whose files the shell refused to write
-	// because their current bytes are not the shell's last render. The
-	// settings Templates section surfaces them with an overwrite action.
-	// templateForce marks templates the user explicitly overrode a refusal
-	// for; the next apply that succeeds consumes the entry.
-	//
-	// generateTheme runs off the Wayland owner (wallpaper applies, config
-	// reload) and deliberately outside Registry.mu, while the panel handler
-	// writes templateForce under it. A leaf mutex guards the pair; nothing
-	// takes Registry.mu while holding it.
-	templateMu       sync.Mutex
-	templateRefusals map[string]string
-	templateForce    map[string]bool
-	themeGen         theme.Generator
+	// templateNotice is the last template toast delivered under each key, so
+	// a re-apply that changes nothing stays quiet. templatePending holds one
+	// that could not be sent yet: the first theme apply runs while the
+	// registry is built, before the notification client is bound or
+	// connected. generateTheme runs off the Wayland owner and outside
+	// Registry.mu, so a leaf mutex guards both.
+	templateMu      sync.Mutex
+	templateNotice  map[string]string
+	templatePending map[string]templateToast
+	themeGen        theme.Generator
 	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
 	// never reassigned outside tests, so it is read without Registry.mu.
 	paletteStore *theme.Store
@@ -133,10 +139,11 @@ type Registry struct {
 	aux           chan wayland.AuxRequest
 	// selections carries text fields' copy and paste requests to the
 	// platform's clipboard.
-	selections chan wayland.SelectionRequest
-	panels     PanelSet
-	panelHosts map[PanelID]*PanelHost
-	files      *filesSession
+	selections  chan wayland.SelectionRequest
+	gammaEvents chan wayland.GammaEvent
+	panels      PanelSet
+	panelHosts  map[PanelID]*PanelHost
+	files       *filesSession
 	// panelShields records which panel host opened each output's shared shield,
 	// even if that host closes while another panel keeps the shield alive.
 	panelShields map[uint32]*PanelHost
@@ -152,6 +159,10 @@ type Registry struct {
 	dwell      *dwell
 	tooltips   *tooltipHost
 	configPath string
+	// configWriteMu keeps file writes and out-of-band read-modify-write
+	// transactions ordered. IPC setters read after taking it so concurrent
+	// edits preserve each other's config fields.
+	configWriteMu sync.Mutex
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
 	writeDelay           time.Duration
@@ -184,6 +195,12 @@ type Registry struct {
 	lockSettingsSaving  bool
 	managedState        locksession.State
 	lockCancel          context.CancelFunc
+	polkitAgent         *polkit.Agent
+	polkitHost          *polkitHost
+	polkitCancel        context.CancelFunc
+	polkitDone          chan struct{}
+	polkitLifecycleMu   sync.Mutex
+	polkitOutputEvents  chan struct{}
 	backgroundHeld      bool
 	backgroundLeasePath string
 	backgroundMu        sync.Mutex
@@ -245,6 +262,8 @@ type Registry struct {
 	traySender           trayCommandSender
 	trayMenu             *trayMenuHost
 	trayDrawer           *trayDrawerHost
+	mediaStrip           *mediaStripHost
+	mediaIntent          *mediaStripIntent
 	trayReplies          *trayReplyTracker
 	trayCloses           *trayCloseTracker
 	trayIcons            *icons.Worker
@@ -366,38 +385,43 @@ func NewRegistry(cfg config.Config) *Registry {
 		// generateOnlyWith may copy r.themeGen without Registry.mu.
 		gen.Custom = palettes
 	}
+	weather := services.NewWeather(
+		cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+	weather.SetLocationConfigured(cfg.Weather.Configured)
+	weather.SetLocationLabel(cfg.Weather.Location)
+	weather.SetCity(cfg.Weather.City)
 	r := &Registry{
-		cfg:     cfg,
-		now:     time.Now(),
-		outputs: make(map[string]outputState),
-		bars:    make(map[uint32]*Bar),
-		leases:  make(map[uint32][]*services.Lease),
-		clock:   services.NewClock(),
-		metrics: services.NewMetrics(),
-		weather: services.NewWeather(
-			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
-		themeGen:         gen,
-		paletteStore:     palettes,
-		paletteLister:    listPalettes,
-		paletteImportDir: paletteImportDir(),
-		templateForce:    map[string]bool{},
-		invalidations:    make(chan wayland.Invalidation, 8),
-		aux:              make(chan wayland.AuxRequest, 8),
-		selections:       make(chan wayland.SelectionRequest, 8),
-		panelHosts:       make(map[PanelID]*PanelHost),
-		panelShields:     make(map[uint32]*PanelHost),
-		closed:           make(chan struct{}),
-		dwell:            newDwell(defaultDwell),
-		runArgv:          runArgvDefault,
-		lookPath:         exec.LookPath,
-		runArgvOutput:    runArgvOutputDefault,
-		startInhibit:     startInhibitDefault,
-		signalProcess:    signalProcessDefault,
-		notify:           newNotifyState(),
-		batteryWarning:   newBatteryWarning(),
-		clipboard:        newClipboardProjection(),
-		tray:             newTrayState(),
-		trayCh:           make(chan trayclient.Message, 32),
+		cfg:                cfg,
+		now:                time.Now(),
+		outputs:            make(map[string]outputState),
+		bars:               make(map[uint32]*Bar),
+		leases:             make(map[uint32][]*services.Lease),
+		clock:              services.NewClock(),
+		metrics:            services.NewMetrics(),
+		weather:            weather,
+		gammaEvents:        make(chan wayland.GammaEvent, 16),
+		themeGen:           gen,
+		paletteStore:       palettes,
+		paletteLister:      listPalettes,
+		paletteImportDir:   paletteImportDir(),
+		invalidations:      make(chan wayland.Invalidation, 8),
+		aux:                make(chan wayland.AuxRequest, 8),
+		selections:         make(chan wayland.SelectionRequest, 8),
+		polkitOutputEvents: make(chan struct{}, 1),
+		panelHosts:         make(map[PanelID]*PanelHost),
+		panelShields:       make(map[uint32]*PanelHost),
+		closed:             make(chan struct{}),
+		dwell:              newDwell(defaultDwell),
+		runArgv:            runArgvDefault,
+		lookPath:           exec.LookPath,
+		runArgvOutput:      runArgvOutputDefault,
+		startInhibit:       startInhibitDefault,
+		signalProcess:      signalProcessDefault,
+		notify:             newNotifyState(),
+		batteryWarning:     newBatteryWarning(),
+		clipboard:          newClipboardProjection(),
+		tray:               newTrayState(),
+		trayCh:             make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
 		trayCloses:      newTrayCloseTracker(),
@@ -406,13 +430,30 @@ func NewRegistry(cfg config.Config) *Registry {
 		machineFacts:    readMachineFacts(),
 	}
 	r.depthClocks = newDepthClockHost(r, nil)
-	r.weather.SetCity(cfg.Weather.City)
+	r.polkitHost = newPolkitHost(r)
+	r.nightLight = services.NewNightLight(services.NightLightOptions{
+		Location:        r.weather.ResolvedLocation,
+		LocationPending: r.weather.LocationPending,
+		Source:          r.weather.LocationSource,
+		ReducedMotion:   cfg.Accessibility.ReducedMotion,
+	})
+	r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
+	if !runningAsTest() {
+		r.syncNightLightWeatherLeaseLocked(cfg)
+	}
 	// Construction is single-threaded, so the first snapshot needs no lock.
 	r.palettes = listPalettes(palettes)
-	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
+	initialTokens, initialErr := r.generateTheme(cfg)
+	r.tokens, r.themeErr = tokensAndReason(initialTokens, initialErr)
+	if !runningAsTest() && initialErr == nil {
+		r.publishCommittedThemeSelection(cfg, initialTokens)
+	}
 	r.osd = newOSDManager(r, 0)
 	r.tooltips = newTooltipHost(r, nil)
 	go r.relayTooltips(r.dwell)
+	r.mediaIntent = newMediaStripIntent(nil)
+	r.mediaStrip = newMediaStripHost(r, nil)
+	go r.relayMediaStrip()
 	// DND toggles often run under Registry.mu; Show takes it, so publish from
 	// a separate goroutine after the setter returns.
 	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
@@ -519,7 +560,7 @@ func (r *Registry) pushIdleInputsLocked() {
 		LockBattery:    r.cfg.Idle.Lock,
 		MediaExempt:    r.cfg.Idle.MediaExempt,
 	})
-	r.idleSvc.SetMediaPlaying(r.mediaState.Status == services.PlaybackPlaying)
+	r.idleSvc.SetMediaPlaying(r.mediaState.LocalPlaying)
 	r.idleSvc.SetInhibited(r.inhibitWanted || len(r.externalInhibitors) > 0)
 }
 
@@ -571,7 +612,8 @@ func (r *Registry) setMedia(m *services.Media) {
 		r.mediaPlayers = nil
 		return
 	}
-	r.mediaState = m.CachedState()
+	state := mediaStartupSnapshot(m.CachedState, m.Changes())
+	r.mediaState = state
 	r.mediaPlayers = m.Players()
 	cancel := make(chan struct{})
 	r.mediaRelayCancel = cancel
@@ -579,11 +621,31 @@ func (r *Registry) setMedia(m *services.Media) {
 	r.pushIdleInputs()
 }
 
+// mediaStartupSnapshot drops queued snapshots covered by the current cache.
+// The media channel coalesces updates, but its construction snapshot can be
+// older than an interpolated cache read; retry if a new update races with it.
+func mediaStartupSnapshot(cached func() services.MediaState, changes <-chan services.MediaState) services.MediaState {
+	for {
+		select {
+		case <-changes:
+		default:
+		}
+		state := cached()
+		select {
+		case <-changes:
+			continue
+		default:
+			return state
+		}
+	}
+}
+
 func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 	if media == nil {
 		return
 	}
-	r.publishMediaSnapshot(media, media.CachedState())
+	// setMedia installs the initial cache before starting this relay. Replaying
+	// it here could overwrite a newer snapshot if relay startup is delayed.
 	prev := media.CachedState()
 	for {
 		select {
@@ -642,6 +704,40 @@ func (r *Registry) applyMediaArt(key icons.Key, image *ui.Image) {
 	}
 }
 
+// relayMediaStrip applies the hover intent's requests under Registry.mu. It
+// runs off the Wayland owner and ends with the registry.
+func (r *Registry) relayMediaStrip() {
+	for {
+		select {
+		case req := <-r.mediaIntent.requests():
+			r.mu.Lock()
+			if req.open {
+				r.mediaStrip.openLocked(req.global, req.anchor, false)
+			} else {
+				r.mediaStrip.closePeekLocked()
+			}
+			r.mu.Unlock()
+		case <-r.closed:
+			return
+		}
+	}
+}
+
+// driveMediaHover feeds the hover intent from one bar's pointer events. Only
+// the art and title count; the play button resolves to its own action.
+func (r *Registry) driveMediaHover(global uint32, bar *Bar, event wayland.Event) {
+	switch event.Kind {
+	case wayland.EventPointerLeave:
+		r.mediaIntent.pill(global, ui.Rect{}, false)
+	case wayland.EventPointerEnter, wayland.EventPointerMotion:
+		if bar.hoveredAction() == panelMediaAction {
+			r.mediaIntent.pill(global, bar.actionBounds(panelMediaAction), true)
+		} else {
+			r.mediaIntent.pill(global, ui.Rect{}, false)
+		}
+	}
+}
+
 func (r *Registry) publishMediaSnapshot(media *services.Media, state services.MediaState) {
 	players := media.Players()
 	r.mu.Lock()
@@ -659,6 +755,7 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 		}
 	}
 	out, open := r.rebuildControlCentreLocked()
+	stripOut, stripOpen := r.mediaStrip.refreshLocked()
 	if h := r.panelHosts[PanelControlCenter]; h != nil && mediaBodyVisible(h) {
 		r.startSurfaceFrames(h)
 	}
@@ -667,6 +764,9 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 	r.publish(changed)
 	if open {
 		r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	}
+	if stripOpen {
+		r.publishSurface(stripOut, mediaStripSurfaceID)
 	}
 }
 
@@ -968,6 +1068,7 @@ func (r *Registry) Status() map[string]any {
 		panels = append(panels, id.String())
 	}
 	cfg := r.cfg
+	polkitStatus := r.polkitStatusLocked()
 	inhibitors := make([]string, 0, len(r.externalInhibitors))
 	for _, in := range r.externalInhibitors {
 		inhibitors = append(inhibitors, in.App)
@@ -986,6 +1087,7 @@ func (r *Registry) Status() map[string]any {
 		"matugen":         err == nil,
 		"templates":       templates,
 		"idle_inhibitors": inhibitors,
+		"polkit":          polkitStatus,
 	}
 }
 
@@ -1109,11 +1211,12 @@ func (r *Registry) panelTheme() Theme {
 	return t.WithCompositor(r.caps.Blur)
 }
 
-// resolveOutputTheme is one output's theme, with the compositor's blur applied
-// so the bar and the panels that join it agree about its ground.
-func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, blur bool) (Theme, error) {
+// resolveOutputTheme is one output's theme, with the compositor's blur and any
+// terminal effect behind it applied, so the bar and the panels that join it
+// agree about its ground.
+func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, blur, effectBehind bool) (Theme, error) {
 	t, err := ResolveTheme(cfg, cfg.ForConnector(connector), tok)
-	return t.WithCompositor(blur), err
+	return t.WithEffectBehind(effectBehind, blur), err
 }
 
 func (r *Registry) panelThemeFor(output uint32) Theme {
@@ -1147,7 +1250,7 @@ func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens t
 	if bar, ok := r.bars[output]; ok {
 		connector = bar.connector()
 	}
-	t, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur)
+	t, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector])
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -1169,14 +1272,13 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		return tok, err
 	}
 	if !runningAsTest() {
-		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
-		// A nil outcomes map means the apply did not run: it was queued
-		// behind a live one (or had nothing to do). Sweeping now would eat
-		// the overwrite the queued pass is about to consume; the goroutine
-		// that eventually runs the job reports its outcomes instead.
-		r.recordTemplateOutcomes(outcomes, true)
-		if err != nil {
-			return tok, fmt.Errorf("theme: external templates: %w", err)
+		// Template outcomes are the apps', not the palette's: they go to a
+		// toast, and the palette stands either way. A nil outcomes map means
+		// the apply was queued behind a live one, whose caller reports it.
+		home := os.Getenv("HOME")
+		outcomes, adopted, _ := theming.ApplyEnabled(home, cfg.TemplateEnabled, tok, cfg.TerminalOpacity)
+		if outcomes != nil {
+			r.reportTemplates(home, outcomes, adopted)
 		}
 	}
 	return tok, nil
@@ -1191,28 +1293,6 @@ func (r *Registry) tokensFor(cfg config.Config) (theme.Tokens, error) {
 		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
 	}
 	return tok, nil
-}
-
-func (r *Registry) recordTemplateOutcomes(outcomes map[string]error, clearResolvedForces bool) {
-	if outcomes == nil {
-		return
-	}
-	refusals := map[string]string{}
-	for name, err := range outcomes {
-		if errors.Is(err, theming.ErrUserModified) {
-			refusals[name] = err.Error()
-		}
-	}
-	r.templateMu.Lock()
-	r.templateRefusals = refusals
-	if clearResolvedForces {
-		for name := range r.templateForce {
-			if _, refused := refusals[name]; !refused {
-				delete(r.templateForce, name)
-			}
-		}
-	}
-	r.templateMu.Unlock()
 }
 
 // generateOnly produces palette tokens for cfg without touching published
@@ -1262,15 +1342,6 @@ func (r *Registry) generateOnlyWith(cfg config.Config, gen theme.Generator) (the
 	return tok, nil
 }
 
-// consumeTemplateForce reports and clears one template's overwrite request.
-func (r *Registry) consumeTemplateForce(name string) bool {
-	r.templateMu.Lock()
-	defer r.templateMu.Unlock()
-	forced := r.templateForce[name]
-	delete(r.templateForce, name)
-	return forced
-}
-
 // tokensAndReason flattens generateTheme for the construction path, which has
 // no surface to report to yet and only needs the reason recorded.
 func tokensAndReason(tok theme.Tokens, err error) (theme.Tokens, string) {
@@ -1278,6 +1349,116 @@ func tokensAndReason(tok theme.Tokens, err error) (theme.Tokens, string) {
 		return tok, err.Error()
 	}
 	return tok, ""
+}
+
+// Template toast keys. The notification service replaces a live toast that
+// shares a key, so each kind keeps one toast on screen at most.
+const (
+	templateAdoptedKey = "sysc-shell:theme-templates:adopted"
+	templateFailedKey  = "sysc-shell:theme-templates:failed"
+)
+
+// reportTemplates turns one template apply into toasts: the apps whose own
+// setting was replaced, with where the original went, and the apps that could
+// not be themed, with why. A toast is posted only when its text changed since
+// the last one of its kind, and a clean apply forgets the last failure, so a
+// recurrence is news again.
+func (r *Registry) reportTemplates(home string, outcomes map[string]error, adopted []string) {
+	var failed []string
+	reasons := map[string]string{}
+	for name, err := range outcomes {
+		if err != nil {
+			failed = append(failed, name)
+			reasons[name] = strings.TrimPrefix(err.Error(), "theming: ")
+		}
+	}
+	slices.Sort(failed)
+	adopted = slices.Sorted(slices.Values(adopted))
+
+	var adoptedBody, failedBody string
+	if len(adopted) > 0 {
+		var backups []string
+		for _, name := range adopted {
+			backups = append(backups, theming.Backups(home, name)...)
+		}
+		adoptedBody = "Your own setting was replaced with the shell's theme."
+		if len(backups) > 0 {
+			adoptedBody += " The original is kept as " + strings.Join(homeRelative(home, backups), ", ") + "."
+		}
+	}
+	for _, name := range failed {
+		failedBody += name + ": " + strings.ReplaceAll(reasons[name], home, "~") + "\n"
+	}
+	r.postTemplateToast(templateAdoptedKey, "Theme applied to "+strings.Join(adopted, ", "), adoptedBody)
+	r.postTemplateToast(templateFailedKey, "Could not theme "+strings.Join(failed, ", "), strings.TrimSuffix(failedBody, "\n"))
+}
+
+// templateToast is one template report waiting to be delivered.
+type templateToast struct{ summary, body string }
+
+// postTemplateToast posts body under key unless that body was already
+// delivered; an empty body forgets the last, so the next report of that kind
+// posts. A toast the service cannot take yet stays pending until
+// flushTemplateToasts, rather than counting as sent.
+func (r *Registry) postTemplateToast(key, summary, body string) {
+	r.templateMu.Lock()
+	if r.templateNotice == nil {
+		r.templateNotice = map[string]string{}
+		r.templatePending = map[string]templateToast{}
+	}
+	if body == "" {
+		delete(r.templateNotice, key)
+		delete(r.templatePending, key)
+		r.templateMu.Unlock()
+		return
+	}
+	if body == r.templateNotice[key] {
+		delete(r.templatePending, key)
+		r.templateMu.Unlock()
+		return
+	}
+	r.templatePending[key] = templateToast{summary: summary, body: body}
+	r.templateMu.Unlock()
+	r.flushTemplateToasts()
+}
+
+// flushTemplateToasts delivers the pending template toasts. It runs after a
+// report and when the notification client connects; a toast that still
+// cannot be sent stays pending.
+func (r *Registry) flushTemplateToasts() {
+	r.templateMu.Lock()
+	pending := make(map[string]templateToast, len(r.templatePending))
+	for key, toast := range r.templatePending {
+		pending[key] = toast
+	}
+	r.templateMu.Unlock()
+	for key, toast := range pending {
+		if _, err := r.publishToast(key, toast.summary, toast.body, protocol.UrgencyNormal, -1); err != nil {
+			if !errors.Is(err, errNotifyUnavailable) {
+				log.Printf("shell: template toast (will retry on reconnect): %v", err)
+			}
+			continue
+		}
+		r.templateMu.Lock()
+		// Only clear what was sent: a newer report for this key keeps its own.
+		if r.templatePending[key] == toast {
+			delete(r.templatePending, key)
+		}
+		r.templateNotice[key] = toast.body
+		r.templateMu.Unlock()
+	}
+}
+
+// homeRelative shows paths under home as ~/...
+func homeRelative(home string, paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		if rest, ok := strings.CutPrefix(p, home+"/"); ok {
+			p = "~/" + rest
+		}
+		out[i] = p
+	}
+	return out
 }
 
 // lastCompleteTokens is the palette to fall back on when a generated one is
@@ -1462,7 +1643,7 @@ func (r *Registry) adoptBar(
 	// theme before adoption so a preview or commit that arrived during the
 	// build cannot install a bar with stale colors.
 	cfg, tokens := r.effectiveThemeLocked()
-	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur); err == nil {
+	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector]); err == nil {
 		bar.retheme(next)
 	}
 	r.attachRunningIconsAtLocked(bar.scale120())
@@ -1483,6 +1664,7 @@ func (r *Registry) adoptBar(
 	// it once. An invalidation here would be a second frame for a first paint,
 	// and this call is on the owner goroutine, which drains that channel.
 	r.syncTrayLocked()
+	r.signalPolkitOutputChange()
 	return r.outputGlobalsLocked(), r.plugins
 }
 
@@ -1588,8 +1770,14 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			r.stepAudioAsync("mute")
 			return true
 		case action == panelMediaAction && (button == 0 || button == buttonLeft):
-			// The control centre is the one player picker (D7): the widget
-			// routes there and the spine lands on the Media section.
+			// Left click pins the strip, or closes a pinned one (2026-10-08).
+			local := bar.actionBounds(panelMediaAction)
+			r.mu.Lock()
+			ok := r.mediaStrip.togglePinLocked(global, local)
+			r.mu.Unlock()
+			return ok
+		case action == panelMediaAction && button == buttonRight:
+			// The Control Centre Media page stays the full picker.
 			trig = triggerAtAction(bar, trig, panelMediaAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
@@ -1598,11 +1786,12 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			err := r.selectPanelSectionLocked(PanelControlCenter, "media")
 			r.mu.Unlock()
 			return err == nil
-		case action == panelMediaAction && (button == buttonMiddle || button == buttonRight):
+		case action == panelMediaAction && button == buttonMiddle,
+			action == mediaPlayPauseAction && (button == 0 || button == buttonLeft):
 			r.mu.Lock()
-			m := r.media
+			m, disabled := r.media, mediaPlayDisabled(r.mediaState)
 			r.mu.Unlock()
-			if m != nil {
+			if m != nil && !disabled {
 				// Bus I/O, so off the handler path entirely.
 				go func() { _ = m.PlayPause() }()
 			}
@@ -1617,21 +1806,6 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 				r.stepAudioAsync("up")
 			} else if delta < 0 {
 				r.stepAudioAsync("down")
-			}
-			return true
-		case panelMediaAction:
-			// Scroll moves next and previous (D7): up is forward.
-			r.mu.Lock()
-			m := r.media
-			r.mu.Unlock()
-			if m == nil {
-				return true
-			}
-			switch {
-			case delta > 0:
-				go func() { _ = m.Next() }()
-			case delta < 0:
-				go func() { _ = m.Previous() }()
 			}
 			return true
 		}
@@ -1719,6 +1893,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		Commit: func() {
 			once.Do(func() {
 				r.mu.Lock()
+				polkitPolicyChanged := r.cfg.Session.PolkitAgent != cfg.Session.PolkitAgent
+				polkitNeedsStart := len(bars) > 0 && r.polkitAgent == nil
 				outgoing := r.leases
 				outgoingBars := r.bars
 				geometryOutputs := make(map[uint32]bool)
@@ -1750,11 +1926,16 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// for an unrelated reload.
 				r.weather.Reconfigure(
 					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+				r.weather.SetLocationConfigured(cfg.Weather.Configured)
+				r.weather.SetLocationLabel(cfg.Weather.Location)
 				r.weather.SetCity(cfg.Weather.City)
+				r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
+				r.syncNightLightWeatherLeaseLocked(cfg)
 				if len(geometryOutputs) > 0 {
 					r.dwell.leave()
 					for global := range geometryOutputs {
 						r.closeTrayOutputLocked(global)
+						r.mediaStrip.outputLostLocked(global)
 						if h := r.runningMenu; h != nil && h.open_ && h.output == global {
 							h.closeLocked()
 						}
@@ -1812,6 +1993,10 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				r.signalPolkitOutputChange()
+				if !runningAsTest() && genErr == nil {
+					go r.publishCommittedThemeSelection(cfg, tok)
+				}
 				if mediaConfigChanged && media != nil {
 					media.Configure(cfg.Media.Preferred, cfg.Media.Blacklist)
 				}
@@ -1828,6 +2013,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
 					plugins.syncBars()
+				}
+				if polkitPolicyChanged || polkitNeedsStart {
+					go r.configurePolkit()
 				}
 
 				// Released only after the replacement set holds its own, so
@@ -1864,10 +2052,12 @@ func (r *Registry) DropHost(global uint32) {
 	delete(r.bars, global)
 	delete(r.leases, global)
 	r.trayOutputLostLocked(global)
+	r.mediaStrip.outputLostLocked(global)
 	r.tooltips.outputLost(global)
 	toastOutputs := r.outputGlobalsLocked()
 	plugins := r.plugins
 	r.mu.Unlock()
+	r.signalPolkitOutputChange()
 	if bar != nil {
 		bar.stopAnimation()
 	}
@@ -1922,14 +2112,21 @@ func (r *Registry) Close() {
 	var leases []*services.Lease
 	var bars []*Bar
 	var audioLease, brightLease, networkLease *services.Lease
+	var nightLightLease *services.Lease
 	var bluetooth *services.Bluetooth
 	var inhibit io.Closer
 	var wallpaperSvc *wallpaper.Service
 	var wallsSvc wallsController
 	var wallpaperThumbCancel context.CancelFunc
+	var polkitCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
 	var depthEffects depthClockEffects
 	if locked {
+		if r.polkitHost != nil && r.polkitHost.open_ {
+			r.polkitHost.finishLocked(true)
+		}
+		polkitCancel = r.polkitCancel
+		r.polkitAgent, r.polkitCancel, r.polkitDone = nil, nil, nil
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
 			r.toasts.stopSlideAnimation()
@@ -1938,6 +2135,7 @@ func (r *Registry) Close() {
 			osdAux = r.osd.prepareHide()
 		}
 		r.closeTrayLocked()
+		r.mediaStrip.closeLocked()
 		if r.runningMenu != nil {
 			r.runningMenu.closeLocked()
 		}
@@ -1960,6 +2158,9 @@ func (r *Registry) Close() {
 		r.brightLease = nil
 		networkLease = r.networkLease
 		r.networkLease = nil
+		nightLightLease = r.nightLightWeatherLease
+		r.nightLightWeatherLease = nil
+		r.nightLightWeatherInterval = 0
 		wallpaperSvc = r.wallpaperSvc
 		r.wallpaperSvc = nil
 		wallsSvc = r.wallsService
@@ -1980,6 +2181,9 @@ func (r *Registry) Close() {
 		r.pushIdleInputsLocked()
 		r.mu.Unlock()
 	}
+	if polkitCancel != nil {
+		polkitCancel()
+	}
 	for _, bar := range bars {
 		bar.stopAnimation()
 	}
@@ -1998,6 +2202,9 @@ func (r *Registry) Close() {
 	}
 	if networkLease != nil {
 		networkLease.Release()
+	}
+	if nightLightLease != nil {
+		nightLightLease.Release()
 	}
 	if inhibit != nil {
 		_ = inhibit.Close()
@@ -2030,6 +2237,7 @@ func (r *Registry) Close() {
 		}
 	}
 	r.dwell.stop()
+	r.mediaIntent.close()
 	r.clock.Close()
 	r.metrics.Close()
 	r.weather.Close()
@@ -2175,6 +2383,9 @@ func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	weatherOut, weatherOK := r.rebuildWeatherPanelLocked()
 	r.mu.Unlock()
+	if r.nightLight != nil {
+		r.nightLight.Recompute()
+	}
 
 	r.publish(changed)
 	if controlOK {
@@ -2321,9 +2532,9 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 ) {
 	policy := cfg.ForConnector(connector)
 	r.mu.Lock()
-	blur := r.caps.Blur
+	blur, effect := r.caps.Blur, r.effectOutputs[connector]
 	r.mu.Unlock()
-	th, err := resolveOutputTheme(cfg, connector, tok, blur)
+	th, err := resolveOutputTheme(cfg, connector, tok, blur, effect)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
@@ -2437,6 +2648,7 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 	hooks.Handle = func(event wayland.Event) bool {
 		changed := innerHandle(event)
 		r.drivePointerTooltip(global, bar, event)
+		r.driveMediaHover(global, bar, event)
 		return changed
 	}
 	innerOutputSize := hooks.OutputSize
@@ -2510,6 +2722,10 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 		if h.open_ {
 			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: windowSwitcherSurfaceID})
 		}
+	}
+	if h := r.polkitHost; h != nil && h.open_ {
+		h.retheme(r.panelThemeForState(h.output, cfg, tokens))
+		pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: polkitSurfaceID})
 	}
 	if r.osd != nil {
 		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)

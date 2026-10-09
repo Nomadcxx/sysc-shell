@@ -42,7 +42,11 @@ const (
 	launcherRowHeight    = launcherRowPadTop + launcherIconSlot + launcherRowPadBottom
 	launcherRowGap       = 8
 	launcherSlotHeight   = launcherRowHeight + launcherRowGap
-	launcherFieldHeight  = 56
+	// launcherScrollbarClear is the space between the pills and the scrollbar
+	// in the panel's padding. It began as a full row gap, which read as
+	// detached from the list on the desktop.
+	launcherScrollbarClear = 5
+	launcherFieldHeight    = 56
 	// launcherMarkHeight balances the raster against the slashes beside it.
 	// At 23 the mark stood taller than the RoleTitle run and the slashes read
 	// light next to it; the owner picked shrinking the mark over promoting the
@@ -479,6 +483,12 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 		ItemCount:    len(results),
 		ItemHeight:   launcherSlotHeight,
 		ScrollOffset: h.launcherVisibleOffset(len(results)),
+		// Each pill sits launcherRowGap/2 inside the list on every side, so
+		// the bar starts the rest of launcherScrollbarClear beyond the list's
+		// right edge, and its ends stop level with the first and last pill
+		// instead of past them.
+		ScrollbarGap:  launcherScrollbarClear - launcherRowGap/2,
+		ScrollbarEnds: launcherRowGap / 2,
 		Item: func(i int) *ui.Node {
 			return launcherRow(r, h, results, i)
 		},

@@ -12,22 +12,22 @@ import (
 func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 	day := true
 	cases := []struct {
-		name    string
-		code    int
-		variant ui.EffectVariant
-		isDay   *bool
-		night   bool
+		name     string
+		code     int
+		variant  ui.EffectVariant
+		isDay    *bool
+		daylight float64
 	}{
-		{name: "clear day", code: 0, variant: ui.WeatherClear, isDay: &day},
-		{name: "clear night", code: 0, variant: ui.WeatherClear, isDay: func() *bool { v := false; return &v }(), night: true},
-		{name: "partly cloudy", code: 2, variant: ui.WeatherPartlyCloudy, isDay: &day},
-		{name: "cloudy", code: 3, variant: ui.WeatherCloudy, isDay: &day},
-		{name: "fog", code: 45, variant: ui.WeatherFog, isDay: &day},
-		{name: "rain", code: 61, variant: ui.WeatherRain, isDay: &day},
-		{name: "snow", code: 71, variant: ui.WeatherSnow, isDay: &day},
-		{name: "heavy snow", code: 75, variant: ui.WeatherHeavySnow, isDay: &day},
-		{name: "thunderstorm", code: 95, variant: ui.WeatherThunderstorm, isDay: &day},
-		{name: "unknown falls back to cloudy", code: 44, variant: ui.WeatherCloudy, isDay: &day},
+		{name: "clear day", code: 0, variant: ui.WeatherClear, isDay: &day, daylight: 1},
+		{name: "clear night", code: 0, variant: ui.WeatherClear, isDay: func() *bool { v := false; return &v }(), daylight: 0},
+		{name: "partly cloudy", code: 2, variant: ui.WeatherPartlyCloudy, isDay: &day, daylight: 1},
+		{name: "cloudy", code: 3, variant: ui.WeatherCloudy, isDay: &day, daylight: 1},
+		{name: "fog", code: 45, variant: ui.WeatherFog, isDay: &day, daylight: 1},
+		{name: "rain", code: 61, variant: ui.WeatherRain, isDay: &day, daylight: 1},
+		{name: "snow", code: 71, variant: ui.WeatherSnow, isDay: &day, daylight: 1},
+		{name: "heavy snow", code: 75, variant: ui.WeatherHeavySnow, isDay: &day, daylight: 1},
+		{name: "thunderstorm", code: 95, variant: ui.WeatherThunderstorm, isDay: &day, daylight: 1},
+		{name: "unknown falls back to cloudy", code: 44, variant: ui.WeatherCloudy, isDay: &day, daylight: 1},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,8 +39,8 @@ func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 			if spec.Program != ui.EffectWeather || spec.Variant != tt.variant {
 				t.Fatalf("spec = %+v, want weather variant %d", spec, tt.variant)
 			}
-			if spec.Night != tt.night {
-				t.Fatalf("spec night = %v, want %v", spec.Night, tt.night)
+			if spec.Daylight != tt.daylight {
+				t.Fatalf("spec daylight = %v, want %v", spec.Daylight, tt.daylight)
 			}
 			if err := spec.Validate(); err != nil {
 				t.Fatalf("effect spec is invalid: %v", err)
@@ -112,6 +112,7 @@ func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
 		t.Fatalf("hero effect = %+v, want the stable hero effect", effect)
 	}
 	want, ok := weatherEffectSpec(reading)
+	want.Daylight = effect.Effect.Daylight
 	if !ok || effect.Effect != want {
 		t.Fatalf("hero effect spec = %+v, want %+v", effect.Effect, want)
 	}
@@ -177,6 +178,7 @@ func TestControlCentreWeatherUsesTheSameWeatherEffect(t *testing.T) {
 	}
 	want, ok := weatherEffectSpec(reading)
 	want.SceneBias = -1 // the Control Centre card is wide enough to split
+	want.Daylight = effect.Effect.Daylight
 	if !ok || effect.Effect != want {
 		t.Fatalf("Today effect spec = %+v, want %+v", effect.Effect, want)
 	}
@@ -202,6 +204,58 @@ func TestWeatherPanelFitsLaptopScale(t *testing.T) {
 	if err := ui.LayoutColumn(root, ui.Rect{W: 460, H: 560}, h.measureText()); err != nil {
 		t.Fatalf("weather panel does not fit 460x560 at scale 1.25: %v", err)
 	}
+}
+
+func TestWeatherDaylightFollowsSunriseAndSunset(t *testing.T) {
+	zone := "Australia/Melbourne"
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		t.Skip("tzdata unavailable:", err)
+	}
+	day := []services.Day{{Date: "2026-10-08", Sunrise: "2026-10-08T06:38", Sunset: "2026-10-08T19:40"}}
+	night := false
+	base := services.Reading{Observed: true, Timezone: &zone, Daily: day, IsDay: &night}
+	at := func(hhmm string) time.Time {
+		v, err := time.ParseInLocation("2006-01-02T15:04", "2026-10-08T"+hhmm, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.UTC() // the clock is in any zone; the sky reads it in the reading's
+	}
+	for _, tc := range []struct {
+		name   string
+		clock  string
+		lo, hi float64
+	}{
+		{"before dawn", "05:54", 0, 0},
+		{"sunrise is mid-twilight", "06:38", .49, .51},
+		{"twenty minutes after sunrise", "06:58", 1, 1},
+		{"midday", "13:00", 1, 1},
+		{"ten minutes before sunset", "19:30", .7, .9},
+		{"sunset is mid-twilight", "19:40", .49, .51},
+		{"night", "22:30", 0, 0},
+	} {
+		got := weatherDaylight(base, at(tc.clock))
+		if got < tc.lo || got > tc.hi {
+			t.Errorf("%s: daylight %.3f, want [%v, %v]", tc.name, got, tc.lo, tc.hi)
+		}
+	}
+
+	t.Run("falls back to IsDay", func(t *testing.T) {
+		bad := "Not/AZone"
+		dayFlag := true
+		for name, r := range map[string]services.Reading{
+			"no timezone":     {Observed: true, Daily: day, IsDay: &dayFlag},
+			"bad timezone":    {Observed: true, Timezone: &bad, Daily: day, IsDay: &dayFlag},
+			"no daily":        {Observed: true, Timezone: &zone, IsDay: &dayFlag},
+			"unparseable sun": {Observed: true, Timezone: &zone, IsDay: &dayFlag, Daily: []services.Day{{Date: "2026-10-08", Sunrise: "dawn", Sunset: "dusk"}}},
+			"other date":      {Observed: true, Timezone: &zone, IsDay: &dayFlag, Daily: []services.Day{{Date: "2026-10-01", Sunrise: "2026-10-01T06:50", Sunset: "2026-10-01T19:32"}}},
+		} {
+			if got := weatherDaylight(r, at("22:30")); got != 1 {
+				t.Errorf("%s: daylight %v, want the IsDay fallback 1", name, got)
+			}
+		}
+	})
 }
 
 func TestWeatherScrimFillDarkensTheTextSide(t *testing.T) {
