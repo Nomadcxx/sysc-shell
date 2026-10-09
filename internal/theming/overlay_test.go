@@ -35,7 +35,7 @@ func TestUserTemplateOverlayTakesPrecedence(t *testing.T) {
 
 	home := t.TempDir()
 	only := func(name string) bool { return name == "foot" }
-	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback, 100); err != nil {
 		t.Fatal(err)
 	}
 	sidecar := filepath.Join(home, ".config", "foot", "themes", "sysc-shell")
@@ -64,7 +64,7 @@ func TestUserTemplateOverlayBrokenBodyRefused(t *testing.T) {
 	}
 	home := t.TempDir()
 	only := func(name string) bool { return name == "foot" }
-	outcomes, _, err := ApplyEnabled(home, only, theme.Fallback)
+	outcomes, _, err := ApplyEnabled(home, only, theme.Fallback, 100)
 	if err == nil || outcomes["foot"] == nil {
 		t.Fatalf("broken overlay accepted: err=%v outcomes=%v", err, outcomes)
 	}

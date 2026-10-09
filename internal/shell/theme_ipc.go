@@ -240,7 +240,7 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 		// palette that reads as a plain success is the shape of failure #101.
 		tok, err := r.tokensFor(cfg)
 		genErr = err
-		outcomes, adopted, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok)
+		outcomes, adopted, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok, cfg.TerminalOpacity)
 		if outcomes != nil {
 			r.reportTemplates(home, outcomes, adopted)
 		}

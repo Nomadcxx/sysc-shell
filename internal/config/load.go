@@ -222,7 +222,9 @@ type wireConfig struct {
 	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
 	Templates     map[string]bool      `json:"templates,omitempty"`
-	Plugins       *wirePlugins         `json:"plugins,omitempty"`
+	// TerminalOpacity is Config.TerminalOpacity; absent means 100.
+	TerminalOpacity *int         `json:"terminal-opacity,omitempty"`
+	Plugins         *wirePlugins `json:"plugins,omitempty"`
 }
 
 type wirePlugins struct {
@@ -444,6 +446,12 @@ func Parse(data []byte) (Config, error) {
 	}
 	if len(wire.Templates) > 0 {
 		cfg.Templates = wire.Templates
+	}
+	if v := wire.TerminalOpacity; v != nil {
+		if *v < TerminalOpacityMin || *v > TerminalOpacityMax {
+			return Config{}, pathErr("terminal-opacity", "%d is outside %d..%d", *v, TerminalOpacityMin, TerminalOpacityMax)
+		}
+		cfg.TerminalOpacity = *v
 	}
 	if wire.Plugins != nil {
 		plugins, err := applyPlugins(*wire.Plugins, "plugins")

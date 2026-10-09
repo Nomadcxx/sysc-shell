@@ -1240,7 +1240,7 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		// toast, and the palette stands either way. A nil outcomes map means
 		// the apply was queued behind a live one, whose caller reports it.
 		home := os.Getenv("HOME")
-		outcomes, adopted, _ := theming.ApplyEnabled(home, cfg.TemplateEnabled, tok)
+		outcomes, adopted, _ := theming.ApplyEnabled(home, cfg.TemplateEnabled, tok, cfg.TerminalOpacity)
 		if outcomes != nil {
 			r.reportTemplates(home, outcomes, adopted)
 		}

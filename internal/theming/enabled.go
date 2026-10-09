@@ -3,6 +3,7 @@ package theming
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +20,10 @@ type applyJob struct {
 	home    string
 	enabled func(string) bool
 	tok     theme.Tokens
-	done    chan applyResult
+	// terminalOpacity is the percentage written into each enabled terminal's
+	// config; 100 leaves the terminals' own settings alone.
+	terminalOpacity int
+	done            chan applyResult
 }
 
 var (
@@ -48,11 +52,11 @@ type applyResult struct {
 // shell themes everything it lists as themeable). The guarded write runs
 // first; only a refusal over the user's own edit falls through to the
 // adopting write, so a file the shell already owns is never backed up again.
-func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens) (map[string]error, []string, error) {
+func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens, terminalOpacity int) (map[string]error, []string, error) {
 	if home == "" || enabled == nil {
 		return nil, nil, nil
 	}
-	job := applyJob{home: home, enabled: enabled, tok: tok}
+	job := applyJob{home: home, enabled: enabled, tok: tok, terminalOpacity: terminalOpacity}
 	applyMu.Lock()
 	if applyBusy {
 		queueApplyLocked(job)
@@ -69,11 +73,11 @@ func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens) (map
 // nil values for success, and the templates adopted, even when another apply
 // is already running. As with ApplyEnabled, only the newest queued job runs; a
 // queued request replaced before it starts returns ErrApplySuperseded.
-func ApplyEnabledAndWait(home string, enabled func(string) bool, tok theme.Tokens) (map[string]error, []string, error) {
+func ApplyEnabledAndWait(home string, enabled func(string) bool, tok theme.Tokens, terminalOpacity int) (map[string]error, []string, error) {
 	if home == "" || enabled == nil {
 		return nil, nil, nil
 	}
-	job := applyJob{home: home, enabled: enabled, tok: tok, done: make(chan applyResult, 1)}
+	job := applyJob{home: home, enabled: enabled, tok: tok, terminalOpacity: terminalOpacity, done: make(chan applyResult, 1)}
 	applyMu.Lock()
 	if applyBusy {
 		queueApplyLocked(job)
@@ -107,7 +111,7 @@ func runApply(job applyJob) applyResult {
 	current := job
 	var result applyResult
 	for {
-		result.results, result.adopted, result.err = applyOnce(current.home, current.enabled, current.tok)
+		result.results, result.adopted, result.err = applyOnce(current.home, current.enabled, current.tok, current.terminalOpacity)
 		result.outcomes = applyFailures(result.results)
 		finishApplyWaiter(current.done, result)
 		applyMu.Lock()
@@ -132,7 +136,7 @@ func applyFailures(results map[string]error) map[string]error {
 	return failures
 }
 
-func applyOnce(home string, enabled func(string) bool, tok theme.Tokens) (map[string]error, []string, error) {
+func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, terminalOpacity int) (map[string]error, []string, error) {
 	// D6: a template body in $XDG_CONFIG_HOME/sysc-shell/theming-templates
 	// replaces the embedded one for its name; the write targets, the
 	// Complete() gate and the user-modified guard are unchanged.
@@ -188,11 +192,11 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens) (map[st
 			if !on {
 				// A disabled template has nothing to theme; its guard keeps
 				// a line the shell did not write.
-				record(name, applyTemplateTarget(name, home, false, rendered, false))
+				record(name, applyTemplateTarget(name, home, false, rendered, false, terminalOpacity))
 				continue
 			}
 			record(name, adopt(name, func(force bool) error {
-				return applyTemplateTarget(name, home, true, rendered, force)
+				return applyTemplateTarget(name, home, true, rendered, force, terminalOpacity)
 			}))
 		}
 	}
@@ -216,7 +220,8 @@ func writeTarget(home, name string) string {
 	}
 }
 
-func kittyPIDs(root string) []int {
+// procPIDs lists the processes under root whose comm is name.
+func procPIDs(root, name string) []int {
 	ents, err := os.ReadDir(root)
 	if err != nil {
 		return nil
@@ -234,16 +239,17 @@ func kittyPIDs(root string) []int {
 		if err != nil {
 			continue
 		}
-		if strings.TrimSpace(string(b)) == "kitty" {
+		if strings.TrimSpace(string(b)) == name {
 			pids = append(pids, pid)
 		}
 	}
 	return pids
 }
 
-func signalKitty(root string) error {
+// signalComm sends sig to every process named name.
+func signalComm(root, name string, sig syscall.Signal) error {
 	var first error
-	for _, pid := range kittyPIDs(root) {
+	for _, pid := range procPIDs(root, name) {
 		p, err := os.FindProcess(pid)
 		if err != nil {
 			if first == nil {
@@ -251,12 +257,18 @@ func signalKitty(root string) error {
 			}
 			continue
 		}
-		if err := p.Signal(syscall.SIGUSR1); err != nil && first == nil {
+		if err := p.Signal(sig); err != nil && first == nil {
 			first = err
 		}
 	}
 	return first
 }
+
+func signalKitty(root string) error { return signalComm(root, "kitty", syscall.SIGUSR1) }
+
+// signalGhostty asks ghostty to reload its config. ghostty 1.2+ handles
+// SIGUSR2; 1.3.1 was checked to log the reload and keep running.
+func signalGhostty(root string) error { return signalComm(root, "ghostty", syscall.SIGUSR2) }
 
 // templateTarget is the sidecar+directive model for one application: we own
 // a generated file, and manage exactly one include-ish line in the user's
@@ -273,6 +285,35 @@ type templateTarget struct {
 	directives func(home string) []directive
 	signal     func(root string) error
 	block      func(home string) (file, open, close string)
+	// opacity builds the terminal's owned opacity line for a value such as
+	// "0.85". Nil for applications without a background opacity.
+	opacity func(home, value string) valuedLine
+}
+
+// targetFiles hashes every file the target writes, keyed by path; a missing
+// file hashes as empty.
+func targetFiles(tgt templateTarget, home string) map[string]string {
+	paths := append([]string(nil), tgt.sidecar(home)...)
+	for _, d := range tgt.directives(home) {
+		paths = append(paths, d.file)
+	}
+	if tgt.opacity != nil {
+		paths = append(paths, tgt.opacity(home, "").file)
+	}
+	out := make(map[string]string, len(paths))
+	for _, p := range paths {
+		if b, err := os.ReadFile(p); err == nil {
+			out[p] = hash(b)
+		} else {
+			out[p] = ""
+		}
+	}
+	return out
+}
+
+// opacityValue is a percentage as the fraction terminals read.
+func opacityValue(percent int) string {
+	return fmt.Sprintf("%.2f", float64(percent)/100)
 }
 
 const (
@@ -300,6 +341,9 @@ var templateTargets = map[string]templateTarget{
 				create:  true,
 			}}
 		},
+		opacity: func(h, v string) valuedLine {
+			return valuedLine{file: joined(h, ".config", "alacritty", "alacritty.toml"), key: "opacity=", line: "opacity = " + v, section: "window"}
+		},
 	},
 	"foot": {
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "foot", "themes", "sysc-shell")} },
@@ -317,6 +361,10 @@ var templateTargets = map[string]templateTarget{
 				create:  true,
 			}}
 		},
+		// foot 1.28 reads alpha in the [colors-dark] section the template writes.
+		opacity: func(h, v string) valuedLine {
+			return valuedLine{file: joined(h, ".config", "foot", "foot.ini"), key: "alpha=", line: "alpha=" + v, section: "colors-dark"}
+		},
 	},
 	"ghostty": {
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "ghostty", "themes", "sysc-shell")} },
@@ -328,6 +376,11 @@ var templateTargets = map[string]templateTarget{
 				create: true,
 			}}
 		},
+		// The "=" suffix keeps background-opacity-cells out of the match.
+		opacity: func(h, v string) valuedLine {
+			return valuedLine{file: joined(h, ".config", "ghostty", "config"), key: "background-opacity=", line: "background-opacity = " + v}
+		},
+		signal: signalGhostty,
 	},
 	"kitty": {
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "kitty", "themes", "sysc-shell.conf")} },
@@ -343,6 +396,9 @@ var templateTargets = map[string]templateTarget{
 			}}
 		},
 		signal: signalKitty,
+		opacity: func(h, v string) valuedLine {
+			return valuedLine{file: joined(h, ".config", "kitty", "kitty.conf"), key: "background_opacity", line: "background_opacity " + v}
+		},
 	},
 	"helix": {
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "helix", "themes", "sysc-shell.toml")} },
@@ -437,12 +493,18 @@ var templateTargets = map[string]templateTarget{
 				returnConfig: true,
 			}}
 		},
+		opacity: func(h, v string) valuedLine {
+			return valuedLine{
+				file: joined(h, ".config", "wezterm", "wezterm.lua"), key: "config.window_background_opacity",
+				line: "config.window_background_opacity = " + v, returnConfig: true,
+			}
+		},
 	},
 }
 
 // applyTemplateTarget is the per-app dispatch: sidecar+directive for table
 // members, and a guarded whole-file write for the rest.
-func applyTemplateTarget(name, home string, on bool, rendered string, force bool) error {
+func applyTemplateTarget(name, home string, on bool, rendered string, force bool, terminalOpacity int) error {
 	tgt, known := templateTargets[name]
 	if !known {
 		target := writeTarget(home, name)
@@ -476,6 +538,7 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 	}
 	sidecars := tgt.sidecar(home)
 	if on {
+		before := targetFiles(tgt, home)
 		for _, sidecar := range sidecars {
 			if err := applySidecar(sidecar, rendered, force); err != nil {
 				return err
@@ -486,10 +549,38 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 				return err
 			}
 		}
-		if tgt.signal != nil {
-			return tgt.signal(procRoot)
+		var opacityErr error
+		if tgt.opacity != nil {
+			v := tgt.opacity(home, opacityValue(terminalOpacity))
+			// Zero is a config that never set the field, not a request for
+			// invisible terminals; it is unmanaged like 100.
+			if terminalOpacity <= 0 || terminalOpacity >= 100 {
+				opacityErr = removeValuedLine(v)
+			} else {
+				opacityErr = ensureValuedLine(v, force)
+			}
 		}
-		return nil
+		// A guarded pass refused over the user's own opacity line is retried
+		// as an adopting write, which sends the reload; sending one here too
+		// would announce two.
+		if !force && errors.Is(opacityErr, ErrUserModified) {
+			return opacityErr
+		}
+		// The colours above are written whatever the opacity step says, so a
+		// failed opacity write must not keep them from the running terminal.
+		// An apply that changed nothing sends no reload: every shell config
+		// reload runs one, and ghostty announces each reload it is sent.
+		var signalErr error
+		if tgt.signal != nil && !maps.Equal(before, targetFiles(tgt, home)) {
+			signalErr = tgt.signal(procRoot)
+		}
+		return errors.Join(opacityErr, signalErr)
+	}
+	if tgt.opacity != nil {
+		// Removal matches the recorded line, so the value is irrelevant here.
+		if err := removeValuedLine(tgt.opacity(home, "")); err != nil {
+			return err
+		}
 	}
 	for _, dir := range tgt.directives(home) {
 		if err := RemoveDirective(dir); err != nil {

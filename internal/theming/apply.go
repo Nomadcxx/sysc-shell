@@ -575,7 +575,7 @@ func directiveContent(body []byte, lines []string, d directive) []byte {
 	}
 	header := "[" + d.section + "]"
 	for i, ln := range lines {
-		if strings.TrimSpace(ln) == header {
+		if name, ok := sectionHeader(ln); ok && name == d.section {
 			out := make([]string, 0, len(lines)+1)
 			out = append(out, lines[:i+1]...)
 			out = append(out, d.line)
@@ -588,6 +588,20 @@ func directiveContent(body []byte, lines []string, d directive) []byte {
 		out = header + "\n" + d.line + "\n"
 	}
 	return []byte(out)
+}
+
+// sectionHeader reports the section a header line opens. A trailing comment
+// and spaces inside the brackets do not change the section: "[window] # x"
+// is [window], and missing it would append a second table that TOML refuses.
+func sectionHeader(line string) (string, bool) {
+	trim := strings.TrimSpace(line)
+	if i := strings.Index(trim, "#"); i >= 0 {
+		trim = strings.TrimSpace(trim[:i])
+	}
+	if len(trim) < 2 || trim[0] != '[' || trim[len(trim)-1] != ']' {
+		return "", false
+	}
+	return strings.TrimSpace(trim[1 : len(trim)-1]), true
 }
 
 // backupUserFileOnce preserves the complete user config before a confirmed

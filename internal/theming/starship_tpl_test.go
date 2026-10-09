@@ -31,7 +31,7 @@ func TestStarshipManagesPaletteBlockInUserConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "starship" }
-	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback, 100); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(cfg)
@@ -51,7 +51,7 @@ func TestStarshipManagesPaletteBlockInUserConfig(t *testing.T) {
 	}
 	// An edited managed block is adopted: the shell's block is restored and
 	// the edit kept in the backup (owner decision, 2026-10-09).
-	if _, adopted, err := ApplyEnabled(home, only, theme.Fallback); err != nil || len(adopted) != 1 || adopted[0] != "starship" {
+	if _, adopted, err := ApplyEnabled(home, only, theme.Fallback, 100); err != nil || len(adopted) != 1 || adopted[0] != "starship" {
 		t.Fatalf("edited managed block: adopted %v, err %v", adopted, err)
 	}
 	if current, _ := os.ReadFile(cfg); strings.Contains(string(current), "# user edit") {
@@ -62,14 +62,14 @@ func TestStarshipManagesPaletteBlockInUserConfig(t *testing.T) {
 		t.Fatalf("managed block backup = %q, %v", backup, err)
 	}
 	// Re-apply must be idempotent.
-	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback, 100); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(cfg)
 	if strings.Count(string(b2), blockOpen) != 1 || strings.Count(string(b2), `palette = "sysc-shell"`) != 1 {
 		t.Fatalf("re-apply duplicated: %s", b2)
 	}
-	if _, _, err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
+	if _, _, err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback, 100); err != nil {
 		t.Fatal(err)
 	}
 	b3, _ := os.ReadFile(cfg)
