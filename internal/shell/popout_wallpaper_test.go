@@ -270,15 +270,15 @@ func TestWallpaperGridPacksFourTilesPerRow(t *testing.T) {
 	thumb := tile.Children[0].Children[0]
 	switch thumb.Kind {
 	case ui.KindImage:
-		if thumb.ImageW != wallpaperTileWidth || thumb.ImageH != wallpaperThumbH {
-			t.Fatalf("raster box = %dx%d, want %dx%d", thumb.ImageW, thumb.ImageH, wallpaperTileWidth, wallpaperThumbH)
+		if g := wallpaperGridOf(h); thumb.ImageW != g.thumbW || thumb.ImageH != g.thumbH {
+			t.Fatalf("raster box = %dx%d, want %dx%d", thumb.ImageW, thumb.ImageH, g.thumbW, g.thumbH)
 		}
 	case ui.KindRow:
 		// The placeholder holds the tile's box so a late preview cannot reflow
 		// the grid. It carries a glyph only where the embedded icon subset has
 		// one, which for media it does not.
-		if thumb.Width != wallpaperTileWidth || thumb.Height != wallpaperThumbH {
-			t.Fatalf("placeholder box = %dx%d, want %dx%d", thumb.Width, thumb.Height, wallpaperTileWidth, wallpaperThumbH)
+		if g := wallpaperGridOf(h); thumb.Width != g.thumbW || thumb.Height != g.thumbH {
+			t.Fatalf("placeholder box = %dx%d, want %dx%d", thumb.Width, thumb.Height, g.thumbW, g.thumbH)
 		}
 		for _, c := range thumb.Children {
 			if c.Kind == ui.KindIcon && !render.ValidMaterialIcon(c.Icon) {
@@ -1177,7 +1177,7 @@ func TestWallpaperOnlyNamesIconsTheSubsetCarries(t *testing.T) {
 	walk(h.root)
 	// The grid's rows are built on demand, so check the tiles too.
 	for _, entry := range wallpaperMedia(h) {
-		walk(wallpaperTile(reg, h, entry, 0))
+		walk(wallpaperTile(reg, h, wallpaperGridOf(h), entry, 0))
 	}
 	if len(bad) > 0 {
 		t.Fatalf("icons not in the embedded subset: %v (have %v)", bad, render.MaterialIconNames())
@@ -1211,6 +1211,63 @@ func TestWallpaperColumnFitsAShortPanel(t *testing.T) {
 	last := h.root.Children[len(h.root.Children)-1]
 	if bottom := last.Bounds.Y + last.Bounds.H; bottom > short {
 		t.Errorf("last row ends at %d, past the %d-tall panel", bottom, short)
+	}
+}
+
+// The grid's tiles keep visible gaps on both axes, hold their thumbnail inside
+// the tile padding, and use the width beside the scrollbar. The rows used to
+// touch because the tile stretched to the whole row pitch, and the 210 px
+// image sat in a 210 px tile with 4 px padding (sysc-1066).
+func TestWallpaperTileGeometry(t *testing.T) {
+	for _, width := range []int{980, 760} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			t.Parallel()
+			reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
+			h := wallpaperHost(t, reg)
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			h.place.Panel.W = width
+			reg.rebuildPanel(h)
+			if err := ui.LayoutColumn(h.root, ui.Rect{W: width, H: h.place.Panel.H}, h.measureText()); err != nil {
+				t.Fatalf("layout: %v", err)
+			}
+			list := wallpaperListNode(t, h)
+			if len(list.Children) < 2 {
+				t.Fatalf("laid out %d rows, want the seeded two", len(list.Children))
+			}
+			first, second := list.Children[0].Children, list.Children[1].Children
+			if len(first) != wallpaperColumns {
+				t.Fatalf("first row holds %d tiles, want %d", len(first), wallpaperColumns)
+			}
+			if gap := second[0].Bounds.Y - (first[0].Bounds.Y + first[0].Bounds.H); gap < wallpaperRowGap {
+				t.Errorf("rows are %d px apart, want at least %d", gap, wallpaperRowGap)
+			}
+			for i := 1; i < len(first); i++ {
+				if gap := first[i].Bounds.X - (first[i-1].Bounds.X + first[i-1].Bounds.W); gap != wallpaperColGap {
+					t.Errorf("tiles %d and %d are %d px apart, want %d", i-1, i, gap, wallpaperColGap)
+				}
+			}
+			for i, tile := range first {
+				inner := tile.Bounds
+				inner.X += tile.Padding
+				inner.Y += tile.Padding
+				inner.W -= 2 * tile.Padding
+				inner.H -= 2 * tile.Padding
+				thumb := tile.Children[0].Children[0].Bounds
+				if thumb.X < inner.X || thumb.Y < inner.Y ||
+					thumb.X+thumb.W > inner.X+inner.W || thumb.Y+thumb.H > inner.Y+inner.H {
+					t.Errorf("tile %d thumbnail %+v leaves the padded tile %+v", i, thumb, inner)
+				}
+			}
+			content := list.Bounds.X + list.Bounds.W - list.Padding
+			right := first[len(first)-1].Bounds.X + first[len(first)-1].Bounds.W
+			if right > content-wallpaperScrollStrip {
+				t.Errorf("last tile ends at %d, inside the scrollbar strip (list ends %d)", right, content)
+			}
+			if slack := content - wallpaperScrollStrip - right; slack >= wallpaperColumns {
+				t.Errorf("grid leaves %d px unused beside the scrollbar", slack)
+			}
+		})
 	}
 }
 
@@ -1412,7 +1469,7 @@ func TestDecodedThumbReachesItsLaidOutTile(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeWallpaperJPEG(t, still)
-	if _, _, err := worker.Request(wallpaperThumbKey(still)); err != nil {
+	if _, _, err := worker.Request(wallpaperThumbKey(still, wallpaperGridOf(h))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1541,8 +1598,8 @@ func TestWallpaperGridRowsOnLaptop(t *testing.T) {
 	defer reg.mu.Unlock()
 	h.place.Panel.W, h.place.Panel.H = 980, 820
 	reg.rebuildPanel(h)
-	if got := wallpaperListNode(t, h).Height; got < 4*wallpaperRowHeight {
-		t.Fatalf("grid is %d tall, want at least four %d rows", got, wallpaperRowHeight)
+	if pitch := wallpaperGridOf(h).pitch; wallpaperListNode(t, h).Height < 4*pitch {
+		t.Fatalf("grid is %d tall, want at least four %d rows", wallpaperListNode(t, h).Height, pitch)
 	}
 	if err := ui.LayoutColumn(h.root, ui.Rect{W: 980, H: 820}, h.measureText()); err != nil {
 		t.Fatalf("layout: %v", err)

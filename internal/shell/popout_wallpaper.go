@@ -24,18 +24,26 @@ import (
 
 // Wallpaper picker chrome. The plugin's layout with a virtualized grid in place
 // of its page buttons: pagination was a plugin-API ceiling, not a preference
-// (D4/D8). Four 210px columns plus three 10px gaps and the padding come to 902,
-// inside the 980 panel.
+// (D4/D8). The grid's tile size is derived from the panel width (wallpaperGrid).
 const (
-	wallpaperColumns    = 4
-	wallpaperTileWidth  = wallpaper.ThumbWidth
-	wallpaperThumbH     = wallpaper.ThumbHeight
-	wallpaperGridGap    = 10
-	wallpaperPadding    = 16
-	wallpaperFieldH     = 44
-	wallpaperCaptionH   = 22
-	wallpaperTileHeight = wallpaperThumbH + wallpaperCaptionH
-	wallpaperRowHeight  = wallpaperTileHeight + wallpaperGridGap
+	wallpaperColumns  = 4
+	wallpaperGridGap  = 10
+	wallpaperPadding  = 16
+	wallpaperFieldH   = 44
+	wallpaperCaptionH = 22
+
+	// The tile grid. The gaps are what keep rows apart: the virtual list
+	// centres a row of tile height inside the row pitch, so the pitch minus
+	// the tile is empty space. The scroll strip is the 4 px scrollbar the list
+	// paints over its right edge, plus clearance from the last column. The
+	// row pitch these give (144 at the 980 panel) is what still fits four rows
+	// in the laptop's 580 px grid.
+	wallpaperColGap       = 12
+	wallpaperRowGap       = 12
+	wallpaperTilePad      = 5
+	wallpaperTileInnerGap = 5
+	wallpaperTileCaptionH = 20
+	wallpaperScrollStrip  = 12
 
 	// Chrome controls. The output select is D4's 170px minimum.
 	wallpaperOutputWidth     = 170
@@ -288,6 +296,7 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	after = append(after, wallpaperFooter(h, media))
 
+	grid := wallpaperGridFor(inner)
 	rows := (len(media) + wallpaperColumns - 1) / wallpaperColumns
 	used := 0
 	for _, child := range append(slices.Clone(children), after...) {
@@ -296,10 +305,10 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	list := &ui.Node{
 		Kind:       ui.KindVirtualList,
 		ItemCount:  rows,
-		ItemHeight: wallpaperRowHeight,
+		ItemHeight: grid.pitch,
 		Height:     max(h.place.Panel.H-2*wallpaperPadding-used, 0),
 		Item: func(row int) *ui.Node {
-			return wallpaperRow(r, h, media, row)
+			return wallpaperRow(r, h, grid, media, row)
 		},
 	}
 	if len(media) == 0 {
@@ -523,26 +532,53 @@ func wallpaperButton(h *PanelHost, action, label string, selected bool) *ui.Node
 	return n
 }
 
+// wallpaperGrid is the tile geometry for one grid width. Tiles share the width
+// left beside the scroll strip, the thumbnail fills the tile inside its
+// padding, and its height keeps the preview cache's aspect: the painter scales
+// a raster to its box without preserving aspect, so a box off that ratio would
+// stretch every preview.
+type wallpaperGrid struct {
+	tileW, tileH   int
+	thumbW, thumbH int
+	pitch          int
+}
+
+func wallpaperGridFor(width int) wallpaperGrid {
+	tileW := max((width-wallpaperScrollStrip-(wallpaperColumns-1)*wallpaperColGap)/wallpaperColumns, 2*wallpaperTilePad+1)
+	thumbW := tileW - 2*wallpaperTilePad
+	thumbH := max(thumbW*wallpaper.ThumbHeight/wallpaper.ThumbWidth, 1)
+	tileH := 2*wallpaperTilePad + thumbH + wallpaperTileInnerGap + wallpaperTileCaptionH
+	return wallpaperGrid{tileW: tileW, tileH: tileH, thumbW: thumbW, thumbH: thumbH, pitch: tileH + wallpaperRowGap}
+}
+
+// wallpaperGridOf is the grid for this host's panel width.
+func wallpaperGridOf(h *PanelHost) wallpaperGrid {
+	return wallpaperGridFor(max(h.place.Panel.W-2*wallpaperPadding, 0))
+}
+
 // wallpaperRow builds one row of up to four tiles. It runs inside layout, on
 // the Wayland owner, so it only ever reads already-decoded rasters.
-func wallpaperRow(r *Registry, h *PanelHost, media []wallpaper.Entry, row int) *ui.Node {
+//
+// The row carries the tile height, so the virtual list centres it in the row
+// pitch and the difference stays empty: that is the gap between rows.
+func wallpaperRow(r *Registry, h *PanelHost, g wallpaperGrid, media []wallpaper.Entry, row int) *ui.Node {
 	start := row * wallpaperColumns
 	tiles := make([]*ui.Node, 0, wallpaperColumns)
 	for i := start; i < start+wallpaperColumns && i < len(media); i++ {
-		tiles = append(tiles, wallpaperTile(r, h, media[i], i))
+		tiles = append(tiles, wallpaperTile(r, h, g, media[i], i))
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: wallpaperGridGap, Children: tiles}
+	return &ui.Node{Kind: ui.KindRow, Gap: wallpaperColGap, Height: g.tileH, Children: tiles}
 }
 
 // wallpaperTile is a capsule around a thumbnail and a caption. The capsule
 // supplies the tile chrome and takes its radius from the theme's CardRadius,
 // so the tile follows the user's configured radius.
-func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) *ui.Node {
-	raster := wallpaperThumbFor(r, entry)
+func wallpaperTile(r *Registry, h *PanelHost, g wallpaperGrid, entry wallpaper.Entry, index int) *ui.Node {
+	raster := wallpaperThumbFor(r, g, entry)
 	thumb := &ui.Node{
 		Kind:   ui.KindImage,
-		ImageW: wallpaperTileWidth,
-		ImageH: wallpaperThumbH,
+		ImageW: g.thumbW,
+		ImageH: g.thumbH,
 		Image:  raster,
 	}
 	// A thumbnail that has not decoded yet, or cannot be decoded at all, keeps
@@ -550,7 +586,7 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 	var body []*ui.Node
 	if raster == nil {
 		placeholder := &ui.Node{
-			Kind: ui.KindRow, Width: wallpaperTileWidth, Height: wallpaperThumbH,
+			Kind: ui.KindRow, Width: g.thumbW, Height: g.thumbH,
 		}
 		if glyph := wallpaperPlaceholderGlyph(entry); glyph != "" {
 			placeholder.Children = []*ui.Node{{
@@ -564,19 +600,21 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 	body = append(body, &ui.Node{
 		Kind:     ui.KindText,
 		Text:     wallpaperCaption(h, entry),
-		MaxWidth: wallpaperTileWidth,
+		MaxWidth: g.thumbW,
+		Height:   wallpaperTileCaptionH,
 	})
 
 	tile := &ui.Node{
 		Kind:      ui.KindCapsule,
 		Fill:      ui.FillContainerHigh,
-		Width:     wallpaperTileWidth,
-		Padding:   theme.MarginXS,
+		Width:     g.tileW,
+		Height:    g.tileH,
+		Padding:   wallpaperTilePad,
 		Action:    "wallpaper-tile",
 		Name:      entry.Path,
 		Focusable: true,
 		Children: []*ui.Node{{
-			Kind: ui.KindColumn, Gap: theme.MarginXS, Children: body,
+			Kind: ui.KindColumn, Gap: wallpaperTileInnerGap, Children: body,
 		}},
 	}
 	// The output's current wallpaper is outlined, so the picker says what is
@@ -1154,7 +1192,7 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 // This runs inside the virtual list's Item builder, which layout calls on the
 // Wayland owner, so it must never decode here: it looks the raster up and asks
 // for it, and the next snapshot picks up the result.
-func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
+func wallpaperThumbFor(r *Registry, g wallpaperGrid, entry wallpaper.Entry) *ui.Image {
 	if r == nil || entry.IsDir {
 		return nil
 	}
@@ -1170,7 +1208,7 @@ func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
 	if _, err := os.Stat(source); err != nil {
 		return nil
 	}
-	key := wallpaperThumbKey(source)
+	key := wallpaperThumbKey(source, g)
 	worker := r.wallpaperThumbsLocked()
 	if image, ok := worker.Lookup(key); ok {
 		return image
@@ -1180,9 +1218,9 @@ func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
 }
 
 // wallpaperThumbKey is the decode request for one cached preview: the
-// preview file scaled to the tile's thumbnail box.
-func wallpaperThumbKey(preview string) icons.Key {
-	return icons.Key{Name: preview, W: wallpaperTileWidth, H: wallpaperThumbH}
+// preview file scaled to the grid's thumbnail box.
+func wallpaperThumbKey(preview string, g wallpaperGrid) icons.Key {
+	return icons.Key{Name: preview, W: g.thumbW, H: g.thumbH}
 }
 
 // wallpaperStartLocked starts the wallpaper service if it is not running.
