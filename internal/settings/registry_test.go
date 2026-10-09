@@ -24,6 +24,28 @@ func TestRegistryCoversAllSections(t *testing.T) {
 	}
 }
 
+func TestNightLightSettingsValidateAndUseHundredKelvinSteps(t *testing.T) {
+	r := Default()
+	for _, path := range []string{"night-light.night-kelvin", "night-light.day-kelvin"} {
+		e := r.ByPath(path)
+		if e == nil || e.Step != 100 || e.Kind != KindInt || e.Present != PresentSlider {
+			t.Fatalf("%s entry = %+v, want a 100 K slider", path, e)
+		}
+	}
+	if e := r.ByPath("night-light.mode"); e == nil || e.Section != "Night Light" || e.Present != PresentAuto || !slices.Equal(e.Options,
+		[]string{config.NightLightModeOff, config.NightLightModeSunset, config.NightLightModeCustom, config.NightLightModeAlways}) {
+		t.Fatalf("night-light.mode entry = %+v", e)
+	}
+	cfg := config.Default()
+	if err := r.ByPath("night-light.night-kelvin").Set(&cfg, "3501"); err == nil {
+		t.Fatal("night temperature accepted a value outside the 100 K steps")
+	}
+	cfg.NightLight.DayKelvin = 4500
+	if err := r.ByPath("night-light.night-kelvin").Set(&cfg, "5000"); err == nil {
+		t.Fatal("night temperature exceeded the configured day temperature")
+	}
+}
+
 func TestEntryGetSetRoundTrip(t *testing.T) {
 	t.Parallel()
 	r := Default()
@@ -349,9 +371,9 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Sixteen sections include locker presentation alongside Session policy.
-	if len(names) != 16 {
-		t.Fatalf("SectionNames = %d sections, want sixteen", len(names))
+	// Night Light adds one section to the Look cluster.
+	if len(names) != 17 {
+		t.Fatalf("SectionNames = %d sections, want seventeen", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {

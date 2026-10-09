@@ -13,10 +13,22 @@ func mediaBarRegistry(t *testing.T) (*Registry, *Bar, *hostHarness) {
 	r.setTestBar(7, bar)
 	harness := &hostHarness{}
 	r.mu.Lock()
+	// These tests install a synthetic snapshot directly, so stop the startup
+	// relay before it can replace that snapshot with the unavailable service's
+	// cached state.
+	media := r.media
+	if r.mediaRelayCancel != nil {
+		close(r.mediaRelayCancel)
+		r.mediaRelayCancel = nil
+	}
+	r.media = nil
 	r.mediaState = services.MediaState{Available: true, Title: "Track", CanPause: true, Status: services.PlaybackPlaying}
 	r.mediaStrip = newMediaStripHost(r, harness)
 	r.bindBarPanelActionsLocked(7, bar)
 	r.mu.Unlock()
+	if media != nil {
+		media.Close()
+	}
 	return r, bar, harness
 }
 

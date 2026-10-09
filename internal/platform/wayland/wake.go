@@ -26,6 +26,7 @@ type wakePipe struct {
 	selection []SelectionRequest
 	pastes    []pasteResult
 	idle      []IdleRequest
+	gamma     []GammaRequest
 	// reload is set when a SIGHUP arrived. The owner reads and clears it, so
 	// repeated signals during one wait coalesce into a single reload.
 	reload bool
@@ -41,7 +42,7 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult, idleCh <-chan IdleRequest) <-chan struct{} {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult, idleCh <-chan IdleRequest, gammaCh <-chan GammaRequest) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -93,6 +94,15 @@ func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation
 				w.idle = append(w.idle, req)
 				w.mu.Unlock()
 				w.signal()
+			case req, ok := <-gammaCh:
+				if !ok {
+					gammaCh = nil
+					continue
+				}
+				w.mu.Lock()
+				w.gamma = append(w.gamma, req)
+				w.mu.Unlock()
+				w.signal()
 			}
 		}
 	}()
@@ -134,6 +144,14 @@ func (w *wakePipe) takeIdle() []IdleRequest {
 	w.mu.Lock()
 	out := w.idle
 	w.idle = nil
+	w.mu.Unlock()
+	return out
+}
+
+func (w *wakePipe) takeGamma() []GammaRequest {
+	w.mu.Lock()
+	out := w.gamma
+	w.gamma = nil
 	w.mu.Unlock()
 	return out
 }

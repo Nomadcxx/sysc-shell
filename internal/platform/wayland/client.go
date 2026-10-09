@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/backgroundeffect"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/gamma"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/inhibit"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/screencopy"
@@ -136,6 +137,12 @@ type Callbacks struct {
 	// IdleEvents carries compositor idled/resumed verdicts back to the
 	// policy loop. Nil drops them.
 	IdleEvents chan<- IdleEvent
+	// Gamma carries colour-temperature requests. Each request applies to
+	// every bound output. It is owned by the caller and may be nil.
+	Gamma <-chan GammaRequest
+	// GammaEvents carries per-output gamma readiness or failure back to the
+	// policy loop. Nil drops them.
+	GammaEvents chan<- GammaEvent
 	// DropAux releases per-aux resources after a compositor close, surface
 	// failure, or output loss, when the AuxSpec has no OnDrop handler. Requested
 	// closes and replacements are not echoed.
@@ -196,7 +203,7 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	pastes := make(chan pasteResult, 4)
-	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, pastes, callbacks.Idle)
+	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, pastes, callbacks.Idle, callbacks.Gamma)
 	defer func() {
 		cancel()
 		<-bridgeDone
@@ -249,9 +256,25 @@ type owner struct {
 	// idleEvQueue holds idled/resumed events that could not be sent without
 	// blocking; o.wake schedules the retry. wake is set when the loop starts.
 	idleEvQueue []IdleEvent
-	wake        *wakePipe
-	pointer     *client.Pointer
-	keyboard    *client.Keyboard
+	// gammaMgr is nil when the compositor does not advertise
+	// zwlr-gamma-control; the night light then reports unsupported.
+	gammaMgr *gamma.ZwlrGammaControlManagerV1
+	// gammaFactory is nil in production; unit tests use it to supply a fake
+	// control without creating a Wayland connection.
+	gammaFactory func(*client.Output) (gammaControl, error)
+	// gammaOut holds the live control per wl_output global. Entries survive
+	// a compositor-side failure or a neutral request so a later request can
+	// retry once.
+	gammaOut map[uint32]*gammaOutput
+	// gammaCurrent is the last request applied to ready outputs. Nil until
+	// the first request arrives.
+	gammaCurrent *GammaRequest
+	// gammaEvQueue holds gamma events that could not be sent without
+	// blocking, mirroring idleEvQueue.
+	gammaEvQueue []GammaEvent
+	wake         *wakePipe
+	pointer      *client.Pointer
+	keyboard     *client.Keyboard
 
 	textInputMgr *textinput.ZwpTextInputManagerV3
 	textInput    *textinput.ZwpTextInputV3
@@ -444,6 +467,15 @@ func (o *owner) bindGlobals() error {
 			return err
 		}
 	}
+	// Gamma control is optional like idle: without it the night light
+	// reports the compositor does not offer it, everything else is
+	// unaffected.
+	if _, ok := o.rs.singletons[gamma.ZwlrGammaControlManagerV1InterfaceName]; ok {
+		o.gammaMgr = gamma.NewZwlrGammaControlManagerV1(ctx)
+		if err := o.bindSingleton(gamma.ZwlrGammaControlManagerV1InterfaceName, o.gammaMgr); err != nil {
+			return err
+		}
+	}
 	// Inhibit is optional like idle: without it the region selector still
 	// works, the compositor just keeps firing its own binds mid-selection.
 	if _, ok := o.rs.singletons[inhibit.ZwpKeyboardShortcutsInhibitManagerV1InterfaceName]; ok {
@@ -502,6 +534,7 @@ func (o *owner) bindOutput(global, version uint32) {
 	}
 	h.proxy = proxy
 	h.bar.cleanup.push("output", proxy.Release)
+	o.attachGamma(h)
 	o.attachOutputHandlers(h)
 }
 
@@ -559,6 +592,11 @@ func (o *owner) destroyGlobals() error {
 	if o.idleNotifier != nil {
 		errs = append(errs, o.idleNotifier.Destroy())
 		o.idleNotifier = nil
+	}
+	o.destroyGammaAll()
+	if o.gammaMgr != nil {
+		errs = append(errs, o.gammaMgr.Destroy())
+		o.gammaMgr = nil
 	}
 	errs = append(errs, o.destroySelection()...)
 	if o.pointer != nil {
@@ -1370,7 +1408,11 @@ func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResul
 			for _, req := range wake.takeIdle() {
 				o.armIdle(req.ID, req.TimeoutMS)
 			}
+			for _, req := range wake.takeGamma() {
+				o.applyGamma(req)
+			}
 			o.deliverIdleEvents()
+			o.deliverGammaEvents()
 			for _, p := range wake.takePastes() {
 				o.deliverPaste(p)
 			}
@@ -1457,6 +1499,7 @@ func (o *owner) teardownHost(h *OutputHost) error {
 	h.alive = false
 	var errs []error
 
+	o.destroyGamma(h.global)
 	o.closeAllAux(h)
 
 	h.bar.sched.Close()

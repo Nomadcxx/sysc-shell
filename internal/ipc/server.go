@@ -71,6 +71,8 @@ type Handlers struct {
 	Plugins func(method string, params json.RawMessage) (map[string]any, error)
 	// Theme answers every theme.* method.
 	Theme func(method string, params json.RawMessage) (map[string]any, error)
+	// NightLight answers every nightlight.* method.
+	NightLight func(method string, params json.RawMessage) (map[string]any, error)
 }
 
 // shutdownGrace bounds how long Serve waits for in-flight requests once its
@@ -340,6 +342,16 @@ func (s *Server) handleLine(line string) []byte {
 				return envelope(req.ID, "", "theme handler unset")
 			}
 			body, err := s.h.Theme(req.Method, req.Params)
+			if err != nil {
+				return envelope(req.ID, "", err.Error())
+			}
+			return envelope(req.ID, "ok", "", body)
+		}
+		if strings.HasPrefix(req.Method, "nightlight.") {
+			if s.h.NightLight == nil {
+				return envelope(req.ID, "", "night light handler unset")
+			}
+			body, err := s.h.NightLight(req.Method, req.Params)
 			if err != nil {
 				return envelope(req.ID, "", err.Error())
 			}

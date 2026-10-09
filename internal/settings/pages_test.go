@@ -50,7 +50,7 @@ func TestScreensaverFollowsWallpaperInLookCluster(t *testing.T) {
 		if cluster.Name != "Look" {
 			continue
 		}
-		want := []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver"}
+		want := []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver", "Night Light"}
 		if !slices.Equal(cluster.Sections, want) {
 			t.Fatalf("Look sections = %v, want %v", cluster.Sections, want)
 		}

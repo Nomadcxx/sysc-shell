@@ -64,13 +64,18 @@ type Registry struct {
 	// matches the zero value.
 	capsKnown bool
 
-	clock        *services.Clock
-	metrics      *services.Metrics
-	weather      *services.Weather
-	sample       services.Snapshot
-	reading      services.Reading
-	mediaState   services.MediaState
-	mediaPlayers []services.Player
+	clock      *services.Clock
+	metrics    *services.Metrics
+	weather    *services.Weather
+	nightLight *services.NightLightService
+	// The night light holds a weather lease only when a city must be resolved
+	// for sunset scheduling and no widget or panel already needs it.
+	nightLightWeatherLease    *services.Lease
+	nightLightWeatherInterval time.Duration
+	sample                    services.Snapshot
+	reading                   services.Reading
+	mediaState                services.MediaState
+	mediaPlayers              []services.Player
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
 	controlIdentity ccIdentity
@@ -134,10 +139,11 @@ type Registry struct {
 	aux           chan wayland.AuxRequest
 	// selections carries text fields' copy and paste requests to the
 	// platform's clipboard.
-	selections chan wayland.SelectionRequest
-	panels     PanelSet
-	panelHosts map[PanelID]*PanelHost
-	files      *filesSession
+	selections  chan wayland.SelectionRequest
+	gammaEvents chan wayland.GammaEvent
+	panels      PanelSet
+	panelHosts  map[PanelID]*PanelHost
+	files       *filesSession
 	// panelShields records which panel host opened each output's shared shield,
 	// even if that host closes while another panel keeps the shield alive.
 	panelShields map[uint32]*PanelHost
@@ -153,6 +159,10 @@ type Registry struct {
 	dwell      *dwell
 	tooltips   *tooltipHost
 	configPath string
+	// configWriteMu keeps file writes and out-of-band read-modify-write
+	// transactions ordered. IPC setters read after taking it so concurrent
+	// edits preserve each other's config fields.
+	configWriteMu sync.Mutex
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
 	writeDelay           time.Duration
@@ -374,16 +384,21 @@ func NewRegistry(cfg config.Config) *Registry {
 		// generateOnlyWith may copy r.themeGen without Registry.mu.
 		gen.Custom = palettes
 	}
+	weather := services.NewWeather(
+		cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+	weather.SetLocationConfigured(cfg.Weather.Configured)
+	weather.SetLocationLabel(cfg.Weather.Location)
+	weather.SetCity(cfg.Weather.City)
 	r := &Registry{
-		cfg:     cfg,
-		now:     time.Now(),
-		outputs: make(map[string]outputState),
-		bars:    make(map[uint32]*Bar),
-		leases:  make(map[uint32][]*services.Lease),
-		clock:   services.NewClock(),
-		metrics: services.NewMetrics(),
-		weather: services.NewWeather(
-			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
+		cfg:              cfg,
+		now:              time.Now(),
+		outputs:          make(map[string]outputState),
+		bars:             make(map[uint32]*Bar),
+		leases:           make(map[uint32][]*services.Lease),
+		clock:            services.NewClock(),
+		metrics:          services.NewMetrics(),
+		weather:          weather,
+		gammaEvents:      make(chan wayland.GammaEvent, 16),
 		themeGen:         gen,
 		paletteStore:     palettes,
 		paletteLister:    listPalettes,
@@ -416,6 +431,16 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.polkitHost = newPolkitHost(r)
 	r.weather.SetCity(cfg.Weather.City)
+	r.nightLight = services.NewNightLight(services.NightLightOptions{
+		Location:        r.weather.ResolvedLocation,
+		LocationPending: r.weather.LocationPending,
+		Source:          r.weather.LocationSource,
+		ReducedMotion:   cfg.Accessibility.ReducedMotion,
+	})
+	r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
+	if !runningAsTest() {
+		r.syncNightLightWeatherLeaseLocked(cfg)
+	}
 	// Construction is single-threaded, so the first snapshot needs no lock.
 	r.palettes = listPalettes(palettes)
 	initialTokens, initialErr := r.generateTheme(cfg)
@@ -1800,7 +1825,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// for an unrelated reload.
 				r.weather.Reconfigure(
 					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+				r.weather.SetLocationConfigured(cfg.Weather.Configured)
+				r.weather.SetLocationLabel(cfg.Weather.Location)
 				r.weather.SetCity(cfg.Weather.City)
+				r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
+				r.syncNightLightWeatherLeaseLocked(cfg)
 				if len(geometryOutputs) > 0 {
 					r.dwell.leave()
 					for global := range geometryOutputs {
@@ -1980,6 +2009,7 @@ func (r *Registry) Close() {
 	var leases []*services.Lease
 	var bars []*Bar
 	var audioLease, brightLease, networkLease *services.Lease
+	var nightLightLease *services.Lease
 	var bluetooth *services.Bluetooth
 	var inhibit io.Closer
 	var wallpaperSvc *wallpaper.Service
@@ -2025,6 +2055,9 @@ func (r *Registry) Close() {
 		r.brightLease = nil
 		networkLease = r.networkLease
 		r.networkLease = nil
+		nightLightLease = r.nightLightWeatherLease
+		r.nightLightWeatherLease = nil
+		r.nightLightWeatherInterval = 0
 		wallpaperSvc = r.wallpaperSvc
 		r.wallpaperSvc = nil
 		wallsSvc = r.wallsService
@@ -2066,6 +2099,9 @@ func (r *Registry) Close() {
 	}
 	if networkLease != nil {
 		networkLease.Release()
+	}
+	if nightLightLease != nil {
+		nightLightLease.Release()
 	}
 	if inhibit != nil {
 		_ = inhibit.Close()
@@ -2244,6 +2280,9 @@ func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	weatherOut, weatherOK := r.rebuildWeatherPanelLocked()
 	r.mu.Unlock()
+	if r.nightLight != nil {
+		r.nightLight.Recompute()
+	}
 
 	r.publish(changed)
 	if controlOK {

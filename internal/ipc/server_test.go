@@ -39,6 +39,21 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNightLightNamespaceUsesItsHandler(t *testing.T) {
+	out := string(NewServer("", Handlers{}).handleLine(`{"id":1,"method":"nightlight.status"}`))
+	if !strings.Contains(out, "night light handler unset") {
+		t.Fatalf("reply = %s, want the night light handler error", out)
+	}
+
+	s := NewServer("", Handlers{NightLight: func(method string, _ json.RawMessage) (map[string]any, error) {
+		return map[string]any{"method": method}, nil
+	}})
+	out = string(s.handleLine(`{"id":2,"method":"nightlight.status"}`))
+	if !strings.Contains(out, `"method":"nightlight.status"`) {
+		t.Fatalf("reply = %s, want the night light handler result", out)
+	}
+}
+
 func TestThemePreviewCallAllowsGeneratorDuration(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

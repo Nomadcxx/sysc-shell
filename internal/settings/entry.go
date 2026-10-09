@@ -72,6 +72,9 @@ type Entry struct {
 	// has to carry in its place.
 	EmptyLabel string
 	Min, Max   int
+	// Step is the slider or stepper increment for numeric settings. Zero keeps
+	// the default increment of one.
+	Step int
 	// Unit follows the displayed value of a number ("%", "px"). Display
 	// only: the stored value never carries it.
 	Unit string
