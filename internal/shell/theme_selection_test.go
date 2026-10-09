@@ -85,3 +85,32 @@ func TestTemplateOutcomesAreToasts(t *testing.T) {
 		t.Fatalf("toasts = %d, want the recurring failure posted again", n)
 	}
 }
+
+// The first theme apply runs while the registry is built, before the
+// notification client exists. Its takeover toast waits for the connection
+// instead of being dropped and then deduplicated as sent (sysc-1087).
+func TestTemplateToastWaitsForTheNotifyConnection(t *testing.T) {
+	home := t.TempDir()
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+
+	r.reportTemplates(home, map[string]error{"btop": nil}, []string{"btop"})
+
+	rec := &pluginToastRecorder{}
+	r.BindNotifications(rec)
+	if n := len(rec.commands()); n != 0 {
+		t.Fatalf("posted %d toasts before the client connected", n)
+	}
+	r.applyNotify(snap(1))
+	got := rec.commands()
+	if len(got) != 1 || got[0].Producer == nil || got[0].Producer.Summary != "Theme applied to btop" {
+		t.Fatalf("toasts after connecting = %+v, want the startup takeover", got)
+	}
+
+	// Delivered once: a reconnect, or the same report again, posts nothing.
+	r.applyNotify(snap(2))
+	r.reportTemplates(home, map[string]error{"btop": nil}, []string{"btop"})
+	if n := len(rec.commands()); n != 1 {
+		t.Fatalf("toasts = %d, want the takeover posted once", n)
+	}
+}

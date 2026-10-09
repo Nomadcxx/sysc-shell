@@ -99,12 +99,16 @@ type Registry struct {
 	previewPrevErr string
 	previewTheme   *themePreviewState
 	previewRequest uint64
-	// templateNotice is the last template toast posted under each key, so a
-	// re-apply that changes nothing stays quiet. generateTheme runs off the
-	// Wayland owner and outside Registry.mu, so a leaf mutex guards it.
-	templateMu     sync.Mutex
-	templateNotice map[string]string
-	themeGen       theme.Generator
+	// templateNotice is the last template toast delivered under each key, so
+	// a re-apply that changes nothing stays quiet. templatePending holds one
+	// that could not be sent yet: the first theme apply runs while the
+	// registry is built, before the notification client is bound or
+	// connected. generateTheme runs off the Wayland owner and outside
+	// Registry.mu, so a leaf mutex guards both.
+	templateMu      sync.Mutex
+	templateNotice  map[string]string
+	templatePending map[string]templateToast
+	themeGen        theme.Generator
 	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
 	// never reassigned outside tests, so it is read without Registry.mu.
 	paletteStore *theme.Store
@@ -1357,21 +1361,59 @@ func (r *Registry) reportTemplates(home string, outcomes map[string]error, adopt
 	r.postTemplateToast(templateFailedKey, "Could not theme "+strings.Join(failed, ", "), strings.TrimSuffix(failedBody, "\n"))
 }
 
-// postTemplateToast posts body under key unless it repeats the last one; an
-// empty body forgets the last, so the next report of that kind posts.
+// templateToast is one template report waiting to be delivered.
+type templateToast struct{ summary, body string }
+
+// postTemplateToast posts body under key unless that body was already
+// delivered; an empty body forgets the last, so the next report of that kind
+// posts. A toast the service cannot take yet stays pending until
+// flushTemplateToasts, rather than counting as sent.
 func (r *Registry) postTemplateToast(key, summary, body string) {
 	r.templateMu.Lock()
 	if r.templateNotice == nil {
 		r.templateNotice = map[string]string{}
+		r.templatePending = map[string]templateToast{}
 	}
-	last := r.templateNotice[key]
-	r.templateNotice[key] = body
-	r.templateMu.Unlock()
-	if body == "" || body == last {
+	if body == "" {
+		delete(r.templateNotice, key)
+		delete(r.templatePending, key)
+		r.templateMu.Unlock()
 		return
 	}
-	if _, err := r.publishToast(key, summary, body, protocol.UrgencyNormal, -1); err != nil && !errors.Is(err, errNotifyUnavailable) {
-		log.Printf("shell: template toast: %v", err)
+	if body == r.templateNotice[key] {
+		delete(r.templatePending, key)
+		r.templateMu.Unlock()
+		return
+	}
+	r.templatePending[key] = templateToast{summary: summary, body: body}
+	r.templateMu.Unlock()
+	r.flushTemplateToasts()
+}
+
+// flushTemplateToasts delivers the pending template toasts. It runs after a
+// report and when the notification client connects; a toast that still
+// cannot be sent stays pending.
+func (r *Registry) flushTemplateToasts() {
+	r.templateMu.Lock()
+	pending := make(map[string]templateToast, len(r.templatePending))
+	for key, toast := range r.templatePending {
+		pending[key] = toast
+	}
+	r.templateMu.Unlock()
+	for key, toast := range pending {
+		if _, err := r.publishToast(key, toast.summary, toast.body, protocol.UrgencyNormal, -1); err != nil {
+			if !errors.Is(err, errNotifyUnavailable) {
+				log.Printf("shell: template toast (will retry on reconnect): %v", err)
+			}
+			continue
+		}
+		r.templateMu.Lock()
+		// Only clear what was sent: a newer report for this key keeps its own.
+		if r.templatePending[key] == toast {
+			delete(r.templatePending, key)
+		}
+		r.templateNotice[key] = toast.body
+		r.templateMu.Unlock()
 	}
 }
 
