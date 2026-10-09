@@ -287,6 +287,13 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 			r.publishSurfaceAsync(output, id)
 		}
 		return true
+	case "cc:nightlight":
+		if r.nightLight == nil || !r.nightLight.State().Supported {
+			return false
+		}
+		r.nightLight.Toggle()
+		r.rebuildPanel(h)
+		return true
 	case "cc:dnd":
 		_, on := r.notify.dndState(r.now)
 		r.setDND(!on)

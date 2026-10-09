@@ -171,6 +171,7 @@ flowchart LR
 - [The sysc ecosystem](docs/ecosystem.md) — how the projects fit together
 - [Niri hotkeys](docs/niri-hotkeys.md)
 - [Blur on Niri](docs/niri-blur.md)
+- [Night light](docs/night-light.md)
 - [Metrics widgets and Intel GPU usage](docs/metrics-widgets.md)
 - [Running under systemd](packaging/systemd/README.md)
 - [Development](docs/development.md)

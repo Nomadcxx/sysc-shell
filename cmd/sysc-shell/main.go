@@ -143,6 +143,7 @@ func run(ctx context.Context) (err error) {
 						continue
 					}
 					idleSvc.Wake()
+					registry.NightLight().Recompute()
 					registry.RepaintAll()
 				}
 			}
@@ -173,6 +174,29 @@ func run(ctx context.Context) (err error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	nightLight := registry.NightLight()
+	go nightLight.Run(ctx)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-nightLight.Updates():
+				registry.UpdateNightLight()
+			}
+		}
+	}()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-registry.GammaEvents():
+				registry.ApplyGammaEvent(ev)
+			}
+		}
+	}()
 
 	pluginStore := store.New(store.Options{
 		CacheDir: store.CacheRoot(),
@@ -358,6 +382,7 @@ func run(ctx context.Context) (err error) {
 			Screenshot: registry.Screenshot,
 			Switcher:   registry.ShowWindowSwitcher,
 			Theme:      registry.ThemeCall,
+			NightLight: registry.NightLightCall,
 			LockState:  registry.LockStateMap,
 		})
 		ipcErr <- srv.Serve(ipcCtx)
@@ -384,6 +409,8 @@ func run(ctx context.Context) (err error) {
 		Selection:     registry.Selections(),
 		Idle:          idleSvc.Requests(),
 		IdleEvents:    idleSvc.Events(),
+		Gamma:         registry.GammaRequests(),
+		GammaEvents:   registry.GammaEventSink(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
 	})

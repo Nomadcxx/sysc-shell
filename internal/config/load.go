@@ -166,6 +166,15 @@ type wireWeather struct {
 	Location  *string  `json:"location,omitempty"`
 }
 
+type wireNightLight struct {
+	Mode              *string `json:"mode,omitempty"`
+	NightKelvin       *int    `json:"night_kelvin,omitempty"`
+	DayKelvin         *int    `json:"day_kelvin,omitempty"`
+	TransitionMinutes *int    `json:"transition_minutes,omitempty"`
+	Start             *string `json:"start,omitempty"`
+	End               *string `json:"end,omitempty"`
+}
+
 type wireMedia struct {
 	Preferred *string  `json:"preferred,omitempty"`
 	Blacklist []string `json:"blacklist,omitempty"`
@@ -206,6 +215,7 @@ type wireConfig struct {
 	Panels        *wirePanels          `json:"panels,omitempty"`
 	Tray          *wireTrayPreferences `json:"tray,omitempty"`
 	Weather       *wireWeather         `json:"weather,omitempty"`
+	NightLight    *wireNightLight      `json:"night-light,omitempty"`
 	Media         *wireMedia           `json:"media,omitempty"`
 	Monitor       *wireMonitor         `json:"monitor,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
@@ -386,6 +396,13 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Weather = weather
+	}
+	if wire.NightLight != nil {
+		nightLight, err := applyNightLight(cfg.NightLight, *wire.NightLight, "night-light")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.NightLight = nightLight
 	}
 	if wire.Media != nil {
 		media, err := applyMedia(*wire.Media, "media")
@@ -671,6 +688,76 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		out.Location = label
 	}
 	return out, nil
+}
+
+func applyNightLight(base NightLight, w wireNightLight, path string) (NightLight, error) {
+	out := base
+	if w.Mode != nil {
+		out.Mode = *w.Mode
+	}
+	if w.NightKelvin != nil {
+		out.NightKelvin = *w.NightKelvin
+	}
+	if w.DayKelvin != nil {
+		out.DayKelvin = *w.DayKelvin
+	}
+	if w.TransitionMinutes != nil {
+		out.TransitionMinutes = *w.TransitionMinutes
+	}
+	if w.Start != nil {
+		out.Start = *w.Start
+	}
+	if w.End != nil {
+		out.End = *w.End
+	}
+	if err := validateNightLight(out, path); err != nil {
+		return NightLight{}, err
+	}
+	return out, nil
+}
+
+// ValidateNightLight applies the same trust-boundary rules used by config
+// loading to a Settings or IPC candidate.
+func ValidateNightLight(n NightLight) error { return validateNightLight(n, "night-light") }
+
+func validateNightLight(n NightLight, path string) error {
+	switch n.Mode {
+	case NightLightModeOff, NightLightModeSunset, NightLightModeCustom, NightLightModeAlways:
+	default:
+		return pathErr(path+".mode", "%q is not off, sunset, custom or always", n.Mode)
+	}
+	if n.NightKelvin < 2500 || n.NightKelvin > 6000 || n.NightKelvin%100 != 0 {
+		return pathErr(path+".night_kelvin", "%d is outside 2500 through 6000 in steps of 100", n.NightKelvin)
+	}
+	if n.DayKelvin < 4500 || n.DayKelvin > 6500 || n.DayKelvin%100 != 0 {
+		return pathErr(path+".day_kelvin", "%d is outside 4500 through 6500 in steps of 100", n.DayKelvin)
+	}
+	if n.DayKelvin < n.NightKelvin {
+		return pathErr(path+".day_kelvin", "%d must be at least night_kelvin (%d)", n.DayKelvin, n.NightKelvin)
+	}
+	switch n.TransitionMinutes {
+	case 0, 15, 30, 60:
+	default:
+		return pathErr(path+".transition_minutes", "%d is not 0, 15, 30 or 60", n.TransitionMinutes)
+	}
+	if !validClock(n.Start) {
+		return pathErr(path+".start", "%q must be HH:MM in 24-hour time", n.Start)
+	}
+	if !validClock(n.End) {
+		return pathErr(path+".end", "%q must be HH:MM in 24-hour time", n.End)
+	}
+	if n.Start == n.End {
+		return pathErr(path+".end", "must differ from start")
+	}
+	return nil
+}
+
+func validClock(v string) bool {
+	if len(v) != len("15:04") {
+		return false
+	}
+	_, err := time.Parse("15:04", v)
+	return err == nil
 }
 
 // weatherPlaceLabel validates a free-text place label: bounded, and free of
