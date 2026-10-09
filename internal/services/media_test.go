@@ -610,3 +610,33 @@ func TestMediaCommandWithNoPlayerIsQuiet(t *testing.T) {
 		t.Errorf("command with no player returned %v, want nil", err)
 	}
 }
+
+// A paired phone's player, mirrored by KDE Connect, and playerctld's re-export
+// of whichever player was last active are not playback on this machine: they
+// stay selectable, but LocalPlaying ignores them so the idle policy still
+// locks a desk the user walked away from (phone playing YouTube).
+func TestMediaLocalPlayingIgnoresRemoteMirrors(t *testing.T) {
+	t.Parallel()
+	phone := "org.mpris.MediaPlayer2.kdeconnect.mpris_09d7f367"
+	proxy := "org.mpris.MediaPlayer2.playerctld"
+	local := "org.mpris.MediaPlayer2.mpv"
+	b := newFakeBus(phone, proxy, local)
+	b.setProps(phone, map[string]any{"PlaybackStatus": "Playing"})
+	b.setProps(proxy, map[string]any{"PlaybackStatus": "Playing"})
+	b.setProps(local, map[string]any{"PlaybackStatus": "Paused"})
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lease.Release)
+
+	if st := m.State(); st.Status != PlaybackPlaying || st.LocalPlaying {
+		t.Fatalf("state = status %v local %v, want a playing remote player and no local playback", st.Status, st.LocalPlaying)
+	}
+
+	b.setProp(local, "PlaybackStatus", "Playing")
+	b.nameCh <- nameChange{Name: local, Acquired: true}
+	waitFor(t, func() bool { return m.State().LocalPlaying })
+}

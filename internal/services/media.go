@@ -29,7 +29,18 @@ const (
 	mprisIface = "org.mpris.MediaPlayer2"
 	// mprisPlayerIface carries transport state: metadata, status, rate.
 	mprisPlayerIface = "org.mpris.MediaPlayer2.Player"
+	// mprisKDEConnectPrefix names players KDE Connect mirrors from a paired
+	// device, and mprisPlayerctld is playerctld's re-export of whichever
+	// player was last active. Neither is playback on this machine.
+	mprisKDEConnectPrefix = "org.mpris.MediaPlayer2.kdeconnect."
+	mprisPlayerctld       = "org.mpris.MediaPlayer2.playerctld"
 )
+
+// localPlayer reports whether busName plays on this machine rather than
+// mirroring a player that lives elsewhere.
+func localPlayer(busName string) bool {
+	return busName != mprisPlayerctld && !strings.HasPrefix(busName, mprisKDEConnectPrefix)
+}
 
 // mediaPlayer is one discovered player's decoded state. The exported Player
 // inside it is what Players() hands out; the rest feeds the active snapshot.
@@ -66,27 +77,31 @@ type mediaPlayer struct {
 
 // MediaState is one immutable snapshot. Consumers never see a D-Bus type.
 type MediaState struct {
-	Available  bool
-	Player     string // bus name of the active player
-	Identity   string // human name, from org.mpris.MediaPlayer2.Identity
-	Title      string
-	Artist     string
-	Album      string
-	ArtKey     string // identifier for the async art worker, never a decoded image
-	Status     PlaybackStatus
-	Seeks      uint64
-	PositionUS int64
-	LengthUS   int64
-	Rate       float64
-	CanNext    bool
-	CanPrev    bool
-	CanPlay    bool
-	CanPause   bool
-	CanSeek    bool
-	CanLoop    bool
-	LoopStatus string
-	CanShuffle bool
-	Shuffle    bool
+	Available bool
+	Player    string // bus name of the active player
+	Identity  string // human name, from org.mpris.MediaPlayer2.Identity
+	Title     string
+	Artist    string
+	Album     string
+	ArtKey    string // identifier for the async art worker, never a decoded image
+	Status    PlaybackStatus
+	// LocalPlaying is true while any player on this machine is Playing,
+	// whichever one is active. Remote mirrors never set it, so a phone
+	// playing through KDE Connect does not hold the idle timers off.
+	LocalPlaying bool
+	Seeks        uint64
+	PositionUS   int64
+	LengthUS     int64
+	Rate         float64
+	CanNext      bool
+	CanPrev      bool
+	CanPlay      bool
+	CanPause     bool
+	CanSeek      bool
+	CanLoop      bool
+	LoopStatus   string
+	CanShuffle   bool
+	Shuffle      bool
 }
 
 // Player is one discovered player.
@@ -777,6 +792,12 @@ func (m *Media) snapshotLocked() MediaState {
 	st := MediaState{Seeks: m.seeks}
 	st.Available = len(m.players) > 0
 	st.Player = m.active
+	for name, p := range m.players {
+		if p.status == PlaybackPlaying && localPlayer(name) {
+			st.LocalPlaying = true
+			break
+		}
+	}
 	p, ok := m.players[m.active]
 	if !ok {
 		return st
