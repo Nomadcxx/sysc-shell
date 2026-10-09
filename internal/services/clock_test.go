@@ -224,3 +224,23 @@ func TestUpdatesKeepOnlyTheNewestTime(t *testing.T) {
 	default:
 	}
 }
+
+// A consumer may release its lease on another goroutine -- the media strip
+// does, because a release can wait on the bus -- while the shell is closing
+// the service. Both forget the lease's service; neither may race the other.
+func TestReleaseRacingCloseIsSafe(t *testing.T) {
+	for range 20 {
+		c := NewClock()
+		l, err := c.Acquire(time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() {
+			l.Release()
+			close(done)
+		}()
+		c.Close()
+		<-done
+	}
+}

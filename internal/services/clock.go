@@ -34,9 +34,12 @@ type Clock struct {
 	updates chan time.Time
 }
 
-// Lease is one consumer's claim on a service. Exactly one of clock, metrics,
-// or weather is set; the zero value is an already-released lease.
+// Lease is one consumer's claim on a service. At most one service pointer is
+// set; the zero value is an already-released lease.
 type Lease struct {
+	// mu guards the service pointers. A consumer may release on its own
+	// goroutine while the shell closes the service, and both clear them.
+	mu         sync.Mutex
 	clock      *Clock
 	metrics    *Metrics
 	weather    *Weather
@@ -85,41 +88,43 @@ func (c *Clock) Acquire(boundary time.Duration) (*Lease, error) {
 	return lease, nil
 }
 
-// Release drops a consumer, stopping the clock when it was the last one. It is
-// idempotent and safe on a nil lease.
+// Release drops a consumer, stopping its service when it was the last one.
+// It is idempotent and safe on a nil lease.
 func (l *Lease) Release() {
-	switch {
-	case l == nil:
+	if l == nil {
 		return
-	case l.clock != nil:
-		c := l.clock
-		l.clock = nil
-		c.releaseClock(l)
-	case l.metrics != nil:
-		m := l.metrics
-		l.metrics = nil
-		m.releaseMetric(l)
-	case l.weather != nil:
-		w := l.weather
-		l.weather = nil
-		w.releaseWeather(l)
-	case l.audio != nil:
-		a := l.audio
-		l.audio = nil
-		a.release(l)
-	case l.brightness != nil:
-		b := l.brightness
-		l.brightness = nil
-		b.release(l)
-	case l.network != nil:
-		n := l.network
-		l.network = nil
-		n.release(l)
-	case l.media != nil:
-		md := l.media
-		l.media = nil
-		md.release(l)
 	}
+	l.mu.Lock()
+	clock, metrics, weather, audio := l.clock, l.metrics, l.weather, l.audio
+	brightness, network, media := l.brightness, l.network, l.media
+	l.clock, l.metrics, l.weather, l.audio = nil, nil, nil, nil
+	l.brightness, l.network, l.media = nil, nil, nil
+	l.mu.Unlock()
+	switch {
+	case clock != nil:
+		clock.releaseClock(l)
+	case metrics != nil:
+		metrics.releaseMetric(l)
+	case weather != nil:
+		weather.releaseWeather(l)
+	case audio != nil:
+		audio.release(l)
+	case brightness != nil:
+		brightness.release(l)
+	case network != nil:
+		network.release(l)
+	case media != nil:
+		media.release(l)
+	}
+}
+
+// forget detaches a lease from the service closing under it, so a later
+// Release is a no-op.
+func (l *Lease) forget() {
+	l.mu.Lock()
+	l.clock, l.metrics, l.weather, l.audio = nil, nil, nil, nil
+	l.brightness, l.network, l.media = nil, nil, nil
+	l.mu.Unlock()
 }
 
 // releaseClock drops one clock lease, stopping the goroutine when it was the
@@ -143,7 +148,7 @@ func (c *Clock) releaseClock(l *Lease) {
 func (c *Clock) Close() {
 	c.mu.Lock()
 	for _, l := range c.leases.clear() {
-		l.clock = nil
+		l.forget()
 	}
 	done := c.stopIfUnusedLocked()
 	c.mu.Unlock()

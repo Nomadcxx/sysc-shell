@@ -265,7 +265,7 @@ func (b *Brightness) release(l *Lease) {
 func (b *Brightness) Close() {
 	b.mu.Lock()
 	for _, l := range b.leases.clear() {
-		l.brightness = nil
+		l.forget()
 	}
 	done := b.stopIfUnusedLocked()
 	b.mu.Unlock()

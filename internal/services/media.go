@@ -277,7 +277,7 @@ func (m *Media) Close() {
 	}
 	m.closed = true
 	for _, l := range m.leases.clear() {
-		l.media = nil
+		l.forget()
 	}
 	done := m.stopIfUnusedLocked()
 	m.mu.Unlock()

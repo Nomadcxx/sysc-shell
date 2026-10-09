@@ -188,7 +188,7 @@ func (w *Weather) Acquire(interval time.Duration) (*Lease, error) {
 func (w *Weather) Close() {
 	w.mu.Lock()
 	for _, l := range w.leases.clear() {
-		l.weather = nil
+		l.forget()
 	}
 	done := w.stopIfUnusedLocked()
 	w.mu.Unlock()
