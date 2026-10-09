@@ -1665,3 +1665,47 @@ func TestWallpaperPickerExplainsAHeldBackground(t *testing.T) {
 		t.Fatal("picker still spins while the background is held")
 	}
 }
+
+// Choosing a folder in the picker moves preview generation to it, so the grid
+// on screen fills first.
+func TestWallpaperOpeningAFolderPrioritisesItsPreviews(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(root, "a.png"), filepath.Join(sub, "x.png")} {
+		writeWallpaperJPEG(t, p)
+	}
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	svc := wallpaper.NewService(wallpaper.ServiceConfig{
+		Engine:     stubWallpaperEngine{},
+		Settings:   wallpaper.Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: wallpaper.HiddenNone},
+		Connectors: []string{"DP-1"},
+		Roots:      []string{root},
+		CacheDir:   t.TempDir(),
+	})
+	t.Cleanup(svc.Close)
+	reg.mu.Lock()
+	reg.wallpaperSvc = svc
+	reg.mu.Unlock()
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAux(t, reg, 2)
+	h := wallpaperHost(t, reg)
+
+	reg.mu.Lock()
+	h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-dir:" + sub})
+	reg.mu.Unlock()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.Snapshot().ThumbsFolder != sub {
+		if time.Now().After(deadline) {
+			t.Fatalf("generation never moved to %s; folder is %q", sub, svc.Snapshot().ThumbsFolder)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

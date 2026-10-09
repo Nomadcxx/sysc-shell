@@ -1271,7 +1271,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.wallpaperOutput = wallpaper.AllOutputs
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()
-			h.wallpaperDir = firstRoot(h.wallpaperSnap)
+			h.wallpaperOpenDir(r, firstRoot(h.wallpaperSnap))
 		}
 	}
 	if id == PanelTerminalArt {

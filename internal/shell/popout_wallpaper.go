@@ -98,7 +98,7 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 				h.wallpaperSnap = snap
 				h.wallpaperOutput = wallpaperOutputSelection(snap, h.wallpaperOutput)
 				if id == PanelWallpaper && h.wallpaperDir == "" {
-					h.wallpaperDir = firstRoot(snap)
+					h.wallpaperOpenDir(r, firstRoot(snap))
 				}
 				r.rebuildPanel(h)
 				hosts = append(hosts, h)
@@ -1002,7 +1002,7 @@ func (h *PanelHost) wallpaperActivate(r *Registry) {
 // dismiss: the banner already says why (D6).
 func (h *PanelHost) wallpaperApply(r *Registry, entry wallpaper.Entry) {
 	if entry.IsDir {
-		h.wallpaperDir = entry.Path
+		h.wallpaperOpenDir(r, entry.Path)
 		h.wallpaperSel = 0
 		r.rebuildPanel(h)
 		return
@@ -1087,13 +1087,23 @@ func (h *PanelHost) wallpaperSetPaused(r *Registry, paused bool) {
 	r.rebuildPanel(h)
 }
 
+// wallpaperOpenDir shows dir in the grid and tells the service, which
+// generates that folder's previews before the rest of the library.
+// Registry.mu is held.
+func (h *PanelHost) wallpaperOpenDir(r *Registry, dir string) {
+	h.wallpaperDir = dir
+	if r != nil && r.wallpaperSvc != nil && dir != "" {
+		r.wallpaperSvc.Enqueue(wallpaper.Command{Op: wallpaper.OpFocusFolder, Path: dir})
+	}
+}
+
 // wallpaperUp leaves the current directory, stopping at a library root.
 func (h *PanelHost) wallpaperUp(r *Registry) {
 	if h.wallpaperSnap.Library == nil {
 		return
 	}
 	if parent, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
-		h.wallpaperDir = parent
+		h.wallpaperOpenDir(r, parent)
 		h.wallpaperSel = 0
 		r.rebuildPanel(h)
 	}
@@ -1554,7 +1564,7 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	if dir, ok := strings.CutPrefix(n.Action, "wallpaper-dir:"); ok {
-		h.wallpaperDir = dir
+		h.wallpaperOpenDir(r, dir)
 		h.wallpaperSel = 0
 		h.wallpaperMenu = ""
 		r.rebuildPanel(h)
