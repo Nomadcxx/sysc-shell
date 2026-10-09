@@ -69,7 +69,7 @@ type gammaOutput struct {
 // attachGamma creates the control for a freshly bound output. Bar-disabled
 // outputs go through here too: the night light is not a bar feature.
 func (o *owner) attachGamma(h *OutputHost) {
-	if o.gammaMgr == nil {
+	if o.gammaMgr == nil && o.gammaFactory == nil {
 		return
 	}
 	if o.gammaOut == nil {

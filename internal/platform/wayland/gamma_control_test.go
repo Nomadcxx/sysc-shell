@@ -113,6 +113,40 @@ func TestGammaReadyFollowsSuccessfulRampApplication(t *testing.T) {
 	}
 }
 
+func TestGammaHotplugAppliesCurrentRampAndDestroysOnRemoval(t *testing.T) {
+	stub := &gammaControlStub{}
+	events := make(chan GammaEvent, 2)
+	created := 0
+	o := &owner{
+		gammaCurrent: &GammaRequest{Kelvin: 4000},
+		gammaFactory: func(*client.Output) (gammaControl, error) {
+			created++
+			return stub, nil
+		},
+		cb: Callbacks{GammaEvents: events},
+	}
+
+	o.attachGamma(&OutputHost{global: 8, connector: "DP-2"})
+	if created != 1 || stub.sizeHandler == nil {
+		t.Fatalf("hotplug created %d controls with size handler %v, want one control", created, stub.sizeHandler != nil)
+	}
+	stub.sizeHandler(gamma.ZwlrGammaControlV1GammaSizeEvent{Size: 4})
+	if stub.setCalls != 1 {
+		t.Fatalf("new output SetGamma calls = %d, want the current ramp applied once", stub.setCalls)
+	}
+	if ev := <-events; ev.State != GammaReady || ev.Global != 8 {
+		t.Fatalf("hotplug event = %+v, want ready for output 8", ev)
+	}
+
+	o.destroyGamma(8)
+	if stub.destroyCalls != 1 {
+		t.Fatalf("removed output Destroy calls = %d, want 1", stub.destroyCalls)
+	}
+	if ev := <-events; ev.State != GammaRemoved || ev.Global != 8 {
+		t.Fatalf("removal event = %+v, want removed for output 8", ev)
+	}
+}
+
 func TestGammaSizeAboveBoundFailsBeforeRampAllocation(t *testing.T) {
 	stub := &gammaControlStub{}
 	events := make(chan GammaEvent, 1)
