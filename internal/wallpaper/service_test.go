@@ -635,18 +635,26 @@ func TestServicePersistsActualAssignmentAfterFailedApplyRollback(t *testing.T) {
 	engine := newFakeEngine()
 	engine.caps.Terminal = true
 	path := filepath.Join(t.TempDir(), "assignments.json")
+	seeded := make(chan string, 1)
 	svc := NewService(ServiceConfig{
 		Engine:      engine,
 		Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
 		Connectors:  []string{"DP-1"},
 		PersistPath: path,
+		ConfigHook:  func(_, seed string) { seeded <- seed },
 	})
 	t.Cleanup(svc.Close)
 
 	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindImage, Path: "/w/first.png"})
 	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/first.png" })
-	seeded := make(chan string, 1)
-	svc.SetConfigHook(func(_, seed string) { seeded <- seed })
+	select {
+	case seed := <-seeded:
+		if seed != "/w/first.png" {
+			t.Fatalf("initial seed = %q, want the applied image", seed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("applied image did not update the theme seed")
+	}
 	engine.mu.Lock()
 	engine.fail[""] = &restoredApplyError{
 		cause: errors.New("new effect failed"), state: StateStatic, engine: EngineGSlapper,
