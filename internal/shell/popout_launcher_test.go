@@ -331,8 +331,8 @@ func TestLauncherListEndsPartWayThroughARow(t *testing.T) {
 	}
 }
 
-// The scrollbar sits in the panel's right padding, a full row gap clear of the
-// pills, and its ends are level with the pill edges. Inside the list it covered
+// The scrollbar sits in the panel's right padding, launcherScrollbarClear from
+// the pills, and its ends are level with the pill edges. Inside the list it covered
 // the last two pixels of every pill and started above the first one.
 func TestLauncherScrollbarClearsThePills(t *testing.T) {
 	t.Parallel()
@@ -348,8 +348,8 @@ func TestLauncherScrollbarClearsThePills(t *testing.T) {
 		t.Fatal("an overflowing launcher list has no scrollbar")
 	}
 	pill := list.Children[0].Children[0]
-	if gap := bar.X - (pill.Bounds.X + pill.Bounds.W); gap != launcherRowGap {
-		t.Fatalf("scrollbar clears the pills by %d, want %d (bar %+v, pill %+v)", gap, launcherRowGap, bar, pill.Bounds)
+	if gap := bar.X - (pill.Bounds.X + pill.Bounds.W); gap != launcherScrollbarClear {
+		t.Fatalf("scrollbar clears the pills by %d, want %d (bar %+v, pill %+v)", gap, launcherScrollbarClear, bar, pill.Bounds)
 	}
 	if right := bar.X + bar.W; right > h.place.Panel.W {
 		t.Fatalf("scrollbar ends at x=%d, past the %d panel", right, h.place.Panel.W)
