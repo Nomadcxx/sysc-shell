@@ -560,7 +560,7 @@ func (r *Registry) pushIdleInputsLocked() {
 		LockBattery:    r.cfg.Idle.Lock,
 		MediaExempt:    r.cfg.Idle.MediaExempt,
 	})
-	r.idleSvc.SetMediaPlaying(r.mediaState.Status == services.PlaybackPlaying)
+	r.idleSvc.SetMediaPlaying(r.mediaState.LocalPlaying)
 	r.idleSvc.SetInhibited(r.inhibitWanted || len(r.externalInhibitors) > 0)
 }
 
