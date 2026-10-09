@@ -199,7 +199,12 @@ func TestWeatherPanelHeroCarriesOnlyCurrentWeatherInformation(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	cfg.Weather.Location = "Brisbane"
-	r := &Registry{cfg: cfg, reading: observedWeather()}
+	reading := observedWeather()
+	// Without a zone the sky reads is_day, not the wall clock against the
+	// fixture's sunrise and sunset; TestWeatherDaylightFollowsSunriseAndSunset
+	// covers the clock.
+	reading.Timezone = nil
+	r := &Registry{cfg: cfg, reading: reading}
 	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
 
 	tree := weatherTree(r, h)
@@ -219,7 +224,7 @@ func TestWeatherPanelHeroCarriesOnlyCurrentWeatherInformation(t *testing.T) {
 	// The hero's mark is the effect form, not a glyph: the clear state has to
 	// be legible from the effect spec the hero actually carries.
 	effect := findNode(tree, func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
-	if effect == nil || effect.Effect.Variant != ui.WeatherClear || effect.Effect.Night {
+	if effect == nil || effect.Effect.Variant != ui.WeatherClear || effect.Effect.Daylight != 1 {
 		t.Fatalf("hero effect = %+v, want the clear day variant", effect)
 	}
 	if !hasValue(treeActions(tree), "weather-close") {
@@ -400,20 +405,24 @@ func TestTheWeatherLocationDoesNotInventCoordinatesForAnUnresolvedCity(t *testin
 
 func TestTheWeatherPanelFollowsTheDayAndNightReference(t *testing.T) {
 	t.Parallel()
-	r := &Registry{reading: observedWeather()}
+	// Without a zone the sky reads is_day rather than the wall clock.
+	dayReading := observedWeather()
+	dayReading.Timezone = nil
+	r := &Registry{reading: dayReading}
 	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
 	day := findNode(weatherTree(r, h), func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
-	if day == nil || day.Effect.Night {
+	if day == nil || day.Effect.Daylight != 1 {
 		t.Fatalf("day hero effect = %+v, want the daylight form", day)
 	}
 
 	night := observedWeather()
+	night.Timezone = nil
 	falseValue := false
 	night.IsDay = &falseValue
 	n := &Registry{reading: night}
 	h2 := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
 	got := findNode(weatherTree(n, h2), func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
-	if got == nil || !got.Effect.Night {
+	if got == nil || got.Effect.Daylight != 0 {
 		t.Fatalf("night hero effect = %+v, want the nocturnal form", got)
 	}
 	if got.Effect.Intensity >= day.Effect.Intensity {

@@ -124,7 +124,7 @@ func TestWeatherSurfaceRendersAndPublishesAnimatedFrames(t *testing.T) {
 	a, clock := newTestAnimator(false)
 	const width, height = 460, 560
 	effect := &ui.Node{Kind: ui.KindEffect, Key: "weather:hero", Bounds: ui.Rect{W: width, H: height}, Effect: ui.EffectSpec{
-		Program: ui.EffectWeather, Variant: ui.WeatherClear, Seed: 7, Intensity: .7, Speed: 1,
+		Program: ui.EffectWeather, Variant: ui.WeatherClear, Seed: 7, Intensity: .7, Speed: 1, Daylight: 1,
 	}}
 	h := &PanelHost{
 		id: PanelWeather, output: 7, root: &ui.Node{Kind: ui.KindStack, Bounds: ui.Rect{W: width, H: height}, Children: []*ui.Node{effect}},
@@ -175,8 +175,9 @@ func TestWeatherSurfaceRendersAndPublishesAnimatedFrames(t *testing.T) {
 		}
 		return pixels
 	}
+	// A quarter loop apart: the clear sky's ray breath repeats every half loop.
 	first := renderAt(.10)
-	second := renderAt(.60)
+	second := renderAt(.35)
 	if !weatherFrameRegionDiffers(first, second, width, region) {
 		t.Fatal("changing the weather phase did not change the rendered hero")
 	}

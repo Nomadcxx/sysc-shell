@@ -31,3 +31,19 @@ func TestEffectSpecValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectSpecValidatesDaylight(t *testing.T) {
+	ok := EffectSpec{Program: EffectWeather, Variant: WeatherClear, Intensity: .5, Speed: 1}
+	for _, d := range []float64{0, .5, 1} {
+		ok.Daylight = d
+		if err := ok.Validate(); err != nil {
+			t.Errorf("daylight %v rejected: %v", d, err)
+		}
+	}
+	for _, d := range []float64{-.01, 1.01, math.NaN(), math.Inf(1)} {
+		ok.Daylight = d
+		if err := ok.Validate(); err == nil {
+			t.Errorf("daylight %v accepted", d)
+		}
+	}
+}

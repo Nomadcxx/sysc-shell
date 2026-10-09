@@ -251,6 +251,8 @@ type Registry struct {
 	traySender           trayCommandSender
 	trayMenu             *trayMenuHost
 	trayDrawer           *trayDrawerHost
+	mediaStrip           *mediaStripHost
+	mediaIntent          *mediaStripIntent
 	trayReplies          *trayReplyTracker
 	trayCloses           *trayCloseTracker
 	trayIcons            *icons.Worker
@@ -424,6 +426,9 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.tooltips = newTooltipHost(r, nil)
 	go r.relayTooltips(r.dwell)
+	r.mediaIntent = newMediaStripIntent(nil)
+	r.mediaStrip = newMediaStripHost(r, nil)
+	go r.relayMediaStrip()
 	// DND toggles often run under Registry.mu; Show takes it, so publish from
 	// a separate goroutine after the setter returns.
 	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
@@ -653,6 +658,40 @@ func (r *Registry) applyMediaArt(key icons.Key, image *ui.Image) {
 	}
 }
 
+// relayMediaStrip applies the hover intent's requests under Registry.mu. It
+// runs off the Wayland owner and ends with the registry.
+func (r *Registry) relayMediaStrip() {
+	for {
+		select {
+		case req := <-r.mediaIntent.requests():
+			r.mu.Lock()
+			if req.open {
+				r.mediaStrip.openLocked(req.global, req.anchor, false)
+			} else {
+				r.mediaStrip.closePeekLocked()
+			}
+			r.mu.Unlock()
+		case <-r.closed:
+			return
+		}
+	}
+}
+
+// driveMediaHover feeds the hover intent from one bar's pointer events. Only
+// the art and title count; the play button resolves to its own action.
+func (r *Registry) driveMediaHover(global uint32, bar *Bar, event wayland.Event) {
+	switch event.Kind {
+	case wayland.EventPointerLeave:
+		r.mediaIntent.pill(global, ui.Rect{}, false)
+	case wayland.EventPointerEnter, wayland.EventPointerMotion:
+		if bar.hoveredAction() == panelMediaAction {
+			r.mediaIntent.pill(global, bar.actionBounds(panelMediaAction), true)
+		} else {
+			r.mediaIntent.pill(global, ui.Rect{}, false)
+		}
+	}
+}
+
 func (r *Registry) publishMediaSnapshot(media *services.Media, state services.MediaState) {
 	players := media.Players()
 	r.mu.Lock()
@@ -670,6 +709,7 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 		}
 	}
 	out, open := r.rebuildControlCentreLocked()
+	stripOut, stripOpen := r.mediaStrip.refreshLocked()
 	if h := r.panelHosts[PanelControlCenter]; h != nil && mediaBodyVisible(h) {
 		r.startSurfaceFrames(h)
 	}
@@ -678,6 +718,9 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 	r.publish(changed)
 	if open {
 		r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	}
+	if stripOpen {
+		r.publishSurface(stripOut, mediaStripSurfaceID)
 	}
 }
 
@@ -1601,8 +1644,14 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			r.stepAudioAsync("mute")
 			return true
 		case action == panelMediaAction && (button == 0 || button == buttonLeft):
-			// The control centre is the one player picker (D7): the widget
-			// routes there and the spine lands on the Media section.
+			// Left click pins the strip, or closes a pinned one (2026-10-08).
+			local := bar.actionBounds(panelMediaAction)
+			r.mu.Lock()
+			ok := r.mediaStrip.togglePinLocked(global, local)
+			r.mu.Unlock()
+			return ok
+		case action == panelMediaAction && button == buttonRight:
+			// The Control Centre Media page stays the full picker.
 			trig = triggerAtAction(bar, trig, panelMediaAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
@@ -1611,11 +1660,12 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			err := r.selectPanelSectionLocked(PanelControlCenter, "media")
 			r.mu.Unlock()
 			return err == nil
-		case action == panelMediaAction && (button == buttonMiddle || button == buttonRight):
+		case action == panelMediaAction && button == buttonMiddle,
+			action == mediaPlayPauseAction && (button == 0 || button == buttonLeft):
 			r.mu.Lock()
-			m := r.media
+			m, disabled := r.media, mediaPlayDisabled(r.mediaState)
 			r.mu.Unlock()
-			if m != nil {
+			if m != nil && !disabled {
 				// Bus I/O, so off the handler path entirely.
 				go func() { _ = m.PlayPause() }()
 			}
@@ -1630,21 +1680,6 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 				r.stepAudioAsync("up")
 			} else if delta < 0 {
 				r.stepAudioAsync("down")
-			}
-			return true
-		case panelMediaAction:
-			// Scroll moves next and previous (D7): up is forward.
-			r.mu.Lock()
-			m := r.media
-			r.mu.Unlock()
-			if m == nil {
-				return true
-			}
-			switch {
-			case delta > 0:
-				go func() { _ = m.Next() }()
-			case delta < 0:
-				go func() { _ = m.Previous() }()
 			}
 			return true
 		}
@@ -1770,6 +1805,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.dwell.leave()
 					for global := range geometryOutputs {
 						r.closeTrayOutputLocked(global)
+						r.mediaStrip.outputLostLocked(global)
 						if h := r.runningMenu; h != nil && h.open_ && h.output == global {
 							h.closeLocked()
 						}
@@ -1885,6 +1921,7 @@ func (r *Registry) DropHost(global uint32) {
 	delete(r.bars, global)
 	delete(r.leases, global)
 	r.trayOutputLostLocked(global)
+	r.mediaStrip.outputLostLocked(global)
 	r.tooltips.outputLost(global)
 	toastOutputs := r.outputGlobalsLocked()
 	plugins := r.plugins
@@ -1965,6 +2002,7 @@ func (r *Registry) Close() {
 			osdAux = r.osd.prepareHide()
 		}
 		r.closeTrayLocked()
+		r.mediaStrip.closeLocked()
 		if r.runningMenu != nil {
 			r.runningMenu.closeLocked()
 		}
@@ -2060,6 +2098,7 @@ func (r *Registry) Close() {
 		}
 	}
 	r.dwell.stop()
+	r.mediaIntent.close()
 	r.clock.Close()
 	r.metrics.Close()
 	r.weather.Close()
@@ -2467,6 +2506,7 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 	hooks.Handle = func(event wayland.Event) bool {
 		changed := innerHandle(event)
 		r.drivePointerTooltip(global, bar, event)
+		r.driveMediaHover(global, bar, event)
 		return changed
 	}
 	innerOutputSize := hooks.OutputSize
