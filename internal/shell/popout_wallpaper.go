@@ -166,10 +166,34 @@ func wallpaperDirs(h *PanelHost) []wallpaper.Entry {
 	return out
 }
 
-// wallpaperChromeH is the height of one chrome control. The chrome is compact
-// even at standard density: these rows frame the grid rather than being the
-// thing you came for, and section labels above them cost height of their own.
-func wallpaperChromeH(h *PanelHost) int { return h.theme.Metrics.CompactControl }
+// wallpaperChromeH is the height of one chrome control. The Wallpaper panel
+// sizes it with its chrome metrics; Terminal Art shares the helpers and keeps
+// the compact size.
+func wallpaperChromeH(h *PanelHost) int {
+	if h.id == PanelWallpaper {
+		return wallpaperChromeOf(h).control
+	}
+	return h.theme.Metrics.CompactControl
+}
+
+// wallpaperChrome is the picker's section metrics. A short panel (the laptop)
+// uses the compact set, so the sectioned chrome still leaves three and a half
+// rows of tiles (owner decision, 2026-10-09).
+type wallpaperChrome struct {
+	headerH, control, cardPad, footerH int
+}
+
+// wallpaperCompactBelow is the panel height under which the chrome goes
+// compact. The laptop's panel is about 820; the desktop's 1100.
+const wallpaperCompactBelow = 960
+
+func wallpaperChromeOf(h *PanelHost) wallpaperChrome {
+	m := h.theme.Metrics
+	if h.place.Panel.H > 0 && h.place.Panel.H < wallpaperCompactBelow {
+		return wallpaperChrome{headerH: 48, control: m.CompactControl, cardPad: 8, footerH: 40}
+	}
+	return wallpaperChrome{headerH: 56, control: m.StandardControl, cardPad: 12, footerH: 48}
+}
 
 // wallpaperCombo is a closed dropdown: the current value and a chevron. It is
 // a button rather than a ui.KindMenu because KindMenu renders its options
@@ -262,9 +286,10 @@ func wallpaperPaletteOptions(h *PanelHost) []wallpaperOption {
 	return out
 }
 
-// wallpaperTree projects the last snapshot as the D4 chrome: title and close,
-// search with an output select, the kind filter with Up, the folder strip,
-// banners, the active strip, the virtualized grid, and the media count.
+// wallpaperTree projects the last snapshot as the sectioned SYSC chrome: a
+// header band carrying the rail, a controls card (what is showing and where,
+// then how to find something), the path rule, the virtualized grid, and a
+// footer band (owner decisions, 2026-10-09 audit).
 func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
@@ -276,25 +301,25 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	h.wallpaperThemeErr = r.themeErr
 
 	inner := max(h.place.Panel.W-2*wallpaperPadding, 0)
+	media := wallpaperMedia(h)
 
 	children := []*ui.Node{
-		wallpaperTitleRow(h),
-		wallpaperActiveStrip(h),
-		wallpaperToolbar(h, inner),
+		wallpaperHeader(h, inner),
+		wallpaperControls(h, inner),
 	}
 	if h.wallpaperMenu == "folder" {
 		children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
 	}
 	children = append(children, wallpaperBanners(r, h)...)
+	children = append(children, wallpaperRule(h, inner, len(media)))
 
-	media := wallpaperMedia(h)
 	// The theme list opens beside its combo in the footer, so it sits under
 	// the grid and the grid gives up the height.
 	var after []*ui.Node
 	if h.wallpaperMenu == "palette" {
 		after = append(after, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
 	}
-	after = append(after, wallpaperFooter(h, media))
+	after = append(after, wallpaperFooter(h, inner))
 
 	grid := wallpaperGridFor(inner)
 	rows := (len(media) + wallpaperColumns - 1) / wallpaperColumns
@@ -379,25 +404,249 @@ func wallpaperEmptyState(r *Registry, h *PanelHost) *ui.Node {
 		wallpaperButton(h, "wallpaper-library-settings", "Library settings", false))
 }
 
-// wallpaperTitleRow is the panel's name, the outputs it acts on, and its
-// controls.
-func wallpaperTitleRow(h *PanelHost) *ui.Node {
-	return &ui.Node{
-		Kind:   ui.KindRow,
-		Gap:    wallpaperGridGap,
-		Height: h.theme.Metrics.StandardControl,
+// wallpaperHeader is the header band: the SYSC rail centred on the band, with
+// Refresh and Close pinned to its right edge. The rail is measured so a
+// leading spacer can centre it on the whole band rather than on what the
+// buttons leave.
+func wallpaperHeader(h *PanelHost, inner int) *ui.Node {
+	c := wallpaperChromeOf(h)
+	pad := (c.headerH - c.control) / 2
+	measure := h.measureText()
+	title := ui.TextAttrs{Role: theme.RoleTitle}
+	slashW, _ := measure(launcherSlashRun, title)
+	wordW, _ := measure("WALLPAPER", title)
+	railW := 2*slashW + wordW + 2*theme.MarginM
+	lead := max((inner-2*pad-railW)/2, 0)
+
+	slashes := func() *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: launcherSlashRun, TextRole: theme.RoleTitle, Tone: ui.ToneAccent}
+	}
+	rail := &ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginM, Height: c.control,
 		Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "Wallpaper", TextRole: theme.RoleTitle},
-			wallpaperOutputSelect(h, "wallpaper-output:"),
-			wallpaperButton(h, "wallpaper-refresh", "Refresh", false),
-			{
-				Kind: ui.KindButton, Action: "wallpaper-close", Name: "Close",
-				Role: "button", Focusable: true, Padding: wallpaperControlPad,
-				Height:   h.theme.Metrics.StandardControl,
-				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: wallpaperIconSize}},
-			},
+			// An empty column is the spacer: a nested row measures from its
+			// children and ignores Width, a column honours it.
+			{Kind: ui.KindColumn, Width: max(lead-theme.MarginM, 0), Height: c.control},
+			slashes(),
+			{Kind: ui.KindText, Text: "WALLPAPER", Name: "Wallpaper", Role: "heading",
+				TextRole: theme.RoleTitle, Tone: ui.ToneAccent},
+			slashes(),
 		},
 	}
+	iconButton := func(action, name, icon string) *ui.Node {
+		return &ui.Node{
+			Kind: ui.KindButton, Action: action, Name: name,
+			Role: "button", Focusable: true, Padding: wallpaperControlPad,
+			Width: c.control, Height: c.control,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: wallpaperIconSize}},
+		}
+	}
+	buttons := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Height: c.control, Children: []*ui.Node{
+		iconButton("wallpaper-refresh", "Refresh", "restart_alt"),
+		iconButton("wallpaper-close", "Close", "close"),
+	}}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Height: c.headerH, Padding: pad,
+		Children: []*ui.Node{{
+			Kind: ui.KindRow, PinEnd: true, Height: c.control, Children: []*ui.Node{rail, buttons},
+		}},
+	}
+}
+
+// wallpaperLabel is a mono section label in the SYSC style: accent slashes,
+// then the name in the muted foreground. A positive width fixes the label's
+// column, so the controls after it line up across rows; the column carries the
+// width because a nested row measures from its children.
+func wallpaperLabel(name string, width, height int) *ui.Node {
+	// The slashes sit in their own row: a two-child row led by text pins its
+	// second child to the right edge, which split a short label across the
+	// column.
+	label := &ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginXS, Height: height,
+		Children: []*ui.Node{
+			{Kind: ui.KindRow, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: "//", TextRole: theme.RoleMono, Tone: ui.ToneAccent},
+			}},
+			{Kind: ui.KindText, Text: name, TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
+		},
+	}
+	if width <= 0 {
+		return label
+	}
+	return &ui.Node{Kind: ui.KindColumn, Width: width, Height: height, Children: []*ui.Node{label}}
+}
+
+// wallpaperSearchName names the search field. The picker opens with it
+// focused, by this name, and the painter draws the search glyph and the clear
+// affordance only for a field named exactly "Search".
+const wallpaperSearchName = "Search"
+
+// wallpaperHairline is the rule between the controls card's two rows.
+const wallpaperHairline = 1
+
+// wallpaperLabelW is the width of a controls-card label column.
+const wallpaperLabelW = 76
+
+// wallpaperPinned is a row whose right group is pinned to the right edge.
+func wallpaperPinned(height int, left, right []*ui.Node) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindRow, PinEnd: true, Height: height,
+		Children: []*ui.Node{
+			{Kind: ui.KindRow, Gap: wallpaperGridGap, Height: height, Children: left},
+			{Kind: ui.KindRow, Gap: wallpaperGridGap, Height: height, Children: right},
+		},
+	}
+}
+
+// wallpaperControls is the controls card. The first row is where an apply
+// lands and what is there now, with the controls that act on it; the second
+// is how to find something. The output select lives here rather than in the
+// header: it picks the target of an apply, beside Pause and Restore.
+func wallpaperControls(h *PanelHost, inner int) *ui.Node {
+	c := wallpaperChromeOf(h)
+	width := inner - 2*c.cardPad
+	measure := h.measureText()
+
+	// Row one: display, now showing, then the actions pinned right.
+	var actions []*ui.Node
+	if paused, ok := wallpaperPlaybackState(h); ok {
+		action, label := "wallpaper-pause", "Pause"
+		if paused {
+			action, label = "wallpaper-resume", "Resume"
+		}
+		actions = append(actions, wallpaperButton(h, action, label, false))
+	}
+	for _, connector := range wallpaperTargets(h) {
+		if h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindEffect {
+			actions = append(actions, wallpaperButton(h, "wallpaper-open-art", "Open Terminal Art", false))
+			break
+		}
+	}
+	targets, hasEffects := wallpaperRestoreTargets(h)
+	restore := wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false)
+	if len(targets) == 0 {
+		restore.State |= ui.StateDisabled
+		if hasEffects {
+			restore.Tooltip = "Restore effects in Terminal Art"
+		} else {
+			restore.Tooltip = "No wallpaper assigned"
+		}
+	} else if hasEffects {
+		restore.Tooltip = "Terminal Art outputs are skipped"
+	}
+	actions = append(actions, restore)
+	actionsW := 0
+	for _, a := range actions {
+		w, _ := measure(a.Name, ui.TextAttrs{})
+		actionsW += w + 2*wallpaperControlPad + wallpaperGridGap
+	}
+	output := wallpaperOutputSelect(h, "wallpaper-output:")
+	outputW := output.Width
+	if outputW == 0 {
+		outputW, _ = measure(output.Text, ui.TextAttrs{Role: theme.RoleMono})
+	}
+	nowW := max(width-wallpaperLabelW-outputW-actionsW-3*wallpaperGridGap, 0)
+	now := &ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginXS, Height: c.control,
+		Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "\u25b8", TextRole: theme.RoleMono, Tone: ui.ToneAccent},
+			{Kind: ui.KindText, Text: "now: " + wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput),
+				Name: "Now showing", TextRole: theme.RoleMono, Tone: ui.ToneSubtle,
+				MaxWidth: max(nowW-wallpaperIconSize, 0)},
+		},
+	}
+	display := wallpaperPinned(c.control,
+		[]*ui.Node{wallpaperLabel("display", wallpaperLabelW, c.control), output, now}, actions)
+
+	// Row two: search, kind filter, folder, and Up once below a root.
+	filters := []struct {
+		label string
+		value wallpaper.Filter
+	}{
+		{"All", wallpaper.FilterAll},
+		{"Images", wallpaper.FilterImages},
+		{"Videos", wallpaper.FilterVideos},
+	}
+	segments := make([]*ui.Node, 0, len(filters))
+	for _, f := range filters {
+		segments = append(segments, wallpaperSegment(h,
+			fmt.Sprintf("wallpaper-filter:%d", f.value), f.label, f.value == h.wallpaperFilter))
+	}
+	show := &ui.Node{
+		Kind: ui.KindSegmented, Key: "wallpaper-filter", Gap: theme.MarginXXS,
+		Width: wallpaperFilterWidth, Height: c.control, Children: segments,
+	}
+	tail := []*ui.Node{show, wallpaperCombo(h, "folder", wallpaperFolderLabel(h), wallpaperFolderWidth)}
+	used := wallpaperLabelW + wallpaperFilterWidth + wallpaperFolderWidth + 3*wallpaperGridGap
+	if h.wallpaperSnap.Library != nil {
+		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
+			up := wallpaperButton(h, "wallpaper-up", "Up", false)
+			tail = append(tail, up)
+			upW, _ := measure("Up", ui.TextAttrs{})
+			used += wallpaperGridGap + upW + 2*wallpaperControlPad
+		}
+	}
+	// The field draws its own search glyph, so the row carries no second one.
+	field := h.search.Node(wallpaperSearchName)
+	field.Height = c.control
+	// One padded line has to fit the compact row: 8 overflowed it.
+	field.Padding = 6
+	field.Width = max(width-used, 0)
+	find := &ui.Node{
+		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: c.control,
+		Children: append([]*ui.Node{wallpaperLabel("find", wallpaperLabelW, c.control), field}, tail...),
+	}
+
+	sep := &ui.Node{Kind: ui.KindSeparator, Height: wallpaperHairline}
+	gap := theme.MarginM
+	cardH := 2*c.cardPad + 2*c.control + wallpaperHairline + 2*gap
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Padding: c.cardPad,
+		Height: cardH,
+		Children: []*ui.Node{{
+			Kind: ui.KindColumn, Gap: gap, Children: []*ui.Node{display, sep, find},
+		}},
+	}
+}
+
+// wallpaperRule is the line over the grid, drawn in box characters: the
+// folder on the left, the count on the right, rule between.
+func wallpaperRule(h *PanelHost, inner, count int) *ui.Node {
+	measure := h.measureText()
+	mono := ui.TextAttrs{Role: theme.RoleMono}
+	dir := wallpaperRulePath(h.wallpaperDir)
+	tail := plural(count, "item")
+	glyphW, lineH := measure("\u2500", mono)
+	if glyphW <= 0 {
+		glyphW = 8
+	}
+	leftW, _ := measure("\u2500\u2500 "+dir+" ", mono)
+	rightW, _ := measure(" "+tail+" \u2500\u2500", mono)
+	fill := max((inner-leftW-rightW)/glyphW, 2)
+	text := func(s string, tone ui.Tone) *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: s, TextRole: theme.RoleMono, Tone: tone}
+	}
+	return &ui.Node{
+		Kind: ui.KindRow, Height: max(lineH, 16), Name: "Folder " + dir + ", " + tail,
+		Children: []*ui.Node{
+			text("\u2500\u2500 ", ui.ToneSubtle),
+			text(dir, ui.ToneNormal),
+			text(" "+strings.Repeat("\u2500", fill)+" ", ui.ToneSubtle),
+			text(tail, ui.ToneNormal),
+			text(" \u2500\u2500", ui.ToneSubtle),
+		},
+	}
+}
+
+// wallpaperRulePath shortens the open folder for the rule: the home directory
+// reads as ~.
+func wallpaperRulePath(dir string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rest, ok := strings.CutPrefix(dir, home); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+			return "~" + rest
+		}
+	}
+	return dir
 }
 
 // wallpaperOutputSelect is All plus one segment per connector, each acting
@@ -428,60 +677,6 @@ func wallpaperOutputLabel(token string) string {
 		return "All"
 	}
 	return token
-}
-
-// wallpaperToolbar is how to find something: search, the kind filter, the
-// folder dropdown, and Up once the picker has descended out of a root. The
-// search field's role is unambiguous, so it carries a search icon rather than
-// a caption label above it.
-//
-// The folder control replaces a two-row band of chips. That band showed 8 of
-// 26 folders and, being a scrollable region above the grid, quietly took every
-// wheel event the grid was meant to get.
-func wallpaperToolbar(h *PanelHost, inner int) *ui.Node {
-	ch := wallpaperChromeH(h)
-	filters := []struct {
-		label string
-		value wallpaper.Filter
-	}{
-		{"All", wallpaper.FilterAll},
-		{"Images", wallpaper.FilterImages},
-		{"Videos", wallpaper.FilterVideos},
-	}
-	segments := make([]*ui.Node, 0, len(filters))
-	for _, f := range filters {
-		segments = append(segments, wallpaperSegment(h,
-			fmt.Sprintf("wallpaper-filter:%d", f.value), f.label, f.value == h.wallpaperFilter))
-	}
-	show := &ui.Node{
-		Kind: ui.KindSegmented, Key: "wallpaper-filter", Gap: theme.MarginXXS,
-		Width: wallpaperFilterWidth, Height: ch, Children: segments,
-	}
-
-	folder := []*ui.Node{wallpaperCombo(h, "folder", wallpaperFolderLabel(h), wallpaperFolderWidth)}
-	used := wallpaperFilterWidth + wallpaperFolderWidth + 3*wallpaperGridGap + wallpaperIconSize
-	if h.wallpaperSnap.Library != nil {
-		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
-			up := wallpaperButton(h, "wallpaper-up", "Up", false)
-			up.Height = ch
-			folder = append(folder, up)
-			used += wallpaperGridGap + 64
-		}
-	}
-	field := h.search.Node("Search")
-	field.Height = ch
-	// One padded line has to fit the compact row: 8 overflowed it.
-	field.Padding = 6
-	field.Width = max(inner-used, 0)
-
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: ch,
-		Children: append([]*ui.Node{
-			{Kind: ui.KindIcon, Icon: "search", IconSize: wallpaperIconSize},
-			field,
-			show,
-		}, folder...),
-	}
 }
 
 // wallpaperRootLabel names a library root by its directory.
@@ -734,7 +929,11 @@ func wallpaperBanners(r *Registry, h *PanelHost) []*ui.Node {
 	// The palette is the other half of applying a wallpaper. A generator that
 	// cannot produce a usable one leaves the old colours up, which is correct
 	// but looks exactly like nothing having happened unless it says so.
-	add(h.wallpaperThemeErr, ui.ToneError)
+	if h.wallpaperThemeErr == theme.ErrAwaitingWallpaper.Error() {
+		add(h.wallpaperThemeErr, ui.ToneSubtle)
+	} else {
+		add(h.wallpaperThemeErr, ui.ToneError)
+	}
 	for _, connector := range wallpaperTargets(h) {
 		if owner := h.wallpaperSnap.Covered[connector]; owner != "" {
 			add(fmt.Sprintf("%s is already painted by %s - a wallpaper set here will not be visible until that surface goes away",
@@ -749,17 +948,25 @@ func wallpaperBanners(r *Registry, h *PanelHost) []*ui.Node {
 	return out
 }
 
-// wallpaperFooter is the rest: what the grid holds, preview progress, the
-// shell theme, and the one engine painting the selected outputs.
-func wallpaperFooter(h *PanelHost, media []wallpaper.Entry) *ui.Node {
-	count := plural(len(media), "item")
+// wallpaperFooter is the footer band: the key legend (or, while previews are
+// generating, their progress) on the left; the shell theme and the engine
+// painting the selected outputs pinned right.
+func wallpaperFooter(h *PanelHost, inner int) *ui.Node {
+	c := wallpaperChromeOf(h)
+	pad := (c.footerH - c.control) / 2
+
+	var left []*ui.Node
 	if done, total := h.wallpaperSnap.ThumbsDone, h.wallpaperSnap.ThumbsTotal; total > 0 && done < total {
-		// Previews are generated slowly on purpose. Saying so is the
-		// difference between a library that is still filling in and one that
-		// looks broken.
-		count += fmt.Sprintf(" \u00b7 Generating previews \u00b7 %d / %d", done, total)
+		// Previews take a while on a cold library. Saying so is the
+		// difference between one still filling in and one that looks broken.
+		left = append(left, &ui.Node{Kind: ui.KindText, Role: "status", Name: "Preview progress",
+			Text: fmt.Sprintf("Generating previews %d / %d", done, total), TextRole: theme.RoleMono})
+	} else {
+		left = append(left, &ui.Node{Kind: ui.KindText, Text: wallpaperHints,
+			TextRole: theme.RoleMono, Tone: ui.ToneSubtle})
 	}
-	engine := &ui.Node{Kind: ui.KindText, Role: "status", Name: "Engine", TextRole: theme.RoleCaption}
+
+	engine := &ui.Node{Kind: ui.KindText, Role: "status", Name: "Engine", TextRole: theme.RoleMono}
 	if name := wallpaperActiveEngine(h); name == wallpaper.EngineGSlapper {
 		engine.Text = "gSlapper"
 	} else if name != "" {
@@ -767,16 +974,26 @@ func wallpaperFooter(h *PanelHost, media []wallpaper.Entry) *ui.Node {
 	} else if wallpaperNoEngine(h) {
 		engine.Text, engine.Tone = "no wallpaper engine installed", ui.ToneError
 	}
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperChromeH(h),
-		Children: []*ui.Node{
-			{Kind: ui.KindText, Text: count, TextRole: theme.RoleCaption},
-			{Kind: ui.KindText, Text: "Shell theme", TextRole: theme.RoleCaption},
-			wallpaperCombo(h, "palette", wallpaperPaletteLabel(h), wallpaperPaletteWidth),
+	right := []*ui.Node{
+		wallpaperLabel("theme", 0, c.control),
+		wallpaperCombo(h, "palette", wallpaperPaletteLabel(h), wallpaperPaletteWidth),
+		{Kind: ui.KindRow, Height: c.control, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "[", TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
 			engine,
-		},
+			{Kind: ui.KindText, Text: "]", TextRole: theme.RoleMono, Tone: ui.ToneSubtle},
+		}},
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Height: c.footerH, Padding: pad,
+		PaddingX: wallpaperPadding,
+		Children: []*ui.Node{wallpaperPinned(c.control, left, right)},
 	}
 }
+
+// wallpaperHints is the key legend, in the form sysc-greet and the launcher
+// use. The left and right arrows are spaced: Fira Code joins an adjacent pair
+// into one double-headed arrow.
+const wallpaperHints = "\u2191\u2193 \u2190 \u2192 Navigate \u2022 Enter Apply \u2022 / Search \u2022 Esc Close"
 
 // wallpaperNoEngine reports that nothing installed can paint a wallpaper.
 func wallpaperNoEngine(h *PanelHost) bool {
@@ -809,45 +1026,6 @@ func wallpaperActiveEngine(h *PanelHost) string {
 		agreed = name
 	}
 	return agreed
-}
-
-// wallpaperActiveStrip is what the selected output is showing, with the
-// controls that act on it. Pause is video-only because an image has no
-// pipeline to hold (D7).
-func wallpaperActiveStrip(h *PanelHost) *ui.Node {
-	children := []*ui.Node{
-		{Kind: ui.KindText, Text: wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput)},
-	}
-	if paused, ok := wallpaperPlaybackState(h); ok {
-		action, label := "wallpaper-pause", "Pause"
-		if paused {
-			action, label = "wallpaper-resume", "Resume"
-		}
-		children = append(children, wallpaperButton(h, action, label, false))
-	}
-	for _, connector := range wallpaperTargets(h) {
-		if h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindEffect {
-			children = append(children, wallpaperButton(h, "wallpaper-open-art", "Open Terminal Art", false))
-			break
-		}
-	}
-	targets, hasEffects := wallpaperRestoreTargets(h)
-	restore := wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false)
-	if len(targets) == 0 {
-		restore.State |= ui.StateDisabled
-		if hasEffects {
-			restore.Tooltip = "Restore effects in Terminal Art"
-		} else {
-			restore.Tooltip = "No wallpaper assigned"
-		}
-	} else if hasEffects {
-		restore.Tooltip = "Terminal Art outputs are skipped"
-	}
-	children = append(children, restore)
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap,
-		Height: h.theme.Metrics.StandardControl, Children: children,
-	}
 }
 
 func wallpaperRestoreLabel(h *PanelHost) string {

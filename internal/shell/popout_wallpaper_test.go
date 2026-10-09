@@ -743,7 +743,7 @@ func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
 }
 
 func TestWallpaperTitleOffersRefresh(t *testing.T) {
-	if findAction(wallpaperTitleRow(&PanelHost{}), "wallpaper-refresh") == nil {
+	if findAction(wallpaperHeader(&PanelHost{id: PanelWallpaper}, 900), "wallpaper-refresh") == nil {
 		t.Fatal("wallpaper title has no refresh action")
 	}
 }
@@ -1536,8 +1536,9 @@ func TestWallpaperOurNamespaceIncludesTerminal(t *testing.T) {
 	}
 }
 
-// The rows are in the order a user scans them, which is also the focus order:
-// where am I, what is showing, how do I find something, the grid, the rest.
+// The panel reads top to bottom as the scan path: the header band, the
+// controls card (where an apply lands, then how to find something), any
+// banners, the path rule, the grid, and the footer band.
 func TestWallpaperRowOrderIsTheScanPath(t *testing.T) {
 	t.Parallel()
 
@@ -1546,28 +1547,35 @@ func TestWallpaperRowOrderIsTheScanPath(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	// Banners, when there are any, sit between the toolbar and the grid.
 	all := h.root.Children
 	if len(all) < 5 {
-		t.Fatalf("%d rows, want header, strip, toolbar, grid, footer", len(all))
+		t.Fatalf("%d rows, want header, controls, rule, grid, footer", len(all))
 	}
-	rows := append(slices.Clone(all[:3]), all[len(all)-2:]...)
-	for _, action := range []string{"wallpaper-refresh", "wallpaper-close", "wallpaper-output:all"} {
-		if findAction(rows[0], action) == nil {
+	header, controls := all[0], all[1]
+	rule, grid, footer := all[len(all)-3], all[len(all)-2], all[len(all)-1]
+	for _, action := range []string{"wallpaper-refresh", "wallpaper-close"} {
+		if findAction(header, action) == nil {
 			t.Errorf("header lacks %s", action)
 		}
 	}
-	if findAction(rows[1], "wallpaper-restore") == nil {
-		t.Error("the now-showing strip lacks Restore")
+	if findNode(header, func(n *ui.Node) bool { return n.Text == "WALLPAPER" && n.Tone == ui.ToneAccent }) == nil {
+		t.Error("header lacks the SYSC rail")
 	}
-	if findNode(rows[2], func(n *ui.Node) bool { return n.Kind == ui.KindTextField }) == nil ||
-		findAction(rows[2], "wallpaper-filter:0") == nil || findAction(rows[2], "wallpaper-menu:folder") == nil {
-		t.Error("the toolbar must carry search, the kind filter and the folder")
+	for _, action := range []string{"wallpaper-output:all", "wallpaper-restore", "wallpaper-filter:0", "wallpaper-menu:folder"} {
+		if findAction(controls, action) == nil {
+			t.Errorf("controls card lacks %s", action)
+		}
 	}
-	if rows[3].Kind != ui.KindVirtualList {
-		t.Errorf("row 3 is %v, want the grid", rows[3].Kind)
+	if findNode(controls, func(n *ui.Node) bool { return n.Kind == ui.KindTextField }) == nil {
+		t.Error("controls card lacks the search field")
 	}
-	if findAction(rows[4], "wallpaper-menu:palette") == nil {
+	if !strings.HasPrefix(rule.Name, "Folder ") {
+		t.Errorf("row before the grid is %q, want the path rule", rule.Name)
+	}
+	if grid.Kind != ui.KindVirtualList {
+		t.Errorf("row before the footer is %v, want the grid", grid.Kind)
+	}
+	if findAction(footer, "wallpaper-menu:palette") == nil {
 		t.Error("the footer lacks the shell theme")
 	}
 }
@@ -1587,8 +1595,9 @@ func TestWallpaperChromeHasNoCaptionLabels(t *testing.T) {
 	})
 }
 
-// The laptop's panel is about 820 tall. The labelled chrome left 3.4 rows of
-// tiles there; the compact chrome has to leave at least four.
+// The laptop's panel is about 820 tall. The sectioned chrome goes compact
+// there and has to leave at least three and a half rows of tiles (owner
+// decision, 2026-10-09; it was four before the chrome gained its sections).
 func TestWallpaperGridRowsOnLaptop(t *testing.T) {
 	t.Parallel()
 
@@ -1598,8 +1607,8 @@ func TestWallpaperGridRowsOnLaptop(t *testing.T) {
 	defer reg.mu.Unlock()
 	h.place.Panel.W, h.place.Panel.H = 980, 820
 	reg.rebuildPanel(h)
-	if pitch := wallpaperGridOf(h).pitch; wallpaperListNode(t, h).Height < 4*pitch {
-		t.Fatalf("grid is %d tall, want at least four %d rows", wallpaperListNode(t, h).Height, pitch)
+	if pitch := wallpaperGridOf(h).pitch; 2*wallpaperListNode(t, h).Height < 7*pitch {
+		t.Fatalf("grid is %d tall, want at least three and a half %d rows", wallpaperListNode(t, h).Height, pitch)
 	}
 	if err := ui.LayoutColumn(h.root, ui.Rect{W: 980, H: 820}, h.measureText()); err != nil {
 		t.Fatalf("layout: %v", err)
@@ -1621,9 +1630,9 @@ func TestWallpaperOutputSelectCollapsesOnOneOutput(t *testing.T) {
 	h := reg.panelHosts[PanelWallpaper]
 	var outputs []string
 	collectActions(h.root, "wallpaper-output:", &outputs)
-	header := h.root.Children[0]
-	if len(outputs) != 0 || findNode(header, func(n *ui.Node) bool { return n.Text == "eDP-1" }) == nil {
-		t.Fatalf("one output: select %v; want a caption naming eDP-1 in the header", outputs)
+	controls := h.root.Children[1]
+	if len(outputs) != 0 || findNode(controls, func(n *ui.Node) bool { return n.Text == "eDP-1" }) == nil {
+		t.Fatalf("one output: select %v; want a caption naming eDP-1 in the controls card", outputs)
 	}
 }
 

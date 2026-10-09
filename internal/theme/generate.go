@@ -30,6 +30,12 @@ type Generator struct {
 // A cold start may paint the fallback and report the error; a reload must keep
 // the palette it already has rather than swapping a generated theme for the
 // compiled one.
+
+// ErrAwaitingWallpaper is the wallpaper-derived palette before any wallpaper
+// has been applied. It is a state, not a failure: callers show it without the
+// error tone.
+var ErrAwaitingWallpaper = errors.New("theme: waiting for the first wallpaper")
+
 func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	fallback := FallbackFor(opts.HighContrast)
 	if g.Matugen == "" {
@@ -95,7 +101,7 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 			// so a cold start starts empty. There is nothing to derive a
 			// palette from yet; say so instead of failing matugen on an
 			// empty image path every boot.
-			return fallback, errors.New("theme: waiting for the first wallpaper")
+			return fallback, ErrAwaitingWallpaper
 		}
 		args = append(args, "image", src.Seed)
 	case "hex":

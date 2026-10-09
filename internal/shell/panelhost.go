@@ -1327,7 +1327,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelWallpaper {
 		// The picker opens on its search box rather than on the Close button
 		// that happens to be first in the tree.
-		h.focusByName("Search")
+		h.focusByName(wallpaperSearchName)
 		h.wallpaperFocused = true
 	}
 	if id == PanelTerminalArt {
