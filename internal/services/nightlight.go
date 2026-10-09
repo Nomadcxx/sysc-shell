@@ -514,12 +514,15 @@ func (s *NightLightService) Toggle() {
 		}
 	} else {
 		kelvin, _, _ := s.sched.evaluate(now, s.loc)
-		turnOn := kelvin == 0 || kelvin > lerpMired(s.sched.DayK, s.sched.NightK, 0.5)
-		s.setOverrideLocked(turnOn)
+		s.setOverrideLocked(!nightLightActive(kelvin, s.sched.DayK))
 	}
 	s.beginManualFadeLocked(now, from)
 	s.mu.Unlock()
 	s.Wake()
+}
+
+func nightLightActive(kelvin, dayKelvin int) bool {
+	return kelvin > 0 && kelvin < dayKelvin
 }
 
 func (s *NightLightService) targetKelvinLocked(now time.Time) int {
@@ -774,7 +777,7 @@ func (s *NightLightService) publish(force bool) time.Duration {
 
 	state := NightLightState{
 		Mode:       sched.Mode,
-		Active:     available && kelvin > 0 && kelvin < sched.DayK,
+		Active:     available && nightLightActive(kelvin, sched.DayK),
 		Kelvin:     kelvin,
 		Target:     target,
 		NextChange: next,

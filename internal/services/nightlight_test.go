@@ -383,6 +383,24 @@ func TestToggleTurnsOffNightTemperatureAlreadyActive(t *testing.T) {
 	}
 }
 
+func TestToggleTurnsOffDuringScheduleFade(t *testing.T) {
+	clock := time.Date(2026, 10, 8, 19, 47, 0, 0, time.Local)
+	s := NewNightLight(NightLightOptions{Now: func() time.Time { return clock }, ReducedMotion: true})
+	s.Schedule(NightLightSchedule{
+		Mode: NightLightCustom, NightK: 3000, DayK: 6000,
+		Transition: 30 * time.Minute, Start: 20 * time.Hour, End: 8 * time.Hour,
+	})
+	s.GammaEvent(wayland.GammaEvent{Global: 1, State: wayland.GammaReady})
+	if got := s.State(); !got.Active || got.Override || got.Kelvin >= 6000 {
+		t.Fatalf("during the fade = %+v, want an active scheduled ramp below day temperature", got)
+	}
+
+	s.Toggle()
+	if got := s.State(); got.Target != 0 || !got.Override || got.Active {
+		t.Fatalf("after turning off during the fade = %+v, want an off override", got)
+	}
+}
+
 func TestSunScheduleUsesTodaysPolarState(t *testing.T) {
 	loc, err := time.LoadLocation("Europe/Oslo")
 	if err != nil {
