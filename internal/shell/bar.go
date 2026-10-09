@@ -800,6 +800,17 @@ func (b *Bar) actionBounds(action string) ui.Rect {
 	return ui.Rect{}
 }
 
+// hoveredAction is the action under the pointer, or empty when the pointer is
+// outside the bar. It is what the media strip's hover intent watches.
+func (b *Bar) hoveredAction() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.inside {
+		return ""
+	}
+	return b.pointer.hover
+}
+
 func nodeActionBounds(n *ui.Node, action string) (ui.Rect, bool) {
 	if n == nil {
 		return ui.Rect{}, false

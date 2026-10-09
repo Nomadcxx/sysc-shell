@@ -1027,6 +1027,7 @@ func TestMediaSnapshotUpdatesTheRetainedRegistryView(t *testing.T) {
 		bars:       make(map[uint32]*Bar),
 		panelHosts: make(map[PanelID]*PanelHost),
 	}
+	r.mediaStrip = newMediaStripHost(r, &hostHarness{})
 	t.Cleanup(func() {
 		close(r.closed)
 		media.Close()

@@ -173,13 +173,13 @@ func mediaPlayerRows(state services.MediaState, players []services.Player, m the
 }
 
 func mediaTime(us int64) string {
-	if us < 0 {
-		us = 0
-	}
-	if us == 0 {
+	if us <= 0 {
 		return "00:00"
 	}
 	seconds := us / 1_000_000
+	if seconds >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
+	}
 	return fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)
 }
 

@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	panelMediaAction = "panel:media"
-	mediaBarArtSize  = 20
+	panelMediaAction     = "panel:media"
+	mediaPlayPauseAction = "media:playpause"
+	mediaBarArtSize      = 20
 )
 
 func hasMediaItem(items []config.Item) bool {
@@ -20,10 +21,9 @@ func hasMediaItem(items []config.Item) bool {
 	return false
 }
 
-// buildMediaWidget is one glyph and the active track's title, absent while no
-// player is on the bus. The design's D7 scope: no player picker, no seek bar,
-// no volume — the control centre's Media page is the one picker, and volume
-// is already its own widget.
+// buildMediaWidget is the art (or state glyph), the active track's title and a
+// play/pause button, absent while no player is on the bus. Hovering or clicking
+// the art and title opens the media strip (2026-10-08 bar media strip design).
 func buildMediaWidget(items ...config.Item) textWidget {
 	maxWidth := 0
 	if len(items) > 0 {
@@ -34,6 +34,8 @@ func buildMediaWidget(items ...config.Item) textWidget {
 		Children: []*ui.Node{
 			{Kind: ui.KindIcon, Key: "media-art", Icon: "music_note", IconSize: DefaultTheme().Metrics.IconNormal},
 			{Kind: ui.KindText, Key: "media-title", MaxWidth: maxWidth, Marquee: true},
+			{Kind: ui.KindIcon, Key: "media-play", Icon: "play_arrow", IconSize: DefaultTheme().Metrics.IconNormal,
+				Action: mediaPlayPauseAction, Name: "Play or pause", Role: "button"},
 		}}
 	return textWidget{
 		node:           row,
@@ -80,6 +82,19 @@ func refreshMediaWidget(row *ui.Node, v barView) bool {
 	}
 	if !v.Media.Available {
 		return changed
+	}
+	button := row.Children[2]
+	playIcon := "play_arrow"
+	if v.Media.Status == services.PlaybackPlaying {
+		playIcon = "pause"
+	}
+	tone := ui.ToneNormal
+	if mediaPlayDisabled(v.Media) {
+		tone = ui.ToneSubtle
+	}
+	if button.Icon != playIcon || button.Tone != tone {
+		button.Icon, button.Tone = playIcon, tone
+		changed = true
 	}
 	if text := row.Children[1]; text.Text != v.Media.Title {
 		text.Text = v.Media.Title

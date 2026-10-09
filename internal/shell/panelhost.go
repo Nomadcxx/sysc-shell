@@ -835,6 +835,12 @@ func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 }
 
 func (r *Registry) DropAux(output uint32, surfaceID string) {
+	r.mu.Lock()
+	dropped := r.mediaStrip != nil && r.mediaStrip.dropAuxLocked(output, surfaceID)
+	r.mu.Unlock()
+	if dropped {
+		return
+	}
 	if r.DropTrayAux(output, surfaceID) {
 		return
 	}
