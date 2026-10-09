@@ -2,6 +2,7 @@ package wallpaper
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -798,5 +799,34 @@ func TestServiceRestartsExitedWallpaperOnce(t *testing.T) {
 				return len(h.argvs()) == 3 && s.Runtime["DP-1"].State == original.DesiredPlayback
 			})
 		})
+	}
+}
+
+// Opening a folder in the picker moves its previews to the front, and the
+// snapshot reports that folder's own progress next to the library's.
+func TestServiceReportsTheOpenFolderProgress(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(root, "a.png"), filepath.Join(sub, "x.png"), filepath.Join(sub, "y.png")} {
+		writePNG(t, p, 320, 180)
+	}
+	svc := NewService(ServiceConfig{
+		Engine:      newFakeEngine(),
+		Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+		Connectors:  []string{"DP-1"},
+		PersistPath: filepath.Join(t.TempDir(), "assignments.json"),
+		Roots:       []string{root},
+		CacheDir:    t.TempDir(),
+	})
+	t.Cleanup(svc.Close)
+	svc.Enqueue(Command{Op: OpFocusFolder, Path: sub})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.ThumbsFolder == sub && s.ThumbsFolderTotal == 2 && s.ThumbsFolderDone == 2 && s.ThumbsDone == s.ThumbsTotal
+	})
+	if snap.ThumbsTotal != 3 {
+		t.Fatalf("library total %d, want 3 files", snap.ThumbsTotal)
 	}
 }

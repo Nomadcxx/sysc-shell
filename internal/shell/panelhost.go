@@ -179,6 +179,10 @@ type PanelHost struct {
 	// configure at another scale rebuilds it (its measured widths and the bar
 	// pictures depend on it).
 	settingsTreeScale int
+	// wallpaperTreeScale is the same for the wallpaper picker, which measures
+	// its rail, path rule and decoding texture as it builds, and sizes its
+	// preview decodes in physical pixels.
+	wallpaperTreeScale int
 	// pluginStoreTreeScale is the same for the plugin store, whose cards,
 	// chip rows and wrapped text are measured as they are built.
 	pluginStoreTreeScale int
@@ -1271,7 +1275,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.wallpaperOutput = wallpaper.AllOutputs
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()
-			h.wallpaperDir = firstRoot(h.wallpaperSnap)
+			h.wallpaperOpenDir(r, firstRoot(h.wallpaperSnap))
 		}
 	}
 	if id == PanelTerminalArt {
@@ -1327,7 +1331,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelWallpaper {
 		// The picker opens on its search box rather than on the Close button
 		// that happens to be first in the tree.
-		h.focusByName("Search")
+		h.focusByName(wallpaperSearchName)
 		h.wallpaperFocused = true
 	}
 	if id == PanelTerminalArt {
@@ -4412,6 +4416,8 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 		return h.settingsTreeScale, true
 	case PanelPluginStore:
 		return h.pluginStoreTreeScale, true
+	case PanelWallpaper:
+		return h.wallpaperTreeScale, true
 	}
 	return 0, false
 }
