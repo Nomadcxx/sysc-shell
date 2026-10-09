@@ -1590,6 +1590,27 @@ func TestHiddenScrollbarPaintsNoPixels(t *testing.T) {
 	}
 }
 
+// A scrollbar placed in the gutter beyond its view's bounds must still paint:
+// the view's own clip covers its children, not its bar.
+func TestGutterScrollbarPaintsOutsideItsView(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 80, 80)
+	n := &ui.Node{
+		Kind: ui.KindVirtualList, ScrollbarGap: 4,
+		Bounds: ui.Rect{X: 4, Y: 4, W: 48, H: 48}, ContentH: 400,
+	}
+	if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	bar := ui.ScrollBar(n)
+	if bar.X < n.Bounds.X+n.Bounds.W {
+		t.Fatalf("bar %+v is inside the view %+v", bar, n.Bounds)
+	}
+	if got := pixelAt(t, c, bar.X+bar.W/2, bar.Y+bar.H-4); got != testStyle.Track {
+		t.Fatalf("gutter track pixel = %+v, want %+v", got, testStyle.Track)
+	}
+}
+
 // overlay is the colour the painter must produce when it composites src over
 // dst at the given alpha, following the canvas's own blend.
 func overlay(dst, src Color, alpha float64) Color {

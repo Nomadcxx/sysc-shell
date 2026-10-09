@@ -431,6 +431,9 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 				return err
 			}
 		}
+		// The bar paints under the parent's clip, not this view's: a node with
+		// a ScrollbarGap places it in the padding beyond its own bounds.
+		c.restrict = prev
 		paintScrollThumb(c, n, style)
 		return nil
 
@@ -561,32 +564,13 @@ func paintScheduleGrid(c *Canvas, n *ui.Node, text *TextRenderer, style Style) e
 }
 
 func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
-	if n.HideScrollbar {
+	bar := ui.ScrollBar(n)
+	if bar.W == 0 || bar.H <= 0 {
 		return
 	}
 	inner := n.Bounds.H - 2*n.Padding
-	if inner <= 0 || n.ContentH <= inner {
-		return
-	}
-	trackW := style.Scale120.Physical(4)
-	if trackW < 2 {
-		trackW = 2
-	}
-	box := style.Scale120.PhysicalRect(n.Bounds)
-	pad := style.Scale120.Physical(n.Padding)
-	if pad < 2 {
-		pad = 2
-	}
-	trackH := box.H - 2*pad
-	if trackH <= 0 {
-		return
-	}
-	track := ui.Rect{
-		X: box.X + box.W - pad - trackW,
-		Y: box.Y + pad,
-		W: trackW,
-		H: trackH,
-	}
+	track := style.Scale120.PhysicalRect(bar)
+	trackW := track.W
 	c.FillRounded(track, trackW/2, style.Track)
 	thumbH := track.H * inner / n.ContentH
 	minThumb := style.Scale120.Physical(16)

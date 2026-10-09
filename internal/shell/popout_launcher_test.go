@@ -331,6 +331,37 @@ func TestLauncherListEndsPartWayThroughARow(t *testing.T) {
 	}
 }
 
+// The scrollbar sits in the panel's right padding, a full row gap clear of the
+// pills, and its ends are level with the pill edges. Inside the list it covered
+// the last two pixels of every pill and started above the first one.
+func TestLauncherScrollbarClearsThePills(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, alphabetEntries(60))
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	list := launcherListNode(t, h)
+	bar := ui.ScrollBar(list)
+	if bar.W == 0 {
+		t.Fatal("an overflowing launcher list has no scrollbar")
+	}
+	pill := list.Children[0].Children[0]
+	if gap := bar.X - (pill.Bounds.X + pill.Bounds.W); gap != launcherRowGap {
+		t.Fatalf("scrollbar clears the pills by %d, want %d (bar %+v, pill %+v)", gap, launcherRowGap, bar, pill.Bounds)
+	}
+	if right := bar.X + bar.W; right > h.place.Panel.W {
+		t.Fatalf("scrollbar ends at x=%d, past the %d panel", right, h.place.Panel.W)
+	}
+	if bar.Y != pill.Bounds.Y {
+		t.Fatalf("scrollbar top = %d, want level with the first pill at %d", bar.Y, pill.Bounds.Y)
+	}
+	if bottom, want := bar.Y+bar.H, list.Bounds.Y+list.Bounds.H-launcherRowGap/2; bottom != want {
+		t.Fatalf("scrollbar bottom = %d, want %d", bottom, want)
+	}
+}
+
 // DMS's row padding: 12 above the text block and 16 below. ui carries one
 // padding scalar per node, so the asymmetry is structural -- the capsule is
 // taller than its content and a column inside it spends the difference at the

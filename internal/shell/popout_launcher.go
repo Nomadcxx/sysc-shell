@@ -479,6 +479,12 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 		ItemCount:    len(results),
 		ItemHeight:   launcherSlotHeight,
 		ScrollOffset: h.launcherVisibleOffset(len(results)),
+		// Each pill sits launcherRowGap/2 inside the list on every side. The
+		// bar takes the same figure again beyond the list's right edge, so it
+		// clears the pills by a full row gap in the panel's padding, and its
+		// ends stop level with the first and last pill instead of past them.
+		ScrollbarGap:  launcherRowGap / 2,
+		ScrollbarEnds: launcherRowGap / 2,
 		Item: func(i int) *ui.Node {
 			return launcherRow(r, h, results, i)
 		},
