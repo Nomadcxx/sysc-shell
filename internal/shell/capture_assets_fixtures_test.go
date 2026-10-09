@@ -24,7 +24,19 @@ func assetSample() services.Snapshot {
 		CPU:         &metrics.CPUSnapshot{Usage: metrics.CPUUsage{Fraction: 0.27, Valid: true}},
 		Memory: &metrics.MemorySnapshot{
 			Memory: metrics.Capacity{TotalBytes: 32 << 30, UsedBytes: 11 << 30},
+			Swap:   metrics.Capacity{TotalBytes: 4 << 30, UsedBytes: 220 << 20},
 		},
+		Filesystem: &metrics.FilesystemSnapshot{Filesystems: []metrics.Filesystem{{
+			MountPoint: "/", Capacity: metrics.Capacity{TotalBytes: 930 << 30, UsedBytes: 160 << 30},
+		}}},
+		Block: &metrics.BlockSnapshot{Devices: []metrics.BlockDevice{{
+			Name:  "nvme0n1",
+			Rates: metrics.BlockRates{ReadBytesPerSecond: 3_200_000, WriteBytesPerSecond: 1_100_000, Valid: true},
+		}}},
+		Network: &metrics.NetworkSnapshot{Interfaces: []metrics.NetworkInterface{{
+			Name:  "wlan0",
+			Rates: metrics.NetworkRates{ReceiveBytesPerSecond: 1_500_000, TransmitBytesPerSecond: 320_000, Valid: true},
+		}}},
 		Thermal:   &metrics.ThermalSnapshot{Celsius: 54, Valid: true},
 		GPU:       &metrics.GPUSnapshot{GPUs: []metrics.GPU{{Usage: metrics.GPUUsage{Fraction: 0.12, Valid: true}}}},
 		Processes: assetProcesses(),

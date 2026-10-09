@@ -1,7 +1,10 @@
 package shell
 
 import (
+	"context"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"testing"
+	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -11,7 +14,7 @@ import (
 // of them read from the machine the screenshot is taken on.
 func assetApps() []launcher.Entry {
 	app := func(id, name, generic, icon string) launcher.Entry {
-		return launcher.Entry{ID: id + ".desktop", Name: name, GenericName: generic, IconName: icon, Argv: []string{id}}
+		return launcher.Entry{ID: id + ".desktop", Name: name, GenericName: generic, Comment: generic, IconName: icon, Argv: []string{id}}
 	}
 	return []launcher.Entry{
 		app("browser", "Browser", "Web Browser", "web-browser"),
@@ -36,6 +39,12 @@ func TestAssetLauncher(t *testing.T) {
 			reg, _, reqs := openLauncherPanel(t, assetApps())
 			reg.mu.Lock()
 			assetBase(t, reg)
+			// The icon worker resolves each entry's icon name against the installed theme.
+			worker := icons.NewWorker(icons.NewResolver("", nil), nil)
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			go func() { _ = worker.Run(ctx) }()
+			reg.trayIcons = worker
 			reg.mu.Unlock()
 			want := len(assetApps())
 			if tc.query != "" {
@@ -48,6 +57,9 @@ func TestAssetLauncher(t *testing.T) {
 			if want >= 0 {
 				waitForLauncherResults(t, reg, want)
 			}
+			// The first paint asks the icon worker for each icon; the second shows them.
+			paintAssetPanel(t, reg, PanelLauncher, reqs[1].Open, "launcher", tc.name)
+			time.Sleep(600 * time.Millisecond)
 			paintAssetPanel(t, reg, PanelLauncher, reqs[1].Open, "launcher", tc.name)
 		})
 	}
