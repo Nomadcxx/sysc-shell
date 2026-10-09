@@ -6,8 +6,8 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// ponytail: cap the drawn list at six rows; arrows advance the window, with
-// pointer-wheel scrolling as the next step if users need it.
+// ponytail: cap the drawn list at six rows; arrows and the wheel move the
+// cursor, with the visible window following it.
 const menuVisibleRows = 6
 
 // Menu is an in-panel dropdown. It is not a Wayland surface: the open list
@@ -193,25 +193,37 @@ func (m *Menu) Prev() { m.step(-1) }
 // step moves the cursor one drawn row. A picker walks its matches: stepping
 // through the full list would rest the cursor on rows the filter is hiding.
 func (m *Menu) step(by int) {
+	m.move(by, true)
+}
+
+// wheel moves the cursor without wrapping, like scrolling a list to its ends.
+func (m *Menu) wheel(by int) bool {
+	return m.move(by, false)
+}
+
+func (m *Menu) move(by int, wrap bool) bool {
 	if m == nil || !m.open || len(m.options) == 0 {
-		return
+		return false
 	}
-	if m.filter == nil {
-		m.cursor = (m.cursor + by + len(m.options)) % len(m.options)
+	count := m.optionCount()
+	position, ok := m.cursorPosition()
+	if count == 0 || !ok || by == 0 {
+		return false
+	}
+	next := position + by
+	if wrap {
+		next %= count
+		if next < 0 {
+			next += count
+		}
 	} else {
-		if len(m.matches) == 0 {
-			return
-		}
-		at := 0
-		for i, idx := range m.matches {
-			if idx == m.cursor {
-				at = i
-				break
-			}
-		}
-		m.cursor = m.matches[(at+by+len(m.matches))%len(m.matches)]
+		next = min(max(next, 0), count-1)
 	}
+	option := m.optionAt(next)
+	changed := option != m.cursor
+	m.cursor = option
 	m.keepCursorVisible()
+	return changed
 }
 
 func (m *Menu) Select() int {
