@@ -1180,3 +1180,20 @@ func TestBarThicknessAllowsReadableSideText(t *testing.T) {
 		t.Fatalf("thickness was not retained: shared=%d output=%d", cfg.Bar.Height, cfg.ForConnector("eDP-1").Height)
 	}
 }
+
+func TestTerminalOpacityEntry(t *testing.T) {
+	e := Default().ByPath("theme.terminal-opacity")
+	if e == nil {
+		t.Fatal("no theme.terminal-opacity entry")
+	}
+	if e.Section != "Templates" || e.Group != "Terminals" || e.Min != 50 || e.Max != 100 {
+		t.Fatalf("entry = section %q group %q range %d..%d", e.Section, e.Group, e.Min, e.Max)
+	}
+	cfg := config.Default()
+	if err := e.Set(&cfg, "85"); err != nil || cfg.TerminalOpacity != 85 {
+		t.Fatalf("set 85 = %v, value %d", err, cfg.TerminalOpacity)
+	}
+	if err := e.Set(&cfg, "40"); err == nil {
+		t.Fatal("40 is below the floor and must be refused")
+	}
+}

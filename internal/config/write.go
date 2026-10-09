@@ -162,6 +162,10 @@ func toWire(c Config) wireConfig {
 	if len(c.Templates) > 0 {
 		w.Templates = c.Templates
 	}
+	if c.TerminalOpacity != TerminalOpacityMax {
+		v := c.TerminalOpacity
+		w.TerminalOpacity = &v
+	}
 	w.Plugins = pluginsDiff(c.Plugins)
 	return w
 }

@@ -455,8 +455,17 @@ type Config struct {
 	TerminalArt   TerminalArt
 	Outputs       []OutputOverride
 	Templates     map[string]bool
-	Plugins       Plugins
+	// TerminalOpacity is the background opacity, in percent, the shell writes
+	// into each enabled terminal template's config. 100 leaves it unmanaged.
+	TerminalOpacity int
+	Plugins         Plugins
 }
+
+// The terminal-opacity range. Below 50 text over a busy effect stops reading.
+const (
+	TerminalOpacityMin = 50
+	TerminalOpacityMax = 100
+)
 
 // knownItems is the Milestone 3 widget vocabulary through Tranche 3B. The
 // Milestone 2 fixture ids are deliberately absent: there is no compatibility
@@ -615,6 +624,7 @@ func Default() Config {
 			FadeDuration:   0.5,
 			Hidden:         "none",
 		},
+		TerminalOpacity: TerminalOpacityMax,
 	}
 	// The bar's geometry is derived, not written twice: height, padding,
 	// spacing, radius, and text size all follow the resolved composition, and

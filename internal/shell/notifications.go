@@ -179,6 +179,11 @@ func (s *notifyState) historyCount() int {
 // through these rather than the lock directly.
 func (r *Registry) applyNotify(m notifyclient.Message) {
 	r.notify.applyNotify(m)
+	// A snapshot is the service answering: anything held back while it was
+	// unreachable, such as the startup theme apply's report, can go now.
+	if m.Kind == notifyclient.KindSnapshot {
+		r.flushTemplateToasts()
+	}
 	var batteryAction *batteryProducerAction
 	if r.batteryWarning != nil {
 		switch m.Kind {

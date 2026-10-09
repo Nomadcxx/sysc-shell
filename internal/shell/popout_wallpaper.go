@@ -1770,7 +1770,7 @@ func (r *Registry) republishTheme(cfg config.Config) {
 		themeErr = genErr.Error()
 	}
 	r.paintTheme(cfg, tokens, themeErr, true)
-	if !runningAsTest() && generatedTheme(genErr) {
+	if !runningAsTest() && genErr == nil {
 		go r.publishCommittedThemeSelection(cfg, tokens)
 	}
 }

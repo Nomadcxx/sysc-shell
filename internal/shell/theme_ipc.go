@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
@@ -222,6 +223,7 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 	}
 
 	var outcomes map[string]error
+	var adopted []string
 	var applyErr, genErr error
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -238,10 +240,10 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 		// palette that reads as a plain success is the shape of failure #101.
 		tok, err := r.tokensFor(cfg)
 		genErr = err
-		outcomes, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok, nil)
-	}
-	if outcomes != nil {
-		r.recordTemplateOutcomes(outcomes, false)
+		outcomes, adopted, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, tok, cfg.TerminalOpacity)
+		if outcomes != nil {
+			r.reportTemplates(home, outcomes, adopted)
+		}
 	}
 	if outcomes == nil && applyErr == nil {
 		applyErr = errors.New("template apply completed without per-template outcomes")
@@ -260,6 +262,10 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 			}
 		}
 		result := map[string]any{"status": "applied"}
+		if templateErr == nil && slices.Contains(adopted, template) {
+			// Applied over the user's own setting, which was backed up.
+			result = map[string]any{"status": "adopted", "backups": theming.Backups(home, template)}
+		}
 		if templateErr != nil {
 			status := "error"
 			if errors.Is(templateErr, theming.ErrUserModified) {

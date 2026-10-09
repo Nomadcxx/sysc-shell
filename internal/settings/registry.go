@@ -992,6 +992,16 @@ func (r *Registry) addTemplateEntries() {
 			}),
 		})
 	}
+	r.entries = append(r.entries, Entry{
+		Path: "theme.terminal-opacity", Present: PresentSlider, Unit: "%",
+		Label: "Terminal opacity", Section: "Templates", Group: "Terminals",
+		Describe: "Background opacity written into kitty, ghostty, alacritty, foot and wezterm when their template is on. Open windows update, except foot and kitty windows started before the first change, which take it when reopened. 100 leaves each terminal's own setting alone.",
+		Kind:     KindInt,
+		Min:      config.TerminalOpacityMin, Max: config.TerminalOpacityMax,
+		Get: getInt(func(c config.Config) int { return c.TerminalOpacity }),
+		Set: setInt("theme.terminal-opacity", config.TerminalOpacityMin, config.TerminalOpacityMax,
+			func(c *config.Config, n int) { c.TerminalOpacity = n }),
+	})
 }
 
 // conciseDuration prints a duration the way it is typed: 15m, 1h30m, 90s.
