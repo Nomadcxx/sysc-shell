@@ -28,6 +28,8 @@ github.com/Nomadcxx/sysc-terminal v0.1.1-0.20261008172631-0157cbfe0ea0 h1:wtYV6q
 github.com/Nomadcxx/sysc-terminal v0.1.1-0.20261008172631-0157cbfe0ea0/go.mod h1:vJUvbNqGP17it0ApwCaR6pzt0WEkaqfMaZ4pdEhDk7Y=
 github.com/Nomadcxx/sysc-tray v0.1.0-rc.3 h1:WBuTqh8OlMk/PWMe2yc19rr7O6KhYxLM+xSsEywppo8=
 github.com/Nomadcxx/sysc-tray v0.1.0-rc.3/go.mod h1:bXMEvkMvsvkqNXQsNrP3hZeHVq/4AVEeQhL19KdMLos=
+github.com/Nomadcxx/sysc-tray v0.1.1 h1:aU4/lbhU3C07kWMEAYrv0op94okc1JnRb70z27OSg4Q=
+github.com/Nomadcxx/sysc-tray v0.1.1/go.mod h1:bXMEvkMvsvkqNXQsNrP3hZeHVq/4AVEeQhL19KdMLos=
 github.com/Nomadcxx/sysc-wayland v0.3.1 h1:bpo91OQOlWv5rvM4sPueqwEYHYSTIlIKO6KmgGQyU/0=
 github.com/Nomadcxx/sysc-wayland v0.3.1/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
 github.com/Nomadcxx/sysc-wayland v0.3.2-0.20261005032310-d48237c38013 h1:wc+9N2TKJdxa3GEwYsvLPZW6gpeCn21+ecBfrH4mh5M=

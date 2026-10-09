@@ -100,7 +100,7 @@ of the commit gate.
 | sysc-launch | `v0.2.1-0.20260928124755-5ccc1d40f3cf` |
 | sysc-metrics | `v0.7.0` |
 | sysc-notify | `v0.1.0-rc.4.0.20260928141411-254ec5732728` |
-| sysc-tray | `v0.1.0-rc.3` |
+| sysc-tray | `v0.1.1` |
 
 ## Where to go next
 

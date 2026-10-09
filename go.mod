@@ -16,7 +16,7 @@ require (
 	github.com/Nomadcxx/sysc-metrics v0.7.0
 	github.com/Nomadcxx/sysc-notify v0.1.0-rc.4.0.20260928141411-254ec5732728
 	github.com/Nomadcxx/sysc-terminal v0.1.1-0.20261008172631-0157cbfe0ea0
-	github.com/Nomadcxx/sysc-tray v0.1.0-rc.3
+	github.com/Nomadcxx/sysc-tray v0.1.1
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
 	github.com/rivo/uniseg v0.4.7

@@ -14,7 +14,7 @@ commit gate.
 | [sysc-metrics](https://github.com/Nomadcxx/sysc-metrics) | Linux telemetry for the monitoring widgets and the process view |
 | [sysc-launch](https://github.com/Nomadcxx/sysc-launch) | Desktop-entry scan, ranking and usage history. A library the shell runs in-process; its ranking history lives at `$XDG_STATE_HOME/sysc-shell/launcher/history.gob` |
 | [sysc-notify](https://github.com/Nomadcxx/sysc-notify) | Notification daemon. Separate process; the shell dials `$XDG_RUNTIME_DIR/sysc-notify/presenter.v1.sock` |
-| [sysc-tray](https://github.com/Nomadcxx/sysc-tray) | StatusNotifierItem and DBusMenu daemon. Separate process; the shell dials `$XDG_RUNTIME_DIR/sysc-tray/presenter.v1.sock`. The code is on the `redesign/v0.1` branch and its tags; `main` holds only docs |
+| [sysc-tray](https://github.com/Nomadcxx/sysc-tray) | StatusNotifierItem and DBusMenu daemon. Separate process; the shell dials `$XDG_RUNTIME_DIR/sysc-tray/presenter.v1.sock` and links its `protocol` package. Released as `v0.1.1` |
 | [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard) | Clipboard history daemon. Separate process; the shell uses its `client` package |
 | [oksvg](https://github.com/srwiley/oksvg) + [rasterx](https://github.com/srwiley/rasterx) | Pure-Go SVG rasterisation for theme icons. Upstream tags no releases, so the pins are pseudo-versions |
 
