@@ -1733,6 +1733,113 @@ func TestThePanelOpensAndFiltersTheFontPicker(t *testing.T) {
 	t.Logf("filtered to %d of %d families", len(node.Children)-1, len(settingsFontFamilies()))
 }
 
+func TestMouseWheelScrollsAnOpenSettingsMenu(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	size := panelTargetSize(PanelSettings)
+	if err := panel.Callbacks.Configure(size.W, size.H, 120); err != nil {
+		t.Fatal(err)
+	}
+	h := reg.panelHosts[PanelSettings]
+	options := []string{"option0", "option1", "option2", "option3", "option4", "option5", "option6", "option7"}
+	m := NewMenu(options, 0)
+	m.Open()
+
+	reg.mu.Lock()
+	h.section = "Appearance"
+	h.menus["appearance.font-family"] = m
+	h.menu, h.menuPath = m, "appearance.font-family"
+	reg.rebuildPanel(h)
+	n := byAction(h.root, "set:appearance.font-family")
+	var popup ui.Rect
+	if n != nil {
+		popup = ui.MenuPopupBounds(n)
+	}
+	reg.mu.Unlock()
+	if n == nil || popup.W <= 0 || popup.H <= 0 {
+		t.Fatal("open menu has no laid-out popup")
+	}
+
+	handle := panel.Callbacks.Handle
+	x, y := popup.X+popup.W/2, popup.Y+popup.H/2
+	handle(wayland.Event{Kind: wayland.EventPointerEnter, X: float64(x), Y: float64(y)})
+	assertCursor := func(want int) {
+		t.Helper()
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		if m.cursor != want {
+			t.Fatalf("menu cursor = %d, want %d", m.cursor, want)
+		}
+	}
+	if !handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisDiscrete: 1}) {
+		t.Fatal("discrete wheel over the popup was not handled")
+	}
+	assertCursor(1)
+	if !handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 120}) {
+		t.Fatal("value120 wheel over the popup was not handled")
+	}
+	assertCursor(2)
+	if !handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: -120}) {
+		t.Fatal("reverse value120 wheel over the popup was not handled")
+	}
+	assertCursor(1)
+	for range 8 {
+		if !handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisDiscrete: -1}) {
+			t.Fatal("reverse wheel over the popup was not handled")
+		}
+	}
+	assertCursor(0)
+	for range 8 {
+		if !handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisDiscrete: 1}) {
+			t.Fatal("wheel over the popup was not handled")
+		}
+	}
+	assertCursor(7)
+
+	reg.mu.Lock()
+	n = byAction(h.root, "set:appearance.font-family")
+	cursor, selected := m.cursor, m.Index()
+	rowCount, highlighted := 0, -1
+	var visible []string
+	if n != nil {
+		rowCount = len(n.Children)
+		visible = make([]string, len(n.Children))
+		for i, child := range n.Children {
+			visible[i] = child.Text
+			if child.Value != 0 {
+				highlighted = i
+			}
+		}
+	}
+	reg.mu.Unlock()
+	if n == nil {
+		t.Fatal("wheel removed the open menu")
+	}
+	if rowCount != menuVisibleRows {
+		t.Fatalf("open menu rows = %d, want %d", rowCount, menuVisibleRows)
+	}
+	if got := visible[0]; got != "option2" {
+		t.Errorf("first visible option = %q, want option2 after scrolling", got)
+	}
+	if got := visible[len(visible)-1]; got != "option7" {
+		t.Errorf("last visible option = %q, want option7", got)
+	}
+	if highlighted != menuVisibleRows-1 {
+		t.Errorf("highlighted row = %d, want %d", highlighted, menuVisibleRows-1)
+	}
+	if cursor != 7 {
+		t.Errorf("menu cursor after wheel = %d, want 7", cursor)
+	}
+	if selected != 0 {
+		t.Errorf("wheel committed option %d before activation", selected)
+	}
+}
+
 func TestShortEnumsRenderSegmentedAndPickWrites(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
