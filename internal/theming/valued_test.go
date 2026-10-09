@@ -27,7 +27,7 @@ func readString(t *testing.T, p string) string {
 }
 
 func kittyOpacity(p, value string) valuedLine {
-	return valuedLine{file: p, key: "background_opacity", line: "background_opacity " + value}
+	return valuedLine{file: p, key: "background_opacity ", line: "background_opacity " + value}
 }
 
 func TestValuedLineAdoptsUserLinesWithBackup(t *testing.T) {

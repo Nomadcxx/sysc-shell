@@ -1,6 +1,7 @@
 package theming
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -21,6 +22,12 @@ type valuedLine struct {
 
 func valuedOwnershipKey(v valuedLine) string {
 	return "valued:" + hash([]byte(v.file+"\x00"+v.key))
+}
+
+// valuedHeaderKey records that the shell added v's section header, so taking
+// the line away can take the header with it and leave the file as it was.
+func valuedHeaderKey(v valuedLine) string {
+	return "valued-header:" + hash([]byte(v.file+"\x00"+v.section))
 }
 
 // ensureValuedLine writes v.line as the only line for v.key. The first time it
@@ -64,16 +71,61 @@ func ensureValuedLine(v valuedLine, force bool) error {
 		return fmt.Errorf("%w: %s in %s", ErrUserModified, v.key, v.file)
 	}
 	if theirs > 0 {
-		if err := backupUserFileOnce(v.file, b); err != nil {
+		if err := backupUserFile(v.file, b); err != nil {
 			return err
 		}
 	}
+	addsHeader := v.section != "" && !hasSection(keep, v.section)
 	d := directive{file: v.file, line: v.line, section: v.section, returnConfig: v.returnConfig}
 	content := directiveContent([]byte(strings.Join(keep, "\n")), keep, d)
 	if err := writeDirectiveConfig(v.file, content); err != nil {
 		return err
 	}
-	return rememberHash(valuedOwnershipKey(v), hash([]byte(want)))
+	// An unrecorded line would read as the user's on the next apply, so a
+	// failed ownership write puts the file back.
+	record := rememberHash(valuedOwnershipKey(v), hash([]byte(want)))
+	if record == nil && addsHeader {
+		record = rememberHash(valuedHeaderKey(v), "added")
+	}
+	if record != nil {
+		return errors.Join(record, writeDirectiveConfig(v.file, b))
+	}
+	return nil
+}
+
+func hasSection(lines []string, section string) bool {
+	for _, ln := range lines {
+		if name, ok := sectionHeader(ln); ok && name == section {
+			return true
+		}
+	}
+	return false
+}
+
+// dropAddedHeader removes section's header when the shell added it and
+// nothing else has been written under it since, with the blank line that
+// directiveContent put before it.
+func dropAddedHeader(lines []string, section string) []string {
+	for i, ln := range lines {
+		name, ok := sectionHeader(ln)
+		if !ok || name != section {
+			continue
+		}
+		for _, rest := range lines[i+1:] {
+			if _, next := sectionHeader(rest); next {
+				break
+			}
+			if strings.TrimSpace(rest) != "" {
+				return lines
+			}
+		}
+		start := i
+		if i > 0 && strings.TrimSpace(lines[i-1]) == "" {
+			start = i - 1
+		}
+		return append(lines[:start:start], lines[i+1:]...)
+	}
+	return lines
 }
 
 // removeValuedLine deletes the line the shell last wrote for v.key and forgets
@@ -100,8 +152,17 @@ func removeValuedLine(v valuedLine) error {
 		}
 		keep = append(keep, ln)
 	}
+	added := v.section != "" && stateHash(valuedHeaderKey(v)) != ""
+	if added {
+		keep = dropAddedHeader(keep, v.section)
+	}
 	if len(keep) != len(lines) {
 		if err := writeDirectiveConfig(v.file, []byte(strings.Join(keep, "\n"))); err != nil {
+			return err
+		}
+	}
+	if added {
+		if err := rememberHash(valuedHeaderKey(v), ""); err != nil {
 			return err
 		}
 	}

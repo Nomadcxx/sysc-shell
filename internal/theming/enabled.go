@@ -404,8 +404,8 @@ var templateTargets = map[string]templateTarget{
 			// it on while it manages the opacity.
 			conf := joined(h, ".config", "kitty", "kitty.conf")
 			return []valuedLine{
-				{file: conf, key: "background_opacity", line: "background_opacity " + v},
-				{file: conf, key: "dynamic_background_opacity", line: "dynamic_background_opacity yes"},
+				{file: conf, key: "background_opacity ", line: "background_opacity " + v},
+				{file: conf, key: "dynamic_background_opacity ", line: "dynamic_background_opacity yes"},
 			}
 		},
 	},
@@ -639,8 +639,13 @@ func Backups(home, name string) []string {
 			continue
 		}
 		seen[f] = true
-		if _, err := os.Stat(f + ".bak"); err == nil {
-			out = append(out, f+".bak")
+		// Numbered backups follow the first; the run ends at the first gap.
+		for n := 1; ; n++ {
+			backup := numberedBackup(f, n)
+			if _, err := os.Stat(backup); err != nil {
+				break
+			}
+			out = append(out, backup)
 		}
 	}
 	return out

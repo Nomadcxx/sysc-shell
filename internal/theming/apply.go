@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -480,6 +481,12 @@ func directiveOwnershipKey(d directive) string {
 
 func directiveKeyMatches(line, key string) bool {
 	trim := strings.TrimSpace(line)
+	// "name " is a key separated from its value by whitespace, as kitty
+	// writes them: a longer option sharing the prefix is another setting.
+	if name, ok := strings.CutSuffix(key, " "); ok {
+		rest, found := strings.CutPrefix(trim, name)
+		return found && name != "" && (rest == "" || rest[0] == ' ' || rest[0] == '\t')
+	}
 	if strings.HasSuffix(key, "=") {
 		name := strings.TrimSpace(strings.TrimSuffix(key, "="))
 		if name == "" || !strings.HasPrefix(trim, name) {
@@ -607,15 +614,47 @@ func sectionHeader(line string) (string, bool) {
 // backupUserFileOnce preserves the complete user config before a confirmed
 // replacement, retaining its mode and the first backup.
 func backupUserFileOnce(path string, data []byte) error {
+	if err := writeBackup(path, path+".bak", data); !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
+}
+
+// backupUserFile keeps every distinct user file an adoption replaces: the
+// first in <path>.bak, later ones in <path>.bak.2, .bak.3 and on. Bytes a
+// backup already holds are not written again. A shell-owned value is adopted
+// again each time the user edits it, and each edit is theirs to recover.
+func backupUserFile(path string, data []byte) error {
+	for n := 1; ; n++ {
+		backup := numberedBackup(path, n)
+		held, err := os.ReadFile(backup)
+		if errors.Is(err, os.ErrNotExist) {
+			return writeBackup(path, backup, data)
+		}
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(held, data) {
+			return nil
+		}
+	}
+}
+
+func numberedBackup(path string, n int) string {
+	if n == 1 {
+		return path + ".bak"
+	}
+	return path + ".bak." + strconv.Itoa(n)
+}
+
+// writeBackup creates backup, which must not exist, holding data with the
+// mode of path.
+func writeBackup(path, backup string, data []byte) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	backup := path + ".bak"
 	f, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
-	if errors.Is(err, os.ErrExist) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
