@@ -116,3 +116,33 @@ func TestZeroTerminalOpacityIsUnmanaged(t *testing.T) {
 		t.Fatalf("opacity 0 wrote a line: %q", got)
 	}
 }
+
+// kitty applies a reloaded background_opacity only to windows started with
+// dynamic_background_opacity on, so the shell owns that line too while it
+// manages kitty's opacity, and removes it with the opacity.
+func TestKittyOpacityEnablesDynamicOpacity(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	markTemplatesComplete(t, "kitty")
+	p := filepath.Join(home, ".config", "kitty", "kitty.conf")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("font_size 12\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	only := func(name string) bool { return name == "kitty" }
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback, 85); err != nil {
+		t.Fatal(err)
+	}
+	got := readString(t, p)
+	if strings.Count(got, "dynamic_background_opacity yes") != 1 || strings.Count(got, "background_opacity 0.85") != 1 {
+		t.Fatalf("kitty.conf = %q, want background_opacity 0.85 and dynamic_background_opacity yes once each", got)
+	}
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback, 100); err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, p); strings.Contains(got, "background_opacity") {
+		t.Fatalf("100 left an opacity line: %q", got)
+	}
+}

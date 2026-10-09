@@ -987,7 +987,7 @@ func (r *Registry) addTemplateEntries() {
 	r.entries = append(r.entries, Entry{
 		Path: "theme.terminal-opacity", Present: PresentSlider, Unit: "%",
 		Label: "Terminal opacity", Section: "Templates", Group: "Terminals",
-		Describe: "Background opacity written into kitty, ghostty, alacritty, foot and wezterm when their template is on. kitty, ghostty, alacritty and wezterm update open windows; foot applies to new ones. 100 leaves each terminal's own setting alone.",
+		Describe: "Background opacity written into kitty, ghostty, alacritty, foot and wezterm when their template is on. Open windows update, except foot and kitty windows started before the first change, which take it when reopened. 100 leaves each terminal's own setting alone.",
 		Kind:     KindInt,
 		Min:      config.TerminalOpacityMin, Max: config.TerminalOpacityMax,
 		Get: getInt(func(c config.Config) int { return c.TerminalOpacity }),

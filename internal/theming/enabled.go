@@ -285,9 +285,9 @@ type templateTarget struct {
 	directives func(home string) []directive
 	signal     func(root string) error
 	block      func(home string) (file, open, close string)
-	// opacity builds the terminal's owned opacity line for a value such as
+	// opacity builds the terminal's owned opacity lines for a value such as
 	// "0.85". Nil for applications without a background opacity.
-	opacity func(home, value string) valuedLine
+	opacity func(home, value string) []valuedLine
 }
 
 // targetFiles hashes every file the target writes, keyed by path; a missing
@@ -298,7 +298,9 @@ func targetFiles(tgt templateTarget, home string) map[string]string {
 		paths = append(paths, d.file)
 	}
 	if tgt.opacity != nil {
-		paths = append(paths, tgt.opacity(home, "").file)
+		for _, v := range tgt.opacity(home, "") {
+			paths = append(paths, v.file)
+		}
 	}
 	out := make(map[string]string, len(paths))
 	for _, p := range paths {
@@ -341,8 +343,8 @@ var templateTargets = map[string]templateTarget{
 				create:  true,
 			}}
 		},
-		opacity: func(h, v string) valuedLine {
-			return valuedLine{file: joined(h, ".config", "alacritty", "alacritty.toml"), key: "opacity=", line: "opacity = " + v, section: "window"}
+		opacity: func(h, v string) []valuedLine {
+			return []valuedLine{{file: joined(h, ".config", "alacritty", "alacritty.toml"), key: "opacity=", line: "opacity = " + v, section: "window"}}
 		},
 	},
 	"foot": {
@@ -362,8 +364,8 @@ var templateTargets = map[string]templateTarget{
 			}}
 		},
 		// foot 1.28 reads alpha in the [colors-dark] section the template writes.
-		opacity: func(h, v string) valuedLine {
-			return valuedLine{file: joined(h, ".config", "foot", "foot.ini"), key: "alpha=", line: "alpha=" + v, section: "colors-dark"}
+		opacity: func(h, v string) []valuedLine {
+			return []valuedLine{{file: joined(h, ".config", "foot", "foot.ini"), key: "alpha=", line: "alpha=" + v, section: "colors-dark"}}
 		},
 	},
 	"ghostty": {
@@ -377,8 +379,8 @@ var templateTargets = map[string]templateTarget{
 			}}
 		},
 		// The "=" suffix keeps background-opacity-cells out of the match.
-		opacity: func(h, v string) valuedLine {
-			return valuedLine{file: joined(h, ".config", "ghostty", "config"), key: "background-opacity=", line: "background-opacity = " + v}
+		opacity: func(h, v string) []valuedLine {
+			return []valuedLine{{file: joined(h, ".config", "ghostty", "config"), key: "background-opacity=", line: "background-opacity = " + v}}
 		},
 		signal: signalGhostty,
 	},
@@ -396,8 +398,15 @@ var templateTargets = map[string]templateTarget{
 			}}
 		},
 		signal: signalKitty,
-		opacity: func(h, v string) valuedLine {
-			return valuedLine{file: joined(h, ".config", "kitty", "kitty.conf"), key: "background_opacity", line: "background_opacity " + v}
+		opacity: func(h, v string) []valuedLine {
+			// kitty applies a reloaded background_opacity only to windows
+			// started with dynamic_background_opacity on, so the shell turns
+			// it on while it manages the opacity.
+			conf := joined(h, ".config", "kitty", "kitty.conf")
+			return []valuedLine{
+				{file: conf, key: "background_opacity", line: "background_opacity " + v},
+				{file: conf, key: "dynamic_background_opacity", line: "dynamic_background_opacity yes"},
+			}
 		},
 	},
 	"helix": {
@@ -493,11 +502,11 @@ var templateTargets = map[string]templateTarget{
 				returnConfig: true,
 			}}
 		},
-		opacity: func(h, v string) valuedLine {
-			return valuedLine{
+		opacity: func(h, v string) []valuedLine {
+			return []valuedLine{{
 				file: joined(h, ".config", "wezterm", "wezterm.lua"), key: "config.window_background_opacity",
 				line: "config.window_background_opacity = " + v, returnConfig: true,
-			}
+			}}
 		},
 	},
 }
@@ -551,13 +560,18 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 		}
 		var opacityErr error
 		if tgt.opacity != nil {
-			v := tgt.opacity(home, opacityValue(terminalOpacity))
-			// Zero is a config that never set the field, not a request for
-			// invisible terminals; it is unmanaged like 100.
-			if terminalOpacity <= 0 || terminalOpacity >= 100 {
-				opacityErr = removeValuedLine(v)
-			} else {
-				opacityErr = ensureValuedLine(v, force)
+			for _, v := range tgt.opacity(home, opacityValue(terminalOpacity)) {
+				// Zero is a config that never set the field, not a request for
+				// invisible terminals; it is unmanaged like 100.
+				if terminalOpacity <= 0 || terminalOpacity >= 100 {
+					opacityErr = errors.Join(opacityErr, removeValuedLine(v))
+					continue
+				}
+				// Stop at a refusal: the adopting pass backs the file up,
+				// and it must not hold a line this pass already wrote.
+				if opacityErr = ensureValuedLine(v, force); opacityErr != nil {
+					break
+				}
 			}
 		}
 		// A guarded pass refused over the user's own opacity line is retried
@@ -578,8 +592,10 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 	}
 	if tgt.opacity != nil {
 		// Removal matches the recorded line, so the value is irrelevant here.
-		if err := removeValuedLine(tgt.opacity(home, "")); err != nil {
-			return err
+		for _, v := range tgt.opacity(home, "") {
+			if err := removeValuedLine(v); err != nil {
+				return err
+			}
 		}
 	}
 	for _, dir := range tgt.directives(home) {
