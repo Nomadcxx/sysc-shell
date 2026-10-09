@@ -21,6 +21,7 @@ const (
 	artColumns = 3
 	artCardW   = 196
 	artCardH   = 56
+	artInnerW  = artColumns*artCardW + (artColumns-1)*wallpaperGridGap
 )
 
 // terminalArtTree is the Terminal Art panel: sysc-Go effects on the wallpaper
@@ -71,9 +72,13 @@ func artHeader(h *PanelHost) *ui.Node {
 }
 
 // artStatusRow says what the selected outputs run now and offers only the
-// controls their current effect states support.
+// controls their current effect states support. The status sits above the
+// controls and is capped to the interior: one line per output grows with the
+// effect and palette names, and a shared row once pushed the controls out of
+// the panel so the surface could not open.
 func artStatusRow(h *PanelHost) *ui.Node {
-	children := []*ui.Node{{Kind: ui.KindText, Text: artStatusText(h)}}
+	status := &ui.Node{Kind: ui.KindText, Text: artStatusText(h), MaxWidth: artInnerW}
+	var children []*ui.Node
 	active, playing, paused := false, false, false
 	var restorable, skipped []string
 	for _, connector := range wallpaperTargets(h) {
@@ -112,9 +117,15 @@ func artStatusRow(h *PanelHost) *ui.Node {
 		}
 		children = append(children, restore)
 	}
+	if len(children) == 0 {
+		return status
+	}
 	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: h.theme.Metrics.StandardControl,
-		Children: children,
+		Kind: ui.KindColumn, Gap: wallpaperGridGap,
+		Children: []*ui.Node{status, {
+			Kind: ui.KindRow, Gap: wallpaperGridGap, Height: h.theme.Metrics.StandardControl,
+			Children: children,
+		}},
 	}
 }
 

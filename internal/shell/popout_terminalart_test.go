@@ -947,3 +947,39 @@ func TestTerminalArtRestoreTouchesOnlyEffects(t *testing.T) {
 		t.Fatalf("a restored output still reads as running: %q", artTexts(h.root))
 	}
 }
+
+// longArtEngine carries the installed catalog's long effect names, which
+// short fixture names hid from the status row width.
+type longArtEngine struct{ stubWallpaperEngine }
+
+func (longArtEngine) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{
+		GSlapper: true, Terminal: true, Statics: []string{"awww"},
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{{ID: "justice-cross"}},
+			Themes:  []string{"catppuccin-mocha"},
+		},
+	}
+}
+func (e longArtEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
+
+// An effect playing on every output must not make the panel unopenable: the
+// status and its playback controls once overflowed the 608 interior, the
+// first configure failed, and every reopen closed the surface again.
+func TestTerminalArtReopensWhileEffectsPlayOnEveryOutput(t *testing.T) {
+	reg, svc := artRegistry(t, longArtEngine{})
+	for _, connector := range []string{"DP-1", "DP-3"} {
+		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: connector, Kind: wallpaper.KindEffect, Effect: "justice-cross", Theme: "catppuccin-mocha"})
+		awaitArt(t, svc, connector, runningEffect("justice-cross", "catppuccin-mocha"))
+	}
+	for range 2 {
+		h := openArtPanel(t, reg)
+		reg.mu.Lock()
+		if findAction(h.root, "art-pause") == nil {
+			t.Error("playing effects offer Pause")
+		}
+		reg.closePanelLocked(PanelTerminalArt)
+		reg.mu.Unlock()
+		drainAuxQueue(reg)
+	}
+}
