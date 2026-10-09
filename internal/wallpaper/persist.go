@@ -17,7 +17,6 @@ type wireAssignment struct {
 	Path            string `json:"path"`
 	Effect          string `json:"effect,omitempty"`
 	Theme           string `json:"theme,omitempty"`
-	Artwork         string `json:"artwork,omitempty"`
 	PreviewPath     string `json:"preview_path,omitempty"`
 	DesiredPlayback string `json:"desired_playback"`
 }
@@ -82,11 +81,6 @@ func checkAssignment(a Assignment) error {
 				return err
 			}
 		}
-		if a.Artwork != "" {
-			if err := checkPath(a.Artwork); err != nil {
-				return err
-			}
-		}
 		if a.Path != "" {
 			return checkPath(a.Path)
 		}
@@ -131,7 +125,7 @@ func SaveAssignments(path string, assignments map[string]Assignment) error {
 			playback = playbackNames[StateStatic]
 		}
 		wire[connector] = wireAssignment{
-			Kind: kind, Path: a.Path, Effect: a.Effect, Theme: a.Theme, Artwork: a.Artwork,
+			Kind: kind, Path: a.Path, Effect: a.Effect, Theme: a.Theme,
 			PreviewPath: a.PreviewPath, DesiredPlayback: playback,
 		}
 	}
@@ -198,7 +192,7 @@ func LoadAssignments(path string) (map[string]Assignment, error) {
 		if !ok {
 			return nil, fmt.Errorf("wallpaper: %s has unknown kind %q", connector, w.Kind)
 		}
-		a := Assignment{Kind: kind, Path: w.Path, Effect: w.Effect, Theme: w.Theme, Artwork: w.Artwork, PreviewPath: w.PreviewPath}
+		a := Assignment{Kind: kind, Path: w.Path, Effect: w.Effect, Theme: w.Theme, PreviewPath: w.PreviewPath}
 		if err := checkAssignment(a); err != nil {
 			return nil, err
 		}

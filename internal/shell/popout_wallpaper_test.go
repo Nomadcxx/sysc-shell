@@ -88,7 +88,7 @@ func (wallpaperRestoreProbe) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{
 		Terminal: true,
 		Catalog: wallpaper.Catalog{
-			Effects: []wallpaper.EffectInfo{{ID: "fire"}},
+			Effects: []string{"fire"},
 			Themes:  []string{"nord"},
 		},
 	}

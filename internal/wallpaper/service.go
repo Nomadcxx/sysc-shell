@@ -35,13 +35,12 @@ const (
 // Command is one queued request. It is a value, so nothing the panel holds is
 // shared with the service after the send.
 type Command struct {
-	Op      Op
-	Token   string
-	Path    string
-	Kind    Kind
-	Effect  string
-	Theme   string
-	Artwork string
+	Op     Op
+	Token  string
+	Path   string
+	Kind   Kind
+	Effect string
+	Theme  string
 }
 
 // Capabilities is what is installed, probed once at start and projected into
@@ -269,7 +268,7 @@ func (s *Service) reconcile() {
 		if !slices.Contains(s.store.Connectors(), connector) {
 			continue
 		}
-		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme, Artwork: a.Artwork})
+		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme})
 	}
 }
 
@@ -404,7 +403,6 @@ func (s *Service) handle(c Command) {
 		for i := range jobs {
 			jobs[i].Effect = c.Effect
 			jobs[i].Theme = c.Theme
-			jobs[i].Artwork = c.Artwork
 		}
 		s.dispatch(jobs)
 		return

@@ -24,10 +24,15 @@ func clampScroll(n *Node) {
 	}
 }
 
-const scrollHitWidth = 8
+const (
+	scrollBarWidth = 4
+	scrollHitWidth = 8
+)
 
-// ScrollTrack is the logical-pixel strip on the right of an overflowing scroll view.
-func ScrollTrack(n *Node) Rect {
+// ScrollBar is the logical-pixel strip the scrollbar paints in, on the right
+// of an overflowing scroll view. Painting and pointer hit-testing both derive
+// from it, so the bar the user sees is the bar the user can drag.
+func ScrollBar(n *Node) Rect {
 	if n == nil || n.HideScrollbar {
 		return Rect{}
 	}
@@ -35,17 +40,26 @@ func ScrollTrack(n *Node) Rect {
 	if inner <= 0 || n.ContentH <= inner {
 		return Rect{}
 	}
-	pad := n.Padding
-	if pad < 2 {
-		pad = 2
+	pad := max(n.Padding, 2)
+	x := n.Bounds.X + n.Bounds.W - pad - scrollBarWidth
+	if n.ScrollbarGap > 0 {
+		x = n.Bounds.X + n.Bounds.W + n.ScrollbarGap
 	}
-	w := scrollHitWidth
-	return Rect{
-		X: n.Bounds.X + n.Bounds.W - pad - w,
-		Y: n.Bounds.Y + pad,
-		W: w,
-		H: n.Bounds.H - 2*pad,
+	ends := pad
+	if n.ScrollbarEnds > 0 {
+		ends = n.ScrollbarEnds
 	}
+	return Rect{X: x, Y: n.Bounds.Y + ends, W: scrollBarWidth, H: n.Bounds.H - 2*ends}
+}
+
+// ScrollTrack is the pointer strip for the scrollbar: the painted bar widened
+// leftward to a comfortable hit width.
+func ScrollTrack(n *Node) Rect {
+	bar := ScrollBar(n)
+	if bar.W == 0 || bar.H <= 0 {
+		return Rect{}
+	}
+	return Rect{X: bar.X + bar.W - scrollHitWidth, Y: bar.Y, W: scrollHitWidth, H: bar.H}
 }
 
 // ScrollSetFromY maps a pointer y on the track to ScrollOffset.

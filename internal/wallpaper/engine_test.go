@@ -48,19 +48,19 @@ func TestEngineRefreshTerminalCatalogReadsCurrentList(t *testing.T) {
 	engine := NewEngine(t.TempDir(), func(name string) bool { return name == "sysc-terminal" })
 	t.Cleanup(engine.Close)
 
-	if got := engine.Capabilities(); !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0].ID != "fire" {
+	if got := engine.Capabilities(); !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0] != "fire" {
 		t.Fatalf("initial capabilities = %+v, want fire", got)
 	}
 	writeCatalog("effect rain 0\ntheme dracula\n")
 	got := engine.RefreshTerminalCatalog()
-	if !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0].ID != "rain" || got.Catalog.Themes[0] != "dracula" {
+	if !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0] != "rain" || got.Catalog.Themes[0] != "dracula" {
 		t.Fatalf("refreshed capabilities = %+v, want rain and dracula", got)
 	}
 	if err := os.Remove(catalogPath); err != nil {
 		t.Fatal(err)
 	}
 	got = engine.RefreshTerminalCatalog()
-	if !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0].ID != "rain" || got.Catalog.Themes[0] != "dracula" {
+	if !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0] != "rain" || got.Catalog.Themes[0] != "dracula" {
 		t.Fatalf("failed refresh lost the last good catalog: %+v", got)
 	}
 }
@@ -218,9 +218,27 @@ func newEngineHarness(t *testing.T) *engineHarness {
 	return h
 }
 
+// withTerminal installs sysc-terminal with the catalog the tests apply from.
+func (h *engineHarness) withTerminal() {
+	h.eng.caps.Terminal = true
+	h.eng.caps.Catalog = Catalog{Effects: []string{"fire", "rain"}, Themes: []string{"nord", "dracula"}}
+}
+
+func TestApplyEffectRefusesEffectOutsideCatalog(t *testing.T) {
+	h := newEngineHarness(t)
+	h.withTerminal()
+	_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire-text", Theme: "nord"}, defaultSettings())
+	if err == nil || !strings.Contains(err.Error(), `does not offer effect "fire-text"`) {
+		t.Fatalf("apply error = %v, want a refusal naming the effect", err)
+	}
+	if argvs := h.argvs(); len(argvs) != 0 {
+		t.Fatalf("a refused effect launched %v", argvs)
+	}
+}
+
 func TestEngineRoutesEffectsToSyscTerminal(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	if got := h.eng.Capabilities().EngineFor(KindEffect); got != EngineTerminal {
 		t.Fatalf("effect engine = %q, want %q", got, EngineTerminal)
 	}
@@ -277,7 +295,7 @@ func TestEngineLaunchesWhenNoSocket(t *testing.T) {
 
 func TestApplyEffectDoesNotStatEmptyPath(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	job := Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire", Theme: "nord"}
 	if _, err := h.eng.Apply(job, defaultSettings()); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -299,7 +317,7 @@ func TestApplyEffectDoesNotStatEmptyPath(t *testing.T) {
 
 func TestApplyEffectStopsOwnedGSlapper(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("a.png"), Kind: KindImage}, defaultSettings()); err != nil {
 		t.Fatalf("image: %v", err)
 	}
@@ -321,7 +339,7 @@ func TestApplyEffectStopsOwnedGSlapper(t *testing.T) {
 func TestApplyImageStopsTerminalEffectWithoutGSlapper(t *testing.T) {
 	h := newEngineHarness(t)
 	h.eng.caps.GSlapper = false
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire", Theme: "nord"}, defaultSettings()); err != nil {
 		t.Fatalf("effect: %v", err)
 	}
@@ -339,7 +357,7 @@ func TestApplyImageStopsTerminalEffectWithoutGSlapper(t *testing.T) {
 
 func TestApplyEffectReadinessErrorNamesTerminalProcess(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	h.eng.spawn = func([]string) (Process, error) { return exitedProcess(nil), nil }
 	_, err := h.eng.Apply(Job{Connector: "DP-1", Kind: KindEffect, Effect: "fire"}, defaultSettings())
 	if err == nil || !strings.Contains(err.Error(), "sysc-terminal exited before it was ready") {
@@ -349,7 +367,7 @@ func TestApplyEffectReadinessErrorNamesTerminalProcess(t *testing.T) {
 
 func TestApplyEffectRejectsTerminalErrReadinessReply(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	h.eng.readyWait = 20 * time.Millisecond
 	h.eng.poll = time.Millisecond
 	h.replies["query"] = "ERR not ready"
@@ -367,7 +385,7 @@ func TestApplyEffectRejectsTerminalErrReadinessReply(t *testing.T) {
 
 func TestApplyEffectClearsDeadTerminalSocket(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	socket := terminalSocketPath(h.eng.dir, "DP-1")
 	deadSocketFileFor(t, socket)
 	_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire"}, defaultSettings())
@@ -381,7 +399,7 @@ func TestApplyEffectClearsDeadTerminalSocket(t *testing.T) {
 
 func TestApplyEffectLeavesPriorWallpaperWhenTerminalSocketIsLiveForeign(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("previous.png"), Kind: KindImage}, defaultSettings()); err != nil {
 		t.Fatalf("apply prior image: %v", err)
 	}
@@ -407,7 +425,8 @@ func TestApplyEffectLeavesPriorWallpaperWhenTerminalSocketIsLiveForeign(t *testi
 
 func TestApplyEffectRefusesForeignGSlapperBeforeStoppingStaticFallback(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps = Capabilities{Statics: []string{engineSwaybg}, Terminal: true}
+	h.eng.caps = Capabilities{Statics: []string{engineSwaybg}}
+	h.withTerminal()
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("previous.png"), Kind: KindImage}, defaultSettings()); err != nil {
 		t.Fatalf("apply prior image: %v", err)
 	}
@@ -430,7 +449,7 @@ func TestApplyEffectRefusesForeignGSlapperBeforeStoppingStaticFallback(t *testin
 
 func TestFailedSupersedingEffectRestoresLatestLiveAssignment(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	h.eng.readyWait = 20 * time.Millisecond
 	h.eng.poll = time.Millisecond
 	store := newTestStore()
@@ -485,7 +504,7 @@ func TestFailedSupersedingEffectRestoresLatestLiveAssignment(t *testing.T) {
 
 func TestFailedEffectAfterUncommittedImageRestoresImage(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	h.eng.readyWait = 20 * time.Millisecond
 	h.eng.poll = time.Millisecond
 	store := newTestStore()
@@ -534,7 +553,7 @@ func TestFailedEffectAfterUncommittedImageRestoresImage(t *testing.T) {
 
 func TestSuccessfulEffectAfterUncommittedImageKeepsPreviousStill(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	store := newTestStore()
 	first := store.Apply("DP-1", h.media("previous.png"), KindImage)[0]
 	second := store.Apply("DP-1", "", KindEffect)[0]
@@ -561,7 +580,7 @@ func TestFailedEffectLaunchRestoresPreviousImage(t *testing.T) {
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: previous, Kind: KindImage}, defaultSettings()); err != nil {
 		t.Fatalf("image: %v", err)
 	}
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	spawn := h.eng.spawn
 	h.eng.spawn = func(argv []string) (Process, error) {
 		if argv[0] == "sysc-terminal" {
@@ -644,7 +663,7 @@ func TestFailedEffectLaunchRestoresStaticFallbackImage(t *testing.T) {
 	if h.eng.fallbackProcess("DP-1") == nil {
 		t.Fatal("fallback image process was not recorded")
 	}
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	spawn := h.eng.spawn
 	h.eng.spawn = func(argv []string) (Process, error) {
 		if argv[0] == "sysc-terminal" {
@@ -680,7 +699,7 @@ func TestFailedEffectLaunchRestoresStaticFallbackImage(t *testing.T) {
 
 func TestFailedEffectLaunchRestoresPriorEffectWithoutStill(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	previous := Assignment{Kind: KindEffect, Effect: "fire", Theme: "nord"}
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: previous.Effect, Theme: previous.Theme}, defaultSettings()); err != nil {
 		t.Fatalf("prior effect: %v", err)
@@ -1133,7 +1152,7 @@ func TestEngineCloseStopsOwnedProcess(t *testing.T) {
 
 func TestEngineCloseRemovesTerminalSocket(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire"}, defaultSettings()); err != nil {
 		t.Fatalf("apply effect: %v", err)
 	}
@@ -1150,7 +1169,7 @@ func TestEngineCloseRemovesTerminalSocket(t *testing.T) {
 
 func TestEngineCloseRemovesTerminalSocketDuringLaunch(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	h.eng.readyWait = time.Hour
 	socket := terminalSocketPath(h.eng.dir, "DP-1")
 	queryStarted := make(chan struct{})
@@ -1467,7 +1486,7 @@ func TestStillForExtractsVideoStillOnDemand(t *testing.T) {
 
 func TestOwnedExitedRejectsStaleGenerationAndStoppedOwnership(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps.Terminal = true
+	h.withTerminal()
 	defer h.eng.Close()
 	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire", Theme: "nord"}, defaultSettings()); err != nil {
 		t.Fatal(err)
