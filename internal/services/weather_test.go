@@ -304,6 +304,18 @@ func TestRequestURLReportsTheDailyBlock(t *testing.T) {
 	}
 }
 
+func TestResolvedLocationDistinguishesAnUnconfiguredWeatherBlock(t *testing.T) {
+	w := NewWeather(0, 0, UnitCelsius)
+	w.SetLocationConfigured(false)
+	if _, _, ok := w.ResolvedLocation(); ok {
+		t.Fatal("unconfigured weather exposed zero coordinates as a location")
+	}
+	w.SetLocationConfigured(true)
+	if lat, lon, ok := w.ResolvedLocation(); !ok || lat != 0 || lon != 0 {
+		t.Fatalf("configured null-island coordinates = (%v, %v, %v), want (0, 0, true)", lat, lon, ok)
+	}
+}
+
 func TestASuccessfulFetchCarriesTheDailyForecast(t *testing.T) {
 	t.Parallel()
 	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {

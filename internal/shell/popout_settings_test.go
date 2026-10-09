@@ -78,6 +78,22 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 	}
 }
 
+func TestNightLightModeRendersAsSegmentedControl(t *testing.T) {
+	h := newSettingsHost()
+	h.section = "Night Light"
+	h.set = settings.DefaultFor(h.draft)
+	h.root = settingsTree(nil, h)
+	for _, n := range walk(h.root) {
+		if n.Name == "Mode" && n.Kind == ui.KindSegmented {
+			if len(n.Children) != 4 {
+				t.Fatalf("Night Light mode has %d choices, want four", len(n.Children))
+			}
+			return
+		}
+	}
+	t.Fatal("Night Light mode did not render as a segmented selector")
+}
+
 func TestSettingsKeyboardOnlyTraversal(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -1497,7 +1513,7 @@ func TestEmptySectionSaysWhy(t *testing.T) {
 			t.Fatalf("%s built %d entries from a default configuration; "+
 				"this test no longer covers the empty case", section, len(got))
 		}
-		col := settingsSectionColumn(h, section, nil)
+		col := settingsSectionColumn(nil, h, section, nil)
 		var text string
 		var walk func(*ui.Node)
 		walk = func(n *ui.Node) {

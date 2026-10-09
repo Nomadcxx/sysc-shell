@@ -3,6 +3,7 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -49,6 +50,7 @@ var settingsSectionIcons = map[string]string{
 	"Wallpaper":     "wallpaper",
 	"Terminal Art":  "terminal",
 	"Screensaver":   "schedule",
+	"Night Light":   "bedtime",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
 	"Tray":          "apps",
@@ -389,7 +391,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if section == "Tray" {
 		entries = settingsTrayTitles(r, entries)
 	}
-	content := settingsSectionColumn(h, section, entries)
+	content := settingsSectionColumn(r, h, section, entries)
 	if section == "Templates" {
 		content.Children = append(content.Children, templateRefusals(r)...)
 	}
@@ -781,12 +783,19 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 // at ItemHeight and advances by exactly that — so a caption beneath a label
 // and a heading above a run of rows cannot exist under it. Sections bound the
 // row count, which is what keeps laying the whole thing out cheap.
-func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entry) *ui.Node {
+func settingsSectionColumn(r *Registry, h *PanelHost, section string, entries []settings.Entry) *ui.Node {
 	if len(entries) == 0 {
 		return settingsBody(h, theme.MarginXL, settingsEmptyNote(section))
 	}
 	if section == "Appearance" {
 		return settingsPageColumn(h, entries, settingsAppearanceIntro(h))
+	}
+	if section == "Night Light" && r != nil && r.nightLight != nil {
+		status := &ui.Node{
+			Kind: ui.KindText, Name: "Night Light status", Role: "status",
+			Text: nightLightStatusText(r.nightLight.State()), TextRole: theme.RoleCaption,
+		}
+		return settingsPageColumn(h, entries, settingsGroupCard(h, "Status", []*ui.Node{status}))
 	}
 	return settingsPageColumn(h, entries)
 }
@@ -1017,7 +1026,7 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		valueW, _ := settingsMeasure(h)(strconv.Itoa(max(e.Max, -e.Min))+e.Unit, ui.TextAttrs{Tabular: true})
 		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
 			{
-				Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
+				Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: float64(max(e.Step, 1)),
 				Action: action, Width: max(width-valueW-theme.MarginS, 0), Focusable: true, Name: e.Label, Role: "slider",
 			},
 			{Kind: ui.KindText, Text: strconv.Itoa(n) + e.Unit, Tabular: true, Width: valueW},
@@ -1586,6 +1595,14 @@ func (h *PanelHost) persistDraft(r *Registry) {
 }
 
 func (r *Registry) writeConfig(c config.Config) error {
+	r.configWriteMu.Lock()
+	defer r.configWriteMu.Unlock()
+	return r.writeConfigLocked(c)
+}
+
+// writeConfigLocked is writeConfig while configWriteMu is held by a config
+// transaction or writeConfig itself.
+func (r *Registry) writeConfigLocked(c config.Config) error {
 	if r.configPath == "" {
 		return nil
 	}
@@ -1599,4 +1616,33 @@ func (r *Registry) writeConfig(c config.Config) error {
 		}
 	}
 	return nil
+}
+
+// updateConfig applies one persisted edit against the latest file contents.
+// The same mutex covers the read, mutation and write, and writeConfig uses it
+// too so other in-process whole-config writes cannot land in the middle.
+func (r *Registry) updateConfig(update func(*config.Config, func(config.Config) *settings.Registry) error) (config.Config, error) {
+	r.mu.Lock()
+	path, cfg := r.configPath, r.cfg
+	palettes := append([]theme.PaletteInfo(nil), r.palettes...)
+	r.mu.Unlock()
+
+	r.configWriteMu.Lock()
+	defer r.configWriteMu.Unlock()
+	if path != "" {
+		if loaded, err := config.Load(path); err == nil {
+			cfg = loaded
+		}
+	}
+	cfg.Templates = maps.Clone(cfg.Templates)
+	registryFor := func(cfg config.Config) *settings.Registry {
+		return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)))
+	}
+	if err := update(&cfg, registryFor); err != nil {
+		return config.Config{}, err
+	}
+	if err := r.writeConfigLocked(cfg); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
 }
