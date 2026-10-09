@@ -115,6 +115,10 @@ type Theme struct {
 	// them without resolving the whole theme again.
 	barSolid                  uint8
 	frostOpacity, pillOpacity int
+	// effectBehind reports that a terminal effect plays on this bar's
+	// output. Its thin glyphs on black vanish under the configured frost, so
+	// a blurred ground and pills drop to the frost floor while it plays.
+	effectBehind bool
 
 	// The fields below are the flat names the existing surfaces still read.
 	// They are derived from the groups above, and they go away as each tree
@@ -321,18 +325,29 @@ func effectiveBarStyle(style string, highContrast bool) string {
 func (t Theme) WithCompositor(blur bool) Theme {
 	t.Blur = blur && t.BarStyle != "solid"
 	t.Surfaces.Bar, t.PillAlpha = t.barSolid, 0xff
+	frost, pills := t.frostOpacity, t.pillOpacity
+	if t.effectBehind {
+		frost, pills = theme.OpacityMinFrost, theme.OpacityMinFrost
+	}
 	switch {
 	case t.BarStyle == "islands":
 		t.Surfaces.Bar = 0
 		t.PillAlpha = opacityAlpha(t.pillOpacity, false)
 		if t.Blur {
-			t.PillAlpha = alphaAbove(t.pillOpacity, theme.OpacityMinFrost)
+			t.PillAlpha = alphaAbove(pills, theme.OpacityMinFrost)
 		}
 	case t.Blur:
-		t.Surfaces.Bar = alphaAbove(t.frostOpacity, theme.OpacityMinFrost)
-		t.PillAlpha = alphaAbove(t.pillOpacity, theme.OpacityMinFrost)
+		t.Surfaces.Bar = alphaAbove(frost, theme.OpacityMinFrost)
+		t.PillAlpha = alphaAbove(pills, theme.OpacityMinFrost)
 	}
 	return t
+}
+
+// WithEffectBehind records whether a terminal effect plays behind the bar and
+// re-derives its ground and pills, as WithCompositor does for blur.
+func (t Theme) WithEffectBehind(on, blur bool) Theme {
+	t.effectBehind = on
+	return t.WithCompositor(blur)
 }
 
 // opacityAlpha converts a percentage to alpha, clamped to whichever floor

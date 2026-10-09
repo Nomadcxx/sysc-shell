@@ -249,7 +249,7 @@ func TestThemePreviewRepaintsOpenPanelsWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(cfg, "", tokens, false)
+	want, err := resolveOutputTheme(cfg, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestThemePreviewRepaintsOpenOSDWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(candidate, "", tokens, false)
+	want, err := resolveOutputTheme(candidate, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestThemePreviewRepaintsOpenWindowSwitcher(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	wantTheme, err := resolveOutputTheme(candidate, "DP-1", tokens, false)
+	wantTheme, err := resolveOutputTheme(candidate, "DP-1", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestThemePreviewOpensPanelsWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(candidate, "", tokens, false)
+	want, err := resolveOutputTheme(candidate, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestThemePreviewHotpluggedBarUsesCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	want, err := resolveOutputTheme(candidate, "DP-1", tokens, false)
+	want, err := resolveOutputTheme(candidate, "DP-1", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,7 +655,7 @@ func TestThemePreviewRepaintsOpenToastsWithCandidatePalette(t *testing.T) {
 	if !ok {
 		t.Fatal("gruvbox palette is missing")
 	}
-	wantTheme, err := resolveOutputTheme(candidate, "", tokens, false)
+	wantTheme, err := resolveOutputTheme(candidate, "", tokens, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
