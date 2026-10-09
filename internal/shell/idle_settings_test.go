@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -364,4 +365,24 @@ func TestSettingsAfterIdleKeepsReopenedDraft(t *testing.T) {
 	if saved.Session.Locker != "new-locker-command" {
 		t.Fatalf("old Settings overwrote reopened draft: %q", saved.Session.Locker)
 	}
+}
+
+func TestIdleAfterExplainsMissingLocker(t *testing.T) {
+	has := func(h *PanelHost) bool {
+		return findNode(h.root, func(n *ui.Node) bool {
+			return strings.Contains(n.Text, "Lock needs a Locker")
+		}) != nil
+	}
+
+	r, h, _ := newOpenIdleSettings(t, readyWallsSnapshot(), "")
+	r.mu.Lock()
+	if !has(h) {
+		t.Fatal("empty locker: no explanation of why Lock is unavailable")
+	}
+	h.draft.Session.Locker = "sysc-lock"
+	r.rebuildPanel(h)
+	if has(h) {
+		t.Fatal("locker set: explanation still shown")
+	}
+	r.mu.Unlock()
 }
