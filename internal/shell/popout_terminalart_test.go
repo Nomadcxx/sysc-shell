@@ -231,6 +231,20 @@ func TestTerminalArtCardsFromCatalog(t *testing.T) {
 	}
 }
 
+func TestTerminalArtEffectsHeaderFitsTallFontMetrics(t *testing.T) {
+	metrics := standardMetrics()
+	h := &PanelHost{
+		theme: Theme{Metrics: metrics},
+		wallpaperSnap: wallpaper.Snapshot{
+			Caps: wallpaper.Capabilities{Catalog: wallpaper.Catalog{Themes: []string{"nord", "dracula"}}},
+		},
+	}
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 24 }
+	if err := ui.Layout(artEffectsHeader(h, 2), ui.Rect{W: 608, H: metrics.StandardControl}, measure); err != nil {
+		t.Fatalf("effects header with 24 px font metrics: %v", err)
+	}
+}
+
 type catalogRefreshArtEngine struct {
 	stubWallpaperEngine
 	initial   wallpaper.Capabilities
