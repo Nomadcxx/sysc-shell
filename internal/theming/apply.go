@@ -462,6 +462,10 @@ func directiveKeyMatches(line, key string) bool {
 	return strings.HasPrefix(trim, key)
 }
 
+// shellThemeName is the name every template's directive and sidecar uses for
+// the shell's theme.
+const shellThemeName = "sysc-shell"
+
 func directiveOwned(d directive) bool {
 	return stateHash(directiveOwnershipKey(d)) == "owned"
 }
@@ -626,7 +630,11 @@ func RemoveDirective(d directive) error {
 		keep = append(keep, ln)
 	}
 	if !owned {
-		if matchingKey {
+		// A same-key line only blocks when the file refers to the shell's
+		// theme. Without that it is the user's own setting -- an empty
+		// Alacritty import array, an include of another file -- and there is
+		// nothing of the shell's to remove or protect.
+		if matchingKey && strings.Contains(string(b), shellThemeName) {
 			return fmt.Errorf("%w: unowned directive in %s", ErrUserModified, d.file)
 		}
 		return nil
