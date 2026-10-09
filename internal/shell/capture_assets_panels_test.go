@@ -20,15 +20,31 @@ func TestAssetSettings(t *testing.T) {
 	}
 }
 
+func TestAssetProcessesPage(t *testing.T) {
+	captureAssetPanel(t, PanelMonitor, "system-monitor", "processes", func(reg *Registry, h *PanelHost) {
+		assetBase(t, reg)
+		h.monitorPage = monitorPageProcesses
+	})
+}
+
 func TestAssetPanels(t *testing.T) {
 	for _, p := range []struct {
 		id      PanelID
 		surface string
 	}{
-		{PanelMonitor, "system-monitor"}, {PanelWeather, "weather"}, {PanelClock, "clock"}, {PanelSession, "session"},
+		{PanelWeather, "weather"}, {PanelClock, "clock"}, {PanelSession, "session"},
 	} {
 		t.Run(p.surface, func(t *testing.T) {
 			captureAssetPanel(t, p.id, p.surface, "default", func(reg *Registry, h *PanelHost) { assetBase(t, reg) })
 		})
 	}
+}
+
+// TestAssetSystemMonitorSystemPage is the monitor's System page: the readings
+// and graphs, beside the Processes page that TestAssetPanels paints.
+func TestAssetSystemMonitorSystemPage(t *testing.T) {
+	captureAssetPanel(t, PanelMonitor, "system-monitor", "system", func(reg *Registry, h *PanelHost) {
+		assetBase(t, reg)
+		h.monitorPage = monitorPageMetrics
+	})
 }
