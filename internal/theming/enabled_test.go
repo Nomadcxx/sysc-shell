@@ -702,3 +702,50 @@ func TestEnabledBtopIsThemedOverTheUsersTheme(t *testing.T) {
 		t.Fatalf("Backups = %v, want %s", got, conf+".bak")
 	}
 }
+
+// Adopting replaces the user's theme, never their other settings. Foot keeps
+// its other includes; a value spanning several lines (an Alacritty import
+// array) is not cut in half, it is reported (sysc-1084).
+func TestAdoptionKeepsTheUsersOtherSettings(t *testing.T) {
+	t.Run("foot keeps other includes", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		home := t.TempDir()
+		markTemplatesComplete(t, "foot")
+		ini := filepath.Join(home, ".config", "foot", "foot.ini")
+		if err := os.MkdirAll(filepath.Dir(ini), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ini, []byte("[main]\ninclude=~/.config/foot/keys.ini\nfont=Iosevka:size=11\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ApplyEnabled(home, func(n string) bool { return n == "foot" }, theme.Fallback); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(ini)
+		for _, want := range []string{"include=~/.config/foot/keys.ini", "include=~/.config/foot/themes/sysc-shell", "font=Iosevka:size=11"} {
+			if !strings.Contains(string(got), want) {
+				t.Errorf("foot.ini lost %q:\n%s", want, got)
+			}
+		}
+	})
+	t.Run("alacritty multi-line import is reported, not cut", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		home := t.TempDir()
+		markTemplatesComplete(t, "alacritty")
+		toml := filepath.Join(home, ".config", "alacritty", "alacritty.toml")
+		if err := os.MkdirAll(filepath.Dir(toml), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		original := "[general]\nimport = [\n  \"~/.config/alacritty/keys.toml\",\n]\n"
+		if err := os.WriteFile(toml, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		outcomes, adopted, _ := ApplyEnabled(home, func(n string) bool { return n == "alacritty" }, theme.Fallback)
+		if outcomes["alacritty"] == nil || len(adopted) != 0 {
+			t.Fatalf("outcomes %v adopted %v, want a reported failure", outcomes, adopted)
+		}
+		if got, _ := os.ReadFile(toml); string(got) != original {
+			t.Fatalf("alacritty.toml rewritten to %q", got)
+		}
+	})
+}

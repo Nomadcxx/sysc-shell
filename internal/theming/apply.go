@@ -337,6 +337,20 @@ type directive struct {
 	create       bool   // invent the file if it does not exist
 	top          bool   // root-key zone: insert before the first table header
 	returnConfig bool   // Lua assignment must precede a final `return config`
+	// themes marks a key a config repeats (foot's include=). Only a line
+	// naming this themes directory competes with ours; any other include is
+	// the user's own setting and is never counted or removed.
+	themes string
+}
+
+// conflicts reports whether a config line is a competing value for d: one
+// with d's key that is not d's own line, and for a repeated key, one that
+// points into the app's themes directory.
+func (d directive) conflicts(trim string) bool {
+	if trim == strings.TrimSpace(d.line) || !directiveKeyMatches(trim, d.key) {
+		return false
+	}
+	return d.themes == "" || strings.Contains(trim, d.themes)
 }
 
 // EnsureDirective appends, updates or creates exactly one directive line.
@@ -381,7 +395,7 @@ func ensureDirective(d directive, force bool) error {
 			ownCount++
 			continue
 		}
-		if directiveKeyMatches(trim, d.key) {
+		if d.conflicts(trim) {
 			conflictCount++
 		}
 	}
@@ -414,6 +428,16 @@ func ensureDirective(d directive, force bool) error {
 		return recordDirectiveOwned(d, b, content, true)
 	}
 	if force {
+		// Replacing a line that opens a value spanning several lines (an
+		// Alacritty import array) would leave the rest of it dangling and
+		// break the file. That is not a theme the shell can take over by
+		// line; say what to add instead.
+		for _, ln := range lines {
+			trim := strings.TrimSpace(ln)
+			if d.conflicts(trim) && opensMultiline(trim) {
+				return fmt.Errorf("theming: %s: %q spans several lines; add %s to it", d.file, trim, d.line)
+			}
+		}
 		if err := backupUserFileOnce(d.file, b); err != nil {
 			return err
 		}
@@ -421,7 +445,7 @@ func ensureDirective(d directive, force bool) error {
 	remaining := make([]string, 0, len(lines))
 	for _, ln := range lines {
 		trim := strings.TrimSpace(ln)
-		if trim == own || directiveKeyMatches(trim, d.key) {
+		if trim == own || d.conflicts(trim) {
 			continue
 		}
 		remaining = append(remaining, ln)
@@ -464,6 +488,17 @@ func directiveKeyMatches(line, key string) bool {
 		return strings.HasPrefix(strings.TrimLeft(trim[len(name):], " \t"), "=")
 	}
 	return strings.HasPrefix(trim, key)
+}
+
+// opensMultiline reports a config line whose value continues on later lines:
+// an unclosed array, table or list.
+func opensMultiline(line string) bool {
+	for _, open := range []string{"[", "{", "("} {
+		if strings.HasSuffix(line, open) {
+			return true
+		}
+	}
+	return false
 }
 
 // shellThemeName is the name every template's directive and sidecar uses for

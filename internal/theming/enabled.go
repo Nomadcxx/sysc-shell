@@ -304,11 +304,14 @@ var templateTargets = map[string]templateTarget{
 	"foot": {
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "foot", "themes", "sysc-shell")} },
 		directives: func(h string) []directive {
+			// foot holds many includes. One into its themes directory is a
+			// competing theme; any other is the user's own and stays.
 			line := "include=~/.config/foot/themes/sysc-shell"
 			return []directive{{
 				file:    joined(h, ".config", "foot", "foot.ini"),
 				line:    line,
 				key:     "include=",
+				themes:  "foot/themes/",
 				section: "main",
 				seed:    "[main]\n" + line + "\n",
 				create:  true,
