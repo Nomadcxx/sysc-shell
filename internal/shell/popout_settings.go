@@ -357,7 +357,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if searching {
 		var hits []settings.Entry
 		if h.set != nil {
-			hits = overlayIdleGets(r, h.set.Search(h.query))
+			hits = overlayIdleGets(r, h.draft.Session.Locker, h.set.Search(h.query))
 		}
 		return body(settingsSearchColumn(h, hits))
 	}
@@ -387,7 +387,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	var entries []settings.Entry
 	if h.set != nil {
-		entries = overlayIdleGets(r, h.set.Section(section))
+		entries = overlayIdleGets(r, h.draft.Session.Locker, h.set.Section(section))
 	}
 	if section == "Tray" {
 		entries = settingsTrayTitles(r, entries)
@@ -1367,7 +1367,10 @@ func settingsBrowseOptions(current string) []string {
 	return out
 }
 
-func overlayIdleGets(r *Registry, entries []settings.Entry) []settings.Entry {
+// overlayIdleGets swaps in the idle getters that read live walls state, and
+// says why Lock is unavailable while no locker is configured, since the option
+// is otherwise greyed out without a reason.
+func overlayIdleGets(r *Registry, locker string, entries []settings.Entry) []settings.Entry {
 	if r == nil {
 		return entries
 	}
@@ -1375,6 +1378,9 @@ func overlayIdleGets(r *Registry, entries []settings.Entry) []settings.Entry {
 	for i := range entries {
 		switch entries[i].Path {
 		case "idle.after":
+			if strings.TrimSpace(locker) == "" {
+				entries[i].Describe += " Lock needs a Locker: set it under Lock, e.g. sysc-lock."
+			}
 			entries[i].Get = func(c config.Config) string {
 				return settings.WhenIdleMode(c.Idle.Lock, snap.EnabledAtLogin())
 			}
