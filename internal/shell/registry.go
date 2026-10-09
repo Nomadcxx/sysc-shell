@@ -17,6 +17,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
@@ -98,20 +99,12 @@ type Registry struct {
 	previewPrevErr string
 	previewTheme   *themePreviewState
 	previewRequest uint64
-	// templateRefusals names templates whose files the shell refused to write
-	// because their current bytes are not the shell's last render. The
-	// settings Templates section surfaces them with an overwrite action.
-	// templateForce marks templates the user explicitly overrode a refusal
-	// for; the next apply that succeeds consumes the entry.
-	//
-	// generateTheme runs off the Wayland owner (wallpaper applies, config
-	// reload) and deliberately outside Registry.mu, while the panel handler
-	// writes templateForce under it. A leaf mutex guards the pair; nothing
-	// takes Registry.mu while holding it.
-	templateMu       sync.Mutex
-	templateRefusals map[string]string
-	templateForce    map[string]bool
-	themeGen         theme.Generator
+	// templateNotice is the last template toast posted under each key, so a
+	// re-apply that changes nothing stays quiet. generateTheme runs off the
+	// Wayland owner and outside Registry.mu, so a leaf mutex guards it.
+	templateMu     sync.Mutex
+	templateNotice map[string]string
+	themeGen       theme.Generator
 	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
 	// never reassigned outside tests, so it is read without Registry.mu.
 	paletteStore *theme.Store
@@ -400,7 +393,6 @@ func NewRegistry(cfg config.Config) *Registry {
 		paletteStore:     palettes,
 		paletteLister:    listPalettes,
 		paletteImportDir: paletteImportDir(),
-		templateForce:    map[string]bool{},
 		invalidations:    make(chan wayland.Invalidation, 8),
 		aux:              make(chan wayland.AuxRequest, 8),
 		selections:       make(chan wayland.SelectionRequest, 8),
@@ -440,7 +432,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.palettes = listPalettes(palettes)
 	initialTokens, initialErr := r.generateTheme(cfg)
 	r.tokens, r.themeErr = tokensAndReason(initialTokens, initialErr)
-	if !runningAsTest() && generatedTheme(initialErr) {
+	if !runningAsTest() && initialErr == nil {
 		r.publishCommittedThemeSelection(cfg, initialTokens)
 	}
 	r.osd = newOSDManager(r, 0)
@@ -1244,14 +1236,13 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		return tok, err
 	}
 	if !runningAsTest() {
-		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
-		// A nil outcomes map means the apply did not run: it was queued
-		// behind a live one (or had nothing to do). Sweeping now would eat
-		// the overwrite the queued pass is about to consume; the goroutine
-		// that eventually runs the job reports its outcomes instead.
-		r.recordTemplateOutcomes(outcomes, true)
-		if err != nil {
-			return tok, fmt.Errorf("%w: %w", errThemeTemplates, err)
+		// Template outcomes are the apps', not the palette's: they go to a
+		// toast, and the palette stands either way. A nil outcomes map means
+		// the apply was queued behind a live one, whose caller reports it.
+		home := os.Getenv("HOME")
+		outcomes, adopted, _ := theming.ApplyEnabled(home, cfg.TemplateEnabled, tok)
+		if outcomes != nil {
+			r.reportTemplates(home, outcomes, adopted)
 		}
 	}
 	return tok, nil
@@ -1266,28 +1257,6 @@ func (r *Registry) tokensFor(cfg config.Config) (theme.Tokens, error) {
 		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
 	}
 	return tok, nil
-}
-
-func (r *Registry) recordTemplateOutcomes(outcomes map[string]error, clearResolvedForces bool) {
-	if outcomes == nil {
-		return
-	}
-	refusals := map[string]string{}
-	for name, err := range outcomes {
-		if errors.Is(err, theming.ErrUserModified) {
-			refusals[name] = err.Error()
-		}
-	}
-	r.templateMu.Lock()
-	r.templateRefusals = refusals
-	if clearResolvedForces {
-		for name := range r.templateForce {
-			if _, refused := refusals[name]; !refused {
-				delete(r.templateForce, name)
-			}
-		}
-	}
-	r.templateMu.Unlock()
 }
 
 // generateOnly produces palette tokens for cfg without touching published
@@ -1337,15 +1306,6 @@ func (r *Registry) generateOnlyWith(cfg config.Config, gen theme.Generator) (the
 	return tok, nil
 }
 
-// consumeTemplateForce reports and clears one template's overwrite request.
-func (r *Registry) consumeTemplateForce(name string) bool {
-	r.templateMu.Lock()
-	defer r.templateMu.Unlock()
-	forced := r.templateForce[name]
-	delete(r.templateForce, name)
-	return forced
-}
-
 // tokensAndReason flattens generateTheme for the construction path, which has
 // no surface to report to yet and only needs the reason recorded.
 func tokensAndReason(tok theme.Tokens, err error) (theme.Tokens, string) {
@@ -1353,6 +1313,78 @@ func tokensAndReason(tok theme.Tokens, err error) (theme.Tokens, string) {
 		return tok, err.Error()
 	}
 	return tok, ""
+}
+
+// Template toast keys. The notification service replaces a live toast that
+// shares a key, so each kind keeps one toast on screen at most.
+const (
+	templateAdoptedKey = "sysc-shell:theme-templates:adopted"
+	templateFailedKey  = "sysc-shell:theme-templates:failed"
+)
+
+// reportTemplates turns one template apply into toasts: the apps whose own
+// setting was replaced, with where the original went, and the apps that could
+// not be themed, with why. A toast is posted only when its text changed since
+// the last one of its kind, and a clean apply forgets the last failure, so a
+// recurrence is news again.
+func (r *Registry) reportTemplates(home string, outcomes map[string]error, adopted []string) {
+	var failed []string
+	reasons := map[string]string{}
+	for name, err := range outcomes {
+		if err != nil {
+			failed = append(failed, name)
+			reasons[name] = strings.TrimPrefix(err.Error(), "theming: ")
+		}
+	}
+	slices.Sort(failed)
+	adopted = slices.Sorted(slices.Values(adopted))
+
+	var adoptedBody, failedBody string
+	if len(adopted) > 0 {
+		var backups []string
+		for _, name := range adopted {
+			backups = append(backups, theming.Backups(home, name)...)
+		}
+		adoptedBody = "Your own setting was replaced with the shell's theme."
+		if len(backups) > 0 {
+			adoptedBody += " The original is kept as " + strings.Join(homeRelative(home, backups), ", ") + "."
+		}
+	}
+	for _, name := range failed {
+		failedBody += name + ": " + strings.ReplaceAll(reasons[name], home, "~") + "\n"
+	}
+	r.postTemplateToast(templateAdoptedKey, "Theme applied to "+strings.Join(adopted, ", "), adoptedBody)
+	r.postTemplateToast(templateFailedKey, "Could not theme "+strings.Join(failed, ", "), strings.TrimSuffix(failedBody, "\n"))
+}
+
+// postTemplateToast posts body under key unless it repeats the last one; an
+// empty body forgets the last, so the next report of that kind posts.
+func (r *Registry) postTemplateToast(key, summary, body string) {
+	r.templateMu.Lock()
+	if r.templateNotice == nil {
+		r.templateNotice = map[string]string{}
+	}
+	last := r.templateNotice[key]
+	r.templateNotice[key] = body
+	r.templateMu.Unlock()
+	if body == "" || body == last {
+		return
+	}
+	if _, err := r.publishToast(key, summary, body, protocol.UrgencyNormal, -1); err != nil && !errors.Is(err, errNotifyUnavailable) {
+		log.Printf("shell: template toast: %v", err)
+	}
+}
+
+// homeRelative shows paths under home as ~/...
+func homeRelative(home string, paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		if rest, ok := strings.CutPrefix(p, home+"/"); ok {
+			p = "~/" + rest
+		}
+		out[i] = p
+	}
+	return out
 }
 
 // lastCompleteTokens is the palette to fall back on when a generated one is
@@ -1884,7 +1916,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
-				if !runningAsTest() && generatedTheme(genErr) {
+				if !runningAsTest() && genErr == nil {
 					go r.publishCommittedThemeSelection(cfg, tok)
 				}
 				if mediaConfigChanged && media != nil {

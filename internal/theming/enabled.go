@@ -19,7 +19,6 @@ type applyJob struct {
 	home    string
 	enabled func(string) bool
 	tok     theme.Tokens
-	force   func(string) bool
 	done    chan applyResult
 }
 
@@ -34,53 +33,59 @@ var ErrApplySuperseded = errors.New("theming: queued apply superseded by a newer
 type applyResult struct {
 	outcomes map[string]error
 	results  map[string]error
+	adopted  []string
 	err      error
 }
 
 // ApplyEnabled renders every enabled template for home. It returns the
-// per-template outcomes -- a refusal or write failure keyed by template name
-// -- plus the first error overall. force names templates the user explicitly
-// overrode a refusal for; those are overwritten with a backup. While another
-// apply runs, the latest queued job replaces its predecessor and this call
-// returns nil outcomes; use ApplyEnabledAndWait when this caller needs results.
-func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
+// per-template failures keyed by template name, the templates it adopted over
+// the user's own setting (their file backed up once to <file>.bak), and the
+// first error overall. While another apply runs, the latest queued job
+// replaces its predecessor and this call returns nil outcomes; use
+// ApplyEnabledAndWait when this caller needs results.
+//
+// An enabled template is always applied (owner decision, 2026-10-09: the
+// shell themes everything it lists as themeable). The guarded write runs
+// first; only a refusal over the user's own edit falls through to the
+// adopting write, so a file the shell already owns is never backed up again.
+func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens) (map[string]error, []string, error) {
 	if home == "" || enabled == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	job := applyJob{home: home, enabled: enabled, tok: tok, force: force}
+	job := applyJob{home: home, enabled: enabled, tok: tok}
 	applyMu.Lock()
 	if applyBusy {
 		queueApplyLocked(job)
 		applyMu.Unlock()
-		return nil, nil
+		return nil, nil, nil
 	}
 	applyBusy = true
 	applyMu.Unlock()
 	result := runApply(job)
-	return result.outcomes, result.err
+	return result.outcomes, result.adopted, result.err
 }
 
 // ApplyEnabledAndWait returns outcomes for templates actually attempted, with
-// nil values for success, even when another apply is already running. As with
-// ApplyEnabled, only the newest queued job runs; a queued request replaced
-// before it starts returns ErrApplySuperseded.
-func ApplyEnabledAndWait(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
+// nil values for success, and the templates adopted, even when another apply
+// is already running. As with ApplyEnabled, only the newest queued job runs; a
+// queued request replaced before it starts returns ErrApplySuperseded.
+func ApplyEnabledAndWait(home string, enabled func(string) bool, tok theme.Tokens) (map[string]error, []string, error) {
 	if home == "" || enabled == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	job := applyJob{home: home, enabled: enabled, tok: tok, force: force, done: make(chan applyResult, 1)}
+	job := applyJob{home: home, enabled: enabled, tok: tok, done: make(chan applyResult, 1)}
 	applyMu.Lock()
 	if applyBusy {
 		queueApplyLocked(job)
 		applyMu.Unlock()
 		result := <-job.done
-		return result.results, result.err
+		return result.results, result.adopted, result.err
 	}
 	applyBusy = true
 	applyMu.Unlock()
 	go runApply(job)
 	result := <-job.done
-	return result.results, result.err
+	return result.results, result.adopted, result.err
 }
 
 func queueApplyLocked(job applyJob) {
@@ -102,7 +107,7 @@ func runApply(job applyJob) applyResult {
 	current := job
 	var result applyResult
 	for {
-		result.results, result.err = applyOnce(current.home, current.enabled, current.tok, current.force)
+		result.results, result.adopted, result.err = applyOnce(current.home, current.enabled, current.tok)
 		result.outcomes = applyFailures(result.results)
 		finishApplyWaiter(current.done, result)
 		applyMu.Lock()
@@ -127,7 +132,7 @@ func applyFailures(results map[string]error) map[string]error {
 	return failures
 }
 
-func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
+func applyOnce(home string, enabled func(string) bool, tok theme.Tokens) (map[string]error, []string, error) {
 	// D6: a template body in $XDG_CONFIG_HOME/sysc-shell/theming-templates
 	// replaces the embedded one for its name; the write targets, the
 	// Complete() gate and the user-modified guard are unchanged.
@@ -140,7 +145,21 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 			first = err
 		}
 	}
-	forceOn := func(name string) bool { return force != nil && force(name) }
+	var adopted []string
+	// adopt runs the guarded write, and over a refusal caused by the user's
+	// own edit, the adopting one. A failure of the adopting write is reported
+	// as itself.
+	adopt := func(name string, apply func(force bool) error) error {
+		err := apply(false)
+		if !errors.Is(err, ErrUserModified) {
+			return err
+		}
+		if err := apply(true); err != nil {
+			return err
+		}
+		adopted = append(adopted, name)
+		return nil
+	}
 	for _, name := range cat.Names() {
 		rendered := Render(cat.Template(name), tok)
 		// GH #7: a stub template rendered onto a live app config neuters the
@@ -164,12 +183,20 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 			if _, err := os.Stat(cfg); err != nil {
 				continue
 			}
-			record(name, applyNiri(cfg, gen, rendered, forceOn(name)))
+			record(name, adopt(name, func(force bool) error { return applyNiri(cfg, gen, rendered, force) }))
 		default:
-			record(name, applyTemplateTarget(name, home, on, rendered, forceOn(name)))
+			if !on {
+				// A disabled template has nothing to theme; its guard keeps
+				// a line the shell did not write.
+				record(name, applyTemplateTarget(name, home, false, rendered, false))
+				continue
+			}
+			record(name, adopt(name, func(force bool) error {
+				return applyTemplateTarget(name, home, true, rendered, force)
+			}))
 		}
 	}
-	return results, first
+	return results, adopted, first
 }
 
 func writeTarget(home, name string) string {
@@ -277,11 +304,14 @@ var templateTargets = map[string]templateTarget{
 	"foot": {
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "foot", "themes", "sysc-shell")} },
 		directives: func(h string) []directive {
+			// foot holds many includes. One into its themes directory is a
+			// competing theme; any other is the user's own and stays.
 			line := "include=~/.config/foot/themes/sysc-shell"
 			return []directive{{
 				file:    joined(h, ".config", "foot", "foot.ini"),
 				line:    line,
 				key:     "include=",
+				themes:  "foot/themes/",
 				section: "main",
 				seed:    "[main]\n" + line + "\n",
 				create:  true,
@@ -472,4 +502,39 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 		}
 	}
 	return nil
+}
+
+// Backups lists the <file>.bak copies that exist for a template's targets:
+// where the user's own file went when the template was adopted over it.
+func Backups(home, name string) []string {
+	files := []string{writeTarget(home, name)}
+	if name == "niri" {
+		files = append(files, filepath.Join(home, ".config", "niri", "config.kdl"))
+	}
+	if tgt, ok := templateTargets[name]; ok {
+		if tgt.sidecar != nil {
+			files = append(files, tgt.sidecar(home)...)
+		}
+		if tgt.directives != nil {
+			for _, d := range tgt.directives(home) {
+				files = append(files, d.file)
+			}
+		}
+		if tgt.block != nil {
+			file, _, _ := tgt.block(home)
+			files = append(files, file)
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range files {
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		if _, err := os.Stat(f + ".bak"); err == nil {
+			out = append(out, f+".bak")
+		}
+	}
+	return out
 }

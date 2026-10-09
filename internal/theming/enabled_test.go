@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ import (
 )
 
 func applyForTest(home string, enabled func(string) bool, tok theme.Tokens) error {
-	_, err := ApplyEnabled(home, enabled, tok, nil)
+	_, _, err := ApplyEnabled(home, enabled, tok)
 	return err
 }
 
@@ -44,17 +45,21 @@ func TestApplyEnabledReportsRefusalsPerTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "cava" }
-	outcomes, _ := ApplyEnabled(home, only, theme.Fallback, nil)
-	if !errors.Is(outcomes["cava"], ErrUserModified) {
-		t.Fatalf("outcomes = %v, want a cava refusal", outcomes)
+	// An enabled template is applied over the user's own value (owner
+	// decision, 2026-10-09), and the takeover is reported.
+	outcomes, adopted, err := ApplyEnabled(home, only, theme.Fallback)
+	if err != nil || len(outcomes) != 0 {
+		t.Fatalf("apply = %v, %v; want the template adopted", outcomes, err)
 	}
-
-	outcomes, err := ApplyEnabled(home, only, theme.Fallback, only)
-	if err != nil {
-		t.Fatalf("forced apply: %v", err)
+	if !slices.Equal(adopted, []string{"cava"}) {
+		t.Fatalf("adopted = %v, want cava", adopted)
 	}
-	if len(outcomes) != 0 {
-		t.Fatalf("forced outcomes = %v", outcomes)
+	if backup, _ := os.ReadFile(target + ".bak"); string(backup) != "[color]\ntheme = user-choice\n" {
+		t.Fatalf("backup = %q, want the user's file", backup)
+	}
+	// Once the shell owns the setting, a re-apply adopts nothing.
+	if _, again, err := ApplyEnabled(home, only, theme.Fallback); err != nil || len(again) != 0 {
+		t.Fatalf("re-apply adopted %v, err %v", again, err)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "[color]\ntheme = \"sysc-shell\"\n" {
 		t.Fatalf("forced directive replacement = %q", got)
@@ -69,7 +74,7 @@ func TestApplyEnabledWritesAlacrittyUnderXDG(t *testing.T) {
 	home := t.TempDir()
 	markTemplatesComplete(t, "alacritty")
 	only := func(name string) bool { return name == "alacritty" }
-	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	sidecar := filepath.Join(home, ".config", "alacritty", "themes", "sysc-shell.toml")
@@ -191,7 +196,7 @@ func TestApplyEnabledAppendsKittyBesideUserIncludes(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "kitty" }
-	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
 		t.Fatalf("apply beside a user include = %v", err)
 	}
 	got, _ := os.ReadFile(p)
@@ -213,7 +218,7 @@ func TestApplyEnabledForceReplacesDirectiveWithBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "ghostty" }
-	outcomes, err := ApplyEnabled(home, only, theme.Fallback, only)
+	outcomes, _, err := ApplyEnabled(home, only, theme.Fallback)
 	if err != nil || len(outcomes) != 0 {
 		t.Fatalf("forced apply = %v, %v", outcomes, err)
 	}
@@ -274,7 +279,7 @@ func TestApplyEnabledSignalsKitty(t *testing.T) {
 	procRoot = root
 	t.Cleanup(func() { procRoot = prev })
 	only := func(name string) bool { return name == "kitty" }
-	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home, only, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -294,7 +299,7 @@ func TestApplyEnabledSingleFlight(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			_, _ = ApplyEnabled(home, only, theme.Fallback, nil)
+			_, _, _ = ApplyEnabled(home, only, theme.Fallback)
 		}()
 	}
 	wg.Wait()
@@ -320,11 +325,14 @@ func TestApplyEnabledReportsFirstError(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte(`import = ["user.toml"]`+"\n"), 0o644); err != nil {
+	// A disabled template still refuses to remove a line naming the shell's
+	// theme that it did not write; that refusal is the first error.
+	sidecar := filepath.Join(home, ".config", "alacritty", "themes", "sysc-shell.toml")
+	if err := os.WriteFile(p, []byte(`import = ["`+sidecar+`"]`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	only := func(name string) bool { return name == "alacritty" }
-	_, err := ApplyEnabled(home, only, theme.Fallback, nil)
+	none := func(string) bool { return false }
+	_, _, err := ApplyEnabled(home, none, theme.Fallback)
 	if err == nil {
 		t.Fatal("expected skip error")
 	}
@@ -353,7 +361,7 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 		return true
 	}
 	done := make(chan error, 1)
-	go func() { _, err := ApplyEnabled(home1, first, theme.Fallback, nil); done <- err }()
+	go func() { _, _, err := ApplyEnabled(home1, first, theme.Fallback); done <- err }()
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -361,7 +369,7 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 	}
 	secondDone := make(chan error, 1)
 	go func() {
-		_, err := ApplyEnabled(home2, func(name string) bool { return name == "alacritty" }, theme.Fallback, nil)
+		_, _, err := ApplyEnabled(home2, func(name string) bool { return name == "alacritty" }, theme.Fallback)
 		secondDone <- err
 	}()
 	time.Sleep(20 * time.Millisecond)
@@ -414,7 +422,7 @@ func TestApplyEnabledAndWaitReturnsItsQueuedOutcome(t *testing.T) {
 	}
 	firstDone := make(chan struct{})
 	go func() {
-		_, _ = ApplyEnabled(home1, first, theme.Fallback, nil)
+		_, _, _ = ApplyEnabled(home1, first, theme.Fallback)
 		close(firstDone)
 	}()
 	select {
@@ -425,12 +433,13 @@ func TestApplyEnabledAndWaitReturnsItsQueuedOutcome(t *testing.T) {
 
 	type result struct {
 		outcomes map[string]error
+		adopted  []string
 		err      error
 	}
 	secondDone := make(chan result, 1)
 	go func() {
-		outcomes, err := ApplyEnabledAndWait(home2, func(name string) bool { return name == "foot" }, theme.Fallback, nil)
-		secondDone <- result{outcomes: outcomes, err: err}
+		outcomes, adopted, err := ApplyEnabledAndWait(home2, func(name string) bool { return name == "foot" }, theme.Fallback)
+		secondDone <- result{outcomes: outcomes, adopted: adopted, err: err}
 	}()
 	deadline := time.After(2 * time.Second)
 	for {
@@ -455,11 +464,13 @@ func TestApplyEnabledAndWaitReturnsItsQueuedOutcome(t *testing.T) {
 	}
 	select {
 	case got := <-secondDone:
-		if !errors.Is(got.outcomes["foot"], ErrUserModified) {
-			t.Fatalf("second outcomes = %v, want foot refusal; err = %v", got.outcomes, got.err)
+		// The queued apply returns its own outcome: foot, adopted over the
+		// edited sidecar.
+		if footErr, attempted := got.outcomes["foot"]; !attempted || footErr != nil || got.err != nil {
+			t.Fatalf("second outcomes = %v, err = %v; want foot attempted and applied", got.outcomes, got.err)
 		}
-		if !errors.Is(got.err, ErrUserModified) {
-			t.Fatalf("second err = %v, want foot refusal", got.err)
+		if !slices.Equal(got.adopted, []string{"foot"}) {
+			t.Fatalf("second adopted = %v, want foot", got.adopted)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("second apply did not return its outcome")
@@ -496,7 +507,7 @@ func TestApplyEnabledAndWaitReturnsWhenSuperseded(t *testing.T) {
 	}
 	firstDone := make(chan struct{})
 	go func() {
-		_, _ = ApplyEnabled(home1, first, theme.Fallback, nil)
+		_, _, _ = ApplyEnabled(home1, first, theme.Fallback)
 		close(firstDone)
 	}()
 	select {
@@ -507,7 +518,7 @@ func TestApplyEnabledAndWaitReturnsWhenSuperseded(t *testing.T) {
 
 	secondDone := make(chan error, 1)
 	go func() {
-		_, err := ApplyEnabledAndWait(home2, func(name string) bool { return name == "foot" }, theme.Fallback, nil)
+		_, _, err := ApplyEnabledAndWait(home2, func(name string) bool { return name == "foot" }, theme.Fallback)
 		secondDone <- err
 	}()
 	deadline := time.After(2 * time.Second)
@@ -525,7 +536,7 @@ func TestApplyEnabledAndWaitReturnsWhenSuperseded(t *testing.T) {
 		}
 	}
 
-	if _, err := ApplyEnabled(home3, func(name string) bool { return name == "foot" }, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home3, func(name string) bool { return name == "foot" }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -576,14 +587,14 @@ func TestApplyEnabledAndWaitDoesNotWaitForLaterQueuedApply(t *testing.T) {
 
 	firstDone := make(chan error, 1)
 	go func() {
-		outcomes, err := ApplyEnabledAndWait(home1, func(name string) bool {
+		outcomes, _, err := ApplyEnabledAndWait(home1, func(name string) bool {
 			if name == "alacritty" {
 				firstStartOnce.Do(func() { close(firstStarted) })
 				<-firstBlock
 				return true
 			}
 			return false
-		}, theme.Fallback, nil)
+		}, theme.Fallback)
 		if err == nil {
 			var attempted bool
 			err, attempted = outcomes["alacritty"]
@@ -599,14 +610,14 @@ func TestApplyEnabledAndWaitDoesNotWaitForLaterQueuedApply(t *testing.T) {
 		t.Fatal("first apply did not reach alacritty")
 	}
 
-	if _, err := ApplyEnabled(home2, func(name string) bool {
+	if _, _, err := ApplyEnabled(home2, func(name string) bool {
 		if name == "alacritty" {
 			secondStartOnce.Do(func() { close(secondStarted) })
 			<-secondBlock
 			return true
 		}
 		return false
-	}, theme.Fallback, nil); err != nil {
+	}, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	firstReleaseOnce.Do(func() { close(firstBlock) })
@@ -629,7 +640,7 @@ func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	on := func(name string) bool { return true }
-	if _, err := ApplyEnabled(home, on, theme.Fallback, nil); err != nil {
+	if _, _, err := ApplyEnabled(home, on, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range Catalog().Names() {
@@ -658,4 +669,83 @@ func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The desktop's btop.conf names its own theme. With btop enabled the shell
+// themes it anyway and keeps the user's file (sysc-1084).
+func TestEnabledBtopIsThemedOverTheUsersTheme(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	markTemplatesComplete(t, "btop")
+	conf := filepath.Join(home, ".config", "btop", "btop.conf")
+	if err := os.MkdirAll(filepath.Dir(conf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "#? Config file for btop\ncolor_theme = \"noctalia\"\ntheme_background = False\n"
+	if err := os.WriteFile(conf, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	only := func(name string) bool { return name == "btop" }
+	outcomes, adopted, err := ApplyEnabled(home, only, theme.Fallback)
+	if err != nil || len(outcomes) != 0 || !slices.Equal(adopted, []string{"btop"}) {
+		t.Fatalf("apply = %v, adopted %v, err %v", outcomes, adopted, err)
+	}
+	got, _ := os.ReadFile(conf)
+	if !strings.Contains(string(got), `color_theme = "sysc-shell"`) || strings.Contains(string(got), "noctalia") ||
+		!strings.Contains(string(got), "theme_background = False") {
+		t.Fatalf("btop.conf = %q, want the shell's theme and the rest of the user's settings", got)
+	}
+	if backup, _ := os.ReadFile(conf + ".bak"); string(backup) != original {
+		t.Fatalf("btop.conf.bak = %q, want the user's original", backup)
+	}
+	if got := Backups(home, "btop"); !slices.Equal(got, []string{conf + ".bak"}) {
+		t.Fatalf("Backups = %v, want %s", got, conf+".bak")
+	}
+}
+
+// Adopting replaces the user's theme, never their other settings. Foot keeps
+// its other includes; a value spanning several lines (an Alacritty import
+// array) is not cut in half, it is reported (sysc-1084).
+func TestAdoptionKeepsTheUsersOtherSettings(t *testing.T) {
+	t.Run("foot keeps other includes", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		home := t.TempDir()
+		markTemplatesComplete(t, "foot")
+		ini := filepath.Join(home, ".config", "foot", "foot.ini")
+		if err := os.MkdirAll(filepath.Dir(ini), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ini, []byte("[main]\ninclude=~/.config/foot/keys.ini\nfont=Iosevka:size=11\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ApplyEnabled(home, func(n string) bool { return n == "foot" }, theme.Fallback); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(ini)
+		for _, want := range []string{"include=~/.config/foot/keys.ini", "include=~/.config/foot/themes/sysc-shell", "font=Iosevka:size=11"} {
+			if !strings.Contains(string(got), want) {
+				t.Errorf("foot.ini lost %q:\n%s", want, got)
+			}
+		}
+	})
+	t.Run("alacritty multi-line import is reported, not cut", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		home := t.TempDir()
+		markTemplatesComplete(t, "alacritty")
+		toml := filepath.Join(home, ".config", "alacritty", "alacritty.toml")
+		if err := os.MkdirAll(filepath.Dir(toml), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		original := "[general]\nimport = [\n  \"~/.config/alacritty/keys.toml\",\n]\n"
+		if err := os.WriteFile(toml, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		outcomes, adopted, _ := ApplyEnabled(home, func(n string) bool { return n == "alacritty" }, theme.Fallback)
+		if outcomes["alacritty"] == nil || len(adopted) != 0 {
+			t.Fatalf("outcomes %v adopted %v, want a reported failure", outcomes, adopted)
+		}
+		if got, _ := os.ReadFile(toml); string(got) != original {
+			t.Fatalf("alacritty.toml rewritten to %q", got)
+		}
+	})
 }

@@ -392,9 +392,6 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		entries = settingsTrayTitles(r, entries)
 	}
 	content := settingsSectionColumn(r, h, section, entries)
-	if section == "Templates" {
-		content.Children = append(content.Children, templateRefusals(r)...)
-	}
 	if section == "Appearance" && r != nil {
 		// The source may say custom while a saved palette is not what is
 		// painted; say why where the source is chosen (P4).
@@ -454,37 +451,6 @@ func settingsSectionHeading(h *PanelHost, section string) *ui.Node {
 		},
 		slashes(),
 	}}
-}
-
-// templateRefusals reports, under the toggle rows, every template whose file
-// the shell refused to write because the user edited it, each with the
-// explicit overwrite that backs the file up to <path>.bak.
-func templateRefusals(r *Registry) []*ui.Node {
-	if r == nil {
-		return nil
-	}
-	r.templateMu.Lock()
-	refused := make([]string, 0, len(r.templateRefusals))
-	for name := range r.templateRefusals {
-		refused = append(refused, name)
-	}
-	r.templateMu.Unlock()
-	if len(refused) == 0 {
-		return nil
-	}
-	sort.Strings(refused)
-	notes := make([]*ui.Node, 0, len(refused))
-	for _, name := range refused {
-		notes = append(notes, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true,
-			Children: []*ui.Node{
-				{Kind: ui.KindText, Name: name + " refusal",
-					Text:     name + " is user-modified; its theme file was not written",
-					TextRole: theme.RoleCaption, Tone: ui.ToneError},
-				{Kind: ui.KindButton, Text: "Overwrite", Action: "template-overwrite:" + name,
-					Name: "Overwrite " + name, Role: "button", Focusable: true},
-			}})
-	}
-	return notes
 }
 
 // settingsContentHeight is what the scrolling body gets once the title, the
