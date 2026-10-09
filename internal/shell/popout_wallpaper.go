@@ -816,6 +816,9 @@ func wallpaperTile(r *Registry, h *PanelHost, g wallpaperGrid, entry wallpaper.E
 	default:
 		thumb = wallpaperThumbNote(g, g.dither, wallpaperSpinFrame(index), ui.ToneAccent, "decoding")
 	}
+	if entry.Kind == wallpaper.KindVideo && !entry.IsDir {
+		thumb = wallpaperVideoTag(g, thumb)
+	}
 
 	caption := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Height: wallpaperTileCaptionH}
 	name := &ui.Node{Kind: ui.KindText, Text: wallpaperCaption(entry), MaxWidth: g.thumbW, Height: wallpaperTileCaptionH}
@@ -946,12 +949,25 @@ func wallpaperPlaceholderGlyph(entry wallpaper.Entry) string {
 	return ""
 }
 
-// wallpaperCaption is the filename, prefixed for a video.
+// wallpaperCaption is the filename. A video is marked on its thumbnail
+// (wallpaperVideoTag), so the caption keeps its whole width for the name.
 func wallpaperCaption(entry wallpaper.Entry) string {
-	if entry.Kind == wallpaper.KindVideo && !entry.IsDir {
-		return "VIDEO \u00b7 " + entry.Name
-	}
 	return entry.Name
+}
+
+// wallpaperVideoTag lays a small "\u25b6 VID" plate over a video's thumbnail
+// corner. The plate is the scrim, so the tag stays legible over any frame.
+func wallpaperVideoTag(g wallpaperGrid, thumb *ui.Node) *ui.Node {
+	plate := &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillScrim, Padding: theme.MarginXXS, PaddingX: theme.MarginXS,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "\u25b6 VID", Name: "Video", TextRole: theme.RoleMono}},
+	}
+	// The thumbnail rides in a column: a stack only lays out column and row
+	// layers, and a still-decoding thumbnail is a stack of its own.
+	return &ui.Node{Kind: ui.KindStack, Width: g.thumbW, Height: g.thumbH, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Children: []*ui.Node{thumb}},
+		{Kind: ui.KindColumn, Padding: theme.MarginXS, Children: []*ui.Node{{Kind: ui.KindRow, Children: []*ui.Node{plate}}}},
+	}}
 }
 
 // wallpaperTargets resolves the output select to the connectors it acts on.

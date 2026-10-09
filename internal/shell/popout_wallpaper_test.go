@@ -1795,3 +1795,28 @@ func wallpaperTileThumb(tile *ui.Node) *ui.Node {
 	}
 	return content.Children[0]
 }
+
+// A video is marked by a tag over its thumbnail, so the caption has its whole
+// width for the name (sysc-1070).
+func TestWallpaperVideoTagSitsOnTheThumbnail(t *testing.T) {
+	t.Parallel()
+	root := seedWallpaperRoot(t)
+	reg, _, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.wallpaperSel = -1
+	clip := wallpaper.Entry{Name: "clip.mp4", Path: filepath.Join(root, "clip.mp4"), Kind: wallpaper.KindVideo}
+	tile := wallpaperTile(reg, h, wallpaperGridOf(h), clip, 0)
+	thumb := wallpaperTileThumb(tile)
+	if findNode(thumb, func(n *ui.Node) bool { return n.Text == "▶ VID" }) == nil {
+		t.Error("a video thumbnail carries no ▶ VID tag")
+	}
+	if findNode(tile, func(n *ui.Node) bool { return strings.Contains(n.Text, "VIDEO") }) != nil {
+		t.Error("the caption still spends its width on a VIDEO prefix")
+	}
+	still := wallpaper.Entry{Name: "a.png", Path: filepath.Join(root, "a.png"), Kind: wallpaper.KindImage}
+	if findNode(wallpaperTile(reg, h, wallpaperGridOf(h), still, 0), func(n *ui.Node) bool { return n.Text == "▶ VID" }) != nil {
+		t.Error("a still is tagged as a video")
+	}
+}
