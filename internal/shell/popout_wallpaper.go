@@ -1124,6 +1124,13 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 	mediaOpen := false
 	if picker != nil {
 		pickerOut = picker.output
+		// Painting reuses the laid-out tree, and the grid's rows are built
+		// during layout, so the raster only reaches its tile once the panel is
+		// laid out again. That is a layout pass, not a rebuild: the tree, the
+		// scroll offset and the focus all stay as they are.
+		if picker.logicalW > 0 {
+			_ = picker.configure(picker.logicalW, picker.logicalH, picker.scale120)
+		}
 	}
 	if media != nil && media.section == "media" {
 		mediaOut = media.output
@@ -1131,8 +1138,7 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 		r.rebuildPanel(media)
 	}
 	r.mu.Unlock()
-	// The picker only needs a repaint: its virtual-list item builder looks up
-	// the newly decoded raster during the next frame. The Media page must
+	// The picker, laid out again above, only needs a repaint. The Media page must
 	// rebuild because its fallback art is retained in the tree itself.
 	if picker != nil {
 		r.publishSurface(pickerOut, panelSurfaceID(PanelWallpaper))
@@ -1164,13 +1170,19 @@ func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
 	if _, err := os.Stat(source); err != nil {
 		return nil
 	}
-	key := icons.Key{Name: source, W: wallpaperTileWidth, H: wallpaperThumbH}
+	key := wallpaperThumbKey(source)
 	worker := r.wallpaperThumbsLocked()
 	if image, ok := worker.Lookup(key); ok {
 		return image
 	}
 	_, _, _ = worker.Request(key)
 	return nil
+}
+
+// wallpaperThumbKey is the decode request for one cached preview: the
+// preview file scaled to the tile's thumbnail box.
+func wallpaperThumbKey(preview string) icons.Key {
+	return icons.Key{Name: preview, W: wallpaperTileWidth, H: wallpaperThumbH}
 }
 
 // wallpaperStartLocked starts the wallpaper service if it is not running.

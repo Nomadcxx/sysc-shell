@@ -2,6 +2,8 @@ package shell
 
 import (
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1365,6 +1367,103 @@ func TestThumbArrivalDoesNotRebuildTheTree(t *testing.T) {
 	reg.mu.Unlock()
 	if after != before {
 		t.Error("the tree was rebuilt for a raster arrival")
+	}
+}
+
+// A thumbnail that decodes after its tile was laid out has to reach that
+// tile. Painting reuses the laid-out tree, and the virtual list only asks for
+// rasters while laying out, so a repaint alone left the tile blank until a
+// scroll or a snapshot happened to lay the panel out again (sysc-1065).
+func TestDecodedThumbReachesItsLaidOutTile(t *testing.T) {
+	// Not parallel: the preview cache follows XDG_CACHE_HOME.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := seedWallpaperRoot(t)
+	still := wallpaper.CachedStillPath(filepath.Join(root, "a.png"))
+	if still == "" {
+		t.Fatal("no preview path for the seeded still")
+	}
+	// No relay, so no snapshot rebuild can lay the panel out behind the test.
+	reg, svc, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.Snapshot().Library == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the library never indexed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Lay the grid out while the preview does not exist yet, so the tile is
+	// built blank and nothing has asked for a decode.
+	reg.mu.Lock()
+	h.wallpaperSnap = svc.Snapshot()
+	h.wallpaperDir = root
+	reg.rebuildPanel(h)
+	before := h.root
+	if n := laidOutWallpaperRasters(h.root); n != 0 {
+		reg.mu.Unlock()
+		t.Fatalf("%d rasters before any preview existed", n)
+	}
+	worker := reg.wallpaperThumbsLocked()
+	reg.mu.Unlock()
+
+	// The preview lands and decodes. The worker publishes through
+	// applyWallpaperThumb, which is the path under test.
+	if err := os.MkdirAll(filepath.Dir(still), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeWallpaperJPEG(t, still)
+	if _, _, err := worker.Request(wallpaperThumbKey(still)); err != nil {
+		t.Fatal(err)
+	}
+
+	for {
+		reg.mu.Lock()
+		painted := laidOutWallpaperRasters(h.root)
+		rebuilt := h.root != before
+		reg.mu.Unlock()
+		if rebuilt {
+			t.Fatal("the tree was rebuilt; a raster arrival should only lay it out again")
+		}
+		if painted > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the decoded preview never reached its laid-out tile")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// laidOutWallpaperRasters counts tiles in the laid-out grid that hold a
+// raster. It reads the list's current children, which layout produced, not
+// Item, which would build fresh rows and hide the defect.
+func laidOutWallpaperRasters(n *ui.Node) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if n.Kind == ui.KindImage && n.Image != nil {
+		count++
+	}
+	for _, c := range n.Children {
+		count += laidOutWallpaperRasters(c)
+	}
+	return count
+}
+
+func writeWallpaperJPEG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, wallpaper.ThumbWidth, wallpaper.ThumbHeight))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = 0x30, 0x70, 0xc0, 0xff
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := jpeg.Encode(f, img, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 
