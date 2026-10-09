@@ -1485,7 +1485,7 @@ func TestTheWeatherPageUsesTheNocturnalForm(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
 
 	effect := findNode(ccWeather(r, h), func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
-	if effect == nil || !effect.Effect.Night {
+	if effect == nil || effect.Effect.Daylight != 0 {
 		t.Fatalf("night Control Centre hero effect = %+v, want the nocturnal form", effect)
 	}
 }

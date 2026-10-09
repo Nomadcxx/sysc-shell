@@ -31,10 +31,10 @@ const (
 type EffectSpec struct {
 	Program EffectProgram
 	Variant EffectVariant
-	// Night selects the nocturnal form for weather variants that have a
-	// celestial layer. It is explicit because a weather code alone does not
-	// carry day/night state.
-	Night     bool
+	// Daylight is how far the sky is into day: 0 is night, 1 is full day,
+	// and values between are dawn or dusk. The shell derives it from the
+	// forecast's sunrise and sunset; a weather code alone carries neither.
+	Daylight  float64
 	Seed      uint64
 	Intensity float64
 	Speed     float64
@@ -58,6 +58,9 @@ func (s EffectSpec) Validate() error {
 	}
 	if !finiteInRange(s.Speed, 0, 4) {
 		return fmt.Errorf("ui: effect speed %v is outside zero through four", s.Speed)
+	}
+	if !finiteInRange(s.Daylight, 0, 1) {
+		return fmt.Errorf("ui: effect daylight %v is outside zero through one", s.Daylight)
 	}
 	if !finiteInRange(s.SceneBias, -1, 1) {
 		return fmt.Errorf("ui: effect scene bias %v is outside minus one through one", s.SceneBias)
