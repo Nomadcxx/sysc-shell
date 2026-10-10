@@ -50,11 +50,35 @@ Captured from fixture data with invented names, so nothing here is a real accoun
 
 ### Requirements
 
-Go 1.26.4+ and Niri, started as a session (`niri-session`, which is what display managers run) so
-systemd knows about your graphical session.
+Niri, started as a session (`niri-session`, which is what display managers run) so
+systemd knows about your graphical session. Source builds need Go 1.26.4+.
 
 Optional: `matugen` for wallpaper colours, `awww`, `swaybg` or `gSlapper` for wallpapers, and
 `wl-clipboard`.
+
+### Guided installer (recommended)
+
+Use the [SYSC Go installer](https://github.com/Nomadcxx/sysc#install) to set up
+the shell, its companions and your Niri session together.
+
+### AUR
+
+On Arch, install [sysc-shell](https://aur.archlinux.org/packages/sysc-shell) with
+your AUR helper. Stop existing bars and notification daemons before starting the shell:
+
+```sh
+yay -S sysc-shell
+systemctl --user enable --now sysc-shell.service
+```
+
+Run the service command inside a Niri session started with `niri-session`.
+The package pulls in notifications, clipboard, tray and sysc-lock; its service
+starts them before the shell. On first start, it creates a missing shell config
+with sysc-lock selected and tray presentation enabled. Existing configs stay intact.
+Install `sysc-terminal` for animated wallpaper and `sysc-plugins-git` for the
+official plugin bundle.
+
+[Documentation](https://nomadcxx.github.io/sysc/docs/).
 
 ### Build from source
 
@@ -64,7 +88,7 @@ cd sysc-shell
 go build -o ~/.local/bin/sysc-shell ./cmd/sysc-shell
 ```
 
-### Run as a user service
+### Source builds: user service
 
 ```bash
 install -Dm644 packaging/systemd/sysc-shell.service ~/.config/systemd/user/sysc-shell.service
