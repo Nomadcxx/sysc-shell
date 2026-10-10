@@ -1362,6 +1362,11 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelPluginStore {
 		h.focusPluginStoreSelection()
 	}
+	if id == PanelOnboarding {
+		// Keyboard users land on the primary action, not the Not now button
+		// that happens to be first in the tree.
+		h.focusByName(onbMainLabel(h.onbPage))
+	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
 	baseRect := h.place.panelRect()
