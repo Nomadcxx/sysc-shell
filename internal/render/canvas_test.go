@@ -3,11 +3,39 @@ package render
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"math"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func TestTranslucentMaskCompositing(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		coverage     byte
+		before, want [4]byte
+	}{
+		{"clear", 255, [4]byte{}, [4]byte{20, 40, 60, 128}},
+		{"background", 255, [4]byte{10, 20, 30, 64}, [4]byte{24, 49, 74, 159}},
+		{"nonzero channels with zero alpha", 255, [4]byte{2, 3, 4, 0}, [4]byte{20, 41, 61, 128}},
+		{"partial coverage", 127, [4]byte{10, 20, 30, 64}, [4]byte{16, 34, 51, 111}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pixels := append([]byte(nil), tc.before[:]...)
+			c, err := NewCanvas(pixels, 1, 1, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mask := image.NewAlpha(image.Rect(0, 0, 1, 1))
+			mask.Pix[0] = tc.coverage
+			blendMask(c, mask, 0, 0, Color{R: 120, G: 80, B: 40, A: 128})
+			if !bytes.Equal(pixels, tc.want[:]) {
+				t.Fatalf("pixel = %v, want %v", pixels, tc.want)
+			}
+		})
+	}
+}
 
 func TestLerpColorEndpointsAndClamping(t *testing.T) {
 	t.Parallel()

@@ -441,15 +441,19 @@ func (a *animator) TargetCycle(node string, cycle time.Duration, steps int, pose
 	a.nudge()
 }
 
-// SpriteRest reports how long a frame loop may sleep when every value still
-// in flight is a sprite cycle: until the soonest next pose, when the picture
-// can next change. ok is false while anything else is moving, which keeps
-// the loop on its ordinary tick.
+// SpriteRest sleeps to the next sprite pose, capped at the effect cadence
+// when decorative gradients or effects also move. Other motion keeps the
+// ordinary tick; input wakes a resting loop immediately.
 func (a *animator) SpriteRest() (time.Duration, bool) {
 	now := a.now()
 	rest, sprites := time.Duration(0), false
+	decorative := false
 	for key, v := range a.values {
 		if key.channel != animSprite {
+			if key.channel == animGradient || key.channel == animEffect {
+				decorative = decorative || !v.settled(now)
+				continue
+			}
 			if !v.settled(now) {
 				return 0, false
 			}
@@ -467,6 +471,9 @@ func (a *animator) SpriteRest() (time.Duration, bool) {
 			rest = wait
 		}
 		sprites = true
+	}
+	if sprites && decorative {
+		rest = min(rest, effectFrameCap)
 	}
 	return rest, sprites
 }
