@@ -9,10 +9,9 @@
 A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate daemons for
 notifications, clipboard history and the system tray.
 
-<p align="center">
-  <img src="assets/tour.webp" alt="sysc-shell Settings, the Bar settings and the system monitor opening over a static wallpaper, with the bar in view" width="900"><br>
-  <sub>Settings, Bar settings and the system monitor opening over a static wallpaper, bar included. <a href="assets/tour.mp4">Full-quality video</a> (1080p, 19 s).</sub>
-</p>
+https://github.com/user-attachments/assets/7cadf7b9-6fe5-4d53-b7d6-757e4082b68a
+
+<p align="center"><sub>Settings, Bar settings and the system monitor opening over a static wallpaper, bar included. <a href="assets/tour.mp4">Download the 1080p file</a> (19 s).</sub></p>
 
 ## Quick Links
 
