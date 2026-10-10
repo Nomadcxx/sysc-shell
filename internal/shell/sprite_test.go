@@ -119,6 +119,24 @@ func TestSpriteRestSleepsToTheNextPose(t *testing.T) {
 	}
 }
 
+func TestSpriteRestWithDecorativeGradient(t *testing.T) {
+	a, clock := newTestAnimator(false)
+	resolved(a, gallop, 400*time.Millisecond)
+	a.TargetLoop("wordmark", animGradient, 0, 1, time.Second, ui.GradientLoop)
+	clock.add(30 * time.Millisecond)
+	if d, ok := a.SpriteRest(); !ok || d != effectFrameCap {
+		t.Fatalf("gradient and sprite rest = %v %v, want effect interval", d, ok)
+	}
+	clock.add(40 * time.Millisecond)
+	if d, ok := a.SpriteRest(); !ok || d != 30*time.Millisecond {
+		t.Fatalf("rest = %v %v, want next sprite pose in 30ms", d, ok)
+	}
+	a.Target("button", animPress, 1)
+	if _, ok := a.SpriteRest(); ok {
+		t.Fatal("press must interrupt decorative rest")
+	}
+}
+
 // A resting loop publishes once per pose, not once per tick, and a new
 // target cuts the rest short.
 func TestRestingLoopPublishesPerPoseAndWakesForOtherMotion(t *testing.T) {

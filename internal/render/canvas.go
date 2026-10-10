@@ -443,9 +443,8 @@ func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 	b := mask.Bounds()
 	x0, y0, x1, y1 := c.clip(ui.Rect{X: x, Y: y, W: b.Dx(), H: b.Dy()})
 	src := col.premultiply()
-	// A solid colour under full coverage is the interior of every capsule,
-	// pill and card, which is most of the pixels the shell paints. There the
-	// blend reduces to the source, so it stores instead of multiplying.
+	// Full coverage needs no mask multiplication. An opaque source or a
+	// clear destination also needs no over blend (including the bar ground).
 	opaque := col.A == 255
 	for py := y0; py < y1; py++ {
 		row := c.Pix[py*c.Stride:]
@@ -456,8 +455,12 @@ func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 				continue
 			}
 			dst := row[px*4 : px*4+4 : px*4+4]
-			if opaque && coverage == 255 {
-				dst[0], dst[1], dst[2], dst[3] = src[0], src[1], src[2], src[3]
+			if coverage == 255 {
+				if opaque || dst[0]|dst[1]|dst[2]|dst[3] == 0 {
+					dst[0], dst[1], dst[2], dst[3] = src[0], src[1], src[2], src[3]
+				} else {
+					blendPixel(dst, src, uint32(col.A))
+				}
 				continue
 			}
 			alpha := uint32(col.A) * coverage / 255

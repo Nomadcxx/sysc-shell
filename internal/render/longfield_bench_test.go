@@ -67,3 +67,15 @@ func BenchmarkTemperatureGauge(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkTranslucentBarMask(b *testing.B) {
+	c, err := NewCanvas(make([]byte, 3440*40*4), 3440, 40, 3440*4)
+	if err != nil {
+		b.Fatal(err)
+	}
+	mask := RoundedMask(12, 3440, 40)
+	for b.Loop() {
+		clear(c.Pix)
+		blendMask(c, mask, 0, 0, Color{R: 30, G: 25, B: 45, A: 200})
+	}
+}
