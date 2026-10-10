@@ -276,6 +276,7 @@ type Accessibility struct {
 type Session struct {
 	Locker      string // external locker command; empty hides the lock action
 	PolkitAgent string // auto stands down for an existing agent; on retries while one holds the session; off disables
+	Language    string // UI language code ("es", "ja"...); empty follows the session locale
 }
 
 // Idle are the display-power timeouts, resolved to durations. A zero timeout
@@ -290,7 +291,7 @@ type Idle struct {
 	// holds a logind sleep inhibitor until the compositor confirms the lock,
 	// so a suspend armed shorter than lock still cannot outrun locking.
 	Lock        time.Duration
-	MediaExempt bool // playing media suppresses idle behaviors
+	MediaExempt bool // playing media exempts the session from idle behaviors
 }
 
 type Panels struct {

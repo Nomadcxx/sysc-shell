@@ -19,6 +19,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/services/polkit"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -31,6 +32,12 @@ import (
 // list: a section named here and nowhere else renders empty, and one named
 // only there is unreachable.
 var settingsSections = settings.SectionNames()
+
+// settingsLocale resolves the interface language for the draft the panel is
+// showing, so picking a language restyles the panel before it is saved away.
+func settingsLocale(h *PanelHost) string {
+	return i18n.Resolve(h.draft.Session.Language)
+}
 
 // settingsRailWidth holds an icon and a section name (settings redesign D5).
 // The control centre's 56 fitted a glyph and nothing else.
@@ -210,9 +217,10 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 	// pane's content edge.
 	rail := &ui.Node{Kind: ui.KindScroll, Key: settingsRailKey, Width: settingsRailWidth, Height: settingsContentHeight(h, head), Gap: settingsRailGap(), Children: []*ui.Node{search}}
 	item, itemPad := settingsRailItemHeight(h, search)
+	locale := settingsLocale(h)
 	for _, c := range settings.SectionClusters() {
 		rail.Children = append(rail.Children, &ui.Node{
-			Kind: ui.KindText, Text: c.Name, TextRole: theme.RoleCaption,
+			Kind: ui.KindText, Text: i18n.T(locale, "cluster."+c.Name, c.Name), TextRole: theme.RoleCaption,
 			Tone: ui.ToneSubtle, Role: "heading",
 		})
 		for _, name := range c.Sections {
@@ -222,12 +230,12 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 				// A rail tab is a list row, not a push button: the button
 				// padding (18 at spacious) would make twelve of them overrun
 				// a short pane.
-				Tooltip: name, Shape: ui.ShapeMedium, Padding: itemPad,
+				Tooltip: i18n.T(locale, "section."+name, name), Shape: ui.ShapeMedium, Padding: itemPad,
 				// One row child: layoutButtonContent lays a single row out in
 				// full, where several children would get no box (barChip).
 				Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 					{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]},
-					{Kind: ui.KindText, Text: name},
+					{Kind: ui.KindText, Text: i18n.T(locale, "section."+name, name)},
 				}}},
 			}
 			if name == section {
@@ -295,12 +303,13 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 // of radios: "tab" is the rail's role, one per section.
 func settingsPageTabs(h *PanelHost, pages []string, page string) *ui.Node {
 	m := h.metrics()
+	locale := settingsLocale(h)
 	seg := &ui.Node{Kind: ui.KindSegmented, Key: "settings-page", Gap: theme.MarginXXS, Height: m.CompactControl, Name: "Pages", Role: "radiogroup"}
 	for _, p := range pages {
 		b := &ui.Node{
 			Kind: ui.KindButton, Action: "page:" + p, Name: p, Role: "radio",
 			Focusable: true, Height: m.CompactControl,
-			Children: []*ui.Node{{Kind: ui.KindText, Text: p}},
+			Children: []*ui.Node{{Kind: ui.KindText, Text: i18n.T(locale, "page."+p, p)}},
 		}
 		if p == page {
 			b.State |= ui.StateSelected
@@ -450,7 +459,7 @@ func settingsSectionHeading(h *PanelHost, section string) *ui.Node {
 	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Padding: h.metrics().CardPadding, Children: []*ui.Node{
 		slashes(),
 		{
-			Kind: ui.KindText, Text: strings.ToLower(section), Name: section, Role: "heading",
+			Kind: ui.KindText, Text: strings.ToLower(i18n.T(settingsLocale(h), "section."+section, section)), Name: section, Role: "heading",
 			TextRole: theme.RolePage, Tone: ui.ToneAccent,
 		},
 		slashes(),
@@ -855,8 +864,9 @@ func settingsPageColumn(h *PanelHost, entries []settings.Entry, lead ...*ui.Node
 	if len(entries) > 0 {
 		section = entries[0].Section
 	}
+	locale := settingsLocale(h)
 	for _, g := range order {
-		children = append(children, settingsGroupCard(h, g, settingsGroupRows(h, groups[g], rowW)))
+		children = append(children, settingsGroupCard(h, i18n.T(locale, "group."+g, g), settingsGroupRows(h, groups[g], rowW)))
 	}
 	gap := theme.MarginL
 	if section == "Appearance" {
@@ -1085,8 +1095,8 @@ func settingsSegmented(h *PanelHost, e settings.Entry, raw string) *ui.Node {
 		Height: m.CompactControl, Name: e.Label, Role: "radiogroup",
 		Width: settingsSegmentWidth(h, e),
 	}
-	for _, opt := range e.Options {
-		label := settingsOptionLabel(opt)
+	for i, opt := range e.Options {
+		label := settingsEntryOptionLabel(e, i)
 		b := &ui.Node{
 			Kind: ui.KindButton, Action: "pick:" + e.Path + "=" + opt,
 			Name: label, Role: "radio", Focusable: true, Height: m.CompactControl,
@@ -1117,6 +1127,16 @@ func settingsOptionLabel(opt string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// settingsEntryOptionLabel is an enum option's display name: the entry's
+// paired label when it carries one (a language row shows 日本語, not "ja"),
+// else the value read as words.
+func settingsEntryOptionLabel(e settings.Entry, i int) string {
+	if len(e.OptionLabels) == len(e.Options) {
+		return e.OptionLabels[i]
+	}
+	return settingsOptionLabel(e.Options[i])
 }
 
 // settingsStepperSpan is the widest range that reads better one step at a

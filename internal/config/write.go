@@ -102,9 +102,9 @@ func toWire(c Config) wireConfig {
 	if acc := accessibilityDiff(c.Accessibility, d.Accessibility); acc != nil {
 		w.Accessibility = acc
 	}
-	if c.Session.Locker != d.Session.Locker {
-		v := c.Session.Locker
-		w.Session = &wireSession{Locker: &v}
+	if c.Session.Locker != d.Session.Locker || c.Session.Language != d.Session.Language {
+		locker, language := c.Session.Locker, c.Session.Language
+		w.Session = &wireSession{Locker: &locker, Language: &language}
 	}
 	if c.Session.PolkitAgent != "" && c.Session.PolkitAgent != d.Session.PolkitAgent {
 		v := c.Session.PolkitAgent

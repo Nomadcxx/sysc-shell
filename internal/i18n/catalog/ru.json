@@ -1,0 +1,11 @@
+{
+ "cluster.System": "Система",
+ "group.Language": "Язык",
+ "group.Lock": "Блокировка",
+ "section.Session": "Сеанс",
+ "settings.describe.session.language": "Язык интерфейса.",
+ "settings.describe.session.locker": "Команда блокировки экрана.",
+ "settings.label.session.language": "Язык",
+ "settings.label.session.locker": "Блокировка экрана",
+ "settings.option.session.language.": "Как в системе"
+}

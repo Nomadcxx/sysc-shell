@@ -1,0 +1,11 @@
+{
+ "cluster.System": "システム",
+ "group.Language": "言語",
+ "group.Lock": "ロック",
+ "section.Session": "セッション",
+ "settings.describe.session.language": "UI の表示言語。",
+ "settings.describe.session.locker": "画面ロックコマンド。",
+ "settings.label.session.language": "言語",
+ "settings.label.session.locker": "画面ロック",
+ "settings.option.session.language.": "システム設定に従う"
+}

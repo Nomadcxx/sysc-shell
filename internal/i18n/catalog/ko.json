@@ -1,0 +1,11 @@
+{
+ "cluster.System": "시스템",
+ "group.Language": "언어",
+ "group.Lock": "잠금",
+ "section.Session": "세션",
+ "settings.describe.session.language": "인터페이스 언어.",
+ "settings.describe.session.locker": "화면 잠금 명령.",
+ "settings.label.session.language": "언어",
+ "settings.label.session.locker": "화면 잠금",
+ "settings.option.session.language.": "시스템 설정 따름"
+}

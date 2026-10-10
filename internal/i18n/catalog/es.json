@@ -1,0 +1,11 @@
+{
+ "cluster.System": "Sistema",
+ "group.Language": "Idioma",
+ "group.Lock": "Bloqueo",
+ "section.Session": "Sesión",
+ "settings.describe.session.language": "Idioma de la interfaz.",
+ "settings.describe.session.locker": "Comando de bloqueo de pantalla.",
+ "settings.label.session.language": "Idioma",
+ "settings.label.session.locker": "Bloqueo de pantalla",
+ "settings.option.session.language.": "Seguir el sistema"
+}
