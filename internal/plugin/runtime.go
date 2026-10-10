@@ -104,7 +104,7 @@ type Runtime struct {
 	// block whoever sent last — including the shell's main loop, which
 	// freezes the whole desktop. pumpOut is the only writer, so order is
 	// preserved; sendQueueDepth bounds what a stalled plugin can hold.
-	out chan outItem
+	out chan outItem // current session's queue; nil when none
 
 	mu            sync.Mutex
 	state         State
@@ -129,12 +129,10 @@ func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
 		candidate: c,
 		opts:      opts,
 		messages:  make(chan v1.Message, 32),
-		out:       make(chan outItem, sendQueueDepth),
 		state:     StateDisabled,
 		since:     opts.now(),
 		budget:    newRestartBudget(),
 	}
-	go r.pumpOut()
 	return r
 }
 
@@ -146,11 +144,9 @@ const sendQueueDepth = 256
 // errSendQueueFull means a stalled plugin has not drained the queue.
 var errSendQueueFull = errors.New("plugin: send queue full")
 
-// outItem is one queued write. It names its session so a message queued
-// before Stop still reaches the process it was meant for; a nil session with
-// a flushed channel is a barrier that Stop waits on.
+// outItem is one queued write, or, with flushed set, a barrier that Stop
+// waits on.
 type outItem struct {
-	sess    *Session
 	m       v1.Message
 	flushed chan struct{}
 }
@@ -159,25 +155,36 @@ type outItem struct {
 // the plugin before closing it; a stalled plugin must not hold Stop forever.
 const stopFlushTimeout = time.Second
 
-// pumpOut is the only writer to the plugin's standard input. It may block on
-// a stalled plugin; that is the point — no caller of Send ever can.
-// ponytail: one runtime, one goroutine for the process's life; runtimes are
-// per-plugin singletons, so there is nothing to reap.
-func (r *Runtime) pumpOut() {
-	for it := range r.out {
-		if it.flushed != nil {
-			close(it.flushed)
-			continue
+// pumpOut is a session's only writer to the plugin's standard input. It may
+// block on a stalled plugin; that is the point — no caller of Send ever can.
+// It ends with the session: closing the session closes stdin, which also
+// wakes a blocked write.
+func (r *Runtime) pumpOut(ctx context.Context, sess *Session, q <-chan outItem) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case it := <-q:
+			if it.flushed != nil {
+				close(it.flushed)
+				continue
+			}
+			_ = sess.Send(it.m)
 		}
-		_ = it.sess.Send(it.m)
 	}
 }
 
 // flushOut waits, boundedly, for everything queued so far to be written.
 func (r *Runtime) flushOut() {
+	r.mu.Lock()
+	q := r.out
+	r.mu.Unlock()
+	if q == nil {
+		return
+	}
 	barrier := outItem{flushed: make(chan struct{})}
 	select {
-	case r.out <- barrier:
+	case q <- barrier:
 	default:
 		return
 	}
@@ -224,13 +231,13 @@ func (r *Runtime) SetCalls(d *Dispatcher) {
 // plugin must not be able to stall the desktop with it.
 func (r *Runtime) Send(m v1.Message) error {
 	r.mu.Lock()
-	sess := r.session
+	q := r.out
 	r.mu.Unlock()
-	if sess == nil {
+	if q == nil {
 		return errors.New("plugin: not running")
 	}
 	select {
-	case r.out <- outItem{sess: sess, m: m}:
+	case q <- outItem{m: m}:
 		return nil
 	default:
 		return errSendQueueFull
@@ -353,9 +360,12 @@ func (r *Runtime) launch(ctx context.Context) error {
 		sess.Close()
 		return nil
 	}
+	q := make(chan outItem, sendQueueDepth)
 	r.session = sess
 	r.sessionCancel = cancelSession
+	r.out = q
 	r.mu.Unlock()
+	go r.pumpOut(sessionCtx, sess, q)
 
 	r.setState(StateRunning, "")
 	if r.opts.SessionStarted != nil {
@@ -474,6 +484,7 @@ func (r *Runtime) Stop() {
 	cancelSession := r.sessionCancel
 	r.session = nil
 	r.sessionCancel = nil
+	r.out = nil
 	r.early = nil
 	r.mu.Unlock()
 
