@@ -78,8 +78,10 @@ var pluginPanelSettingGroups = []struct {
 	{Title: "Replay", Keys: []string{"replay_enabled", "replay_duration", "replay_filename_pattern", "replay_storage"}},
 	{Title: "Bar", Keys: []string{"hide_inactive"}},
 	{PluginID: "org.sysc.aiusage", Title: "Providers", Keys: []string{
-		"track_claude", "track_codex", "track_commandcode", "track_copilot", "track_ollama", "track_minimax", "track_opencode_go", "track_synthetic",
-		"commandcode_api_key", "ollama_api_key", "minimax_api_key", "opencode_go_api_key", "synthetic_api_key",
+		"track_claude", "track_codex", "track_commandcode", "track_copilot", "track_ollama", "track_minimax", "track_opencode_go",
+		"track_kimi", "track_zai", "track_deepseek", "track_alibaba", "track_synthetic",
+		"commandcode_api_key", "ollama_api_key", "minimax_api_key", "opencode_go_api_key",
+		"kimi_api_key", "zai_api_key", "deepseek_api_key", "alibaba_api_key", "synthetic_api_key",
 	}},
 	{PluginID: "org.sysc.aiusage", Title: "Usage", Keys: []string{"refresh_interval", "history_retention"}},
 	{PluginID: "org.sysc.aiusage", Title: "Alerts", Keys: []string{
