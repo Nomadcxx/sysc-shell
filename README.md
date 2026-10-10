@@ -16,6 +16,7 @@ notifications, clipboard history and the system tray.
 
 ## Quick Links
 
+- [Documentation site](https://nomadcxx.github.io/sysc/docs/components/sysc-shell/)
 - [Documentation](#documentation)
 - [The sysc ecosystem](https://github.com/Nomadcxx/sysc-shell/blob/main/docs/ecosystem.md)
 
