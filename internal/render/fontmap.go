@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-text/typesetting/font"
 	ot "github.com/go-text/typesetting/font/opentype"
@@ -281,13 +282,22 @@ type Run struct {
 // A run boundary is where per-rune fallback changed the resolved face.
 func (m *FontMap) SplitRuns(text string, req FaceRequest) []Run {
 	var runs []Run
+	var runText strings.Builder
 	for _, r := range text {
 		face := m.Face(r, req)
 		if n := len(runs); n > 0 && runs[n-1].Face == face {
-			runs[n-1].Text += string(r)
+			runText.WriteRune(r)
 			continue
 		}
-		runs = append(runs, Run{Face: face, Text: string(r)})
+		if len(runs) > 0 {
+			runs[len(runs)-1].Text = runText.String()
+			runText.Reset()
+		}
+		runs = append(runs, Run{Face: face})
+		runText.WriteRune(r)
+	}
+	if len(runs) > 0 {
+		runs[len(runs)-1].Text = runText.String()
 	}
 	return runs
 }

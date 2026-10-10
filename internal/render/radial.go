@@ -110,6 +110,8 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 	cx, cy := float64(box.X)+float64(size)/2, float64(box.Y)+float64(size)/2
 	fraction := min(max(n.Value, 0), 1)
 	limit := fraction * 2 * math.Pi
+	// Contrast repair depends on the gauge and track, not the arc pixel.
+	arcEnd := radialArcColor(style, n, 1, trackColor)
 	x0, y0, x1, y1 := c.clip(box)
 	for y := y0; y < y1; y++ {
 		for x := x0; x < x1; x++ {
@@ -143,7 +145,7 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 				} else if math.Hypot(dx-math.Sin(limit)*radius, dy+math.Cos(limit)*radius) < math.Hypot(dx, dy+radius) {
 					progress = 1
 				}
-				active := radialArcColor(style, n, progress, trackColor)
+				active := LerpColor(style.Accent, arcEnd, progress)
 				col = LerpColor(trackColor, active, activeCoverage/coverage)
 			}
 			blendCoverage(c, x, y, col, coverage)

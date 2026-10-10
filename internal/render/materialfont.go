@@ -139,5 +139,5 @@ func (r *TextRenderer) RasterMaterialIcon(name string, size int) (Mask, error) {
 	if err != nil {
 		return Mask{}, err
 	}
-	return rasterRuns([]shapedFaceRun{{face: face, text: shapeName, output: out}}, size)
+	return rasterRuns([]shapedFaceRun{{face: face, output: out}}, size)
 }

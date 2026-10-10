@@ -21,6 +21,34 @@ func newTestAnimator(reduced bool) (*animator, *fakeClock) {
 	return newAnimator(clock.now, reduced, render.MotionSet{}), clock
 }
 
+func TestDecorativeLoopsDoNotKeepInteractionCadence(t *testing.T) {
+	a, clock := newTestAnimator(false)
+	a.TargetLoop("wordmark", animGradient, 0, 1, time.Second, ui.GradientLoop)
+	a.TargetSweep("weather", animEffect, time.Second)
+	if a.Settled() || !a.SettledExceptEffects() {
+		t.Fatal("decorative loops must keep painting at the effect cadence")
+	}
+	for _, channel := range []animChannel{animHover, animPress, animTheme, animProgress, animSweep, animSprite} {
+		switch channel {
+		case animSweep:
+			a.TargetSweep("active", channel, time.Second)
+		case animSprite:
+			a.TargetCycle("active", time.Second, 2, 3)
+		default:
+			a.Target("active", channel, 1)
+		}
+		if a.SettledExceptEffects() {
+			t.Fatalf("active channel %v must keep the interaction cadence", channel)
+		}
+		a.Forget("active")
+	}
+	a.Target("button", animHover, 1)
+	clock.add(time.Second)
+	if !a.SettledExceptEffects() {
+		t.Fatal("finished hover must return to the effect cadence")
+	}
+}
+
 func TestStateLayerPolicyGatesHoverOnly(t *testing.T) {
 	t.Parallel()
 	tree := func() *ui.Node {

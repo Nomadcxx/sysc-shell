@@ -256,7 +256,7 @@ func (r *TextRenderer) RasterProjectIcon(name string, size int) (Mask, error) {
 	if err != nil {
 		return Mask{}, err
 	}
-	mask, err := rasterRuns([]shapedFaceRun{{face: face, text: string(glyph), output: out}}, size)
+	mask, err := rasterRuns([]shapedFaceRun{{face: face, output: out}}, size)
 	if err != nil {
 		return Mask{}, err
 	}

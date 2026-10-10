@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -986,6 +987,44 @@ func FieldOffsetAt(n *ui.Node, x int, measure ui.MeasureText) int {
 		rel += n.ScrollX
 	}
 	attrs := ui.TextAttrsOf(n)
+	if n.Masked {
+		// Bullets have monotone advances, unlike contextual unmasked text.
+		// Search grapheme edges so a click never splits an accent or emoji,
+		// without shaping all N growing prefixes (quadratic work per click).
+		edges := []int{0}
+		for pos := 0; pos < len(n.Text); {
+			pos = ui.NextGraphemeBoundary(n.Text, pos)
+			edges = append(edges, pos)
+		}
+		lo, hi := 0, len(edges)
+		best, bestD := 0, abs(rel)
+		for lo < hi {
+			mid := lo + (hi-lo)/2
+			w, _ := measure(ui.DisplayPrefix(n, edges[mid]), attrs)
+			d := abs(w - rel)
+			if d < bestD || d == bestD && edges[mid] < best {
+				best, bestD = edges[mid], d
+			}
+			if w < rel {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+		if best == 0 {
+			return 0
+		}
+		// Rounding can give several edges the winning width. Preserve the
+		// exhaustive path's earliest-edge rule, including equidistant clicks.
+		width, _ := measure(ui.DisplayPrefix(n, best), attrs)
+		first := sort.Search(len(edges), func(i int) bool {
+			w, _ := measure(ui.DisplayPrefix(n, edges[i]), attrs)
+			return w >= width
+		})
+		return edges[first]
+	}
+	// ponytail: unmasked contextual prefixes keep the exhaustive O(n²) path;
+	// use shaped cluster positions if long document-field hit testing is needed.
 	best, bestD := 0, abs(rel)
 	for pos := 0; pos < len(n.Text); {
 		pos = ui.NextGraphemeBoundary(n.Text, pos)

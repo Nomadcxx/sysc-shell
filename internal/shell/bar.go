@@ -736,17 +736,23 @@ func (b *Bar) barFrameLoop() {
 		b.anim.running.Store(false)
 		b.mu.Unlock()
 	}()
-	// Resolve the cap once, under the lock: a theme reload can replace the
-	// animator, and the call expression below runs unlocked.
+	// Resolve the cap per tick so interaction resumes the normal cadence.
+	frameCap := func() time.Duration {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.anim.SettledExceptEffects() {
+			return effectFrameCap
+		}
+		return b.anim.frameCap()
+	}
 	b.mu.Lock()
-	frameCap := b.anim.frameCap()
 	wake := b.anim.wake
 	b.mu.Unlock()
 	animateSurfaceResting(b.stopAnim, wake, func() bool {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		return b.anim.Settled()
-	}, b.invalidate, func() time.Duration { return frameCap }, func() (time.Duration, bool) {
+	}, b.invalidate, frameCap, func() (time.Duration, bool) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		return b.anim.SpriteRest()
