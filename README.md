@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/7cadf7b9-6fe5-4d53-b7d6-757e4082b68a
 
 ## Screenshots
 
-Captured from fixture data with invented names, so nothing here is a real account, network or device.
+Captured from fixture data with invented names, so nothing here is a real account, network or device. The wallpaper picker is the exception: it shows the author's own wallpaper library.
 
 <table>
   <tr>
@@ -43,6 +43,9 @@ Captured from fixture data with invented names, so nothing here is a real accoun
   <tr>
     <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396"><br><sub>Clipboard history</sub></td>
     <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396"><br><sub>Settings: Bar</sub></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396"><br><sub>Wallpaper picker</sub></td>
   </tr>
 </table>
 
