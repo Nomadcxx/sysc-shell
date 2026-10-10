@@ -202,7 +202,7 @@ func TestTerminalArtShowsApplyErrorAfterRollback(t *testing.T) {
 			Runtime:     map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StateStatic, Err: "sysc-terminal failed"}},
 		},
 	}
-	for _, banner := range artBanners(h) {
+	for _, banner := range artBanners(nil, h) {
 		if banner.Text == "DP-1: sysc-terminal failed" {
 			return
 		}
@@ -1058,5 +1058,50 @@ func TestTerminalArtArrowKeysKeepFocusInView(t *testing.T) {
 	if grid.ScrollOffset == 0 || card == nil ||
 		card.Bounds.Y < grid.Bounds.Y || card.Bounds.Y+card.Bounds.H > grid.Bounds.Y+grid.Bounds.H {
 		t.Fatalf("focused %+v outside grid %+v at offset %d", card.Bounds, grid.Bounds, grid.ScrollOffset)
+	}
+}
+
+// A held background never starts the wallpaper service, so the capabilities
+// are empty. Both Terminal Art pages used to read that as a missing
+// sysc-terminal and tell the user to install a binary that was there.
+func TestTerminalArtExplainsAHeldBackground(t *testing.T) {
+	const reason = "the lock session service is not reporting; background is held until it does"
+	want := "Wallpaper and screensaver are held: " + reason + "."
+
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	reg.mu.Lock()
+	reg.backgroundHeld = true
+	reg.backgroundError = reason
+	reg.mu.Unlock()
+
+	settings := openArtSettings(t, reg)
+	reg.mu.Lock()
+	said := artTexts(settings.root)
+	reg.mu.Unlock()
+	if !slices.Contains(said, want) || slices.Contains(said, artNotInstalled) {
+		t.Fatalf("Settings > Terminal Art with a held background: %q, want the held reason and no install hint", said)
+	}
+
+	panel := openArtPanel(t, reg)
+	reg.mu.Lock()
+	said = artTexts(panel.root)
+	reg.mu.Unlock()
+	if !slices.Contains(said, want) || slices.Contains(said, artNotInstalled) {
+		t.Fatalf("Terminal Art panel with a held background: %q, want the held reason and no install hint", said)
+	}
+}
+
+// Without a recorded hold the install hint stays: that is the case it is for.
+func TestTerminalArtKeepsTheInstallHintWhenNothingIsHeld(t *testing.T) {
+	reg, _ := artRegistry(t, stubWallpaperEngine{})
+	reg.mu.Lock()
+	reg.backgroundHeld = true // held, but no reason recorded
+	reg.mu.Unlock()
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !slices.Contains(artTexts(h.root), artNotInstalled) {
+		t.Fatalf("without sysc-terminal and no recorded hold: %q, want the install hint", artTexts(h.root))
 	}
 }
