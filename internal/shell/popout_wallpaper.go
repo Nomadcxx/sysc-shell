@@ -70,6 +70,15 @@ const (
 	wallpaperCoverageTimeout = 2 * time.Second
 )
 
+// heldBackgroundNotice says why wallpaper and screensaver are held, or returns
+// "" when the background is free or no reason was recorded. Registry.mu is held.
+func heldBackgroundNotice(r *Registry) string {
+	if r == nil || !r.backgroundHeld || r.backgroundError == "" {
+		return ""
+	}
+	return "Wallpaper and screensaver are held: " + r.backgroundError + "."
+}
+
 // wallpaperServiceLocked returns the running service, or nil before the
 // registry has started one. Registry.mu is held.
 func (r *Registry) wallpaperServiceLocked() *wallpaper.Service {
@@ -1059,8 +1068,8 @@ func wallpaperBanners(r *Registry, h *PanelHost) []*ui.Node {
 	}
 	// A held background means no service, no library, and no assignment. The
 	// only copy of the reason used to live on the Lock Screen page.
-	if r != nil && r.backgroundHeld && r.backgroundError != "" {
-		add("Wallpaper and screensaver are held: "+r.backgroundError+".", ui.ToneError)
+	if text := heldBackgroundNotice(r); text != "" {
+		add(text, ui.ToneError)
 	}
 	for _, connector := range wallpaperTargets(h) {
 		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StateStarting {

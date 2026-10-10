@@ -34,7 +34,7 @@ const (
 func terminalArtTree(r *Registry, h *PanelHost) *ui.Node {
 	children := []*ui.Node{artHeader(h)}
 	children = append(children, artNowPlaying(h)...)
-	children = append(children, artBanners(h)...)
+	children = append(children, artBanners(r, h)...)
 	effects := artEffects(h)
 	if h.wallpaperSnap.Caps.Terminal && len(effects) > 0 {
 		children = append(children, artEffectsHeader(h, len(effects)))
@@ -244,7 +244,7 @@ func (h *PanelHost) artSetPalette(r *Registry, name string) {
 	r.rebuildPanel(h)
 }
 
-func artBanners(h *PanelHost) []*ui.Node {
+func artBanners(r *Registry, h *PanelHost) []*ui.Node {
 	var out []*ui.Node
 	add := func(text string) {
 		if text != "" {
@@ -252,7 +252,7 @@ func artBanners(h *PanelHost) []*ui.Node {
 		}
 	}
 	if !h.wallpaperSnap.Caps.Terminal {
-		add(artNotInstalled)
+		add(artUnavailable(r))
 	}
 	add(h.errLabel)
 	add(h.wallpaperSnap.Err)
@@ -407,6 +407,17 @@ func (h *PanelHost) artKeyPress(r *Registry, key uint32) bool {
 
 const artNotInstalled = "sysc-terminal is not installed. Install it to /usr/local/bin"
 
+// artUnavailable is why Terminal Art has no engine. A held background never
+// starts the wallpaper service, so the capabilities are empty whether or not
+// sysc-terminal is installed; blaming the install sent people looking for a
+// binary that was there (#114 fixed the same blind spot in the picker).
+func artUnavailable(r *Registry) string {
+	if text := heldBackgroundNotice(r); text != "" {
+		return text
+	}
+	return artNotInstalled
+}
+
 // terminalArtSettingsTree is Settings → Terminal Art: whether the engine is
 // there, the palette the panel starts on, and the way into the panel. Picking
 // a palette here writes config only; a running effect is the panel's.
@@ -419,7 +430,7 @@ func terminalArtSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	var rows []*ui.Node
 	if !caps.Terminal {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: artNotInstalled, Tone: ui.ToneError, Height: wallpaperCaptionH})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: artUnavailable(r), Tone: ui.ToneError, Height: wallpaperCaptionH})
 	} else {
 		effects := len(caps.Catalog.Effects)
 		rows = append(rows, &ui.Node{
