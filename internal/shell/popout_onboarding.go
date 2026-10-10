@@ -67,8 +67,8 @@ const (
 
 	onbWallpaperHint = "The picker browses images, sets per-output assignments " +
 		"and updates its folder; presets and bar layout live in Settings."
-	onbRegionHint = "Language, keyboard layout and timezone stay with your OS " +
-		"session. Coordinates accept 0; blank a field to clear it."
+	onbRegionHint = "Language affects interface text only. Keyboard layout and timezone " +
+		"stay with your OS. Coordinates accept 0; blank a field to clear it."
 	onbIdleHint = "A screensaver does not secure the session. The lock choice " +
 		"needs a locker command set below."
 	onbEntryHint = "Settings holds every control used here, beside the rest of " +
@@ -156,6 +156,8 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 		children = append(children, pick)
 		children = append(children, onbCaption(onbWallpaperHint))
 	case onbRegion:
+		children = append(children, onbRows(h, "session.language")...)
+		children = append(children, onboardingFontOption(h)...)
 		children = append(children, onbRows(h, "weather.city", "weather.latitude",
 			"weather.longitude", "weather.unit")...)
 		children = append(children, onbCaption(onbRegionHint))
@@ -171,6 +173,20 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 		children = append(children, onbCaption(onbDocsHint))
 	}
 	return children
+}
+
+func onboardingFontOption(h *PanelHost) []*ui.Node {
+	copy := onboardingFontCopy(h.onbFontLocale, h.onbFontState)
+	if copy == "" {
+		return nil
+	}
+	out := []*ui.Node{onbCaption(copy)}
+	if h.onbFontState == onboardingFontMissing || h.onbFontState == onboardingFontFailed {
+		button := h.button("onb-font-install", "Install Noto CJK", "download")
+		button.Width = onbBodyWidth(h)
+		out = append(out, button)
+	}
+	return out
 }
 
 // onbRows renders the named settings entries as Settings renders them. An
@@ -320,8 +336,14 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 	case "onb-next":
 		h.onbPage = h.onbPage.next()
 		h.onbScroll = 0
+		if h.onbPage == onbRegion {
+			r.checkOnboardingFont(h)
+		}
 		r.rebuildPanel(h)
 		h.focusByName(onbMainLabel(h.onbPage))
+		return true
+	case "onb-font-install":
+		r.installOnboardingFont(h)
 		return true
 	case "onb-wallpaper":
 		// Reuse the picker rather than a second wallpaper UI: it opens on top

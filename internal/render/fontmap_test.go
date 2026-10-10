@@ -88,6 +88,17 @@ func TestFaceCacheIsBounded(t *testing.T) {
 	}
 }
 
+func TestFontMapReportsInstalledGlyphCoverage(t *testing.T) {
+	t.Parallel()
+	m := newFixtureFontMap(t)
+	if !m.HasGlyph('A') {
+		t.Fatal("fixture's Latin font did not report its A glyph")
+	}
+	if m.HasGlyph('日') {
+		t.Fatal("Latin-only fixture reported Japanese coverage")
+	}
+}
+
 func TestFaceNeverReturnsNil(t *testing.T) {
 	t.Parallel()
 	m := newSystemMap(t)

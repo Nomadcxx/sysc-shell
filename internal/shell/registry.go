@@ -309,6 +309,15 @@ type Registry struct {
 	screenshotDir func() string
 	// selector is the open region selector, if any. Registry.mu.
 	selector *regionSelector
+	// CJK font probes run off Registry.mu; the install hook is reached only
+	// from the onboarding button after an explicit user choice.
+	onboardingFontCoverage         func(string) bool
+	onboardingFontInstallAvailable func() bool
+	onboardingFontInstall          func() error
+	// Registry.mu guards these process-local flags. An installed font package
+	// does not enter the active renderer maps until sysc-shell restarts.
+	onboardingFontInstallRunning bool
+	onboardingFontInstalled      bool
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
 	// depthClocks contains one click-through wallpaper clock per accepted mask.
@@ -432,10 +441,13 @@ func NewRegistry(cfg config.Config) *Registry {
 		trayCh:             make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
-		trayCloses:      newTrayCloseTracker(),
-		notifyCh:        make(chan notifyclient.Message, 32),
-		controlIdentity: readCCIdentity(),
-		machineFacts:    readMachineFacts(),
+		trayCloses:                     newTrayCloseTracker(),
+		notifyCh:                       make(chan notifyclient.Message, 32),
+		controlIdentity:                readCCIdentity(),
+		onboardingFontCoverage:         hasCJKFontCoverage,
+		onboardingFontInstallAvailable: cjkFontInstallAvailable,
+		onboardingFontInstall:          runCJKFontInstall,
+		machineFacts:                   readMachineFacts(),
 	}
 	// Absent marker (missing file, malformed state, or a pre-onboarding
 	// config) means the wizard has not been seen. A malformed file is left

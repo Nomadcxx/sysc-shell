@@ -182,6 +182,23 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 	return face
 }
 
+// HasGlyph reports whether this map can paint r with an installed font.
+func (m *FontMap) HasGlyph(r rune) bool {
+	face := m.Face(r, FaceRequest{})
+	if face == nil {
+		return false
+	}
+	gid, ok := face.NominalGlyph(r)
+	if !ok {
+		return false
+	}
+	if _, ok := face.GlyphDataBitmap(gid); ok {
+		return true
+	}
+	_, ok = face.GlyphDataOutline(gid)
+	return ok
+}
+
 // wghtAxis is the OpenType weight axis.
 var wghtAxis = ot.MustNewTag("wght")
 

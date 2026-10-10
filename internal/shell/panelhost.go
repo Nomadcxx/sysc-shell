@@ -338,8 +338,10 @@ type PanelHost struct {
 	clipboardThumbnails       map[string]*ui.Image
 	clipboardThumbnailRequest map[string]struct{}
 	// onbPage and onbScroll are the wizard's step and retained body scroll.
-	onbPage   onboardingPage
-	onbScroll int
+	onbPage       onboardingPage
+	onbScroll     int
+	onbFontLocale string
+	onbFontState  onboardingFontState
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -3331,6 +3333,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 		path, value, found := strings.Cut(rest, "=")
 		if e := h.set.ByPath(path); found && e != nil {
 			h.commitSetting(r, e, value)
+			if h.id == PanelOnboarding && path == "session.language" {
+				r.checkOnboardingFont(h)
+			}
 			r.rebuildPanel(h)
 		}
 		return true
