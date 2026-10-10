@@ -2924,6 +2924,12 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 		return true
 	}
 	if strings.HasPrefix(n.Action, "plugin-set:") {
+		// A plugin setting text field is a draft: the well keeps the buffer
+		// and Enter or the Save pill commits it. Persisting on every change
+		// wrote the config and woke the plugin once per keystroke.
+		if n.Kind == ui.KindTextField {
+			return true
+		}
 		return r.handlePluginManager(h, n)
 	}
 	h.applySetting(r, n)
