@@ -132,6 +132,18 @@ func ccAvatar(r *Registry, h *PanelHost, identity ccIdentity) *ui.Node {
 	return ccAvatarNode(nil)
 }
 
+// ccT resolves a translator for a control-centre page from the panel host's
+// draft config, falling back to the registry config, then English.
+func ccT(h *PanelHost, r *Registry) translateFunc {
+	if h != nil {
+		return h.tr
+	}
+	if r != nil {
+		return cfgT(r.cfg)
+	}
+	return nil
+}
+
 func ccText(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return ccDash
@@ -153,10 +165,10 @@ func ccDate(now time.Time) string {
 	return now.Format("Monday, 2 January")
 }
 
-func ccWeatherSummary(reading services.Reading) (string, ui.Tone) {
+func ccWeatherSummary(reading services.Reading, tr translateFunc) (string, ui.Tone) {
 	if !reading.Observed {
 		if !reading.FailedSince.IsZero() {
-			return "weather unavailable", ui.ToneError
+			return cardT(tr, "cc.weather_unavailable", "weather unavailable"), ui.ToneError
 		}
 		return ccDash, ui.ToneNormal
 	}
@@ -184,14 +196,14 @@ func ccQuickAccessButton(width int, icon, label, action string, selected bool) *
 	return n
 }
 
-func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector, selected bool, slotWidth int) *ui.Node {
+func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector, selected bool, slotWidth int, tr translateFunc) *ui.Node {
 	value, valueText, ok := ccResourceValue(snap, sel, selected)
-	name := ccResourceName(snap, id, selected)
+	name := ccResourceName(snap, id, selected, tr)
 	detail := valueText
 	if !ok {
-		detail = "unavailable"
-		if id == "gpu" && strings.Contains(name, "ambiguous") {
-			detail = "device identity ambiguous"
+		detail = cardT(tr, "cc.unavailable", "unavailable")
+		if id == "gpu" && ccGPUAmbiguous(snap) {
+			detail = cardT(tr, "cc.gpu_ambiguous_detail", "device identity ambiguous")
 		}
 	}
 	return &ui.Node{Kind: ui.KindColumn, Width: slotWidth, Gap: theme.MarginXXS, Name: name, Role: "group", Children: []*ui.Node{
@@ -200,19 +212,23 @@ func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Sele
 	}}
 }
 
-func ccResourceName(snap services.Snapshot, id string, selected bool) string {
-	if id == "gpu" && !selected && snap.GPU != nil && len(snap.GPU.GPUs) > 1 {
-		return "GPU usage: device identity ambiguous"
+func ccGPUAmbiguous(snap services.Snapshot) bool {
+	return snap.GPU != nil && len(snap.GPU.GPUs) > 1
+}
+
+func ccResourceName(snap services.Snapshot, id string, selected bool, tr translateFunc) string {
+	if id == "gpu" && !selected && ccGPUAmbiguous(snap) {
+		return cardT(tr, "cc.usage.gpu_ambiguous", "GPU usage: device identity ambiguous")
 	}
 	switch id {
 	case "cpu":
-		return "CPU usage"
+		return cardT(tr, "cc.usage.cpu", "CPU usage")
 	case "memory":
-		return "Memory usage"
+		return cardT(tr, "cc.usage.memory", "Memory usage")
 	case "temperature":
-		return "CPU temperature"
+		return cardT(tr, "cc.usage.temp", "CPU temperature")
 	case "gpu":
-		return "GPU usage"
+		return cardT(tr, "cc.usage.gpu", "GPU usage")
 	default:
 		return id
 	}
@@ -235,11 +251,11 @@ func ccResourceValue(snap services.Snapshot, sel services.Selector, selected boo
 	return value, ccPercent(int(value*100+0.5), true), true
 }
 
-func ccOnOff(on bool) string {
+func ccOnOff(on bool, tr translateFunc) string {
 	if on {
-		return "On"
+		return cardT(tr, "cc.on", "On")
 	}
-	return "Off"
+	return cardT(tr, "cc.off", "Off")
 }
 
 func ccSegment(icon, label, action string, selected bool) *ui.Node {
@@ -316,6 +332,7 @@ func hProfileNext(h *PanelHost) string {
 }
 
 func ccWeather(r *Registry, h *PanelHost) *ui.Node {
+	tr := ccT(h, r)
 	m := h.metrics()
 	reading := services.Reading{}
 	location := ccDash
@@ -324,7 +341,7 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 		location = weatherLocation(r.cfg.Weather, reading)
 	}
 	today := weatherHeroCard(reading, location, m,
-		max(ccBodyWidth(h)-2*m.CardPadding, 0), ccTodayH, weatherTodayEffectKey)
+		max(ccBodyWidth(h)-2*m.CardPadding, 0), ccTodayH, weatherTodayEffectKey, tr)
 
 	// Four slots share the body width and the three gaps between them. The
 	// width is derived rather than written down: it was 143 for a gap of 8,
@@ -348,18 +365,19 @@ func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.
 
 func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
+	tr := ccT(h, r)
 	state := services.AudioState{}
 	ok := false
 	if r != nil && r.audio != nil {
 		state, ok = r.audio.CachedState()
 	}
-	mute := ccQuickTile(ccTileW, "volume_off", "Mute", ccOnOff(state.Muted), "cc:mute", state.Muted)
+	mute := ccQuickTile(ccTileW, "volume_off", cardT(tr, "cc.mute", "Mute"), ccOnOff(state.Muted, tr), "cc:mute", state.Muted)
 	if !ok {
 		ccDisable(mute)
 	}
 	rows := []*ui.Node{
-		monitorCardTitle("Output", 0),
-		ccSlider(m, "volume_up", "Volume", "cc:volume", state.Level, ok),
+		monitorCardTitle(cardT(tr, "cc.output", "Output"), 0),
+		ccSlider(m, "volume_up", cardT(tr, "cc.volume", "Volume"), "cc:volume", state.Level, ok),
 		mute,
 	}
 	if h != nil && h.errLabel != "" {
@@ -372,6 +390,7 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 
 func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
+	tr := ccT(h, r)
 	var snap services.Snapshot
 	locker := ""
 	if r != nil {
@@ -382,27 +401,27 @@ func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil {
 		errLabel = h.errLabel
 	}
-	battery := ccPowerBattery(m, snap, errLabel)
+	battery := ccPowerBattery(m, snap, errLabel, tr)
 	profiles := ccPowerProfiles(m, h)
-	actions := ccSessionActions(m, locker, r.lockActionLabel())
+	actions := ccSessionActions(m, locker, r.lockActionLabel(), tr)
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginM,
 		Children: []*ui.Node{battery, profiles, actions}}
 }
 
-func ccPowerBattery(m theme.Metrics, snap services.Snapshot, errLabel string) *ui.Node {
-	rows := []*ui.Node{monitorCardTitle("Battery", 0)}
+func ccPowerBattery(m theme.Metrics, snap services.Snapshot, errLabel string, tr translateFunc) *ui.Node {
+	rows := []*ui.Node{monitorCardTitle(cardT(tr, "session.battery", "Battery"), 0)}
 	if errLabel != "" {
 		rows = append([]*ui.Node{{Kind: ui.KindText, Text: errLabel, Tone: ui.ToneError}}, rows...)
 	}
 	b := snap.Battery
 	if b == nil || !b.Present || !b.ChargeValid {
-		rows = append(rows, monitorKeyValue("Status", ccDash))
+		rows = append(rows, monitorKeyValue(cardT(tr, "cc.status", "Status"), ccDash))
 	} else {
 		rows = append(rows,
-			monitorKeyValue("Charge", fmt.Sprintf("%.0f%%", b.Charge*100)),
-			monitorKeyValue("State", batteryStateLabel(b.State)))
+			monitorKeyValue(cardT(tr, "cc.charge", "Charge"), fmt.Sprintf("%.0f%%", b.Charge*100)),
+			monitorKeyValue(cardT(tr, "cc.state", "State"), cardT(tr, "session.state."+batteryStateLabel(b.State), batteryStateLabel(b.State))))
 		if b.TimeValid {
-			rows = append(rows, monitorKeyValue("Remaining", batteryDuration(b.TimeRemaining)))
+			rows = append(rows, monitorKeyValue(cardT(tr, "cc.remaining", "Remaining"), batteryDuration(b.TimeRemaining)))
 		}
 	}
 	card := monitorCard(m, rows)
@@ -411,9 +430,10 @@ func ccPowerBattery(m theme.Metrics, snap services.Snapshot, errLabel string) *u
 }
 
 func ccPowerProfiles(m theme.Metrics, h *PanelHost) *ui.Node {
-	rows := []*ui.Node{monitorCardTitle("Power profile", 0)}
+	tr := ccT(h, nil)
+	rows := []*ui.Node{monitorCardTitle(cardT(tr, "session.power_profile", "Power profile"), 0)}
 	if h == nil || !h.profilesOK || len(h.profiles) == 0 {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "powerprofilesctl unavailable", TextRole: theme.RoleCaption})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "cc.profiles_unavailable", "powerprofilesctl unavailable"), TextRole: theme.RoleCaption})
 	} else {
 		segments := &ui.Node{Kind: ui.KindSegmented, Key: "cc-power-profiles", Gap: sessionSegmentGap}
 		for _, name := range h.profiles {
@@ -426,7 +446,7 @@ func ccPowerProfiles(m theme.Metrics, h *PanelHost) *ui.Node {
 			if icon != "" {
 				children = append(children, &ui.Node{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconProfile})
 			}
-			label := powerProfileLabel(name)
+			label := cardT(tr, "session.profile."+name, powerProfileLabel(name))
 			children = append(children, &ui.Node{Kind: ui.KindText, Text: label})
 			segment := &ui.Node{
 				Kind: ui.KindButton, Action: "cc:profile:" + name,
@@ -445,7 +465,7 @@ func ccPowerProfiles(m theme.Metrics, h *PanelHost) *ui.Node {
 	return card
 }
 
-func ccSessionActions(m theme.Metrics, locker, lockLabel string) *ui.Node {
+func ccSessionActions(m theme.Metrics, locker, lockLabel string, tr translateFunc) *ui.Node {
 	actions := []struct{ name, action, icon string }{
 		{lockLabel, "session-lock", "lock"},
 		{"Log out", "session-logout", "logout"},
@@ -457,14 +477,15 @@ func ccSessionActions(m theme.Metrics, locker, lockLabel string) *ui.Node {
 	if locker == "" {
 		actions = actions[1:]
 	}
-	rows := []*ui.Node{monitorCardTitle("Session", 0)}
+	rows := []*ui.Node{monitorCardTitle(cardT(tr, "section.Session", "Session"), 0)}
 	for _, action := range actions {
+		name := cardT(tr, "session.action."+action.name, action.name)
 		n := &ui.Node{
-			Kind: ui.KindButton, Action: action.action, Name: action.name, Role: "button", Focusable: true,
+			Kind: ui.KindButton, Action: action.action, Name: name, Role: "button", Focusable: true,
 			Height: m.CompactControl, Gap: theme.MarginM, Padding: m.CardPadding,
 			Children: []*ui.Node{
 				{Kind: ui.KindIcon, Icon: action.icon, IconSize: m.IconNormal},
-				{Kind: ui.KindText, Text: action.name},
+				{Kind: ui.KindText, Text: name},
 			},
 		}
 		if action.action == "session-reboot" || action.action == "session-poweroff" {
@@ -531,6 +552,7 @@ func ccCalendarDots(count int) *ui.Node {
 
 func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
+	tr := ccT(h, r)
 	now := time.Time{}
 	if r != nil {
 		now = r.now
@@ -554,9 +576,9 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	cellW := max((ccBodyWidth(h)-2*m.CardPadding-6*theme.MarginXS)/7, 0)
 	rows := []*ui.Node{{
 		Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-			calendarArrow("chevron_left", "cal-prev", "Previous month", h.theme),
+			calendarArrow("chevron_left", "cal-prev", cardT(tr, "cc.prev_month", "Previous month"), h.theme),
 			{Kind: ui.KindText, Text: view.Format("January 2006"), TextRole: theme.RoleTitle},
-			calendarArrow("chevron_right", "cal-next", "Next month", h.theme),
+			calendarArrow("chevron_right", "cal-next", cardT(tr, "cc.next_month", "Next month"), h.theme),
 		},
 	}}
 	weekdays := &ui.Node{Kind: ui.KindRow, Height: ccCalendarWeekdayH, Gap: theme.MarginXS}
@@ -596,7 +618,7 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if snapshot != nil {
 		if len(snapshot.Upcoming) == 0 {
-			rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "No upcoming events", TextRole: theme.RoleLabel, Tone: ui.ToneSubtle, CenterX: true})
+			rows = append(rows, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "cc.calendar_empty", "No upcoming events"), TextRole: theme.RoleLabel, Tone: ui.ToneSubtle, CenterX: true})
 		}
 		for _, occ := range snapshot.Upcoming[:min(len(snapshot.Upcoming), 3)] {
 			label := ccCalendarOccurrenceLabel(occ, now)
@@ -607,11 +629,11 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 			})
 		}
 		rows = append(rows, &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{{
-			Kind: ui.KindButton, Action: "plugin-calendar:open", Name: "Open calendar", Role: "button", Focusable: true,
+			Kind: ui.KindButton, Action: "plugin-calendar:open", Name: cardT(tr, "cc.open_calendar", "Open calendar"), Role: "button", Focusable: true,
 			Height: m.CompactControl, Gap: theme.MarginM, Padding: m.CardPadding,
 			Children: []*ui.Node{
 				{Kind: ui.KindIcon, Icon: "calendar_month", IconSize: m.IconNormal},
-				{Kind: ui.KindText, Text: "Open calendar"},
+				{Kind: ui.KindText, Text: cardT(tr, "cc.open_calendar", "Open calendar")},
 			},
 		}}})
 	}
@@ -642,6 +664,7 @@ func ccCalendarOccurrenceLabel(occ ccCalOccurrence, now time.Time) string {
 
 func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
+	tr := ccT(h, r)
 	now, dnd := time.Now(), false
 	var active []protocol.Notification
 	var history []protocol.HistoryEntry
@@ -662,21 +685,21 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 		Kind: ui.KindCapsule, Height: ccSliderCapsuleH, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
-			ccSegment("do_not_disturb_on", "Do not disturb", "cc:dnd", dnd),
-			ccSegment("delete", "Clear all", "notify:center:clear", false),
+			ccSegment("do_not_disturb_on", cardT(tr, "notify.dnd", "Do not disturb"), "cc:dnd", dnd),
+			ccSegment("delete", cardT(tr, "notify.clear_all", "Clear all"), "notify:center:clear", false),
 		}}},
 	}
 	var cards []*ui.Node
 	for _, group := range activeGroups(active) {
-		cards = append(cards, ActiveGroupCard(group, now, false, nil, false))
+		cards = append(cards, ActiveGroupCard(group, now, false, nil, false, tr))
 	}
 	for _, entry := range history {
-		cards = append(cards, HistoryCard(entry, now, nil, false))
+		cards = append(cards, HistoryCard(entry, now, nil, false, tr))
 	}
 	if len(cards) == 0 {
 		empty := monitorCard(m, []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "notifications", IconSize: m.IconLarge, Tone: ui.ToneSubtle},
-			{Kind: ui.KindText, Text: "No notifications", TextRole: theme.RoleLabel, Tone: ui.ToneSubtle, CenterX: true},
+			{Kind: ui.KindText, Text: cardT(tr, "notify.empty", "No notifications"), TextRole: theme.RoleLabel, Tone: ui.ToneSubtle, CenterX: true},
 		})
 		empty.Height = 416
 		cards = append(cards, empty)
@@ -694,17 +717,18 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 // So this page is a way in, one link per section, carrying the same glyph the
 // settings rail draws so the two read as one place.
 func ccSettings(h *PanelHost) *ui.Node {
+	tr := ccT(h, nil)
 	rows := []*ui.Node{{
-		Kind: ui.KindText, Text: "Open settings at a section.",
+		Kind: ui.KindText, Text: cardT(tr, "cc.settings_hint", "Open settings at a section."),
 		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 	}}
 	for _, name := range settingsSections {
 		rows = append(rows, &ui.Node{
 			Kind: ui.KindRow, Gap: theme.MarginM, Height: h.metrics().StandardControl,
-			Action: "settings-section:" + name, Name: name, Role: "button", Focusable: true,
+			Action: "settings-section:" + name, Name: cardT(tr, "section."+name, name), Role: "button", Focusable: true,
 			Children: []*ui.Node{
 				{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]},
-				{Kind: ui.KindText, Text: name},
+				{Kind: ui.KindText, Text: cardT(tr, "section."+name, name)},
 			},
 		})
 	}

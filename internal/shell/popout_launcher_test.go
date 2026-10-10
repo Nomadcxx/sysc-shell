@@ -131,16 +131,16 @@ func TestLauncherHistoryPath(t *testing.T) {
 }
 
 func TestNotesLauncherCaptureAndProviderRoutes(t *testing.T) {
-	if got, handled := notesLauncherResults("/nt"); !handled || len(got) != 1 || got[0].Entry.ID != notesLauncherActionID || got[0].Entry.Name != "Open Notes" {
+	if got, handled := notesLauncherResults("/nt", nil); !handled || len(got) != 1 || got[0].Entry.ID != notesLauncherActionID || got[0].Entry.Name != "Open Notes" {
 		t.Fatalf("/nt route = %+v, handled=%v", got, handled)
 	}
-	if got, handled := notesLauncherResults("/nt Remember this"); !handled || got[0].Entry.Name != "Capture note: Remember this" {
+	if got, handled := notesLauncherResults("/nt Remember this", nil); !handled || got[0].Entry.Name != "Capture note: Remember this" {
 		t.Fatalf("capture route = %+v, handled=%v", got, handled)
 	}
-	if got, handled := notesLauncherResults("/nth"); handled || got != nil {
+	if got, handled := notesLauncherResults("/nth", nil); handled || got != nil {
 		t.Fatalf("unrelated route = %+v, handled=%v", got, handled)
 	}
-	if got, handled := notesLauncherResults("/nt " + strings.Repeat("x", v1.MaxInputBytes+1)); !handled || got[0].Entry.ID != notesLauncherTooLongID {
+	if got, handled := notesLauncherResults("/nt "+strings.Repeat("x", v1.MaxInputBytes+1), nil); !handled || got[0].Entry.ID != notesLauncherTooLongID {
 		t.Fatalf("oversized route = %+v, handled=%v", got, handled)
 	}
 }

@@ -23,24 +23,24 @@ func sessionTree(h *PanelHost, snap services.Snapshot, locker string) *ui.Node {
 	if h.errLabel != "" {
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
-	if card := sessionBatteryCard(h.theme.Metrics, snap.Battery); card != nil {
+	if card := sessionBatteryCard(h.theme.Metrics, h.tr, snap.Battery); card != nil {
 		children = append(children, card)
 	}
 	if h.profilesOK && len(h.profiles) > 0 {
 		children = append(children, sessionProfileCard(h))
 	}
-	children = append(children, sessionActionsCard(h.theme, locker))
+	children = append(children, sessionActionsCard(h.theme, h.tr, locker))
 	return &ui.Node{Kind: ui.KindColumn, Gap: monitorCardGap, Padding: h.theme.Metrics.PanelPadding, Children: children}
 }
 
-func sessionBatteryCard(m theme.Metrics, b *metrics.BatterySnapshot) *ui.Node {
+func sessionBatteryCard(m theme.Metrics, tr func(string, string) string, b *metrics.BatterySnapshot) *ui.Node {
 	if b == nil || !b.Present || !b.ChargeValid {
 		return nil
 	}
 	charging := b.State == metrics.BatteryCharging || b.State == metrics.BatteryFull
 	glyph := string(render.BatteryIconRune(b.Charge, charging, false))
 	rows := []*ui.Node{
-		monitorCardTitle("Battery", 0),
+		monitorCardTitle(tr("session.battery", "Battery"), 0),
 		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: glyph},
 			// Reserve the width of a full charge so the meter and the rows
@@ -49,11 +49,12 @@ func sessionBatteryCard(m theme.Metrics, b *metrics.BatterySnapshot) *ui.Node {
 				Tabular: true, MinWidthText: "100%"},
 		}},
 		{Kind: ui.KindMeter, Value: b.Charge, Max: 1},
-		{Kind: ui.KindText, Text: batteryStateLabel(b.State)},
+		{Kind: ui.KindText, Text: tr("session.state."+batteryStateLabel(b.State), batteryStateLabel(b.State))},
 	}
 	if b.TimeValid {
 		if d := batteryDuration(b.TimeRemaining); d != "" {
-			rows = append(rows, &ui.Node{Kind: ui.KindText, Text: d + " remaining"})
+			rows = append(rows, &ui.Node{Kind: ui.KindText,
+				Text: fmt.Sprintf(tr("session.battery.remaining", "%s remaining"), d)})
 		}
 	}
 	if b.RateValid {
@@ -109,7 +110,7 @@ func sessionProfileIcon(name string) string {
 func sessionProfileCard(h *PanelHost) *ui.Node {
 	segments := make([]*ui.Node, 0, len(h.profiles))
 	for _, name := range h.profiles {
-		label := powerProfileLabel(name)
+		label := h.tr("session.profile."+name, powerProfileLabel(name))
 		selected := name == h.profileActive
 
 		// The check replaces the profile's own glyph on the active segment.
@@ -139,7 +140,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 		segments = append(segments, segment)
 	}
 	return monitorCard(h.theme.Metrics, []*ui.Node{
-		monitorCardTitle("Power profile", 0),
+		monitorCardTitle(h.tr("session.power_profile", "Power profile"), 0),
 		{
 			Kind: ui.KindSegmented, Key: "power-profiles", Gap: sessionSegmentGap,
 			Height: h.theme.Metrics.StandardControl, Children: segments,
@@ -147,7 +148,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 	})
 }
 
-func sessionActionsCard(th Theme, locker string) *ui.Node {
+func sessionActionsCard(th Theme, tr func(string, string) string, locker string) *ui.Node {
 	// destructive marks the two actions that end the session without warning.
 	// They take the error-toned outline from the catalogue rather than a solid
 	// red block: a permanent red slab reads as an alarm, not as a control.
@@ -166,11 +167,12 @@ func sessionActionsCard(th Theme, locker string) *ui.Node {
 	if locker == "" {
 		acts = acts[1:]
 	}
-	rows := []*ui.Node{monitorCardTitle("Session", 0)}
+	rows := []*ui.Node{monitorCardTitle(tr("session.actions_title", "Session"), 0)}
 	for _, a := range acts {
+		name := tr("session.action."+a.name, a.name)
 		node := &ui.Node{
 			Kind: ui.KindButton, Action: a.id,
-			Name: a.name, Role: "button", Focusable: true,
+			Name: name, Role: "button", Focusable: true,
 			Gap: th.Metrics.ButtonPadding / 2, Padding: th.Metrics.ButtonPadding,
 			Height: th.Metrics.StandardControl,
 			Children: []*ui.Node{

@@ -114,8 +114,8 @@ func TestNotifyToastIsItsOwnGround(t *testing.T) {
 		t.Fatalf("toast root = %+v, want a padded column leading with the lead row", toast)
 	}
 	now := time.Now()
-	live := ActiveGroupCard(activeGroup{members: []protocol.Notification{baseNotification()}}, now, false, nil, false)
-	history := HistoryCard(protocol.HistoryEntry{ID: 1, Summary: "history"}, now, nil, false)
+	live := ActiveGroupCard(activeGroup{members: []protocol.Notification{baseNotification()}}, now, false, nil, false, nil)
+	history := HistoryCard(protocol.HistoryEntry{ID: 1, Summary: "history"}, now, nil, false, nil)
 	for _, card := range []*ui.Node{live, history} {
 		if card.Children[0].Fill != ui.FillContainerHigh {
 			t.Fatal("centre card lost its high container fill")

@@ -557,7 +557,7 @@ func TestFilterRowIsOneSegmentedControl(t *testing.T) {
 	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
 	history := []protocol.HistoryEntry{{ID: 1, Timestamp: now.Add(-time.Hour)}}
 
-	row := centreFilterRow(nil, history, "today", now, 392)
+	row := centreFilterRow(nil, history, "today", now, 392, nil)
 	if row.Kind != ui.KindSegmented {
 		t.Fatalf("kind = %v, want segmented", row.Kind)
 	}

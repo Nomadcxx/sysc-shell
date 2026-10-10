@@ -864,7 +864,7 @@ func (h *toastHost) cardOf(n protocol.Notification) *ui.Node {
 	if h.expanded[n.ID] {
 		wrap = h.wrapBody
 	}
-	return notificationCard(n, icon, h.r.linksAllowed(), h.measureText(), wrap, time.Now(), h.cardWidth())
+	return notificationCard(n, icon, h.r.linksAllowed(), h.measureText(), wrap, time.Now(), h.cardWidth(), cfgT(h.r.cfg))
 }
 
 // cardWidth is the width toast cards lay out at: the design width, or

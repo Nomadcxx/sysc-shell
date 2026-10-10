@@ -116,7 +116,7 @@ func (r *Registry) notesProvider() launcher.Provider {
 		Name: "Notes", Prefix: prefix, Glyph: "glyph:description",
 		Description: "Search notes or capture with /nt <text>",
 		Query: func(q string) []launcher.Result {
-			rows, _ := notesLauncherResults(strings.TrimSpace("/nt " + q))
+			rows, _ := notesLauncherResults(strings.TrimSpace("/nt "+q), cfgT(r.cfg))
 			return rows
 		},
 		// launcherNotesAction reads the capture body from the panel's query

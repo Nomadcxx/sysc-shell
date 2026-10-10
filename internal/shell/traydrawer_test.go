@@ -16,7 +16,7 @@ func TestTrayDrawerIsAVirtualListWithKeyboardAccessibleControls(t *testing.T) {
 		Overflow: []tray.Item{preferenceItem("mail", "Mail", 1)},
 		Hidden:   []tray.Item{preferenceItem("chat", "Chat", 1)},
 	}
-	tree, _ := trayDrawerTree(arranged, nil)
+	tree, _ := trayDrawerTree(arranged, nil, nil)
 	if tree.Kind != ui.KindVirtualList || tree.ItemCount != 4 {
 		t.Fatalf("tree = kind %d count %d, want virtual list with two headings and two items", tree.Kind, tree.ItemCount)
 	}
@@ -43,7 +43,7 @@ func TestTrayDrawerPinnedItemOffersUnpin(t *testing.T) {
 	item := preferenceItem("mail", "Mail", 1)
 	tree, _ := trayDrawerTree(trayArrangement{
 		Overflow: []tray.Item{item}, Pinned: map[tray.ItemKey]bool{item.Key: true},
-	}, nil)
+	}, nil, nil)
 	controls := ui.Focusables(tree.Item(1))
 	if len(controls) < 3 || controls[2].Name != "Unpin Mail" || controls[2].Action != "tray-pref:unpin:id:mail" {
 		t.Fatalf("pin control = %+v", controls)

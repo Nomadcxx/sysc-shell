@@ -457,6 +457,15 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set: setNonNegDuration("idle.suspend_battery", func(c *config.Config, d time.Duration) { c.Idle.SuspendBattery = d }),
 		},
 		{
+			Path: "session.language", Label: "Language", Section: "Session", Group: "Language",
+			Describe:     "Interface language. It never changes the keyboard layout.",
+			Kind:         KindEnum,
+			Options:      languageOptions,
+			OptionLabels: languageLabels,
+			Get:          func(c config.Config) string { return c.Session.Language },
+			Set:          setEnum("session.language", languageOptions, func(c *config.Config, v string) { c.Session.Language = v }),
+		},
+		{
 			Path: "accessibility.reduced-motion", Label: "Reduced motion", Section: "Accessibility", Group: "Assistance",
 			Describe: "Shorten or remove animation.",
 			Kind:     KindBool,
@@ -1293,9 +1302,12 @@ func (r *Registry) Search(q string) []Entry {
 	for _, e := range r.entries {
 		// The description is searched too. The word a user knows is often in
 		// the explanation rather than in the label, so matching labels alone
-		// hides the setting that would have answered them.
+		// hides the setting that would have answered them. The path is
+		// searched as well: in a localized registry it is the one English
+		// string every row still carries.
 		if strings.Contains(strings.ToLower(e.Label), q) ||
-			strings.Contains(strings.ToLower(e.Describe), q) {
+			strings.Contains(strings.ToLower(e.Describe), q) ||
+			strings.Contains(strings.ToLower(e.Path), q) {
 			out = append(out, e)
 		}
 	}

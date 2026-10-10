@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -391,7 +392,7 @@ func pluginStoreGridRow(r *Registry, h *PanelHost, listings []store.Listing, row
 // lines of description (Noctalia).
 func pluginStoreCardNode(r *Registry, h *PanelHost, listing store.Listing, width int) *ui.Node {
 	m := h.theme.Metrics
-	card := cardFor(listing, r.pluginStoreSnapshot.Media)
+	card := cardFor(listing, r.pluginStoreSnapshot.Media, r.pluginStoreLocale())
 	key := pluginStoreKey(listing)
 	inner := max(width-2*pluginStoreCardPadding, 1)
 	imageHeight := pluginStoreImageHeight(width)
@@ -516,7 +517,7 @@ func pluginStoreVisibleMedia(listings []store.Listing, media map[string]store.Me
 	var keys []store.MediaKey
 	for row := start; row < end; row++ {
 		for i := row * columns; i < min((row+1)*columns, len(listings)); i++ {
-			card := cardFor(listings[i], media)
+			card := cardFor(listings[i], media, "en")
 			if card.Screenshot.SHA256 != "" {
 				keys = append(keys, card.Screenshot)
 			}
@@ -768,4 +769,8 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 		return false
 	}
 	return true
+}
+
+func (r *Registry) pluginStoreLocale() string {
+	return i18n.Resolve(r.cfg.Session.Language)
 }

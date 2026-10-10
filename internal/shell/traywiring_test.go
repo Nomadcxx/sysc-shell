@@ -298,7 +298,7 @@ func TestTrayDrawerRowsCarryResolvedImages(t *testing.T) {
 	item := preferenceItem("mail", "Mail", 1)
 	image := &ui.Image{Width: 24, Height: 24, Stride: 96, Pix: make([]byte, 24*96)}
 	tree, _ := trayDrawerTree(trayArrangement{Overflow: []tray.Item{item}},
-		map[tray.ItemKey]*ui.Image{item.Key: image})
+		map[tray.ItemKey]*ui.Image{item.Key: image}, nil)
 	row := tree.Item(1)
 	icon := ui.Focusables(row)[0]
 	if icon.Image != image {

@@ -23,11 +23,11 @@ const (
 	trayDrawerAction = "tray-drawer"
 )
 
-func trayDrawerTree(arranged trayArrangement, images map[tray.ItemKey]*ui.Image) (*ui.Node, map[*ui.Node]tray.Item) {
+func trayDrawerTree(arranged trayArrangement, images map[tray.ItemKey]*ui.Image, tr translateFunc) (*ui.Node, map[*ui.Node]tray.Item) {
 	rows := make([]*ui.Node, 0, len(arranged.Overflow)+len(arranged.Hidden)+2)
 	items := make(map[*ui.Node]tray.Item, len(arranged.Overflow)+len(arranged.Hidden))
 	if len(arranged.Overflow) > 0 {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Overflow", TextRole: theme.RoleLabel})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "tray.overflow", "Overflow"), TextRole: theme.RoleLabel})
 		for i := range arranged.Overflow {
 			row, itemNode := trayDrawerItemRow(arranged.Overflow[i], false, arranged.Pinned[arranged.Overflow[i].Key])
 			itemNode.Image = images[arranged.Overflow[i].Key]
@@ -36,7 +36,7 @@ func trayDrawerTree(arranged trayArrangement, images map[tray.ItemKey]*ui.Image)
 		}
 	}
 	if len(arranged.Hidden) > 0 {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Hidden", TextRole: theme.RoleLabel})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "tray.hidden", "Hidden"), TextRole: theme.RoleLabel})
 		for i := range arranged.Hidden {
 			row, itemNode := trayDrawerItemRow(arranged.Hidden[i], true, false)
 			itemNode.Image = images[arranged.Hidden[i].Key]
@@ -183,7 +183,7 @@ func (h *trayDrawerHost) refresh(arranged trayArrangement, images map[tray.ItemK
 }
 
 func (h *trayDrawerHost) rebuild() {
-	h.root, h.itemNodes = trayDrawerTree(h.arranged, h.images)
+	h.root, h.itemNodes = trayDrawerTree(h.arranged, h.images, cfgT(h.r.cfg))
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.focusRows = make(map[*ui.Node]int, len(h.focus))

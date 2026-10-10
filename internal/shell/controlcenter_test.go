@@ -1801,12 +1801,12 @@ func TestCalendarPageRendersToPNG(t *testing.T) {
 
 func TestHomeBrightnessRowsPairTwoDisplaysAndStackMore(t *testing.T) {
 	m := DefaultTheme().Metrics
-	one := ccBrightnessRows(m, services.BrightnessState{Level: 60}, true, nil, 596)
+	one := ccBrightnessRows(m, services.BrightnessState{Level: 60}, true, nil, 596, nil)
 	if len(one) != 1 || findByName(one[0], "Brightness") == nil {
 		t.Fatalf("single display rows = %d, want one Brightness row", len(one))
 	}
 	two := []services.DisplayInfo{{ID: "a", Label: "eDP-1", Level: 50, OK: true}, {ID: "b", Label: "DP-1", Level: 70, OK: true}}
-	paired := ccBrightnessRows(m, services.BrightnessState{}, false, two, 596)
+	paired := ccBrightnessRows(m, services.BrightnessState{}, false, two, 596, nil)
 	if len(paired) != 1 || paired[0].Kind != ui.KindRow || len(paired[0].Children) != 2 {
 		t.Fatalf("two displays = %+v, want one row holding two sliders", paired)
 	}
@@ -1825,7 +1825,7 @@ func TestHomeBrightnessRowsPairTwoDisplaysAndStackMore(t *testing.T) {
 		}
 	})
 	three := append(two, services.DisplayInfo{ID: "c", Label: "HDMI-1", Level: 40, OK: true})
-	stacked := ccBrightnessRows(m, services.BrightnessState{}, false, three, 596)
+	stacked := ccBrightnessRows(m, services.BrightnessState{}, false, three, 596, nil)
 	if len(stacked) != 3 {
 		t.Fatalf("three displays gave %d rows, want one per display", len(stacked))
 	}

@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -129,6 +130,7 @@ type wireAccessibility struct {
 type wireSession struct {
 	Locker      *string `json:"locker,omitempty"`
 	PolkitAgent *string `json:"polkit_agent,omitempty"`
+	Language    *string `json:"language,omitempty"`
 }
 
 type wireIdle struct {
@@ -1611,6 +1613,12 @@ func applySession(base Session, w wireSession) (Session, error) {
 		default:
 			return Session{}, pathErr("session.polkit_agent", "%q is not auto, on, or off", *w.PolkitAgent)
 		}
+	}
+	if w.Language != nil {
+		base.Language = *w.Language
+	}
+	if base.Language != "" && !slices.Contains(i18n.Codes, base.Language) {
+		return base, pathErr("session.language", "%q is not one of %s", base.Language, strings.Join(i18n.Codes, ", "))
 	}
 	return base, nil
 }

@@ -459,7 +459,7 @@ func TestWeatherHeroComposesByAspect(t *testing.T) {
 	reading := observedWeather()
 
 	// The standalone panel's hero is 416x346: stacked, scene centred.
-	stacked := weatherHeroCard(reading, "Lisbon", m, 416, 346+2*m.CardPadding, weatherHeroEffectKey)
+	stacked := weatherHeroCard(reading, "Lisbon", m, 416, 346+2*m.CardPadding, weatherHeroEffectKey, nil)
 	effect := findNode(stacked, func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
 	if effect == nil {
 		t.Fatal("stacked hero has no effect")
@@ -469,7 +469,7 @@ func TestWeatherHeroComposesByAspect(t *testing.T) {
 	}
 
 	// The Control Centre card is 578x318: split, scene against the leading edge.
-	split := weatherHeroCard(reading, "Lisbon", m, 578, 318+2*m.CardPadding, weatherTodayEffectKey)
+	split := weatherHeroCard(reading, "Lisbon", m, 578, 318+2*m.CardPadding, weatherTodayEffectKey, nil)
 	effect = findNode(split, func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
 	if effect == nil {
 		t.Fatal("split hero has no effect")

@@ -19,6 +19,7 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
@@ -357,13 +358,15 @@ func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
 	r.mu.Lock()
 	list := r.palettes
 	r.mu.Unlock()
-	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(list)))
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(list))).Localized(i18n.Resolve(cfg.Session.Language))
 }
 
 // settingsForLocked is settingsFor for callers that already hold Registry.mu.
 // It reads only the snapshot, so it is cheap enough for every settings edit.
+// Display text follows the session language; paths, actions, and option
+// values stay English tokens.
 func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
-	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)))
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes))).Localized(i18n.Resolve(cfg.Session.Language))
 }
 
 // paletteDir is where saved palettes live: beside the config file main

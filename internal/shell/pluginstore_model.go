@@ -170,7 +170,7 @@ type Card struct {
 	Reason         string
 }
 
-func cardFor(listing store.Listing, media map[string]store.MediaState) Card {
+func cardFor(listing store.Listing, media map[string]store.MediaState, locale string) Card {
 	version := listing.Entry.Version
 	if listing.Resolution.Release != nil {
 		version = listing.Resolution.Release.Version
@@ -182,7 +182,7 @@ func cardFor(listing store.Listing, media map[string]store.MediaState) Card {
 		byline = "v" + version
 	}
 	card := Card{
-		Title: listing.Entry.Name, Byline: byline, Description: listing.Entry.Description,
+		Title: listing.Entry.LocalizedName(locale), Byline: byline, Description: listing.Entry.LocalizedDescription(locale),
 		Badges: listingBadges(listing), Glyph: categoryGlyph(listing.Entry.Category),
 	}
 	if listing.Entry.Screenshot != nil {
@@ -294,8 +294,8 @@ type Detail struct {
 	ConsentLines     []string
 }
 
-func detailFor(listing store.Listing, enabled bool, media map[string]store.MediaState, readme string) Detail {
-	card := cardFor(listing, media)
+func detailFor(listing store.Listing, enabled bool, media map[string]store.MediaState, readme string, locale string) Detail {
+	card := cardFor(listing, media, locale)
 	release := listing.Resolution.Release
 	if release == nil {
 		release = &listing.Entry.Release
@@ -317,10 +317,10 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 	}
 	description := listing.Entry.LongDescription
 	if description == "" {
-		description = listing.Entry.Description
+		description = listing.Entry.LocalizedDescription(locale)
 	}
 	detail := Detail{
-		ID: listing.Entry.ID, Title: listing.Entry.Name, Author: listing.Entry.Author,
+		ID: listing.Entry.ID, Title: listing.Entry.LocalizedName(locale), Author: listing.Entry.Author,
 		Category: listing.Entry.Category, Glyph: categoryGlyph(listing.Entry.Category),
 		Version: version, ReleaseRef: store.ReleaseRef{Version: version, SHA256: sha},
 		License: listing.Entry.License, Source: listing.Source,

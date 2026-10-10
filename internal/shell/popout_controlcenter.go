@@ -170,11 +170,11 @@ func ccRail(h *PanelHost) *ui.Node {
 		if section.ID == "media" || section.ID == "network" || section.ID == "weather" {
 			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: theme.MarginM})
 		}
-		name := section.Label
+		name := cardT(h.tr, "cc.tab."+section.ID, section.Label)
 		action := "section:" + section.ID
 		state := ui.Interaction(0)
 		if !section.Enabled {
-			name += " — not available yet"
+			name += cardT(h.tr, "cc.tab_unavailable", " — not available yet")
 			action = ""
 			state |= ui.StateDisabled
 		}
@@ -196,9 +196,9 @@ func ccRail(h *PanelHost) *ui.Node {
 }
 
 func ccHeader(h *PanelHost) *ui.Node {
-	label := "Home"
+	label := cardT(h.tr, "cc.tab.home", "Home")
 	if section, ok := ccSectionFor(h.section); ok {
-		label = section.Label
+		label = cardT(h.tr, "cc.tab."+section.ID, section.Label)
 	}
 	button := func(icon, action, name string) *ui.Node {
 		n := centreIconButton(icon, action, name)

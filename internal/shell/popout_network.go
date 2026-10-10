@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -47,7 +48,7 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 
 	body := networkWifiTree(aps, st, h, m)
 	if h.networkTab == "ethernet" {
-		body = networkEthernetTree(st, m)
+		body = networkEthernetTree(st, m, hostT(h))
 	}
 
 	panelH := h.place.Panel.H
@@ -78,10 +79,20 @@ func networkHeaderHeight(m theme.Metrics) int {
 // networkHeaderCard is Direction B's status block: the active connection is
 // promoted above the tabs, so "what am I on?" is answered without reading the
 // list below it.
+// hostT resolves the panel's translate func; a nil host (previews) keeps
+// English literals.
+func hostT(h *PanelHost) translateFunc {
+	if h != nil {
+		return h.tr
+	}
+	return nil
+}
+
 func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Snapshot, m theme.Metrics) *ui.Node {
 	well := m.StandardControl
 	closeSz := m.CompactControl
 	wired := h != nil && h.networkTab == "ethernet"
+	tr := hostT(h)
 
 	icon := &ui.Node{
 		Kind: ui.KindCapsule, Width: well, Height: well, Shape: ui.ShapeMedium,
@@ -91,14 +102,14 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 
 	title := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{
-			Kind: ui.KindText, Text: headerTitle(st, wired),
-			TextRole: theme.RoleTitle, Name: "Network", Role: "heading",
+			Kind: ui.KindText, Text: headerTitle(st, wired, tr),
+			TextRole: theme.RoleTitle, Name: cardT(tr, "cc.tab.network", "Network"), Role: "heading",
 		},
-		{Kind: ui.KindText, Text: headerDetail(st, wired), TextRole: theme.RoleCaption},
+		{Kind: ui.KindText, Text: headerDetail(st, wired, tr), TextRole: theme.RoleCaption},
 	}}
 
 	closeBtn := &ui.Node{
-		Kind: ui.KindButton, Action: "network-close", Name: "Close", Role: "button",
+		Kind: ui.KindButton, Action: "network-close", Name: cardT(tr, "notify.close", "Close"), Role: "button",
 		Focusable: true, Width: closeSz, Height: closeSz, Shape: ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}
@@ -109,7 +120,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 		// Wi-Fi tab alone.
 		trailing.Children = append(trailing.Children, &ui.Node{
 			Kind: ui.KindToggle, Value: toggleValue(st.WirelessEnabled),
-			Action: "network-radio", Name: "Wi-Fi", Role: "switch", Focusable: true,
+			Action: "network-radio", Name: cardT(tr, "net.tab.wifi", "Wi-Fi"), Role: "switch", Focusable: true,
 		})
 	}
 	trailing.Children = append(trailing.Children, closeBtn)
@@ -125,7 +136,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginL, Children: []*ui.Node{
 			top,
 			{Kind: ui.KindSeparator},
-			networkFigures(st, snap, (panelTargetSize(PanelNetwork).W-2*m.PanelPadding-2*m.CardPadding-2*networkFigureGap)/3),
+			networkFigures(st, snap, tr, (panelTargetSize(PanelNetwork).W-2*m.PanelPadding-2*m.CardPadding-2*networkFigureGap)/3),
 		}}},
 	}
 }
@@ -134,11 +145,12 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 // the audio panel's tabs use. Wi-Fi is first because it is the default.
 func networkTabs(h *PanelHost, m theme.Metrics) *ui.Node {
 	tab := h.networkTab
+	tr := hostT(h)
 	return &ui.Node{
 		Kind: ui.KindSegmented, Key: "network-tab", Gap: theme.MarginXXS, Height: m.StandardControl,
 		Children: []*ui.Node{
-			networkSegment(m, "network-tab:wifi", "Wi-Fi", tab != "ethernet"),
-			networkSegment(m, "network-tab:ethernet", "Ethernet", tab == "ethernet"),
+			networkSegment(m, "network-tab:wifi", cardT(tr, "net.tab.wifi", "Wi-Fi"), tab != "ethernet"),
+			networkSegment(m, "network-tab:ethernet", cardT(tr, "net.tab.ethernet", "Ethernet"), tab == "ethernet"),
 		},
 	}
 }
@@ -162,6 +174,7 @@ func networkSegment(m theme.Metrics, action, label string, selected bool) *ui.No
 // re-sort: two orderings would drift, and the list would reshuffle under the
 // pointer.
 func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *PanelHost, m theme.Metrics) *ui.Node {
+	tr := hostT(h)
 	if h != nil && h.pendingSSID != "" {
 		return networkPasswordCard(h)
 	}
@@ -169,16 +182,16 @@ func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *Pa
 	case !st.WirelessEnabled:
 		// Not an empty list: an empty list claims "no networks here", which is
 		// a different and wrong statement.
-		return networkNotice("Wi-Fi is off", "Turn the radio on to scan for networks.", m)
+		return networkNotice(cardT(tr, "net.wifi_off", "Wi-Fi is off"), cardT(tr, "net.hint.radio_on", "Turn the radio on to scan for networks."), m)
 	case st.Scanning && len(aps) == 0:
-		return networkNotice("Searching for networks…", orAbsent(st.Interface), m)
+		return networkNotice(cardT(tr, "net.scanning", "Searching for networks…"), orAbsent(st.Interface), m)
 	case len(aps) == 0:
-		return networkNotice("No networks found", "Nothing is in range on this adapter.", m)
+		return networkNotice(cardT(tr, "net.none", "No networks found"), cardT(tr, "net.hint.none", "Nothing is in range on this adapter."), m)
 	}
 
 	rows := make([]*ui.Node, 0, len(aps))
 	for _, ap := range aps {
-		rows = append(rows, networkAPRow(ap, m))
+		rows = append(rows, networkAPRow(ap, m, tr))
 	}
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
@@ -188,16 +201,17 @@ func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *Pa
 
 func networkPasswordCard(h *PanelHost) *ui.Node {
 	m := h.metrics()
+	tr := h.tr
 	if h.password == nil {
 		h.password = ui.NewField("")
 		h.password.Masked = true
 	}
-	field := h.password.Node("Password")
+	field := h.password.Node(cardT(tr, "net.password", "Password"))
 	field.Key = "network-password"
 	field.Height = m.StandardControl
-	revealIcon, revealName := "visibility", "Show password"
+	revealIcon, revealName := "visibility", cardT(tr, "net.show_password", "Show password")
 	if !h.password.Masked {
-		revealIcon, revealName = "visibility_off", "Hide password"
+		revealIcon, revealName = "visibility_off", cardT(tr, "net.hide_password", "Hide password")
 	}
 	reveal := &ui.Node{
 		Kind: ui.KindButton, Action: "network-password-reveal", Name: revealName,
@@ -206,14 +220,14 @@ func networkPasswordCard(h *PanelHost) *ui.Node {
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: revealIcon, IconSize: m.IconNormal}},
 	}
 	buttons := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-		{Kind: ui.KindButton, Action: "network-password-cancel", Name: "Cancel", Role: "button", Focusable: true,
-			Height: m.StandardControl, Children: []*ui.Node{{Kind: ui.KindText, Text: "Cancel"}}},
-		{Kind: ui.KindButton, Action: "network-password-submit", Name: "Connect", Role: "button", Focusable: true,
-			Height: m.StandardControl, Fill: ui.FillAccent, Children: []*ui.Node{{Kind: ui.KindText, Text: "Connect"}}},
+		{Kind: ui.KindButton, Action: "network-password-cancel", Name: cardT(tr, "common.cancel", "Cancel"), Role: "button", Focusable: true,
+			Height: m.StandardControl, Children: []*ui.Node{{Kind: ui.KindText, Text: cardT(tr, "common.cancel", "Cancel")}}},
+		{Kind: ui.KindButton, Action: "network-password-submit", Name: cardT(tr, "common.connect", "Connect"), Role: "button", Focusable: true,
+			Height: m.StandardControl, Fill: ui.FillAccent, Children: []*ui.Node{{Kind: ui.KindText, Text: cardT(tr, "common.connect", "Connect")}}},
 	}}
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginL, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "Join " + h.pendingSSID, TextRole: theme.RoleTitle},
+			{Kind: ui.KindText, Text: fmt.Sprintf(cardT(tr, "net.join", "Join %s"), h.pendingSSID), TextRole: theme.RoleTitle},
 			{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{field, reveal}},
 			buttons,
 		}}},
@@ -225,12 +239,12 @@ func networkPasswordCard(h *PanelHost) *ui.Node {
 // The connected row carries a trailing check and no fill: the status block
 // above owns the filled highlight, and two primary-filled elements would
 // state the same fact twice and fight for the same focal point.
-func networkAPRow(ap services.AccessPoint, m theme.Metrics) *ui.Node {
+func networkAPRow(ap services.AccessPoint, m theme.Metrics, tr translateFunc) *ui.Node {
 	leading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: wifiBandGlyph(ap.Strength), IconSize: m.IconNormal},
 		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: ap.SSID},
-			{Kind: ui.KindText, Text: apDetail(ap), TextRole: theme.RoleCaption, Tabular: true},
+			{Kind: ui.KindText, Text: apDetail(ap, tr), TextRole: theme.RoleCaption, Tabular: true},
 		}},
 	}}
 	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM}
@@ -253,7 +267,7 @@ func networkAPRow(ap services.AccessPoint, m theme.Metrics) *ui.Node {
 
 // apDetail says what tapping the row will do, which is the question the user
 // is actually asking: connect, reconnect, or be asked for a password.
-func apDetail(ap services.AccessPoint) string {
+func apDetail(ap services.AccessPoint, tr translateFunc) string {
 	state := "Open"
 	switch {
 	case ap.Active:
@@ -263,13 +277,13 @@ func apDetail(ap services.AccessPoint) string {
 	case ap.Secured:
 		state = "Secured"
 	}
-	return state + "  " + itoa(int(ap.Strength)) + "%"
+	return cardT(tr, "net.ap."+state, state) + "  " + itoa(int(ap.Strength)) + "%"
 }
 
 // networkEthernetTree is the wired tab: one interface, or the absence of one.
-func networkEthernetTree(st services.NetworkState, m theme.Metrics) *ui.Node {
+func networkEthernetTree(st services.NetworkState, m theme.Metrics, tr translateFunc) *ui.Node {
 	if st.Kind != services.ConnWired || !st.Connected {
-		return networkNotice("No wired connection", "Plug in a cable to use this tab.", m)
+		return networkNotice(cardT(tr, "net.no_wired", "No wired connection"), cardT(tr, "net.hint.cable", "Plug in a cable to use this tab."), m)
 	}
 	row := &ui.Node{
 		Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: true, Padding: m.CardPadding,
@@ -277,7 +291,7 @@ func networkEthernetTree(st services.NetworkState, m theme.Metrics) *ui.Node {
 			{Kind: ui.KindIcon, Icon: "lan", IconSize: m.IconLarge},
 			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 				{Kind: ui.KindText, Text: orAbsent(st.Interface)},
-				{Kind: ui.KindText, Text: "Connected  " + orAbsent(st.IPv4),
+				{Kind: ui.KindText, Text: cardT(tr, "net.ap.Connected", "Connected") + "  " + orAbsent(st.IPv4),
 					TextRole: theme.RoleCaption, Tabular: true},
 			}},
 			{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal},
@@ -391,7 +405,7 @@ func (h *PanelHost) clearNetworkSecret() {
 // Throughput stays with the existing metrics owner rather than expanding
 // NetworkState. A missing sample or interface is an absent figure, not zero.
 
-func networkFigures(st services.NetworkState, snap services.Snapshot, columnW int) *ui.Node {
+func networkFigures(st services.NetworkState, snap services.Snapshot, tr translateFunc, columnW int) *ui.Node {
 	down, up := absent, absent
 	if rate, ok := snap.Rate(services.Selector{Source: services.SourceNetwork, Subject: st.Interface, Direction: "rx"}); ok {
 		down = formatRate(rate)
@@ -401,8 +415,8 @@ func networkFigures(st services.NetworkState, snap services.Snapshot, columnW in
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: networkFigureGap, Height: networkFigureRowH, Children: []*ui.Node{
 		networkFigure("IPv4", orAbsent(st.IPv4), columnW),
-		networkFigure("Down", down, columnW),
-		networkFigure("Up", up, columnW),
+		networkFigure(cardT(tr, "net.down", "Down"), down, columnW),
+		networkFigure(cardT(tr, "net.up", "Up"), up, columnW),
 	}}
 }
 
@@ -415,37 +429,37 @@ func networkFigure(label, value string, width int) *ui.Node {
 
 // headerTitle names what the panel is looking at: the network, the interface,
 // or the reason there is neither.
-func headerTitle(st services.NetworkState, wired bool) string {
+func headerTitle(st services.NetworkState, wired bool, tr translateFunc) string {
 	if wired {
 		if st.Connected {
-			return "Wired connection"
+			return cardT(tr, "net.wired_connection", "Wired connection")
 		}
-		return "No wired link"
+		return cardT(tr, "net.no_wired_link", "No wired link")
 	}
 	if !st.WirelessEnabled {
-		return "Wi-Fi is off"
+		return cardT(tr, "net.wifi_off", "Wi-Fi is off")
 	}
 	if st.Connected && st.SSID != "" {
 		return st.SSID
 	}
 	if st.Resolving {
-		return "Connecting…"
+		return cardT(tr, "net.connecting", "Connecting…")
 	}
-	return "Not connected"
+	return cardT(tr, "net.not_connected", "Not connected")
 }
 
 // headerDetail is the caption under the title: the interface, and the signal
 // when there is one to report.
-func headerDetail(st services.NetworkState, wired bool) string {
+func headerDetail(st services.NetworkState, wired bool, tr translateFunc) string {
 	if wired {
 		return orAbsent(st.Interface)
 	}
 	if !st.WirelessEnabled {
-		return "Radio off"
+		return cardT(tr, "net.radio_off", "Radio off")
 	}
 	iface := orAbsent(st.Interface)
 	if st.Connected {
-		return iface + " · " + itoa(int(st.Strength)) + "% signal"
+		return iface + " · " + strings.Replace(cardT(tr, "net.signal", "%d signal"), "%d", itoa(int(st.Strength)), 1)
 	}
 	return iface
 }

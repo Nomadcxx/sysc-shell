@@ -40,6 +40,7 @@ func ccHomeRightW(body int) int {
 
 func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
+	tr := ccT(h, r)
 	body := ccBodyWidth(h)
 	identity := ccIdentity{}
 	snap := services.Snapshot{}
@@ -75,25 +76,26 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		ccHomeIdentity(r, h, identity, half),
 		ccHomeMediaCard(r, h, media, body-half-ccHomeGap),
 	}}
-	toggles := ccHomeToggles(r, body, caffeine, wallsStatus)
+	toggles := ccHomeToggles(r, body, caffeine, wallsStatus, tr)
 	split := &ui.Node{Kind: ui.KindRow, Height: ccHomeSplitH, Gap: ccHomeGap, Children: []*ui.Node{
 		{Kind: ui.KindColumn, Width: ccHomeLeftW, Height: ccHomeSplitH, Gap: ccHomeGap, Children: []*ui.Node{
-			ccHomeWeather(m, now, reading),
-			ccHomeSystem(m, snap),
+			ccHomeWeather(m, now, reading, tr),
+			ccHomeSystem(m, snap, tr),
 		}},
-		ccHomeTiles(h, snap, audio, audioOK, dnd, ccHomeRightW(body)),
+		ccHomeTiles(h, snap, audio, audioOK, dnd, ccHomeRightW(body), tr),
 	}}
-	sliders := ccHomeSliders(m, audio, audioOK, brightness, brightnessOK, displays, body)
+	sliders := ccHomeSliders(m, audio, audioOK, brightness, brightnessOK, displays, body, tr)
 	children := append([]*ui.Node{top, toggles, split}, sliders...)
 	return &ui.Node{Kind: ui.KindColumn, Height: ccHomeHeight(len(sliders)), Gap: ccHomeGap, Children: children}
 }
 
 func ccHomeIdentity(r *Registry, h *PanelHost, identity ccIdentity, width int) *ui.Node {
 	m := h.metrics()
+	tr := ccT(h, r)
 	rows := []*ui.Node{
 		{Kind: ui.KindText, Text: ccText(identity.Name), TextRole: theme.RoleTitle},
 		{Kind: ui.KindText, Text: ccText(identity.Account), TextRole: theme.RoleCaption},
-		{Kind: ui.KindText, Text: "Uptime " + ccText(identity.Uptime), TextRole: theme.RoleCaption},
+		{Kind: ui.KindText, Text: cardT(tr, "cc.uptime", "Uptime") + " " + ccText(identity.Uptime), TextRole: theme.RoleCaption},
 	}
 	if h != nil && h.errLabel != "" {
 		rows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, rows...)
@@ -112,14 +114,15 @@ func ccHomeIdentity(r *Registry, h *PanelHost, identity ccIdentity, width int) *
 // an empty state of the same size, so the row never shifts.
 func ccHomeMediaCard(r *Registry, h *PanelHost, media services.MediaState, width int) *ui.Node {
 	m := h.metrics()
+	tr := ccT(h, r)
 	card := &ui.Node{Kind: ui.KindCapsule, Width: width, Height: ccHomeTopH,
-		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Name: "Now playing", Role: "group"}
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Name: cardT(tr, "cc.now_playing", "Now playing"), Role: "group"}
 	if !media.Available {
 		card.Padding = m.CardPadding
 		card.Children = []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginL, CenterY: true, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "music_note", IconSize: m.IconLarge},
 			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
-				{Kind: ui.KindText, Text: "Nothing playing", TextRole: theme.RoleLabel},
+				{Kind: ui.KindText, Text: cardT(tr, "cc.nothing_playing", "Nothing playing"), TextRole: theme.RoleLabel},
 				{Kind: ui.KindText, Text: "Start a player to control it here", TextRole: theme.RoleCaption},
 			}},
 		}}}
@@ -162,7 +165,7 @@ func ccHomeMediaCard(r *Registry, h *PanelHost, media services.MediaState, width
 	return card
 }
 
-func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string) *ui.Node {
+func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string, tr translateFunc) *ui.Node {
 	supported := false
 	nightState := services.NightLightState{}
 	if r != nil && r.nightLight != nil {
@@ -174,7 +177,7 @@ func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string) *ui
 		count++
 	}
 	w := (body - (count-1)*ccHomeGap) / count
-	caffeineButton := ccHomePill(w, "coffee", "Caffeine", "cc:caffeine", caffeine)
+	caffeineButton := ccHomePill(w, "coffee", cardT(tr, "cc.caffeine", "Caffeine"), "cc:caffeine", caffeine)
 	var holding []string
 	if r != nil {
 		for _, inh := range r.externalInhibitors {
@@ -193,7 +196,7 @@ func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string) *ui
 	}
 	children := []*ui.Node{
 		caffeineButton,
-		ccHomePill(w, "wallpaper", "Wallpaper", "cc:wallpaper", false),
+		ccHomePill(w, "wallpaper", cardT(tr, "cc.wallpaper", "Wallpaper"), "cc:wallpaper", false),
 		ccHomePill(w, "terminal", "Terminal Art", "cc:terminal-art", false),
 		screensaver,
 	}
@@ -211,8 +214,8 @@ func ccHomePill(width int, icon, label, action string, selected bool) *ui.Node {
 	return n
 }
 
-func ccHomeWeather(m theme.Metrics, now time.Time, reading services.Reading) *ui.Node {
-	summary, tone := ccWeatherSummary(reading)
+func ccHomeWeather(m theme.Metrics, now time.Time, reading services.Reading, tr translateFunc) *ui.Node {
+	summary, tone := ccWeatherSummary(reading, tr)
 	card := monitorCard(m, []*ui.Node{
 		monitorCardTitle(ccClock(now), 0),
 		{Kind: ui.KindText, Text: ccDate(now), TextRole: theme.RoleCaption},
@@ -224,22 +227,22 @@ func ccHomeWeather(m theme.Metrics, now time.Time, reading services.Reading) *ui
 	return weatherCardWithEffect(card, reading, weatherHomeEffectKey, 1)
 }
 
-func ccHomeSystem(m theme.Metrics, snap services.Snapshot) *ui.Node {
+func ccHomeSystem(m theme.Metrics, snap services.Snapshot, tr translateFunc) *ui.Node {
 	gpuSelector, gpuOK := selectGPU(snap)
 	slotWidth := (ccHomeLeftW - 2*m.CardPadding - 3*theme.MarginM) / 4
 	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
-		ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}, true, slotWidth),
-		ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}, true, slotWidth),
-		ccResourceGroup(snap, "temperature", "Temp", services.Selector{Source: services.SourceCPU, Subject: "temperature"}, true, slotWidth),
-		ccResourceGroup(snap, "gpu", "GPU", gpuSelector, gpuOK, slotWidth),
+		ccResourceGroup(snap, "cpu", cardT(tr, "cc.cpu", "CPU"), services.Selector{Source: services.SourceCPU}, true, slotWidth, tr),
+		ccResourceGroup(snap, "memory", cardT(tr, "cc.memory", "Memory"), services.Selector{Source: services.SourceMemory}, true, slotWidth, tr),
+		ccResourceGroup(snap, "temperature", cardT(tr, "cc.temp", "Temp"), services.Selector{Source: services.SourceCPU, Subject: "temperature"}, true, slotWidth, tr),
+		ccResourceGroup(snap, "gpu", cardT(tr, "cc.gpu", "GPU"), gpuSelector, gpuOK, slotWidth, tr),
 	}}
 	card := monitorCard(m, []*ui.Node{row})
-	card.Name, card.Role = "System", "group"
+	card.Name, card.Role = cardT(tr, "cluster.System", "System"), "group"
 	card.Height = ccHomeSplitH - ccHomeWeatherH - ccHomeGap
 	return card
 }
 
-func ccHomeTiles(h *PanelHost, snap services.Snapshot, audio services.AudioState, audioOK, dnd bool, width int) *ui.Node {
+func ccHomeTiles(h *PanelHost, snap services.Snapshot, audio services.AudioState, audioOK, dnd bool, width int, tr translateFunc) *ui.Node {
 	tileW := (width - ccHomeGap) / 2
 	tileH := (ccHomeSplitH - ccHomeGap) / 2
 	battery := ccDash
@@ -248,23 +251,23 @@ func ccHomeTiles(h *PanelHost, snap services.Snapshot, audio services.AudioState
 	}
 	profile := ccDash
 	if h != nil && h.profileActive != "" {
-		profile = powerProfileLabel(h.profileActive)
+		profile = cardT(tr, "session.profile."+h.profileActive, powerProfileLabel(h.profileActive))
 	}
-	mute := ccQuickTile(tileW, "volume_off", "Mute", ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
+	mute := ccQuickTile(tileW, "volume_off", cardT(tr, "cc.mute", "Mute"), ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
 	if !audioOK {
 		ccDisable(mute)
 	}
-	dndTile := ccQuickTile(tileW, "do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
-	dndTile.Name = "Do not disturb"
+	dndTile := ccQuickTile(tileW, "do_not_disturb_on", cardT(tr, "cc.dnd", "DND"), ccOnOff(dnd, tr), "cc:dnd", dnd)
+	dndTile.Name = cardT(tr, "notify.dnd", "Do not disturb")
 	nextProfile := hProfileNext(h)
-	profileTile := ccQuickTile(tileW, "balance", "Profile", profile, "cc:profile:"+nextProfile, false)
-	profileTile.Name = "Power profile"
+	profileTile := ccQuickTile(tileW, "balance", cardT(tr, "cc.profile", "Profile"), profile, "cc:profile:"+nextProfile, false)
+	profileTile.Name = cardT(tr, "session.power_profile", "Power profile")
 	if nextProfile == "" {
 		ccDisable(profileTile)
 	}
 	// Battery is a readout in the same filled tile as its neighbours: one
 	// tile style for every state on the page.
-	batteryTile := ccQuickTile(tileW, "battery_full", "Battery", battery, "", false)
+	batteryTile := ccQuickTile(tileW, "battery_full", cardT(tr, "session.battery", "Battery"), battery, "", false)
 	batteryTile.Role, batteryTile.Focusable = "group", false
 	for _, t := range []*ui.Node{mute, dndTile, profileTile, batteryTile} {
 		t.Height = tileH
@@ -276,18 +279,19 @@ func ccHomeTiles(h *PanelHost, snap services.Snapshot, audio services.AudioState
 }
 
 // ccHomeSliders is the volume row and the brightness rows.
-func ccHomeSliders(m theme.Metrics, audio services.AudioState, audioOK bool, brightness services.BrightnessState, brightnessOK bool, displays []services.DisplayInfo, body int) []*ui.Node {
-	volume := ccHomeSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK, body)
-	return append([]*ui.Node{volume}, ccBrightnessRows(m, brightness, brightnessOK, displays, body)...)
+func ccHomeSliders(m theme.Metrics, audio services.AudioState, audioOK bool, brightness services.BrightnessState, brightnessOK bool, displays []services.DisplayInfo, body int, tr translateFunc) []*ui.Node {
+	volume := ccHomeSlider(m, "volume_up", cardT(tr, "cc.volume", "Volume"), "cc:volume", audio.Level, audioOK, body)
+	return append([]*ui.Node{volume}, ccBrightnessRows(m, brightness, brightnessOK, displays, body, tr)...)
 }
 
 // ccBrightnessRows is one row for one display, two half-width sliders in one
 // row for two, and a row per display beyond that. Three or more displays are
 // the one case where Home scrolls.
-func ccBrightnessRows(m theme.Metrics, single services.BrightnessState, singleOK bool, displays []services.DisplayInfo, body int) []*ui.Node {
+func ccBrightnessRows(m theme.Metrics, single services.BrightnessState, singleOK bool, displays []services.DisplayInfo, body int, tr translateFunc) []*ui.Node {
+	label := cardT(tr, "cc.brightness", "Brightness")
 	switch {
 	case len(displays) <= 1:
-		return []*ui.Node{ccHomeSlider(m, "brightness_high", "Brightness", "cc:brightness", single.Level, singleOK, body)}
+		return []*ui.Node{ccHomeSlider(m, "brightness_high", label, "cc:brightness", single.Level, singleOK, body)}
 	case len(displays) == 2:
 		half := (body - ccHomeGap) / 2
 		row := &ui.Node{Kind: ui.KindRow, Height: ccHomeSliderH, Gap: ccHomeGap}
@@ -299,7 +303,7 @@ func ccBrightnessRows(m theme.Metrics, single services.BrightnessState, singleOK
 	default:
 		rows := make([]*ui.Node, 0, len(displays))
 		for _, d := range displays {
-			rows = append(rows, ccHomeSlider(m, "brightness_high", "Brightness "+d.Label, "cc:brightness:"+d.ID, d.Level, d.OK, body))
+			rows = append(rows, ccHomeSlider(m, "brightness_high", label+" "+d.Label, "cc:brightness:"+d.ID, d.Level, d.OK, body))
 		}
 		return rows
 	}

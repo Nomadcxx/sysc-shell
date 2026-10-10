@@ -106,7 +106,7 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 
 func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
 	reading := observedWeather()
-	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346)
+	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346, nil)
 	effect := firstWeatherEffect(hero)
 	if effect == nil || effect.Key != "weather:hero" {
 		t.Fatalf("hero effect = %+v, want the stable hero effect", effect)
@@ -158,11 +158,11 @@ func TestWeatherMetaLineKeepsTheStaleWarning(t *testing.T) {
 	stale := observedWeather()
 	stale.FetchedAt = time.Now().Add(-3 * time.Hour)
 	stale.FailedSince = time.Now().Add(-2 * time.Hour)
-	if got := weatherMetaLine(stale, "Lisbon"); !strings.Contains(got, "Stale") {
+	if got := weatherMetaLine(stale, "Lisbon", nil); !strings.Contains(got, "Stale") {
 		t.Fatalf("stale meta line = %q, want the stale warning", got)
 	}
 	fresh := observedWeather()
-	if got := weatherMetaLine(fresh, "Lisbon"); strings.Contains(got, "Stale") {
+	if got := weatherMetaLine(fresh, "Lisbon", nil); strings.Contains(got, "Stale") {
 		t.Fatalf("fresh meta line = %q, want no stale warning", got)
 	}
 }

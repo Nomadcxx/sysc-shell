@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -101,6 +103,23 @@ func wrapNotifyCard(inner *ui.Node, critical bool, fill ui.Fill) *ui.Node {
 		cap.Stroke, cap.StrokeFill = 1, ui.FillError
 	}
 	return cap
+}
+
+// translateFunc renders SYSC-owned card labels in the panel's locale. A nil
+// tr is the English fallback the builders use directly under test.
+type translateFunc = func(key, english string) string
+
+// cfgT resolves the session locale once and returns its translator.
+func cfgT(cfg config.Config) translateFunc {
+	locale := i18n.Resolve(cfg.Session.Language)
+	return func(key, english string) string { return i18n.T(locale, key, english) }
+}
+
+func cardT(tr translateFunc, key, english string) string {
+	if tr == nil {
+		return english
+	}
+	return tr(key, english)
 }
 
 // centreRemoveButton is the per-entry remove control. HistoryCard omits it
@@ -209,19 +228,19 @@ func toneFor(urgency protocol.Urgency) ui.Tone {
 // icon, or nil for the glyph tile. measure packs action pills into rows; nil
 // stacks them one per row.
 func NotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText) *ui.Node {
-	return notificationCard(n, raster, allowLinks, measure, nil, time.Now(), toastCardWidth)
+	return notificationCard(n, raster, allowLinks, measure, nil, time.Now(), toastCardWidth, nil)
 }
 
 // ExpandedNotificationCard is a toast whose body is wrapped over several
 // lines after a vertical drag.
 func ExpandedNotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string) *ui.Node {
-	return notificationCard(n, raster, allowLinks, measure, wrap, time.Now(), toastCardWidth)
+	return notificationCard(n, raster, allowLinks, measure, wrap, time.Now(), toastCardWidth, nil)
 }
 
 // notificationCard has no chrome of its own: the toast host paints the card
 // ground, rim and blur around it. width is the card's laid-out width, which
 // the action rows pack against.
-func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time, width int) *ui.Node {
+func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time, width int, tr translateFunc) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(n.Image)
 	}
@@ -257,9 +276,10 @@ func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool
 		root.Action = fmt.Sprintf("notify:%d:dismiss", n.ID)
 	}
 	if n.InlineReply {
+		reply := cardT(tr, "notify.reply", "Reply")
 		root.Children = append(root.Children, &ui.Node{
 			Kind: ui.KindTextField,
-			Name: "Reply", Placeholder: "Reply", Role: "text", Focusable: true,
+			Name: reply, Placeholder: reply, Role: "text", Focusable: true,
 			Action: fmt.Sprintf("notify:%d:reply", n.ID),
 		})
 	}
@@ -314,7 +334,7 @@ func markDefault(root *ui.Node, id uint32) {
 
 // HistoryCard builds one closed history row. A right-pinned remove control
 // is present when the pinned service accepts history.remove.
-func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allowLinks bool) *ui.Node {
+func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allowLinks bool, tr translateFunc) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(e.Image)
 	}
@@ -322,7 +342,7 @@ func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allow
 	if historyRemoveSupported() {
 		inner = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
 			inner,
-			centreRemoveButton(fmt.Sprintf("notify:%d:remove", e.ID), "Remove"),
+			centreRemoveButton(fmt.Sprintf("notify:%d:remove", e.ID), cardT(tr, "notify.remove", "Remove")),
 		}}
 	}
 	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical, ui.FillContainerHigh))
@@ -330,7 +350,7 @@ func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allow
 
 // ActiveGroupCard is one Current-tab group. Actions come from the newest
 // member. Expand lists up to 10 members.
-func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Image, allowLinks bool) *ui.Node {
+func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Image, allowLinks bool, tr translateFunc) *ui.Node {
 	if len(g.members) == 0 {
 		return &ui.Node{Kind: ui.KindColumn}
 	}
@@ -342,7 +362,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, nil, now, latest.Timestamp)
 	head = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
 		head,
-		centreRemoveButton(fmt.Sprintf("notify:%d:dismiss", latest.ID), "Dismiss"),
+		centreRemoveButton(fmt.Sprintf("notify:%d:dismiss", latest.ID), cardT(tr, "notify.dismiss", "Dismiss")),
 	}}
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{head}}
 	if n := len(g.members); n > 1 {
@@ -351,14 +371,15 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 			Children: []*ui.Node{{Kind: ui.KindText, Text: fmt.Sprintf("%d", n)}},
 		})
 	}
+	dismiss := cardT(tr, "notify.dismiss", "Dismiss")
 	actions := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
-		{Kind: ui.KindButton, Text: "Dismiss", Padding: theme.MarginXS, Name: "Dismiss", Role: "button", Focusable: true,
+		{Kind: ui.KindButton, Text: dismiss, Padding: theme.MarginXS, Name: dismiss, Role: "button", Focusable: true,
 			Action: "notify:center:dismiss-group:" + g.key},
 	}}
 	if len(g.members) > 1 {
-		label := "Expand"
+		label := cardT(tr, "notify.expand", "Expand")
 		if expanded {
-			label = "Collapse"
+			label = cardT(tr, "notify.collapse", "Collapse")
 		}
 		actions.Children = append(actions.Children, &ui.Node{
 			Kind: ui.KindButton, Text: label, Padding: theme.MarginXS, Name: label, Role: "button", Focusable: true,
