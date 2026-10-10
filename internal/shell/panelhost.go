@@ -4372,6 +4372,16 @@ func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
 			return
 		}
 		if n.Kind == ui.KindTextField {
+			// Host-built settings fields read their editor from the panel's
+			// field map; overlaying a retained copy here would stamp the
+			// value the setting had when the panel opened back over the
+			// node on every rebuild, so each keystroke replaced the last.
+			if pluginSettingStoreKey(n.Action) != "" {
+				for _, c := range n.Children {
+					walk(c)
+				}
+				return
+			}
 			k := n.StableKey()
 			if k != "" {
 				seen[k] = true
