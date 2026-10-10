@@ -435,8 +435,10 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	if err := run(ctx); err != nil {
+	stopDiagnostics := watchDiagnostics(ctx)
+	err := run(ctx)
+	stopDiagnostics()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

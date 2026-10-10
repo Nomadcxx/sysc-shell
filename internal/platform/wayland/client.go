@@ -1392,6 +1392,7 @@ func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResul
 
 		o.stall.waiting()
 		waylandReady, wakeReady, err := o.poll(wake.read, o.repeatTimeout())
+		o.stall.working()
 		if err != nil {
 			return err
 		}
