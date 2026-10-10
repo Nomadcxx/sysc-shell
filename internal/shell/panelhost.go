@@ -20,6 +20,7 @@ import (
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/files"
+	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -336,6 +337,9 @@ type PanelHost struct {
 	clipboardDeleteConfirmID  string
 	clipboardThumbnails       map[string]*ui.Image
 	clipboardThumbnailRequest map[string]struct{}
+	// onbPage and onbScroll are the wizard's step and retained body scroll.
+	onbPage   onboardingPage
+	onbScroll int
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -374,6 +378,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelPluginStore, nil
 	case "files":
 		return PanelFiles, nil
+	case "onboarding":
+		return PanelOnboarding, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -995,6 +1001,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelPluginStore, true
 	case "files":
 		return PanelFiles, true
+	case "onboarding":
+		return PanelOnboarding, true
 	default:
 		return 0, false
 	}
@@ -1258,6 +1266,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.menus = map[string]*Menu{}
 		h.fields = map[string]*ui.Field{}
 	}
+	if id == PanelOnboarding {
+		h.set = r.settingsForLocked(r.cfg)
+		h.draft = r.cfg
+	}
 	if id == PanelPluginStore {
 		h.search = ui.NewField("")
 		h.pluginStoreQuery.Sort = SortName
@@ -1435,7 +1447,7 @@ func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger,
 	}
 	// Settings, the launcher, the clipboard, the plugin store and the file
 	// browser float; other panels attach to the bar.
-	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore || id == PanelFiles {
+	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore || id == PanelFiles || id == PanelOnboarding {
 		place.CenterY = true
 	}
 	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
@@ -1647,6 +1659,9 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 				newest := r.newestPanelOnOutputLocked(h.output)
 				if newest == nil {
 					return false
+				}
+				if newest.id == PanelOnboarding {
+					markOnboardingOutcome(onboarding.OutcomeDismissed)
 				}
 				r.closePanelLocked(newest.id)
 				return true
@@ -2502,6 +2517,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 			r.rebuildPanel(h)
 			return true
 		}
+		if h.id == PanelOnboarding {
+			markOnboardingOutcome(onboarding.OutcomeDismissed)
+		}
 		r.closePanelLocked(h.id)
 		return true
 	case keyTab:
@@ -3198,6 +3216,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
 		return true
 	}
+	if h.id == PanelOnboarding && h.activateOnboarding(r, n) {
+		return true
+	}
 	if n.Kind == ui.KindToggle {
 		changed := ui.Activate(n)
 		h.applySetting(r, n)
@@ -3346,6 +3367,13 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		r.runSessionAction(h, n.Action)
+	case "onboarding:open":
+		// Reopening from Settings never touches the lifecycle marker; the
+		// wizard only writes it when the user presses its buttons.
+		r.closePanelLocked(h.id)
+		if err := r.openPanelLocked(PanelOnboarding, h.output, Trigger{}); err != nil {
+			log.Printf("shell: reopen onboarding: %v", err)
+		}
 	}
 	return true
 }
@@ -3542,6 +3570,9 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 			h.settingsScroll, h.settingsScrollTop = 0, false
 		}
 	}
+	if h.id == PanelOnboarding {
+		h.onbScroll = onboardingScrollOffset(h.root)
+	}
 	focusedKey := ""
 	focusedName := ""
 	focusedKind := ui.Kind(0)
@@ -3698,6 +3729,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return clipboardTree(r, h)
 	case PanelFiles:
 		return r.filesTree(h)
+	case PanelOnboarding:
+		return onboardingTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -3753,6 +3786,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// Same box as the system monitor: a file list needs name, size, date
 		// and a preview pane, not the compact network-list width.
 		return ui.Rect{W: 800, H: 650}
+	case PanelOnboarding:
+		return ui.Rect{W: 560, H: 640}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

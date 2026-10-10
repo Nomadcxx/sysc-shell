@@ -395,6 +395,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	content := settingsSectionColumn(r, h, section, entries)
 	if section == "Session" {
 		content.Children = append(content.Children, polkitStatusCard(r, h))
+		content.Children = append(content.Children, onboardingReopenCard(h))
 	}
 	if section == "Appearance" && r != nil {
 		// The source may say custom while a saved palette is not what is
