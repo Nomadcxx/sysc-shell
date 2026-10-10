@@ -123,7 +123,7 @@ func TestPluginStoreCardModelsBadgesActionAndMedia(t *testing.T) {
 	l.Status = store.StatusShadowed
 	l.UpdateAvailable = true
 	media := map[string]store.MediaState{strings.Repeat("c", 64): {Path: "/cache/timer.png"}}
-	card := cardFor(l, media)
+	card := cardFor(l, media, "en")
 	if card.Title != "Timer" || card.Byline != "v1.4.0 · Nomad" || card.Action != ActionUpdate {
 		t.Fatalf("card = %+v", card)
 	}
@@ -162,7 +162,7 @@ func TestPluginStoreDetailCarriesPinnedConsentAndStartWarning(t *testing.T) {
 	l.Resolution.Release = &l.Entry.Release
 	l.Resolution.AssetKey = "linux-amd64"
 	media := map[string]store.MediaState{strings.Repeat("c", 64): {Path: "/cache/timer.png"}}
-	detail := detailFor(l, true, media, "## Timer\n\nREADME text")
+	detail := detailFor(l, true, media, "## Timer\n\nREADME text", "en")
 	if detail.Action != ActionInstall || !detail.NeedsConsent || !detail.StartImmediately {
 		t.Fatalf("detail action/consent = %+v", detail)
 	}
@@ -180,12 +180,12 @@ func TestPluginStoreDetailCarriesPinnedConsentAndStartWarning(t *testing.T) {
 	l.Installed = &store.Record{Source: "sysc", Version: "1.3.0", Capabilities: []string{"panels", "settings"}, Requires: []string{"notify-send"}}
 	l.Status = store.StatusUpdateAvailable
 	l.UpdateAvailable = true
-	detail = detailFor(l, false, nil, "")
+	detail = detailFor(l, false, nil, "", "en")
 	if detail.Action != ActionUpdate || detail.NeedsConsent {
 		t.Fatalf("unchanged-capability update = %+v", detail)
 	}
 	l.Entry.Release.Capabilities = []string{"panels"}
-	detail = detailFor(l, false, nil, "")
+	detail = detailFor(l, false, nil, "", "en")
 	if !detail.NeedsConsent {
 		t.Fatalf("capability-changing update did not require consent: %+v", detail)
 	}

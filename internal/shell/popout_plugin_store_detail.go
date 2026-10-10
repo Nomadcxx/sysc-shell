@@ -85,7 +85,7 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 	}
 	readmeKey := ""
 	var keys []store.MediaKey
-	detail := detailFor(listing, enabled, r.pluginStoreSnapshot.Media, "")
+	detail := detailFor(listing, enabled, r.pluginStoreSnapshot.Media, "", r.pluginStoreDetailLocale(nil))
 	if detail.Screenshot.SHA256 != "" {
 		keys = append(keys, detail.Screenshot)
 	}
@@ -99,7 +99,7 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 		r.pluginStore.Want(keys)
 	}
 	readme := r.pluginStoreReadmes[readmeKey]
-	detail = detailFor(listing, enabled, r.pluginStoreSnapshot.Media, readme)
+	detail = detailFor(listing, enabled, r.pluginStoreSnapshot.Media, readme, r.pluginStoreDetailLocale(nil))
 
 	body := max(width-theme.MarginM, 1) // room for the scroll bar
 	children := []*ui.Node{pluginStoreDetailSummary(r, h, detail, body, metrics)}
@@ -348,7 +348,7 @@ func (h *PanelHost) pluginStoreBeginPrimary(r *Registry) {
 	h.pluginStoreDetailErr = ""
 	h.pluginStorePending = nil
 	enabled := slices.Contains(r.cfg.Plugins.Enabled, listing.Entry.ID)
-	detail := detailFor(listing, enabled, r.pluginStoreSnapshot.Media, "")
+	detail := detailFor(listing, enabled, r.pluginStoreSnapshot.Media, "", r.pluginStoreDetailLocale(nil))
 	switch detail.Action {
 	case ActionInstall, ActionUpdate:
 		h.pluginStoreConsent = &pluginStorePinnedConsent{
@@ -475,4 +475,11 @@ func (h *PanelHost) pluginStoreOpenLink(r *Registry, action string) {
 			r.publishSurface(output, panelSurfaceID(PanelPluginStore))
 		}
 	}()
+}
+
+func (r *Registry) pluginStoreDetailLocale(h *PanelHost) string {
+	if h != nil {
+		return settingsLocale(h)
+	}
+	return r.pluginStoreLocale()
 }

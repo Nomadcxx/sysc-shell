@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -423,7 +424,7 @@ func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics
 			if !ok {
 				continue
 			}
-			name := listing.Entry.Name
+			name := listing.Entry.LocalizedName(r.pluginsManagerLocale(h))
 			if name == "" {
 				name = listing.Entry.ID
 			}
@@ -493,7 +494,7 @@ func pluginManagerRows(r *Registry) []pluginManagerRow {
 		rows = append(rows, row)
 	}
 	slices.SortFunc(rows, func(a, b pluginManagerRow) int {
-		an, bn := pluginManagerName(a), pluginManagerName(b)
+		an, bn := pluginManagerName(a, r.pluginsManagerLocale(nil)), pluginManagerName(b, r.pluginsManagerLocale(nil))
 		if order := strings.Compare(strings.ToLower(an), strings.ToLower(bn)); order != 0 {
 			return order
 		}
@@ -502,12 +503,12 @@ func pluginManagerRows(r *Registry) []pluginManagerRow {
 	return rows
 }
 
-func pluginManagerName(row pluginManagerRow) string {
+func pluginManagerName(row pluginManagerRow, locale string) string {
 	if row.candidate != nil && row.candidate.Manifest.Name != "" {
 		return row.candidate.Manifest.Name
 	}
-	if row.listing != nil && row.listing.Entry.Name != "" {
-		return row.listing.Entry.Name
+	if row.listing != nil && row.listing.Entry.LocalizedName(locale) != "" {
+		return row.listing.Entry.LocalizedName(locale)
 	}
 	return row.id
 }
@@ -516,7 +517,7 @@ func pluginManagerName(row pluginManagerRow) string {
 // icon and label column (name, source badge, version, description, Requires,
 // provenance) with the row's actions and switch pinned to the end.
 func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, width int, metrics theme.Metrics) *ui.Node {
-	id, name := row.id, pluginManagerName(row)
+	id, name := row.id, pluginManagerName(row, r.pluginsManagerLocale(h))
 	version, description, source, provenance := "", "", "local", ""
 	var required []string
 	if row.candidate != nil {
@@ -532,7 +533,7 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 			source = listing.Installed.Source
 		}
 		if description == "" {
-			description = listing.Entry.Description
+			description = listing.Entry.LocalizedDescription(r.pluginsManagerLocale(h))
 		}
 		if len(required) == 0 && listing.Resolution.Release != nil {
 			required = listing.Resolution.Release.Requires.Commands
@@ -1182,4 +1183,11 @@ func (r *Registry) removePluginSourceLocked(h *PanelHost, name string) {
 	r.cfg = next
 	h.pluginManagerError = ""
 	r.refreshPluginStoreLocked(h)
+}
+
+func (r *Registry) pluginsManagerLocale(h *PanelHost) string {
+	if h != nil {
+		return settingsLocale(h)
+	}
+	return i18n.Resolve(r.cfg.Session.Language)
 }

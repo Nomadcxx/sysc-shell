@@ -109,21 +109,46 @@ type Release struct {
 // Entry is one catalog row. Its embedded Release is the newest version; older
 // ones in Releases exist for hosts below that version's protocol.
 type Entry struct {
-	ID              string      `json:"id"`
-	Name            string      `json:"name"`
-	Author          string      `json:"author"`
-	Description     string      `json:"description"`
-	LongDescription string      `json:"long_description,omitempty"`
-	Category        string      `json:"category"`
-	License         string      `json:"license,omitempty"`
-	Homepage        string      `json:"homepage,omitempty"`
-	Screenshot      *Screenshot `json:"screenshot,omitempty"`
-	Readme          *Screenshot `json:"readme,omitempty"`
-	AddedAt         time.Time   `json:"added_at,omitzero"`
-	UpdatedAt       time.Time   `json:"updated_at,omitzero"`
-	Deprecated      bool        `json:"deprecated,omitempty"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Author          string            `json:"author"`
+	Description     string            `json:"description"`
+	LongDescription string            `json:"long_description,omitempty"`
+	NameI18n        map[string]string `json:"name_i18n,omitempty"`
+	DescriptionI18n map[string]string `json:"description_i18n,omitempty"`
+	Category        string            `json:"category"`
+	License         string            `json:"license,omitempty"`
+	Homepage        string            `json:"homepage,omitempty"`
+	Screenshot      *Screenshot       `json:"screenshot,omitempty"`
+	Readme          *Screenshot       `json:"readme,omitempty"`
+	AddedAt         time.Time         `json:"added_at,omitzero"`
+	UpdatedAt       time.Time         `json:"updated_at,omitzero"`
+	Deprecated      bool              `json:"deprecated,omitempty"`
 	Release
 	Releases []Release `json:"releases,omitempty"`
+}
+
+// LocalizedName returns the catalog name in the locale's language, falling
+// back to the English row when no variant exists. Locale is an i18n code
+// (es, pt, ja, ko, ru); "" and "en" always mean English.
+func (e Entry) LocalizedName(locale string) string {
+	return localize(e.NameI18n, locale, e.Name)
+}
+
+// LocalizedDescription returns the short description in the locale's language
+// with the same English fallback as LocalizedName.
+func (e Entry) LocalizedDescription(locale string) string {
+	return localize(e.DescriptionI18n, locale, e.Description)
+}
+
+func localize(variants map[string]string, locale, english string) string {
+	if locale == "" || locale == "en" {
+		return english
+	}
+	if v := variants[locale]; v != "" {
+		return v
+	}
+	return english
 }
 
 // RowError is one catalog row that did not decode or validate.
