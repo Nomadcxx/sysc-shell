@@ -22,7 +22,7 @@ notifications, clipboard history and the system tray.
 
 ## Screenshots
 
-Captured from fixture data, so nothing here is a real account.
+Captured from fixture data with invented names, so nothing here is a real account, network or device.
 
 <table>
   <tr>
@@ -36,6 +36,14 @@ Captured from fixture data, so nothing here is a real account.
   <tr>
     <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396"><br><sub>Launcher</sub></td>
     <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396"><br><sub>Weather</sub></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="assets/screens/shell-wifi.png" alt="Wi-Fi" width="396"><br><sub>Wi-Fi</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bluetooth.png" alt="Bluetooth" width="396"><br><sub>Bluetooth</sub></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396"><br><sub>Clipboard history</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396"><br><sub>Settings: Bar</sub></td>
   </tr>
 </table>
 
