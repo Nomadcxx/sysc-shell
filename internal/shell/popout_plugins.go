@@ -224,6 +224,18 @@ func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setti
 	if value != nil {
 		trailingChildren = append(trailingChildren, value)
 	}
+	if control.Kind == ui.KindTextField {
+		pill := pluginManagerButton("plugin-set-save:"+pluginID+":"+s.Key, "Save", h.metrics())
+		pill.Name = "Save " + s.Label
+		trailingChildren = append(trailingChildren, pill)
+		if fills && controlWidth > 0 {
+			pillWidth := 48 // token-exempt: fallback for "Save" + outline padding
+			if measured, _ := h.measureText()("Save", ui.TextAttrs{}); measured > 0 {
+				pillWidth = measured + 2*h.metrics().ButtonPadding
+			}
+			control.Width = max(controlWidth-pillWidth-theme.MarginS, 1)
+		}
+	}
 	trailing := &ui.Node{Kind: ui.KindRow, PinEnd: true, CenterY: true, Gap: theme.MarginS, Children: trailingChildren}
 	if fills && controlWidth > 0 {
 		trailing.Width = controlWidth
@@ -999,6 +1011,21 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 	}
 	if r.plugins == nil {
 		return false
+	}
+	if rest, ok := strings.CutPrefix(action, "plugin-set-save:"); ok {
+		pluginID, key, ok := strings.Cut(rest, ":")
+		if !ok || h.fields == nil {
+			return false
+		}
+		f := h.fields[pluginID+"."+key]
+		if f == nil {
+			return false
+		}
+		if err := r.plugins.applySettingLocked(pluginID, key, f.Text); err != nil {
+			h.pluginManagerError = err.Error()
+		}
+		r.rebuildPanel(h)
+		return true
 	}
 	if strings.HasPrefix(action, "plugin-set:") {
 		pluginID, key, ok := strings.Cut(strings.TrimPrefix(action, "plugin-set:"), ":")

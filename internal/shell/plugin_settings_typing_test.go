@@ -7,10 +7,8 @@ import (
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
-// Typing into a host-built settings text field (an API-key bar) must
-// accumulate text across the per-keystroke persist + rebuild. The overlay
-// that keeps a plugin's own wells alive must not stamp a stale copy back
-// over the freshly built node.
+// Typing into a host-built settings text field (an API-key bar) buffers in
+// the field without persisting per keystroke; Enter or the Save pill commits.
 func TestPluginSettingsTypingAccumulates(t *testing.T) {
 	const pluginID = "org.sysc.screen-recorder"
 	const action = "plugin-set:" + pluginID + ":resolution"
@@ -58,7 +56,24 @@ func TestPluginSettingsTypingAccumulates(t *testing.T) {
 	reg.mu.Lock()
 	got, _ := reg.cfg.Plugins.Settings[pluginID]["resolution"].(string)
 	reg.mu.Unlock()
+	if got != "" {
+		t.Fatalf("typing persisted early: cfg resolution = %q", got)
+	}
+	pillAction := "plugin-set-save:" + pluginID + ":resolution"
+	reg.mu.Lock()
+	var pill *ui.Node
+	for _, n := range host.focus {
+		if n != nil && n.Action == pillAction {
+			pill = n
+		}
+	}
+	if pill == nil || !reg.handlePluginManager(host, pill) {
+		reg.mu.Unlock()
+		t.Fatalf("save pill %v", pill)
+	}
+	got, _ = reg.cfg.Plugins.Settings[pluginID]["resolution"].(string)
+	reg.mu.Unlock()
 	if got != "originalxyz" {
-		t.Fatalf("cfg resolution = %q, want \"originalxyz\"", got)
+		t.Fatalf("after Save cfg resolution = %q, want \"originalxyz\"", got)
 	}
 }
