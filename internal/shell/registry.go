@@ -22,6 +22,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
+	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
@@ -52,6 +53,10 @@ type Registry struct {
 	cfg     config.Config
 	outputs map[string]outputState
 	bars    map[uint32]*Bar
+	// onboardingPending asks the first adopted output to host the setup
+	// wizard. Set at construction when the lifecycle marker is absent;
+	// consumed once, so hotplug never stacks a second wizard.
+	onboardingPending bool
 	// effectOutputs names the connectors whose wallpaper is a playing or
 	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
 	effectOutputs map[string]bool
@@ -429,6 +434,14 @@ func NewRegistry(cfg config.Config) *Registry {
 		controlIdentity: readCCIdentity(),
 		machineFacts:    readMachineFacts(),
 	}
+	// Absent marker (missing file, malformed state, or a pre-onboarding
+	// config) means the wizard has not been seen. A malformed file is left
+	// untouched; the marker only moves when the user acts.
+	state, err := onboarding.Load(onboarding.StatePath())
+	if err != nil {
+		log.Printf("shell: onboarding state: %v", err)
+	}
+	r.onboardingPending = state.Unseen()
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.polkitHost = newPolkitHost(r)
 	r.nightLight = services.NewNightLight(services.NightLightOptions{
@@ -1620,7 +1633,27 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	// An output that comes back gets its wallpaper back (D20). This is the
 	// arrival seam; DropHost is the departure one.
 	r.wallpaperOutputConnected(connector)
+	if r.consumeOnboardingOffer() {
+		// The first host to arrive is the first interactive output; the
+		// wizard lives on that one only. A failed open leaves the marker
+		// absent, so the offer simply stands until the next start.
+		if err := r.OpenPanel(PanelOnboarding, global, Trigger{}); err != nil {
+			r.mu.Lock()
+			r.onboardingPending = true
+			r.mu.Unlock()
+			log.Printf("shell: open onboarding: %v", err)
+		}
+	}
 	return r.bindHost(global, bar, callbacks), nil
+}
+
+// consumeOnboardingOffer claims the one first-start offer exactly once.
+func (r *Registry) consumeOnboardingOffer() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	claim := r.onboardingPending
+	r.onboardingPending = false
+	return claim
 }
 
 // adoptBar installs a freshly built bar as the one for its output and reports
