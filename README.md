@@ -10,8 +10,8 @@ A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate da
 notifications, clipboard history and the system tray.
 
 <p align="center">
-  <img src="assets/tour.webp" alt="sysc-shell panels opening over a terminal-art wallpaper" width="800"><br>
-  <sub>Terminal Art, Settings and the control centre opening over the wallpaper. <a href="assets/tour.mp4">Full-quality video</a></sub>
+  <img src="assets/tour.webp" alt="sysc-shell Settings, the Bar settings and the system monitor opening over a static wallpaper, with the bar in view" width="900"><br>
+  <sub>Settings, Bar settings and the system monitor opening over a static wallpaper, bar included. <a href="assets/tour.mp4">Full-quality video</a> (1080p, 19 s).</sub>
 </p>
 
 ## Quick Links
@@ -26,16 +26,16 @@ Captured from fixture data, so nothing here is a real account.
 
 <table>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.webp" alt="Control centre: Home" width="396"><br><sub>Control centre: Home</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-media.webp" alt="Control centre: Media" width="396"><br><sub>Control centre: Media</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396"><br><sub>Control centre: Home</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-media.png" alt="Control centre: Media" width="396"><br><sub>Control centre: Media</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-settings.webp" alt="Settings: Appearance" width="396"><br><sub>Settings: Appearance</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-monitor.webp" alt="System monitor" width="396"><br><sub>System monitor</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-settings.png" alt="Settings: Appearance" width="396"><br><sub>Settings: Appearance</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-monitor.png" alt="System monitor" width="396"><br><sub>System monitor</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-launcher.webp" alt="Launcher" width="396"><br><sub>Launcher</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-weather.webp" alt="Weather" width="396"><br><sub>Weather</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396"><br><sub>Launcher</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396"><br><sub>Weather</sub></td>
   </tr>
 </table>
 
