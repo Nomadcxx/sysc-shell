@@ -17,6 +17,7 @@ import (
 // on the Wayland owner, where a fetch would stall every bar on the machine.
 func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
+	tr := hostT(h)
 	reading := services.Reading{}
 	location := ""
 	if r != nil {
@@ -36,10 +37,10 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	bodyW := max(panelW-2*m.PanelPadding, 0)
 	forecastH := weatherForecastHeight(m)
 	heroH := max(bodyH-theme.MarginL-forecastH, 0)
-	hero := weatherHero(reading, location, m, heroH)
+	hero := weatherHero(reading, location, m, heroH, tr)
 
 	children := []*ui.Node{
-		weatherHeader(m),
+		weatherHeader(m, tr),
 		{Kind: ui.KindColumn, Gap: theme.MarginL, Height: bodyH, Children: []*ui.Node{
 			hero,
 			weatherForecastStrip(reading, m, bodyW, forecastH),
@@ -92,14 +93,14 @@ func weatherHeaderHeight(m theme.Metrics) int {
 	return m.StandardControl + 2*m.CardPadding
 }
 
-func weatherHeader(m theme.Metrics) *ui.Node {
+func weatherHeader(m theme.Metrics, tr translateFunc) *ui.Node {
 	well := m.StandardControl
 	title := &ui.Node{
-		Kind: ui.KindText, Text: "Weather",
-		TextRole: theme.RoleTitle, Name: "Weather", Role: "heading",
+		Kind: ui.KindText, Text: cardT(tr, "wx.title", "Weather"),
+		TextRole: theme.RoleTitle, Name: cardT(tr, "wx.title", "Weather"), Role: "heading",
 	}
 	close := &ui.Node{
-		Kind: ui.KindButton, Action: "weather-close", Name: "Close", Role: "button",
+		Kind: ui.KindButton, Action: "weather-close", Name: cardT(tr, "notify.close", "Close"), Role: "button",
 		Focusable: true, Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}
@@ -123,13 +124,13 @@ func weatherDayRange(reading services.Reading) string {
 
 // weatherHero is the standalone hero. The sized form is shared with the
 // Control Centre Today card so both surfaces keep the same information budget.
-func weatherHero(reading services.Reading, location string, m theme.Metrics, height int) *ui.Node {
+func weatherHero(reading services.Reading, location string, m theme.Metrics, height int, tr translateFunc) *ui.Node {
 	panelW := panelTargetSize(PanelWeather).W
 	contentW := max(panelW-2*m.PanelPadding-2*m.CardPadding, 0)
-	return weatherHeroCard(reading, location, m, contentW, height, weatherHeroEffectKey)
+	return weatherHeroCard(reading, location, m, contentW, height, weatherHeroEffectKey, tr)
 }
 
-func weatherHeroCard(reading services.Reading, location string, m theme.Metrics, contentW, height int, effectKey string) *ui.Node {
+func weatherHeroCard(reading services.Reading, location string, m theme.Metrics, contentW, height int, effectKey string, tr translateFunc) *ui.Node {
 	if !reading.Observed {
 		text, tone := "-", ui.ToneNormal
 		if !reading.FailedSince.IsZero() {
@@ -150,14 +151,14 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 	// follows the measured aspect rather than which surface asked for it: a
 	// tall card stacks the reading over the scene, a wide one sets it beside.
 	contentH := max(height-2*m.CardPadding, 0)
-	meta := weatherMetaRow(reading, location, m)
+	meta := weatherMetaRow(reading, location, m, tr)
 	metaH := m.IconSmall
 	groupH := max(contentH-metaH-theme.MarginS, 0)
 
 	reading0 := &ui.Node{Kind: ui.KindText, Tabular: true, TextRole: theme.RoleHeadline,
 		Text: fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit))}
 	condition := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel,
-		Text: render.WeatherCondition(reading.Code)}
+		Text: cardT(tr, "wx.cond."+condKey(render.WeatherCondition(reading.Code)), render.WeatherCondition(reading.Code))}
 	dayRange := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true,
 		Tone: ui.ToneAccent, Text: weatherDayRange(reading)}
 
@@ -204,9 +205,9 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 // leading edge and the readings at the trailing one, both in the muted
 // foreground: they are there to be found, not to compete with the scene. A
 // single run-on caption at full contrast read as an unstyled afterthought.
-func weatherMetaRow(reading services.Reading, location string, m theme.Metrics) *ui.Node {
+func weatherMetaRow(reading services.Reading, location string, m theme.Metrics, tr translateFunc) *ui.Node {
 	readings := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Tabular: true,
-		Tone: ui.ToneSubtle, Text: weatherMetaLine(reading, "")}
+		Tone: ui.ToneSubtle, Text: weatherMetaLine(reading, "", tr)}
 	place := strings.TrimSpace(location)
 	if place == "" || place == absent || place == ccDash {
 		return readings
@@ -219,7 +220,7 @@ func weatherMetaRow(reading services.Reading, location string, m theme.Metrics) 
 
 // weatherMetaLine is the readings half of that row. Every fact the three-cell
 // grid carried survives here; none of them competes with the scene.
-func weatherMetaLine(reading services.Reading, location string) string {
+func weatherMetaLine(reading services.Reading, location string, tr translateFunc) string {
 	parts := make([]string, 0, 5)
 	if location != "" && location != absent && location != ccDash {
 		parts = append(parts, location)
@@ -234,7 +235,7 @@ func weatherMetaLine(reading services.Reading, location string) string {
 	if reading.Humidity != nil {
 		parts = append(parts, fmt.Sprintf("%.0f%%", *reading.Humidity))
 	}
-	if fresh := weatherMetaFreshness(reading); fresh != absent {
+	if fresh := weatherMetaFreshness(reading, tr); fresh != absent {
 		parts = append(parts, fresh)
 	}
 	if len(parts) == 0 {
@@ -243,14 +244,14 @@ func weatherMetaLine(reading services.Reading, location string) string {
 	return strings.Join(parts, " · ")
 }
 
-func weatherEssentials(reading services.Reading, m theme.Metrics, contentW int) *ui.Node {
+func weatherEssentials(reading services.Reading, m theme.Metrics, contentW int, tr translateFunc) *ui.Node {
 	cellW := max((contentW-2*theme.MarginS)/3, 0)
 	return &ui.Node{Kind: ui.KindRow, Height: max(m.StandardControl, 2*m.IconSmall+theme.MarginXXS), Gap: theme.MarginS, Children: []*ui.Node{
-		weatherEssentialCell(m, cellW, "Feels like", weatherOptional(reading.Apparent, func(v float64) string {
+		weatherEssentialCell(m, cellW, cardT(tr, "wx.feels_like", "Feels like"), weatherOptional(reading.Apparent, func(v float64) string {
 			return fmt.Sprintf("%.1f%s", v, unitSuffix(reading.Unit))
 		})),
-		weatherEssentialCell(m, cellW, "Wind", weatherWind(reading)),
-		weatherEssentialCell(m, cellW, "Humidity", weatherOptional(reading.Humidity, func(v float64) string {
+		weatherEssentialCell(m, cellW, cardT(tr, "wx.wind", "Wind"), weatherWind(reading)),
+		weatherEssentialCell(m, cellW, cardT(tr, "wx.humidity", "Humidity"), weatherOptional(reading.Humidity, func(v float64) string {
 			return fmt.Sprintf("%.0f%%", v)
 		})),
 	}}
@@ -266,24 +267,24 @@ func weatherEssentialCell(m theme.Metrics, width int, label, value string) *ui.N
 // weatherMetaFreshness is the terse form for the hero's one meta line. A stale
 // reading keeps the full wording; a fresh one is just its time, because the
 // panel is too narrow to spend eight characters saying "Updated".
-func weatherMetaFreshness(reading services.Reading) string {
+func weatherMetaFreshness(reading services.Reading, tr translateFunc) string {
 	if reading.FetchedAt.IsZero() {
 		return absent
 	}
 	if reading.Stale() {
-		return weatherFreshness(reading)
+		return weatherFreshness(reading, tr)
 	}
 	return reading.FetchedAt.Format("15:04")
 }
 
-func weatherFreshness(reading services.Reading) string {
+func weatherFreshness(reading services.Reading, tr translateFunc) string {
 	if reading.FetchedAt.IsZero() {
 		return absent
 	}
 	if reading.Stale() {
-		return "Stale · Age " + humaniseAge(time.Since(reading.FetchedAt))
+		return cardT(tr, "wx.stale_age", "Stale · Age ") + humaniseAge(time.Since(reading.FetchedAt))
 	}
-	return "Updated " + reading.FetchedAt.Format("15:04")
+	return cardT(tr, "wx.updated", "Updated") + " " + reading.FetchedAt.Format("15:04")
 }
 
 func weatherForecastHeight(m theme.Metrics) int {
@@ -343,4 +344,9 @@ func weatherOptional(value *float64, format func(float64) string) string {
 		return absent
 	}
 	return format(*value)
+}
+
+// condKey maps an English condition word to its catalog key suffix.
+func condKey(word string) string {
+	return "wx.cond." + strings.ToLower(strings.ReplaceAll(word, " ", ""))
 }

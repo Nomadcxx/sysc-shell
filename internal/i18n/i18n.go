@@ -8,8 +8,8 @@
 package i18n
 
 import (
-	"encoding/json"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"

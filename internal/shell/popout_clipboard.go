@@ -31,6 +31,7 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil {
 		m = h.metrics()
 	}
+	tr := hostT(h)
 	if h.search == nil {
 		h.search = ui.NewField(h.query)
 	}
@@ -51,17 +52,17 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 	filtered := filterClipboardEntries(entries, h.query)
 	selected, selectedOK := clipboardSelection(h, filtered)
 
-	field := h.search.Node("Search")
+	field := h.search.Node(cardT(tr, "clip.search", "Search"))
 	field.Width = max(panelW-2*m.PanelPadding, 1)
 	field.Height = m.StandardControl
 	field.Padding = m.ButtonPadding
 
 	children := []*ui.Node{
-		clipboardHeader(m),
+		clipboardHeader(m, tr),
 		field,
-		clipboardToolbar(m),
+		clipboardToolbar(m, tr),
 	}
-	if state := clipboardStatus(view, m); state != nil {
+	if state := clipboardStatus(view, m, tr); state != nil {
 		children = append(children, state)
 	}
 	if h.errLabel != "" {
@@ -69,15 +70,15 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	if len(filtered) == 0 {
-		message := "No clipboard history"
+		message := cardT(tr, "clip.empty", "No clipboard history")
 		if len(entries) > 0 {
-			message = "No clipboard matches"
+			message = cardT(tr, "clip.no_matches", "No clipboard matches")
 		}
-		children = append(children, clipboardNotice(message, "Try a different search", m))
+		children = append(children, clipboardNotice(message, cardT(tr, "clip.hint.search", "Try a different search"), m))
 	} else {
 		rows := make([]*ui.Node, len(filtered))
 		for i, entry := range filtered {
-			rows[i] = clipboardRow(r, h, entry, entry.ID == selected.ID && selectedOK, m, panelW)
+			rows[i] = clipboardRow(r, h, entry, entry.ID == selected.ID && selectedOK, m, panelW, tr)
 		}
 		list := &ui.Node{
 			Kind: ui.KindVirtualList, ItemCount: len(rows), ItemHeight: clipboardRowHeight,
@@ -90,7 +91,7 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 		used := 2*m.PanelPadding + clipboardHeaderHeight(m) + m.CardGap + m.StandardControl +
 			m.CardGap + clipboardToolbarHeight(m) + m.CardGap
-		if state := clipboardStatus(view, m); state != nil {
+		if state := clipboardStatus(view, m, tr); state != nil {
 			used += clipboardStatusHeight + m.CardGap
 		}
 		if h.errLabel != "" {
@@ -107,22 +108,22 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	if h.clipboardConfirmScope != "" {
-		children = append(children, clipboardConfirmCard("clear", h.clipboardConfirmScope, m))
+		children = append(children, clipboardConfirmCard("clear", h.clipboardConfirmScope, m, tr))
 	} else if h.clipboardDeleteConfirmID != "" {
-		children = append(children, clipboardConfirmCard("delete", h.clipboardDeleteConfirmID, m))
+		children = append(children, clipboardConfirmCard("delete", h.clipboardDeleteConfirmID, m, tr))
 	} else if selectedOK {
-		children = append(children, clipboardDetail(r, h, selected, m))
+		children = append(children, clipboardDetail(r, h, selected, m, tr))
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: m.CardGap, Padding: m.PanelPadding, Children: children}
 }
 
-func clipboardHeader(m theme.Metrics) *ui.Node {
+func clipboardHeader(m theme.Metrics, tr translateFunc) *ui.Node {
 	title := &ui.Node{Kind: ui.KindRow, Gap: m.CardGap, Height: m.StandardControl, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: "content_paste", IconSize: m.IconNormal, Tone: ui.ToneAccent},
-		{Kind: ui.KindText, Text: "Clipboard History", TextRole: theme.RoleHeadline, Name: "Clipboard History", Role: "heading"},
+		{Kind: ui.KindText, Text: cardT(tr, "clip.title", "Clipboard History"), TextRole: theme.RoleHeadline, Name: cardT(tr, "clip.title", "Clipboard History"), Role: "heading"},
 	}}
 	close := &ui.Node{
-		Kind: ui.KindButton, Key: "clipboard-close", Action: "clipboard-close", Name: "Close", Role: "button", Focusable: true,
+		Kind: ui.KindButton, Key: "clipboard-close", Action: "clipboard-close", Name: cardT(tr, "notify.close", "Close"), Role: "button", Focusable: true,
 		Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}
@@ -131,24 +132,24 @@ func clipboardHeader(m theme.Metrics) *ui.Node {
 
 func clipboardHeaderHeight(m theme.Metrics) int { return m.StandardControl }
 
-func clipboardToolbar(m theme.Metrics) *ui.Node {
+func clipboardToolbar(m theme.Metrics, tr translateFunc) *ui.Node {
 	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: m.CardGap, Children: []*ui.Node{
-		clipboardButton("clipboard:clear:unpinned", "Clear unpinned", "Clear unpinned clipboard entries", m),
-		clipboardButton("clipboard:clear:all", "Clear all", "Clear all clipboard history", m),
+		clipboardButton("clipboard:clear:unpinned", cardT(tr, "clip.clear_unpinned", "Clear unpinned"), cardT(tr, "clip.clear_unpinned_hint", "Clear unpinned clipboard entries"), m),
+		clipboardButton("clipboard:clear:all", cardT(tr, "clip.clear_all", "Clear all"), cardT(tr, "clip.clear_all_hint", "Clear all clipboard history"), m),
 	}}
 }
 
 func clipboardToolbarHeight(m theme.Metrics) int { return m.CompactControl }
 
-func clipboardStatus(view clipboardProjection, m theme.Metrics) *ui.Node {
+func clipboardStatus(view clipboardProjection, m theme.Metrics, tr translateFunc) *ui.Node {
 	if !view.Connected || view.Snapshot.Wayland != clipboardprotocol.WaylandReady {
-		return clipboardNotice("Clipboard unavailable", "Start sysc-clipboard to capture and restore history", m)
+		return clipboardNotice(cardT(tr, "clip.unavailable", "Clipboard unavailable"), cardT(tr, "clip.hint.unavailable", "Start sysc-clipboard to capture and restore history"), m)
 	}
 	switch view.Snapshot.Persistence {
 	case clipboardprotocol.PersistenceVolatile:
-		return clipboardNotice("Clipboard persistence is volatile", "History will not survive a daemon restart", m)
+		return clipboardNotice(cardT(tr, "clip.volatile", "Clipboard persistence is volatile"), cardT(tr, "clip.hint.volatile", "History will not survive a daemon restart"), m)
 	case clipboardprotocol.PersistenceUnavailable:
-		return clipboardNotice("Clipboard persistence unavailable", "History remains available in memory", m)
+		return clipboardNotice(cardT(tr, "clip.persistence_unavailable", "Clipboard persistence unavailable"), cardT(tr, "clip.hint.persistence", "History remains available in memory"), m)
 	default:
 		return nil
 	}
@@ -204,9 +205,9 @@ func filterClipboardEntries(entries []clipboardprotocol.Entry, query string) []c
 	return filtered
 }
 
-func clipboardRow(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, selected bool, m theme.Metrics, panelW int) *ui.Node {
+func clipboardRow(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, selected bool, m theme.Metrics, panelW int, tr translateFunc) *ui.Node {
 	preview := clipboardPreview(entry)
-	name := "Restore clipboard item"
+	name := cardT(tr, "clip.restore_item", "Restore clipboard item")
 	if preview != "" {
 		name += ": " + preview
 	} else if entry.Kind == clipboardprotocol.KindImage {
@@ -232,17 +233,17 @@ func clipboardRow(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, sele
 		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: preview, TextRole: theme.RoleLabel, MaxWidth: max(panelW/2, 120)})
 	} else if entry.Kind == clipboardprotocol.KindImage {
 		if h == nil || h.clipboardThumbnails == nil || h.clipboardThumbnails[entry.ID] == nil {
-			labels = append(labels, &ui.Node{Kind: ui.KindText, Text: "Image preview unavailable", TextRole: theme.RoleLabel})
+			labels = append(labels, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "clip.image_unavailable", "Image preview unavailable"), TextRole: theme.RoleLabel})
 		} else {
-			labels = append(labels, &ui.Node{Kind: ui.KindText, Text: "Image preview", TextRole: theme.RoleLabel})
+			labels = append(labels, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "clip.image_preview", "Image preview"), TextRole: theme.RoleLabel})
 		}
 	}
 	labels = append(labels,
 		&ui.Node{Kind: ui.KindText, Text: entry.MIME + " · " + clipboardSize(entry.Size), TextRole: theme.RoleCaption},
-		&ui.Node{Kind: ui.KindText, Text: clipboardTime(entry), TextRole: theme.RoleCaption},
+		&ui.Node{Kind: ui.KindText, Text: clipboardTime(entry, tr), TextRole: theme.RoleCaption},
 	)
 	if entry.Pinned {
-		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: "Pinned", TextRole: theme.RoleCaption, Tone: ui.ToneAccent})
+		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "clip.pinned", "Pinned"), TextRole: theme.RoleCaption, Tone: ui.ToneAccent})
 	}
 	labelW := max(panelW-2*m.PanelPadding-2*m.CardPadding-clipboardThumbnailSize-m.CardGap, 120)
 	body := &ui.Node{Kind: ui.KindRow, Gap: m.CardGap, Children: []*ui.Node{
@@ -264,54 +265,54 @@ func clipboardRow(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, sele
 	}
 }
 
-func clipboardDetail(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, m theme.Metrics) *ui.Node {
+func clipboardDetail(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, m theme.Metrics, tr translateFunc) *ui.Node {
 	var image *ui.Image
 	if h != nil && h.clipboardThumbnails != nil {
 		image = h.clipboardThumbnails[entry.ID]
 	}
-	children := []*ui.Node{{Kind: ui.KindText, Text: "Selected item", TextRole: theme.RoleTitle}}
+	children := []*ui.Node{{Kind: ui.KindText, Text: cardT(tr, "clip.selected", "Selected item"), TextRole: theme.RoleTitle}}
 	if entry.Kind == clipboardprotocol.KindImage {
 		if image == nil {
 			requestClipboardThumbnail(r, h, entry.ID)
 		}
 		children = append(children, &ui.Node{Kind: ui.KindRow, Height: clipboardThumbnailSize, Gap: m.CardGap, Children: []*ui.Node{
 			{Kind: ui.KindImage, Image: image, ImageSize: clipboardThumbnailSize},
-			{Kind: ui.KindText, Text: "Image · " + entry.MIME + " · " + clipboardSize(entry.Size), TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: cardT(tr, "clip.image", "Image") + " · " + entry.MIME + " · " + clipboardSize(entry.Size), TextRole: theme.RoleCaption},
 		}})
 	} else {
 		preview := clipboardPreview(entry)
 		if preview == "" {
-			preview = "No text preview"
+			preview = cardT(tr, "clip.no_preview", "No text preview")
 		}
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: preview, TextRole: theme.RoleBody})
 	}
 	children = append(children, &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: m.CardGap, Children: []*ui.Node{
-		clipboardButtonWithKey("clipboard-detail-restore:"+entry.ID, "clipboard:restore:"+entry.ID, "Restore", "Restore selected clipboard item", m),
-		clipboardButtonWithKey("clipboard-detail-pin:"+entry.ID, "clipboard:pin:"+entry.ID, pinLabel(entry), pinName(entry), m),
-		clipboardButtonWithKey("clipboard-detail-delete:"+entry.ID, "clipboard:delete:"+entry.ID, "Delete", "Delete selected clipboard item", m),
+		clipboardButtonWithKey("clipboard-detail-restore:"+entry.ID, "clipboard:restore:"+entry.ID, cardT(tr, "clip.restore", "Restore"), cardT(tr, "clip.restore_hint", "Restore selected clipboard item"), m),
+		clipboardButtonWithKey("clipboard-detail-pin:"+entry.ID, "clipboard:pin:"+entry.ID, pinLabel(entry, tr), pinName(entry, tr), m),
+		clipboardButtonWithKey("clipboard-detail-delete:"+entry.ID, "clipboard:delete:"+entry.ID, cardT(tr, "clip.delete", "Delete"), cardT(tr, "clip.delete_hint", "Delete selected clipboard item"), m),
 	}})
 	return &ui.Node{Kind: ui.KindCapsule, Height: clipboardDetailHeight, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{{Kind: ui.KindColumn, Gap: m.CardGap, Children: children}}}
 }
 
-func clipboardConfirmCard(kind, value string, m theme.Metrics) *ui.Node {
-	title := "Clear clipboard history?"
+func clipboardConfirmCard(kind, value string, m theme.Metrics, tr translateFunc) *ui.Node {
+	title := cardT(tr, "clip.confirm_clear", "Clear clipboard history?")
 	confirmAction := "clipboard:confirm-clear:" + value
 	if value == string(clipboardprotocol.ClearAll) {
-		title = "Clear all clipboard history?"
+		title = cardT(tr, "clip.confirm_clear_all", "Clear all clipboard history?")
 	} else if value == string(clipboardprotocol.ClearUnpinned) {
-		title = "Clear unpinned clipboard history?"
+		title = cardT(tr, "clip.confirm_clear_unpinned", "Clear unpinned clipboard history?")
 	}
 	if kind == "delete" {
-		title = "Delete clipboard item?"
+		title = cardT(tr, "clip.confirm_delete", "Delete clipboard item?")
 		confirmAction = "clipboard:confirm-delete:" + value
 	}
 	return &ui.Node{Kind: ui.KindCapsule, Height: clipboardConfirmHeight, Padding: m.CardPadding,
 		Fill: ui.FillErrorContainer, Shape: ui.ShapeCard, Children: []*ui.Node{{Kind: ui.KindColumn, Gap: m.CardGap, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: title, TextRole: theme.RoleTitle},
 			{Kind: ui.KindRow, Height: m.CompactControl, Gap: m.CardGap, Children: []*ui.Node{
-				clipboardButton(confirmAction, "Confirm", "Confirm destructive clipboard action", m),
-				clipboardButton("clipboard:cancel-"+kind, "Cancel", "Cancel destructive clipboard action", m),
+				clipboardButton(confirmAction, cardT(tr, "clip.confirm", "Confirm"), cardT(tr, "clip.confirm_hint", "Confirm destructive clipboard action"), m),
+				clipboardButton("clipboard:cancel-"+kind, cardT(tr, "common.cancel", "Cancel"), cardT(tr, "clip.cancel_hint", "Cancel destructive clipboard action"), m),
 			}},
 		}}}}
 }
@@ -346,9 +347,9 @@ func clipboardPreview(entry clipboardprotocol.Entry) string {
 	return strings.Join(strings.Fields(entry.Preview), " ")
 }
 
-func clipboardTime(entry clipboardprotocol.Entry) string {
+func clipboardTime(entry clipboardprotocol.Entry, tr translateFunc) string {
 	if entry.CapturedAt.IsZero() {
-		return "Unknown time"
+		return cardT(tr, "clip.time_unknown", "Unknown time")
 	}
 	return entry.CapturedAt.Local().Format("15:04")
 }
@@ -364,18 +365,18 @@ func clipboardSize(size uint64) string {
 	}
 }
 
-func pinLabel(entry clipboardprotocol.Entry) string {
+func pinLabel(entry clipboardprotocol.Entry, tr translateFunc) string {
 	if entry.Pinned {
-		return "Unpin"
+		return cardT(tr, "clip.unpin", "Unpin")
 	}
-	return "Pin"
+	return cardT(tr, "clip.pin", "Pin")
 }
 
-func pinName(entry clipboardprotocol.Entry) string {
+func pinName(entry clipboardprotocol.Entry, tr translateFunc) string {
 	if entry.Pinned {
-		return "Unpin selected clipboard item"
+		return cardT(tr, "clip.unpin_hint", "Unpin selected clipboard item")
 	}
-	return "Pin selected clipboard item"
+	return cardT(tr, "clip.pin_hint", "Pin selected clipboard item")
 }
 
 func decodeClipboardThumbnail(thumbnail *clipboardprotocol.Thumbnail) *ui.Image {

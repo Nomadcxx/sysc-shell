@@ -22,17 +22,17 @@ func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 	metrics := h.metrics()
 	segments := &ui.Node{
 		Kind: ui.KindSegmented, Key: "plugins-tab", Gap: theme.MarginXXS, Width: settingsBodyWidth(h),
-		Height: metrics.CompactControl, Name: "Plugins view", Role: "radiogroup",
+		Height: metrics.CompactControl, Name: cardT(hostT(h), "plugins.view_name", "Plugins view"), Role: "radiogroup",
 		Children: []*ui.Node{
 			pluginManagerSegment(h, "installed", "Installed"),
 			pluginManagerSegment(h, "sources", "Sources"),
 		},
 	}
-	browse := pluginManagerButton("plugins-browse", "Browse plugins", metrics)
+	browse := pluginManagerButton("plugins-browse", cardT(hostT(h), "plugins.browse", "Browse plugins"), metrics)
 	browse.Fill = ui.FillAccent
 	browse.Children = []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: "search", IconSize: metrics.IconSmall},
-		{Kind: ui.KindText, Text: "Browse plugins"},
+		{Kind: ui.KindText, Text: cardT(hostT(h), "plugins.browse", "Browse plugins")},
 	}}}
 	browse.Text = ""
 	// The body scrolls; its bar keeps a lane at the right edge.
@@ -53,8 +53,9 @@ func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func pluginDirectoryLabel(r *Registry) string {
+	tr := cfgT(r.cfg)
 	if r == nil || r.plugins == nil || len(r.plugins.opts.Roots) == 0 {
-		return "Plugin directory"
+		return cardT(tr, "plugins.directory", "Plugin directory")
 	}
 	var parts []string
 	for _, root := range r.plugins.opts.Roots {
@@ -126,7 +127,7 @@ func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []pl
 		rows = append(rows, pluginSettingRow(r, h, pluginID, s))
 	}
 	if len(rows) != 0 {
-		out = append(out, monitorCard(h.metrics(), append([]*ui.Node{monitorCardTitle("Settings", 0)}, rows...)))
+		out = append(out, monitorCard(h.metrics(), append([]*ui.Node{monitorCardTitle(cardT(hostT(h), "section.Settings", "Settings"), 0)}, rows...)))
 	}
 	return out
 }
@@ -370,6 +371,7 @@ type pluginManagerRow struct {
 }
 
 func pluginManagerSegment(h *PanelHost, tab, label string) *ui.Node {
+	label = cardT(hostT(h), "plugins.tab."+tab, label)
 	m := h.metrics()
 	n := &ui.Node{
 		Kind: ui.KindButton, Action: "plugins-tab:" + tab, Name: label, Role: "radio", Focusable: true,
@@ -407,7 +409,7 @@ func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics
 	if len(updates) > 0 {
 		lead = append(lead, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.CompactControl, Children: []*ui.Node{
 			settingsCardHeading(fmt.Sprintf("Updates (%d)", len(updates))),
-			pluginManagerButton("plugins-update-all", "Update all", metrics),
+			pluginManagerButton("plugins-update-all", cardT(hostT(h), "plugins.update_all", "Update all"), metrics),
 		}})
 	}
 	var cards []*ui.Node
@@ -427,7 +429,7 @@ func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics
 			}
 			lead = append(lead, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.CompactControl, Children: []*ui.Node{
 				{Kind: ui.KindText, Text: name},
-				pluginManagerButton("plugins-review:"+key, "Review", metrics),
+				pluginManagerButton("plugins-review:"+key, cardT(hostT(h), "plugins.review", "Review"), metrics),
 			}})
 		}
 	}
@@ -445,7 +447,7 @@ func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics
 		}
 		installed = append(installed, pluginManagerInstalledRow(r, h, row, inner, metrics))
 	}
-	return append(cards, settingsGroupCard(h, "Installed", installed))
+	return append(cards, settingsGroupCard(h, cardT(hostT(h), "plugins.tab.installed", "Installed"), installed))
 }
 
 func pluginManagerUpdates(listings []store.Listing) []store.Listing {
@@ -562,10 +564,10 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		if listing.Resolution.Release != nil {
 			release = listing.Resolution.Release.Version
 		}
-		actions = append(actions, pluginManagerButton("plugins-update:"+id, "Update to v"+release, metrics))
+		actions = append(actions, pluginManagerButton("plugins-update:"+id, fmt.Sprintf(cardT(hostT(h), "plugins.update_to", "Update to v%s"), release), metrics))
 	}
 	if listing != nil && listing.Installed != nil && listing.Installed.Previous != nil {
-		actions = append(actions, pluginManagerButton("plugins-rollback:"+id, "Roll back to v"+listing.Installed.Previous.Version, metrics))
+		actions = append(actions, pluginManagerButton("plugins-rollback:"+id, fmt.Sprintf(cardT(hostT(h), "plugins.rollback_to", "Roll back to v%s"), listing.Installed.Previous.Version), metrics))
 	}
 	var status plugin.Status
 	if row.candidate != nil && r.plugins != nil {
@@ -577,14 +579,14 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		actions = append(actions, pluginManagerIconButton("plugin-retry:"+id, "Retry "+name, "refresh", metrics))
 	}
 	if row.candidate != nil && len(row.candidate.Manifest.Settings) > 0 {
-		label := "Plugin settings"
+		label := cardT(hostT(h), "plugins.plugin_settings", "Plugin settings")
 		if h.pluginManagerExpanded[id] {
-			label = "Hide settings"
+			label = cardT(hostT(h), "plugins.hide_settings", "Hide settings")
 		}
 		actions = append(actions, pluginManagerIconButton("plugins-settings:"+id, label, "settings", metrics))
 	}
 	if listing != nil && listing.Installed != nil {
-		actions = append(actions, pluginManagerIconButton("plugins-remove:"+id, "Remove "+name, "delete", metrics))
+		actions = append(actions, pluginManagerIconButton("plugins-remove:"+id, fmt.Sprintf(cardT(hostT(h), "plugins.remove_name", "Remove %s"), name), "delete", metrics))
 	}
 	canToggle := listing != nil && listing.Installed != nil
 	if row.candidate != nil && row.candidate.Err == nil {
@@ -596,7 +598,7 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 			value = 1
 		}
 		actions = append(actions, &ui.Node{Kind: ui.KindToggle, Value: value, Action: "plugin-enable:" + id,
-			Name: "Enable " + name, Role: "switch", Focusable: true})
+			Name: fmt.Sprintf(cardT(hostT(h), "plugins.enable", "Enable %s"), name), Role: "switch", Focusable: true})
 	}
 	// The actions are measured, not estimated: a guess that ran short at
 	// 1.92 left the label column narrower than the tree built for it. When
@@ -658,10 +660,10 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	}
 	if listing != nil && listing.Installed != nil && h.pluginManagerRemoveConfirm == id {
 		children = append(children, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Height: metrics.CompactControl, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "Remove " + name + "? Its settings and enabled state are kept.", TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: fmt.Sprintf(cardT(hostT(h), "plugins.remove_confirm", "Remove %s? Its settings and enabled state are kept."), name), TextRole: theme.RoleCaption},
 			{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
-				pluginManagerButton("plugins-remove-cancel", "Cancel", metrics),
-				pluginManagerDestructive("plugins-remove-confirm:"+id, "Remove", metrics),
+				pluginManagerButton("plugins-remove-cancel", cardT(hostT(h), "common.cancel", "Cancel"), metrics),
+				pluginManagerDestructive("plugins-remove-confirm:"+id, cardT(hostT(h), "plugins.remove", "Remove"), metrics),
 			}},
 		}})
 	}
@@ -722,25 +724,25 @@ func pluginManagerSourcesTree(r *Registry, h *PanelHost, metrics theme.Metrics) 
 			sources = append(sources, config.PluginSource{Name: state.Name, URL: state.URL})
 		}
 	}
-	rows := []*ui.Node{{Kind: ui.KindText, Text: "Lower sources override higher ones when they offer the same plugin.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true}}
+	rows := []*ui.Node{{Kind: ui.KindText, Text: cardT(hostT(h), "plugins.sources_hint1", "Lower sources override higher ones when they offer the same plugin."), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true}}
 	for _, source := range sources {
 		rows = append(rows, pluginManagerSourceRow(h, source, stateByName[source.Name], inner, metrics))
 	}
 	if h.pluginManagerError != "" {
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: h.pluginManagerError, Tone: ui.ToneError, MaxWidth: inner, Multiline: true})
 	}
-	rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "The same plugin offered by two sources appears once per source.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true})
+	rows = append(rows, &ui.Node{Kind: ui.KindText, Text: cardT(hostT(h), "plugins.sources_hint2", "The same plugin offered by two sources appears once per source."), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true})
 
 	fieldW := max((inner-theme.MarginS*2-settingsControlWidth(h)/2)/2, 1)
-	name := pluginManagerSourceField(h, "plugins-source-name", "Source name")
+	name := pluginManagerSourceField(h, "plugins-source-name", cardT(hostT(h), "plugins.source_name", "Source name"))
 	name.Width = fieldW
-	url := pluginManagerSourceField(h, "plugins-source-url", "Repository URL")
+	url := pluginManagerSourceField(h, "plugins-source-url", cardT(hostT(h), "plugins.source_url", "Repository URL"))
 	url.Width = fieldW
 	add := []*ui.Node{
-		{Kind: ui.KindText, Text: "Any git repository with a catalog.json at its root.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		{Kind: ui.KindText, Text: cardT(hostT(h), "plugins.source_git_hint", "Any git repository with a catalog.json at its root."), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
 			{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{name, url}},
-			pluginManagerButton("plugins-source-add", "Add source", metrics),
+			pluginManagerButton("plugins-source-add", cardT(hostT(h), "plugins.add_source", "Add source"), metrics),
 		}},
 	}
 	if h.pluginManagerSourceWarning {
@@ -751,8 +753,8 @@ func pluginManagerSourcesTree(r *Registry, h *PanelHost, metrics theme.Metrics) 
 				{Kind: ui.KindRow, PinEnd: true, Width: inner - 2*metrics.CardPadding, Height: metrics.CompactControl, Children: []*ui.Node{
 					{Kind: ui.KindText, Text: ""},
 					{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
-						pluginManagerButton("plugins-source-cancel", "Cancel", metrics),
-						pluginManagerDestructive("plugins-source-confirm", "Confirm", metrics),
+						pluginManagerButton("plugins-source-cancel", cardT(hostT(h), "common.cancel", "Cancel"), metrics),
+						pluginManagerDestructive("plugins-source-confirm", cardT(hostT(h), "plugins.confirm", "Confirm"), metrics),
 					}},
 				}},
 			}},
@@ -764,17 +766,17 @@ func pluginManagerSourcesTree(r *Registry, h *PanelHost, metrics theme.Metrics) 
 			{Kind: ui.KindText, Text: "Community catalog", Tone: ui.ToneSubtle},
 			{Kind: ui.KindText, Text: "Third-party plugins reviewed by pull request", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 		}},
-		{Kind: ui.KindText, Text: "Not published yet", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		{Kind: ui.KindText, Text: cardT(hostT(h), "plugins.not_published", "Not published yet"), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 	}}
 	local := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.StandardControl, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: pluginDirectoryLabel(r), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 		pluginManagerButton("plugin-rescan", "Rescan", metrics),
 	}}
 	return []*ui.Node{
-		settingsGroupCard(h, "Sources", rows),
-		settingsGroupCard(h, "Add source", add),
-		settingsGroupCard(h, "Suggested", []*ui.Node{suggested}),
-		settingsGroupCard(h, "Local plugin directory", []*ui.Node{local}),
+		settingsGroupCard(h, cardT(hostT(h), "plugins.tab.sources", "Sources"), rows),
+		settingsGroupCard(h, cardT(hostT(h), "plugins.add_source", "Add source"), add),
+		settingsGroupCard(h, cardT(hostT(h), "plugins.suggested", "Suggested"), []*ui.Node{suggested}),
+		settingsGroupCard(h, cardT(hostT(h), "plugins.local_directory", "Local plugin directory"), []*ui.Node{local}),
 	}
 }
 
@@ -796,14 +798,14 @@ func pluginManagerSourceField(h *PanelHost, action, label string) *ui.Node {
 
 func pluginManagerSourceRow(h *PanelHost, source config.PluginSource, state store.SourceState, width int, metrics theme.Metrics) *ui.Node {
 	name := pluginSourceLabel(source.Name)
-	kind := "Git"
+	kind := cardT(hostT(h), "plugins.kind.git", "Git")
 	if strings.HasPrefix(source.URL, "file:") {
-		kind = "Path"
+		kind = cardT(hostT(h), "plugins.kind.path", "Path")
 	}
-	status := "Not fetched yet"
+	status := cardT(hostT(h), "plugins.not_fetched", "Not fetched yet")
 	tone := ui.ToneSubtle
 	if !state.FetchedAt.IsZero() {
-		status = fmt.Sprintf("%d plugins · last fetched %s", state.Plugins, state.FetchedAt.Local().Format("2006-01-02 15:04"))
+		status = fmt.Sprintf(cardT(hostT(h), "plugins.source_status", "%d plugins · last fetched %s"), state.Plugins, state.FetchedAt.Local().Format("2006-01-02 15:04"))
 	}
 	if state.Err != nil {
 		tone = ui.ToneError
@@ -819,10 +821,10 @@ func pluginManagerSourceRow(h *PanelHost, source config.PluginSource, state stor
 	}
 	actions := []*ui.Node{pluginManagerIconButton("plugins-source-refresh:"+source.Name, "Refresh "+name, "refresh", metrics)}
 	if source.Name != "sysc" {
-		actions = append(actions, pluginManagerIconButton("plugins-source-remove:"+source.Name, "Remove "+name, "delete", metrics))
+		actions = append(actions, pluginManagerIconButton("plugins-source-remove:"+source.Name, fmt.Sprintf(cardT(hostT(h), "plugins.remove_name", "Remove %s"), name), "delete", metrics))
 	}
 	actions = append(actions, &ui.Node{Kind: ui.KindToggle, Value: value, Action: "plugins-source-toggle:" + source.Name,
-		Name: "Enable " + name, Role: "switch", Focusable: true})
+		Name: fmt.Sprintf(cardT(hostT(h), "plugins.enable", "Enable %s"), name), Role: "switch", Focusable: true})
 	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Height: metrics.CompactControl, Children: actions}
 	trailingW, _, err := ui.Measure(trailing, h.measureText())
 	if err != nil {

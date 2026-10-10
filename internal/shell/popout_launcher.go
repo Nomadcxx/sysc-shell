@@ -408,16 +408,14 @@ func launcherFooter(h *PanelHost, count int) *ui.Node {
 			count--
 		}
 	}
-	noun := "result"
+	nounKey, one, other := "launcher.noun.result", "result", "results"
 	if strings.TrimSpace(h.query) == "" {
-		noun = "app"
+		nounKey, one, other = "launcher.noun.app", "app", "apps"
 	}
-	if count != 1 {
-		noun += "s"
-	}
-	text := fmt.Sprintf("%d %s \u2022 %s", count, noun, launcherHints)
+	// ponytail: launcherHints stays English; sysc-greet prints it verbatim.
+	text := fmt.Sprintf("%d %s \u2022 %s", count, h.trn(nounKey, count, one, other), launcherHints)
 	if count == 0 {
-		text = "No results \u2022 " + launcherHints
+		text = h.tr("launcher.no_results", "No results") + " \u2022 " + launcherHints
 	}
 	return &ui.Node{Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption, Text: text}
 }
@@ -456,7 +454,7 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
-	field := h.search.Node("Search")
+	field := h.search.Node(h.tr("common.search", "Search"))
 	field.Width = max(h.place.Panel.W-2*theme.MarginL, 0)
 	field.Height = launcherFieldHeight
 	field.Padding = theme.MarginM
@@ -713,18 +711,18 @@ const (
 	notesLauncherTooLongID = "sysc-notes-launcher-too-long"
 )
 
-func notesLauncherResults(query string) ([]launcher.Result, bool) {
+func notesLauncherResults(query string, tr translateFunc) ([]launcher.Result, bool) {
 	query = strings.TrimSpace(query)
 	if query != "/nt" && !strings.HasPrefix(query, "/nt ") {
 		return nil, false
 	}
 	body := strings.TrimSpace(strings.TrimPrefix(query, "/nt"))
-	id, name, comment := notesLauncherActionID, "Open Notes", "Search your Markdown library or capture a thought"
+	id, name, comment := notesLauncherActionID, cardT(tr, "launcher.notes.name", "Open Notes"), cardT(tr, "launcher.notes.comment", "Search your Markdown library or capture a thought")
 	if body != "" {
-		name = "Capture note: " + launcherPreview(body, 72)
-		comment = "Create a Markdown note in your configured Notes folder"
+		name = cardT(tr, "launcher.notes.capture", "Capture note") + ": " + launcherPreview(body, 72)
+		comment = cardT(tr, "launcher.notes.capture_comment", "Create a Markdown note in your configured Notes folder")
 		if len(body) > v1.MaxInputBytes {
-			id, name, comment = notesLauncherTooLongID, "Capture is too long", "Notes captures are limited to 1 MiB"
+			id, name, comment = notesLauncherTooLongID, cardT(tr, "launcher.notes.toolong", "Capture is too long"), cardT(tr, "launcher.notes.toolong_comment", "Notes captures are limited to 1 MiB")
 		}
 	}
 	return []launcher.Result{{Entry: launcher.Entry{ID: id, Name: name, Comment: comment}}}, true
@@ -744,7 +742,7 @@ func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
 	}
 	attempt := h.launcherAttempt
 	if action == notesLauncherTooLongID {
-		h.errLabel = "Capture is too long (maximum 1 MiB)"
+		h.errLabel = h.tr("launcher.notes.toolong_max", "Capture is too long (maximum 1 MiB)")
 		r.rebuildPanel(h)
 		return
 	}

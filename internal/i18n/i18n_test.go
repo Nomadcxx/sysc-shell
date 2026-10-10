@@ -1,6 +1,10 @@
 package i18n
 
-import "testing"
+import (
+	"encoding/json"
+	"regexp"
+	"testing"
+)
 
 func TestMatch(t *testing.T) {
 	cases := map[string]string{
@@ -72,6 +76,59 @@ func TestNativeNamesAreSelfDescriptions(t *testing.T) {
 	for code, name := range want {
 		if Native[code] != name {
 			t.Errorf("Native[%q] = %q, want %q", code, Native[code], name)
+		}
+	}
+}
+
+// TestCatalogsAreConsistent keeps the five locale catalogs in lockstep: the
+// same key set (Russian may add the plural forms the count switch needs),
+// non-empty values, and identical placeholder counts per key.
+func TestCatalogsAreConsistent(t *testing.T) {
+	loads := map[string]map[string]string{}
+	for _, code := range []string{"es", "pt", "ja", "ko", "ru"} {
+		raw, err := catalogFS.ReadFile("catalog/" + code + ".json")
+		if err != nil {
+			t.Fatalf("%s: %v", code, err)
+		}
+		var m map[string]string
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("%s: %v", code, err)
+		}
+		loads[code] = m
+	}
+	ruExtras := map[string]bool{
+		"launcher.noun.result.few": true, "launcher.noun.result.many": true,
+		"launcher.noun.app.few": true, "launcher.noun.app.many": true,
+	}
+	ph := regexp.MustCompile(`%[sdf]|%%`)
+	for code, m := range loads {
+		for k, v := range m {
+			if v == "" {
+				t.Errorf("%s: empty value for %q", code, k)
+			}
+		}
+		base := loads["es"]
+		if code == "ru" {
+			base = map[string]string{}
+			for k, v := range loads["es"] {
+				base[k] = v
+			}
+			for k := range ruExtras {
+				base[k] = m[k]
+			}
+		}
+		if len(m) != len(base) {
+			t.Fatalf("%s: %d keys, want %d", code, len(m), len(base))
+		}
+		for k := range base {
+			if _, ok := m[k]; !ok {
+				t.Errorf("%s: missing key %q", code, k)
+			}
+		}
+		for k, v := range m {
+			if len(ph.FindAllString(v, -1)) != len(ph.FindAllString(base[k], -1)) {
+				t.Errorf("%s: placeholder count differs for %q: %q vs %q", code, k, v, base[k])
+			}
 		}
 	}
 }

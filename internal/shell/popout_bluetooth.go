@@ -18,7 +18,7 @@ func bluetoothTree(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil && h.place.Panel.H > 0 {
 		panelH = h.place.Panel.H
 	}
-	header := bluetoothHeader(r, m)
+	header := bluetoothHeader(r, hostT(h), m)
 	viewportH := max(panelH-2*m.PanelPadding-m.StandardControl-theme.MarginL, 0)
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: []*ui.Node{
 		header,
@@ -26,7 +26,7 @@ func bluetoothTree(r *Registry, h *PanelHost) *ui.Node {
 	}}
 }
 
-func bluetoothHeader(r *Registry, m theme.Metrics) *ui.Node {
+func bluetoothHeader(r *Registry, tr translateFunc, m theme.Metrics) *ui.Node {
 	state := services.BluetoothState{}
 	if r != nil {
 		state = r.bluetoothState
@@ -36,9 +36,9 @@ func bluetoothHeader(r *Registry, m theme.Metrics) *ui.Node {
 		Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: bluetoothGlyph(state), IconSize: m.IconNormal}},
 	}
-	title := &ui.Node{Kind: ui.KindText, Text: "Bluetooth", TextRole: theme.RoleHeadline, Name: "Bluetooth", Role: "heading"}
+	title := &ui.Node{Kind: ui.KindText, Text: cardT(tr, "bt.title", "Bluetooth"), TextRole: theme.RoleHeadline, Name: cardT(tr, "bt.title", "Bluetooth"), Role: "heading"}
 	close := &ui.Node{
-		Kind: ui.KindButton, Action: "bluetooth-close", Name: "Close", Role: "button",
+		Kind: ui.KindButton, Action: "bluetooth-close", Name: cardT(tr, "notify.close", "Close"), Role: "button",
 		Focusable: true, Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}

@@ -51,7 +51,7 @@ func bluetoothBody(r *Registry, h *PanelHost) *ui.Node {
 		}}
 		if h.bluetoothRetry != "" {
 			errorRow.Children = append(errorRow.Children, bluetoothButton(
-				bluetoothRetryAction, "Retry", m, false))
+				bluetoothRetryAction, cardT(hostT(h), "common.retry", "Retry"), m, false))
 		}
 		children = append(children, errorRow)
 	}
@@ -59,21 +59,22 @@ func bluetoothBody(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func bluetoothAdapterCard(state services.BluetoothState, h *PanelHost, m theme.Metrics) *ui.Node {
-	title, detail := "Bluetooth", "Ready"
+	tr := hostT(h)
+	title, detail := cardT(tr, "bt.title", "Bluetooth"), cardT(tr, "bt.ready", "Ready")
 	if !state.Available {
-		title, detail = "Bluetooth unavailable", "BlueZ is not available"
+		title, detail = cardT(tr, "bt.unavailable", "Bluetooth unavailable"), cardT(tr, "bt.no_bluez", "BlueZ is not available")
 	} else if !state.Adapter.Powered {
-		title, detail = "Bluetooth is off", "Turn it on to discover devices"
+		title, detail = cardT(tr, "bt.off", "Bluetooth is off"), cardT(tr, "bt.turn_on", "Turn it on to discover devices")
 	} else if !state.AgentReady {
-		detail = "Pairing prompts are unavailable"
+		detail = cardT(tr, "bt.no_agent", "Pairing prompts are unavailable")
 	} else if state.Adapter.Pairable {
-		detail = "Ready to pair"
+		detail = cardT(tr, "bt.ready_to_pair", "Ready to pair")
 	}
 
 	power := &ui.Node{
 		Kind: ui.KindToggle, Width: ui.ToggleWidth, Height: ui.ToggleHeight,
 		Value:  toggleValue(state.Available && state.Adapter.Powered),
-		Action: bluetoothPowerAction, Name: "Bluetooth power", Role: "switch", Focusable: true,
+		Action: bluetoothPowerAction, Name: cardT(tr, "bt.power_switch", "Bluetooth power"), Role: "switch", Focusable: true,
 	}
 	if !state.Available {
 		power.State |= ui.StateDisabled
@@ -82,16 +83,16 @@ func bluetoothAdapterCard(state services.BluetoothState, h *PanelHost, m theme.M
 	if h != nil {
 		scanning = h.bluetoothDiscovery
 	}
-	scanLabel := "Scan"
+	scanLabel := cardT(tr, "bt.scan", "Scan")
 	if scanning {
-		scanLabel = "Stop scan"
+		scanLabel = cardT(tr, "bt.stop_scan", "Stop scan")
 	}
 	scan := bluetoothButton(bluetoothScanAction, scanLabel, m, scanning)
 	if !state.Available || !state.Adapter.Powered {
 		scan.State |= ui.StateDisabled
 	}
 	controls := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Power", TextRole: theme.RoleCaption},
+		{Kind: ui.KindText, Text: cardT(tr, "bt.power", "Power"), TextRole: theme.RoleCaption},
 		power,
 		scan,
 	}}
@@ -119,14 +120,15 @@ func bluetoothAdapterCard(state services.BluetoothState, h *PanelHost, m theme.M
 }
 
 func bluetoothEmptyCard(state services.BluetoothState, h *PanelHost, m theme.Metrics) *ui.Node {
-	title, detail := "No Bluetooth devices found", "Nothing is in range on this adapter"
+	tr := hostT(h)
+	title, detail := cardT(tr, "bt.empty", "No Bluetooth devices found"), cardT(tr, "bt.hint.range", "Nothing is in range on this adapter")
 	switch {
 	case !state.Available:
-		title, detail = "Bluetooth unavailable", "Reconnect BlueZ to manage devices"
+		title, detail = cardT(tr, "bt.unavailable", "Bluetooth unavailable"), cardT(tr, "bt.reconnect_bluez", "Reconnect BlueZ to manage devices")
 	case !state.Adapter.Powered:
-		title, detail = "Bluetooth is off", "Turn the radio on to discover devices"
+		title, detail = cardT(tr, "bt.off", "Bluetooth is off"), cardT(tr, "bt.turn_on_radio", "Turn the radio on to discover devices")
 	case state.Adapter.Discovering || (h != nil && h.bluetoothDiscovery):
-		title, detail = "Searching for devices…", "Nearby devices will appear here"
+		title, detail = cardT(tr, "bt.searching", "Searching for devices…"), cardT(tr, "bt.hint.appear", "Nearby devices will appear here")
 	}
 	return bluetoothNotice(title, detail, m)
 }
@@ -145,30 +147,31 @@ func bluetoothSection(section services.BluetoothSectionDevices, h *PanelHost, st
 		rows = append(rows, bluetoothDeviceRow(device, h, state, m))
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: bluetoothSectionName(section.Name), TextRole: theme.RoleTitle},
+		{Kind: ui.KindText, Text: bluetoothSectionName(section.Name, hostT(h)), TextRole: theme.RoleTitle},
 		{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
 			Shape: ui.ShapeCard, Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: rows}}},
 	}}
 }
 
-func bluetoothSectionName(section services.BluetoothSection) string {
+func bluetoothSectionName(section services.BluetoothSection, tr translateFunc) string {
 	switch section {
 	case services.BluetoothSectionConnected:
-		return "Connected"
+		return cardT(tr, "bt.section.Connected", "Connected")
 	case services.BluetoothSectionPaired:
-		return "Paired"
+		return cardT(tr, "bt.section.Paired", "Paired")
 	case services.BluetoothSectionAvailable:
-		return "Available"
+		return cardT(tr, "bt.section.Available", "Available")
 	default:
-		return "Devices"
+		return cardT(tr, "bt.section.Devices", "Devices")
 	}
 }
 
 func bluetoothDeviceRow(device services.BluetoothDevice, h *PanelHost, state services.BluetoothState, m theme.Metrics) *ui.Node {
-	label, action := bluetoothDeviceAction(device)
+	tr := hostT(h)
+	label, action := bluetoothDeviceAction(device, tr)
 	actionName := "bluetooth-" + action + ":" + string(device.ID)
 	if device.Action != services.BluetoothActionNone {
-		label = bluetoothActionProgress(device.Action)
+		label = bluetoothActionProgress(device.Action, tr)
 	}
 	primary := bluetoothButton(actionName, label, m, false)
 	if device.Action != services.BluetoothActionNone || !state.Available || !state.Adapter.Powered ||
@@ -176,10 +179,10 @@ func bluetoothDeviceRow(device services.BluetoothDevice, h *PanelHost, state ser
 		primary.State |= ui.StateDisabled
 	}
 	detailsAction := "bluetooth-details:" + string(device.ID)
-	detailsLabel := "Details for " + device.Alias
+	detailsLabel := fmt.Sprintf(cardT(tr, "bt.details_show", "Details for %s"), device.Alias)
 	detailsIcon := "chevron_right"
 	if h != nil && h.bluetoothDetails == device.ID {
-		detailsIcon, detailsLabel = "chevron_left", "Hide details for "+device.Alias
+		detailsIcon, detailsLabel = "chevron_left", fmt.Sprintf(cardT(tr, "bt.details_hide", "Hide details for %s"), device.Alias)
 	}
 	details := &ui.Node{Kind: ui.KindButton, Action: detailsAction, Name: detailsLabel, Role: "button",
 		Focusable: true, Width: m.StandardControl, Height: m.StandardControl, Shape: ui.ShapeCircle,
@@ -201,30 +204,30 @@ func bluetoothDeviceRow(device services.BluetoothDevice, h *PanelHost, state ser
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: children}
 }
 
-func bluetoothDeviceAction(device services.BluetoothDevice) (label, action string) {
+func bluetoothDeviceAction(device services.BluetoothDevice, tr translateFunc) (label, action string) {
 	if device.Connected {
-		return "Disconnect", "disconnect"
+		return cardT(tr, "bt.action.Disconnect", "Disconnect"), "disconnect"
 	}
 	if device.Paired {
-		return "Connect", "connect"
+		return cardT(tr, "common.connect", "Connect"), "connect"
 	}
-	return "Pair", "pair"
+	return cardT(tr, "bt.action.Pair", "Pair"), "pair"
 }
 
-func bluetoothActionProgress(action services.BluetoothAction) string {
+func bluetoothActionProgress(action services.BluetoothAction, tr translateFunc) string {
 	switch action {
 	case services.BluetoothActionPair:
-		return "Pairing…"
+		return cardT(tr, "bt.progress.pairing", "Pairing…")
 	case services.BluetoothActionConnect:
-		return "Connecting…"
+		return cardT(tr, "common.connecting", "Connecting…")
 	case services.BluetoothActionDisconnect:
-		return "Disconnecting…"
+		return cardT(tr, "bt.progress.disconnecting", "Disconnecting…")
 	case services.BluetoothActionTrust:
-		return "Updating trust…"
+		return cardT(tr, "bt.progress.trust", "Updating trust…")
 	case services.BluetoothActionForget:
-		return "Forgetting…"
+		return cardT(tr, "bt.progress.forgetting", "Forgetting…")
 	default:
-		return "Working…"
+		return cardT(tr, "bt.progress.working", "Working…")
 	}
 }
 
@@ -243,32 +246,33 @@ func bluetoothDeviceSummary(device services.BluetoothDevice) string {
 }
 
 func bluetoothDeviceDetails(device services.BluetoothDevice, state services.BluetoothState, h *PanelHost, m theme.Metrics) *ui.Node {
-	rows := []*ui.Node{{Kind: ui.KindText, Text: "Address  " + orAbsent(device.Address), TextRole: theme.RoleCaption}}
+	tr := hostT(h)
+	rows := []*ui.Node{{Kind: ui.KindText, Text: cardT(tr, "bt.address", "Address") + "  " + orAbsent(device.Address), TextRole: theme.RoleCaption}}
 	if device.Battery != nil {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("Battery  %d%%", *device.Battery), TextRole: theme.RoleCaption, Tabular: true})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf(cardT(tr, "bt.battery", "Battery  %d%%"), *device.Battery), TextRole: theme.RoleCaption, Tabular: true})
 	}
 	if device.RSSI != nil {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("Signal  %d dBm", *device.RSSI), TextRole: theme.RoleCaption, Tabular: true})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf(cardT(tr, "bt.signal", "Signal  %d dBm"), *device.RSSI), TextRole: theme.RoleCaption, Tabular: true})
 	}
 	trusted := &ui.Node{Kind: ui.KindToggle, Width: ui.ToggleWidth, Height: ui.ToggleHeight,
 		Value: toggleValue(device.Trusted), Action: "bluetooth-trust:" + string(device.ID),
-		Name: "Trusted", Role: "switch", Focusable: true}
+		Name: cardT(tr, "bt.trusted", "Trusted"), Role: "switch", Focusable: true}
 	if !state.Available || !state.Adapter.Powered || device.Action != services.BluetoothActionNone {
 		trusted.State |= ui.StateDisabled
 	}
 	rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Trusted", TextRole: theme.RoleCaption}, trusted,
+		{Kind: ui.KindText, Text: cardT(tr, "bt.trusted", "Trusted"), TextRole: theme.RoleCaption}, trusted,
 	}})
 	rows = append(rows, &ui.Node{Kind: ui.KindText,
-		Text: "Trusted permits service authorization and reconnect", TextRole: theme.RoleCaption})
+		Text: cardT(tr, "bt.trusted_hint", "Trusted permits service authorization and reconnect"), TextRole: theme.RoleCaption})
 	if h.bluetoothForget == device.ID {
 		rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "Forget this device?", TextRole: theme.RoleCaption},
-			bluetoothButton("bluetooth-forget-cancel", "Cancel", m, false),
-			bluetoothButton("bluetooth-forget:"+string(device.ID), "Forget", m, false),
+			{Kind: ui.KindText, Text: cardT(tr, "bt.forget_confirm", "Forget this device?"), TextRole: theme.RoleCaption},
+			bluetoothButton("bluetooth-forget-cancel", cardT(tr, "common.cancel", "Cancel"), m, false),
+			bluetoothButton("bluetooth-forget:"+string(device.ID), cardT(tr, "bt.forget", "Forget"), m, false),
 		}})
 	} else {
-		rows = append(rows, bluetoothButton("bluetooth-forget-confirm:"+string(device.ID), "Forget device", m, false))
+		rows = append(rows, bluetoothButton("bluetooth-forget-confirm:"+string(device.ID), cardT(tr, "bt.forget_device", "Forget device"), m, false))
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Padding: theme.MarginXS, Children: rows}
 }
@@ -305,7 +309,8 @@ func bluetoothButton(action, label string, m theme.Metrics, selected bool) *ui.N
 }
 
 func bluetoothPromptCard(h *PanelHost, prompt services.BluetoothPrompt, m theme.Metrics) *ui.Node {
-	children := []*ui.Node{{Kind: ui.KindText, Text: bluetoothPromptTitle(prompt.Kind), TextRole: theme.RoleTitle}}
+	tr := hostT(h)
+	children := []*ui.Node{{Kind: ui.KindText, Text: bluetoothPromptTitle(prompt.Kind, tr), TextRole: theme.RoleTitle}}
 	if prompt.Alias != "" {
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: prompt.Alias, TextRole: theme.RoleCaption})
 	}
@@ -314,55 +319,55 @@ func bluetoothPromptCard(h *PanelHost, prompt services.BluetoothPrompt, m theme.
 		field := bluetoothPromptField(h, prompt, m)
 		children = append(children, field)
 		children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-			bluetoothButton("bluetooth-prompt-cancel", "Cancel", m, false),
-			bluetoothButton("bluetooth-prompt-submit", "Submit", m, true),
+			bluetoothButton("bluetooth-prompt-cancel", cardT(tr, "common.cancel", "Cancel"), m, false),
+			bluetoothButton("bluetooth-prompt-submit", cardT(tr, "common.submit", "Submit"), m, true),
 		}})
 	case services.PairingPromptDisplayPIN, services.PairingPromptDisplayPasskey:
 		children = append(children,
 			&ui.Node{Kind: ui.KindText, Text: prompt.Code, Tabular: true, TextRole: theme.RoleHeadline},
-			&ui.Node{Kind: ui.KindText, Text: bluetoothDisplayDetail(prompt), TextRole: theme.RoleCaption},
+			&ui.Node{Kind: ui.KindText, Text: bluetoothDisplayDetail(prompt, tr), TextRole: theme.RoleCaption},
 		)
 	case services.PairingPromptConfirmation, services.PairingPromptAuthorization, services.PairingPromptServiceAuthorization:
 		if prompt.Code != "" {
 			children = append(children, &ui.Node{Kind: ui.KindText, Text: prompt.Code, Tabular: true, TextRole: theme.RoleHeadline})
 		}
 		if prompt.UUID != "" {
-			children = append(children, &ui.Node{Kind: ui.KindText, Text: "Service " + prompt.UUID, TextRole: theme.RoleCaption})
+			children = append(children, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf(cardT(tr, "bt.service", "Service %s"), prompt.UUID), TextRole: theme.RoleCaption})
 		}
 		children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-			bluetoothButton("bluetooth-prompt-reject", "Reject", m, false),
-			bluetoothButton("bluetooth-prompt-accept", "Allow", m, true),
+			bluetoothButton("bluetooth-prompt-reject", cardT(tr, "bt.reject", "Reject"), m, false),
+			bluetoothButton("bluetooth-prompt-accept", cardT(tr, "bt.allow", "Allow"), m, true),
 		}})
 	}
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillAccent,
 		Shape: ui.ShapeCard, Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: children}}}
 }
 
-func bluetoothPromptTitle(kind services.PairingPromptKind) string {
+func bluetoothPromptTitle(kind services.PairingPromptKind, tr translateFunc) string {
 	switch kind {
 	case services.PairingPromptPIN:
-		return "Enter PIN"
+		return cardT(tr, "bt.prompt.enter_pin", "Enter PIN")
 	case services.PairingPromptPasskey:
-		return "Enter passkey"
+		return cardT(tr, "bt.prompt.enter_passkey", "Enter passkey")
 	case services.PairingPromptDisplayPIN:
-		return "Check this PIN"
+		return cardT(tr, "bt.prompt.check_pin", "Check this PIN")
 	case services.PairingPromptDisplayPasskey:
-		return "Check this passkey"
+		return cardT(tr, "bt.prompt.check_passkey", "Check this passkey")
 	case services.PairingPromptConfirmation:
-		return "Confirm passkey"
+		return cardT(tr, "bt.prompt.confirm_passkey", "Confirm passkey")
 	case services.PairingPromptAuthorization:
-		return "Authorize device"
+		return cardT(tr, "bt.prompt.authorize_device", "Authorize device")
 	case services.PairingPromptServiceAuthorization:
-		return "Authorize service"
+		return cardT(tr, "bt.prompt.authorize_service", "Authorize service")
 	default:
-		return "Bluetooth pairing"
+		return cardT(tr, "bt.prompt.title", "Bluetooth pairing")
 	}
 }
 
 func bluetoothPromptField(h *PanelHost, prompt services.BluetoothPrompt, m theme.Metrics) *ui.Node {
 	if h == nil {
 		return &ui.Node{Kind: ui.KindTextField, Action: "bluetooth-prompt-input", Key: "bluetooth-prompt-input",
-			Name: "Pairing code", Role: "textbox", Focusable: true, Height: m.StandardControl}
+			Name: cardT(hostT(h), "bt.pairing_code", "Pairing code"), Role: "textbox", Focusable: true, Height: m.StandardControl}
 	}
 	if h.bluetoothPromptID != prompt.ID {
 		clearBluetoothInput(h)
@@ -373,7 +378,7 @@ func bluetoothPromptField(h *PanelHost, prompt services.BluetoothPrompt, m theme
 		h.bluetoothInput = ui.NewField("")
 	}
 	h.bluetoothInput.Masked = prompt.Kind == services.PairingPromptPIN || prompt.Kind == services.PairingPromptPasskey
-	n := h.bluetoothInput.Node("Pairing code")
+	n := h.bluetoothInput.Node(cardT(hostT(h), "bt.pairing_code", "Pairing code"))
 	n.Action = "bluetooth-prompt-input"
 	n.Key = "bluetooth-prompt-input"
 	n.Height = m.StandardControl
@@ -381,11 +386,11 @@ func bluetoothPromptField(h *PanelHost, prompt services.BluetoothPrompt, m theme
 	return n
 }
 
-func bluetoothDisplayDetail(prompt services.BluetoothPrompt) string {
+func bluetoothDisplayDetail(prompt services.BluetoothPrompt, tr translateFunc) string {
 	if prompt.Entered > 0 {
-		return fmt.Sprintf("%d of 6 digits entered on the other device", prompt.Entered)
+		return fmt.Sprintf(cardT(tr, "bt.prompt.digits", "%d of 6 digits entered on the other device"), prompt.Entered)
 	}
-	return "Enter or check this code on the other device"
+	return cardT(tr, "bt.prompt.check_code", "Enter or check this code on the other device")
 }
 
 func clearBluetoothInput(h *PanelHost) {

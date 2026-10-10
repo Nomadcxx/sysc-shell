@@ -33,10 +33,41 @@ import (
 // only there is unreachable.
 var settingsSections = settings.SectionNames()
 
+// trn picks the plural form for count. Russian keeps three forms; the other
+// locales here distinguish two. English literals are the fallback.
+func (h *PanelHost) trn(key string, count int, one, other string) string {
+	locale := settingsLocale(h)
+	english, form := other, "other"
+	if count == 1 {
+		english, form = one, "one"
+	}
+	if locale == "ru" {
+		switch {
+		case count%10 == 1 && count%100 != 11:
+			form = "one"
+		case count%10 >= 2 && count%10 <= 4 && (count%100 < 12 || count%100 > 14):
+			form = "few"
+		default:
+			form = "many"
+		}
+		if form != "one" {
+			english = other
+		}
+	}
+	return i18n.T(locale, key+"."+form, english)
+}
+
 // settingsLocale resolves the interface language for the draft the panel is
 // showing, so picking a language restyles the panel before it is saved away.
 func settingsLocale(h *PanelHost) string {
 	return i18n.Resolve(h.draft.Session.Language)
+}
+
+// tr translates a shell surface string in the draft's locale. Keys are stable
+// IDs; the English fallback keeps any surface not yet in a catalog rendering
+// exactly as before.
+func (h *PanelHost) tr(key, english string) string {
+	return i18n.T(settingsLocale(h), key, english)
 }
 
 // settingsRailWidth holds an icon and a section name (settings redesign D5).
@@ -1127,16 +1158,6 @@ func settingsOptionLabel(opt string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-// settingsEntryOptionLabel is an enum option's display name: the entry's
-// paired label when it carries one (a language row shows 日本語, not "ja"),
-// else the value read as words.
-func settingsEntryOptionLabel(e settings.Entry, i int) string {
-	if len(e.OptionLabels) == len(e.Options) {
-		return e.OptionLabels[i]
-	}
-	return settingsOptionLabel(e.Options[i])
 }
 
 // settingsStepperSpan is the widest range that reads better one step at a

@@ -204,11 +204,11 @@ func TestNotifyCardAppliesUrgencyToneToTheSummary(t *testing.T) {
 func TestHistoryAndGroupCardsReuseUrgencyTone(t *testing.T) {
 	now := time.Unix(1_756_000_000, 0)
 	entry := protocol.HistoryEntry{ID: 3, AppName: "Mail", Summary: "Old", Body: "seen", Timestamp: now, Urgency: protocol.UrgencyLow}
-	if node := textNode(HistoryCard(entry, now, nil, false), "Old"); node == nil || node.Tone != ui.ToneSubtle {
+	if node := textNode(HistoryCard(entry, now, nil, false, nil), "Old"); node == nil || node.Tone != ui.ToneSubtle {
 		t.Fatalf("history summary = %+v, want subtle", node)
 	}
 	g := activeGroup{key: "mail", members: []protocol.Notification{{ID: 1, AppName: "Mail", Summary: "New", Body: "body", Timestamp: now, Urgency: protocol.UrgencyLow}}}
-	if node := textNode(ActiveGroupCard(g, now, false, nil, false), "New"); node == nil || node.Tone != ui.ToneSubtle {
+	if node := textNode(ActiveGroupCard(g, now, false, nil, false, nil), "New"); node == nil || node.Tone != ui.ToneSubtle {
 		t.Fatalf("group summary = %+v, want subtle", node)
 	}
 }
@@ -249,7 +249,7 @@ func TestNotifyHistoryCardOmitsActionsAndReply(t *testing.T) {
 		ID: 3, AppName: "Mail", Summary: "Old", Body: "seen",
 		Timestamp: time.Unix(1_756_000_000, 0), Urgency: protocol.UrgencyLow,
 	}
-	card := HistoryCard(entry, time.Unix(1_756_000_000, 0), nil, true)
+	card := HistoryCard(entry, time.Unix(1_756_000_000, 0), nil, true, nil)
 	for _, b := range buttons(card) {
 		if b.Action != "notify:3:remove" {
 			t.Fatalf("history card has a non-remove action: %+v", b)
@@ -320,7 +320,7 @@ func TestNotifyCardOmitsCriticalBang(t *testing.T) {
 		t.Fatalf("toast tree stroke = %d, want 0: the host paints the rim", s)
 	}
 	now := time.Unix(1_756_000_000, 0)
-	history := HistoryCard(protocol.HistoryEntry{ID: 3, Summary: "Low", Timestamp: now, Urgency: protocol.UrgencyCritical}, now, nil, false)
+	history := HistoryCard(protocol.HistoryEntry{ID: 3, Summary: "Low", Timestamp: now, Urgency: protocol.UrgencyCritical}, now, nil, false, nil)
 	if s := strokeOf(history); s != 1 {
 		t.Fatalf("critical history stroke = %d, want 1", s)
 	}
@@ -330,7 +330,7 @@ func TestNotifyCardKeepsTheTimeBesideALongSummary(t *testing.T) {
 	n := baseNotification()
 	n.Summary = strings.Repeat("A very long summary that cannot fit ", 4)
 	now := n.Timestamp
-	card := notificationCard(n, nil, true, nil, nil, now, toastCardWidth)
+	card := notificationCard(n, nil, true, nil, nil, now, toastCardWidth, nil)
 	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(card, ui.Rect{W: toastCardWidth, H: 400}, measure); err != nil {
 		t.Fatal(err)
@@ -420,7 +420,7 @@ func TestActiveGroupCardShowsCountDismissAndExpand(t *testing.T) {
 		{ID: 2, AppName: "Mail", Summary: "new", Body: "b", Timestamp: now.Add(time.Hour), Urgency: protocol.UrgencyNormal},
 		{ID: 1, AppName: "Mail", Summary: "old", Timestamp: now, Urgency: protocol.UrgencyNormal},
 	}}
-	card := ActiveGroupCard(g, now.Add(time.Hour), false, nil, false)
+	card := ActiveGroupCard(g, now.Add(time.Hour), false, nil, false, nil)
 	joined := strings.Join(texts(card), "\n")
 	for _, want := range []string{"new", "b", "2"} {
 		if !strings.Contains(joined, want) {
@@ -436,7 +436,7 @@ func TestActiveGroupCardShowsCountDismissAndExpand(t *testing.T) {
 	if containsText(card, "old") {
 		t.Fatal("collapsed group listed a member summary")
 	}
-	open := ActiveGroupCard(g, now.Add(time.Hour), true, nil, false)
+	open := ActiveGroupCard(g, now.Add(time.Hour), true, nil, false, nil)
 	if !containsText(open, "old") {
 		t.Fatal("expanded group hid members")
 	}
@@ -450,7 +450,7 @@ func TestHistoryRemoveSupportedOnCurrentPin(t *testing.T) {
 
 func TestHistoryCardCarriesARemoveControl(t *testing.T) {
 	now := time.Now()
-	card := HistoryCard(protocol.HistoryEntry{ID: 9, AppName: "mail", Summary: "s", Timestamp: now}, now, nil, false)
+	card := HistoryCard(protocol.HistoryEntry{ID: 9, AppName: "mail", Summary: "s", Timestamp: now}, now, nil, false, nil)
 
 	n := findAction(card, "notify:9:remove")
 	if n == nil {
@@ -469,7 +469,7 @@ func TestActiveCardRemoveDismisses(t *testing.T) {
 	g := activeGroup{key: "mail", members: []protocol.Notification{
 		{ID: 4, AppName: "mail", Summary: "s", Timestamp: now},
 	}}
-	card := ActiveGroupCard(g, now, false, nil, false)
+	card := ActiveGroupCard(g, now, false, nil, false, nil)
 
 	if findAction(card, "notify:4:dismiss") == nil {
 		t.Fatal("live card has no remove control")

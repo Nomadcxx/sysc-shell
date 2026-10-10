@@ -298,7 +298,7 @@ func TestSecuredRowCarriesTheLockGlyph(t *testing.T) {
 }
 
 func TestAccessPointRowUsesSmallCornerShape(t *testing.T) {
-	row := networkAPRow(services.AccessPoint{SSID: "Test AP", Strength: 50}, standardMetrics())
+	row := networkAPRow(services.AccessPoint{SSID: "Test AP", Strength: 50}, standardMetrics(), nil)
 	if row.Shape != ui.ShapeSmall {
 		t.Fatalf("access-point row shape = %v, want ShapeSmall", row.Shape)
 	}
@@ -314,7 +314,7 @@ func TestAccessPointRowsKeepLeadingAndTrailingIconsAligned(t *testing.T) {
 	}
 	wantLeadingX := -1
 	for _, ap := range aps {
-		row := networkAPRow(ap, m)
+		row := networkAPRow(ap, m, nil)
 		root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{row}}
 		if err := ui.LayoutColumn(root, ui.Rect{X: 8, W: 400, H: 64}, func(s string, _ ui.TextAttrs) (int, int) {
 			return len(s) * 8, 16
@@ -393,7 +393,7 @@ func TestRadioOffShowsAnOffStateNotAnEmptyList(t *testing.T) {
 
 func TestEthernetTabShowsTheWiredInterface(t *testing.T) {
 	st := services.NetworkState{Kind: services.ConnWired, Connected: true, Interface: "enp7s0", IPv4: "192.168.1.24"}
-	tree := networkEthernetTree(st, standardMetrics())
+	tree := networkEthernetTree(st, standardMetrics(), nil)
 	texts := collectText(tree)
 	if !slices.Contains(texts, "enp7s0") {
 		t.Errorf("ethernet tab must name the interface; got %v", texts)
@@ -523,7 +523,7 @@ func TestNetworkFiguresUseCachedMetricRates(t *testing.T) {
 			Valid:                  true,
 		},
 	}}}}
-	texts := collectText(networkFigures(st, snap, 120))
+	texts := collectText(networkFigures(st, snap, nil, 120))
 	for _, want := range []string{"1.5 MB/s", "250.0 kB/s"} {
 		if !slices.Contains(texts, want) {
 			t.Fatalf("network figures missing %q: %v", want, texts)
