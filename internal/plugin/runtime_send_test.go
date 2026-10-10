@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -24,9 +25,15 @@ func TestRuntimeSendStalledPlugin(t *testing.T) {
 		_ = pw.Close()
 	})
 	r := NewRuntime(Candidate{}, RuntimeOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel) // do not call r.Stop: this handcrafted session has no cmd
+	sess := &Session{enc: v1.NewEncoder(pw)}
+	q := make(chan outItem, sendQueueDepth)
 	r.mu.Lock()
-	r.session = &Session{enc: v1.NewEncoder(pw)}
+	r.session = sess
+	r.out = q
 	r.mu.Unlock()
+	go r.pumpOut(ctx, sess, q)
 
 	const total = 2000
 	type outcome struct {
@@ -50,6 +57,9 @@ func TestRuntimeSendStalledPlugin(t *testing.T) {
 	}
 	if res.overflows == 0 {
 		t.Error("an unread pipe plus a bounded queue must surface overflow, got none")
+	}
+	if res.overflows == total {
+		t.Fatal("every Send failed: the queue and pump are not wired up")
 	}
 
 	// Accepted messages must reach the pipe in order; overflowed ones are
