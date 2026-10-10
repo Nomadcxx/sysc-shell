@@ -113,8 +113,19 @@ func bgraImage(src *image.NRGBA) *ui.Image {
 // <dir>/shell/<surface>/<name>.png. It returns the path.
 func captureAssetPanel(t *testing.T, id PanelID, surface, name string, setup func(reg *Registry, h *PanelHost)) string {
 	t.Helper()
+	return captureAssetPanelWith(t, id, surface, name, nil, setup)
+}
+
+// captureAssetPanelWith is captureAssetPanel with a pre hook that runs on the
+// fresh registry before the panel opens and without Registry.mu held, for state
+// that has to be in place at open, such as a network service.
+func captureAssetPanelWith(t *testing.T, id PanelID, surface, name string, pre func(reg *Registry), setup func(reg *Registry, h *PanelHost)) string {
+	t.Helper()
 	assetsDir(t)
 	reg := newPanelRegistry(t)
+	if pre != nil {
+		pre(reg)
+	}
 	keepInvalidationsDrained(t, reg)
 	if err := reg.OpenPanel(id, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: assetOutW, OutH: assetOutH}); err != nil {
 		t.Fatal(err)
