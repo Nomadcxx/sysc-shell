@@ -49,3 +49,21 @@ func BenchmarkLongField(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkTemperatureGauge(b *testing.B) {
+	fontMap, err := NewSystemFontMap("Inter Variable", DefaultFontCacheDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	text := NewTextRendererWithFontMap(fontMap)
+	n := &ui.Node{Kind: ui.KindRadialGauge, Value: .8, ValueText: "80°", Bounds: ui.Rect{W: 22, H: 22}}
+	c, err := NewCanvas(make([]byte, 22*22*4), 22, 22, 22*4)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for b.Loop() {
+		if err := paintRadialGauge(c, n, text, testStyle); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

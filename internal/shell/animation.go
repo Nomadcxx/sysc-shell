@@ -531,14 +531,12 @@ func (a *animator) Settled() bool {
 	return true
 }
 
-// SettledExceptEffects reports whether everything but the effect layers has
-// come to rest. Effects loop forever, so they can never settle; asking this
-// separately is what lets a surface drop to the effect cadence once its
-// transitions are done, instead of pacing a drifting sky like a hover.
+// SettledExceptEffects ignores decorative effects and gradients so surfaces
+// can use the effect cadence after interactions and content motion settle.
 func (a *animator) SettledExceptEffects() bool {
 	now := a.now()
 	for key, v := range a.values {
-		if key.channel == animEffect {
+		if key.channel == animEffect || key.channel == animGradient {
 			continue
 		}
 		if !v.settled(now) {
