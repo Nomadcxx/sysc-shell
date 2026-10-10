@@ -39,6 +39,7 @@ var (
 		"clipboard":      "",
 		"plugin-store":   "",
 		"files":          "",
+		"onboarding":     "",
 	}
 	knownScreenshotModes = map[string]bool{"region": true, "screen": true, "window": true}
 )
