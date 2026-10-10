@@ -23,6 +23,7 @@ const (
 	PanelPluginStore
 	PanelFiles
 	PanelTerminalArt
+	PanelOnboarding
 )
 
 func (p PanelID) String() string {
@@ -61,6 +62,8 @@ func (p PanelID) String() string {
 		return "files"
 	case PanelTerminalArt:
 		return "terminal-art"
+	case PanelOnboarding:
+		return "onboarding"
 	default:
 		return "unknown"
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/files"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -36,8 +37,21 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	os.Setenv("XDG_CONFIG_HOME", dir)
+	state, err := os.MkdirTemp("", "sysc-shell-test-state-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	os.Setenv("XDG_STATE_HOME", state)
+	// Tests opt out of the first-start offer; those that want it set
+	// onboardingPending explicitly.
+	if err := onboarding.Mark(onboarding.StatePath(), onboarding.OutcomeCompleted); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
+	os.RemoveAll(state)
 	os.Exit(code)
 }
 
