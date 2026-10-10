@@ -64,8 +64,8 @@ const (
 
 	onbDocsHint = "Docs: https://nomadcxx.github.io/sysc/docs/"
 
-	onbWallpaperHint = "Wallpaper images and per-output assignment live in the " +
-		"wallpaper picker; presets and bar layout live in Settings."
+	onbWallpaperHint = "The picker browses images, sets per-output assignments " +
+		"and updates its folder; presets and bar layout live in Settings."
 	onbRegionHint = "Language, keyboard layout and timezone stay with your OS " +
 		"session. Coordinates accept 0; blank a field to clear it."
 	onbIdleHint = "A screensaver does not secure the session. The lock choice " +
@@ -74,11 +74,19 @@ const (
 		"the shell: launcher, notifications, clipboard and tray panels sit in " +
 		"the bar."
 
-	onbBackLabel   = "Back"
-	onbNextLabel   = "Next"
-	onbFinishLabel = "Finish"
-	onbSkipLabel   = "Not now"
+	onbBackLabel       = "Back"
+	onbNextLabel       = "Next"
+	onbFinishLabel     = "Finish"
+	onbSkipLabel       = "Not now"
+	onbWallpaperButton = "Choose wallpaper"
 )
+
+func onbMainLabel(p onboardingPage) string {
+	if p == onbReady {
+		return onbFinishLabel
+	}
+	return onbNextLabel
+}
 
 var onbTitles = [onbPages]string{
 	onbTitleWelcome, onbTitleAppearance, onbTitleRegion, onbTitleIdle, onbTitleReady,
@@ -131,6 +139,9 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 	case onbAppearance:
 		children = append(children, onbRows(h, "appearance.mode", "appearance.source",
 			"appearance.palette", "appearance.scheme")...)
+		pick := h.button("onb-wallpaper", onbWallpaperButton, "wallpaper")
+		pick.Width = onbBodyWidth(h)
+		children = append(children, pick)
 		children = append(children, onbCaption(onbWallpaperHint))
 	case onbRegion:
 		children = append(children, onbRows(h, "weather.city", "weather.latitude",
@@ -214,18 +225,27 @@ func onboardingLocale() string {
 	return "not set"
 }
 
+// onbActions keeps one primary action per step (Next/Finish, default fill);
+// Back and Not now wear the Settings panel's outline style so they read as
+// subordinate, the way Noctalia's wizard puts one Get-started button forward.
 func onbActions(h *PanelHost) *ui.Node {
 	back := h.button("onb-back", onbBackLabel, "")
+	back.Fill = ui.FillOutline
+	back.Shape = ui.ShapeMedium
 	if h.onbPage == onbWelcome {
 		back.State |= ui.StateDisabled
 		back.AriaDisabled = true
 	}
-	main := h.button("onb-next", onbNextLabel, "arrow_forward")
+	main := h.button("onb-next", onbNextLabel, "chevron_right")
 	if h.onbPage == onbReady {
 		main = h.button("onb-finish", onbFinishLabel, "check")
 	}
+	skip := h.button("onb-skip", onbSkipLabel, "")
+	skip.Fill = ui.FillOutline
+	skip.Shape = ui.ShapeMedium
+	skip.Tone = ui.ToneSubtle
 	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-		h.button("onb-skip", onbSkipLabel, ""), back, main,
+		skip, back, main,
 	}}
 }
 
@@ -283,11 +303,20 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		h.onbPage = h.onbPage.prev()
 		h.onbScroll = 0
 		r.rebuildPanel(h)
+		h.focusByName(onbMainLabel(h.onbPage))
 		return true
 	case "onb-next":
 		h.onbPage = h.onbPage.next()
 		h.onbScroll = 0
 		r.rebuildPanel(h)
+		h.focusByName(onbMainLabel(h.onbPage))
+		return true
+	case "onb-wallpaper":
+		// Reuse the picker rather than a second wallpaper UI: it opens on top
+		// of the wizard, and the shield closes the picker first.
+		if err := r.openPanelLocked(PanelWallpaper, h.output, Trigger{}); err != nil {
+			log.Printf("shell: onboarding wallpaper picker: %v", err)
+		}
 		return true
 	case "onb-skip":
 		markOnboardingOutcome(onboarding.OutcomeDismissed)

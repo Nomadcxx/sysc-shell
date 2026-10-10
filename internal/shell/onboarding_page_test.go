@@ -96,3 +96,74 @@ func TestOnboardingReopensFromSessionSettings(t *testing.T) {
 		t.Fatal("the wizard left Settings open")
 	}
 }
+
+func TestOnboardingOpensOnPrimaryAndReusesWallpaperPicker(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelOnboarding]
+	if h == nil {
+		t.Fatal("the wizard did not host")
+	}
+	f := h.focused()
+	if f == nil || f.Name != onbNextLabel {
+		t.Fatalf("initial focus name=%v, want %q", f, onbNextLabel)
+	}
+	h.onbPage = onbAppearance
+	reg.rebuildPanel(h)
+	pick := byAction(h.root, "onb-wallpaper")
+	if pick == nil {
+		t.Fatal("the appearance page lost the wallpaper picker action")
+	}
+	h.setFocus(pick)
+	if !h.activate(reg) {
+		t.Fatal("the picker action was not accepted")
+	}
+	if !reg.panelOpenLocked(PanelWallpaper) {
+		t.Fatal("the shared picker did not open")
+	}
+	if !reg.panelOpenLocked(PanelOnboarding) {
+		t.Fatal("the wizard closed underneath the picker")
+	}
+}
+
+func TestOnboardingActionRowHierarchyAndKeptFocus(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelOnboarding]
+	skip := byAction(h.root, "onb-skip")
+	back := byAction(h.root, "onb-back")
+	next := byAction(h.root, "onb-next")
+	if skip == nil || back == nil || next == nil {
+		t.Fatal("the action row lost a control")
+	}
+	if skip.Fill != ui.FillOutline || back.Fill != ui.FillOutline {
+		t.Fatal("secondary actions are not visually subordinate")
+	}
+	if next.Fill != ui.FillNone {
+		t.Fatal("the primary action lost its default fill")
+	}
+	for _, p := range []onboardingPage{onbAppearance, onbRegion, onbIdle, onbReady} {
+		nav := byAction(h.root, "onb-next")
+		if nav == nil {
+			t.Fatalf("the Next action vanished before page %d", p)
+		}
+		h.setFocus(nav)
+		if !h.activate(reg) {
+			t.Fatalf("Next rejected on page %d", p)
+		}
+		if h.onbPage != p {
+			t.Fatalf("advanced to %d, want %d", h.onbPage, p)
+		}
+		if f := h.focused(); f == nil || f.Name != onbMainLabel(p) {
+			t.Errorf("page %d focus=%v, want %q", p, f, onbMainLabel(p))
+		}
+	}
+}
