@@ -16,6 +16,8 @@ github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf h1:fnxwcoTi
 github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf/go.mod h1:5qLWSiYkjWvOMxbRpzoZF2R55uSy2vLjZM5Wr9dJMtg=
 github.com/Nomadcxx/sysc-metrics v0.7.0 h1:eJZNzqPL9eeJgy9DxJXFm7utRaMd+GIFRZT6+zX0Jro=
 github.com/Nomadcxx/sysc-metrics v0.7.0/go.mod h1:qIgYyJuuD0Ql7wlh3cN0kiHsSG/LEMczrq+vXA7rIQs=
+github.com/Nomadcxx/sysc-metrics v0.7.1 h1:rgtOJ5mKnhwJqe19l/tFCOkX/+ogUzUzD2jDOo3UgkE=
+github.com/Nomadcxx/sysc-metrics v0.7.1/go.mod h1:qIgYyJuuD0Ql7wlh3cN0kiHsSG/LEMczrq+vXA7rIQs=
 github.com/Nomadcxx/sysc-notify v0.1.0-rc.4.0.20260928141411-254ec5732728 h1:dC7p/3GuZB3KywYrAdWx4m5PDZhPAKutT+WukP4YSrM=
 github.com/Nomadcxx/sysc-notify v0.1.0-rc.4.0.20260928141411-254ec5732728/go.mod h1:ZZlN0ZktmQ15uWf1VaVZ8vXFLe708R1u85dIaag7gtM=
 github.com/Nomadcxx/sysc-terminal v0.0.0-20261004174459-4e522749ac8b h1:oH38Fkzdbs7Xg1j5AJqplZjWPzNo3GIKz4SXva+kUBc=
