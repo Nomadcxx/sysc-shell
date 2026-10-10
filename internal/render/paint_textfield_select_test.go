@@ -1,10 +1,56 @@
 package render
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func TestMaskedFieldHitTestingDoesNotMeasureEveryPrefix(t *testing.T) {
+	n := &ui.Node{Kind: ui.KindTextField, Text: strings.Repeat("a", 4096), Masked: true,
+		Padding: 10, Bounds: ui.Rect{W: 200, H: 40}, Editing: true, ScrollX: 20000}
+	calls := 0
+	measure := func(s string, _ ui.TextAttrs) (int, int) {
+		calls++
+		return utf8.RuneCountInString(s) * 10, 16
+	}
+	if got := FieldOffsetAt(n, FieldTextRect(n).X+16, measure); got != 2002 {
+		t.Fatalf("scrolled caret = %d, want 2002", got)
+	}
+	if calls > 32 {
+		t.Fatalf("hit testing measured %d prefixes; want logarithmic search", calls)
+	}
+}
+
+func TestMaskedFieldHitTestingKeepsGraphemesAndNearestTies(t *testing.T) {
+	n := &ui.Node{Kind: ui.KindTextField, Text: "ae\u0301👩‍💻z", Masked: true,
+		Padding: 10, Bounds: ui.Rect{W: 200, H: 40}}
+	measure := func(s string, _ ui.TextAttrs) (int, int) {
+		return utf8.RuneCountInString(s) * 10, 16
+	}
+	// Display positions are 0, 10, 30, 60, 70; a masked grapheme may
+	// occupy multiple bullets. An equidistant click keeps the earlier edge.
+	for _, tc := range []struct{ x, want int }{{-5, 0}, {5, 0}, {6, 1}, {20, 1}, {21, 4}, {45, 4}, {46, 15}, {80, 16}} {
+		if got := FieldOffsetAt(n, FieldTextRect(n).X+tc.x, measure); got != tc.want {
+			t.Errorf("x=%d: offset=%d, want %d", tc.x, got, tc.want)
+		}
+	}
+}
+
+func TestMaskedFieldHitTestingKeepsFirstRoundedEdge(t *testing.T) {
+	n := &ui.Node{Kind: ui.KindTextField, Text: strings.Repeat("a", 20), Masked: true,
+		Padding: 10, Bounds: ui.Rect{W: 200, H: 40}}
+	measure := func(s string, _ ui.TextAttrs) (int, int) {
+		return (utf8.RuneCountInString(s) + 2) / 3 * 2, 16
+	}
+	// Several edges share a rounded advance. The exhaustive search chose
+	// the earliest one even when the closest width lies before the click.
+	if got := FieldOffsetAt(n, FieldTextRect(n).X+5, measure); got != 4 {
+		t.Fatalf("rounded tie picked byte %d, want the first edge at width 4 (byte 4)", got)
+	}
+}
 
 func TestEditingFieldFillsItsSelectionBehindTheText(t *testing.T) {
 	t.Parallel()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"golang.org/x/image/font/gofont/goregular"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -11,6 +12,22 @@ import (
 	"github.com/go-text/typesetting/fontscan"
 	"github.com/go-text/typesetting/language"
 )
+
+func TestSplitRunsDoesNotAllocatePerRune(t *testing.T) {
+	m := newFixtureFontMap(t)
+	text := strings.Repeat("A", 4096)
+	req := FaceRequest{Weight: 400}
+	m.SplitRuns(text, req) // warm face resolution
+	allocs := testing.AllocsPerRun(1, func() {
+		runs := m.SplitRuns(text, req)
+		if len(runs) != 1 || runs[0].Text != text {
+			t.Fatal("one face must keep the complete text in one run")
+		}
+	})
+	if allocs > 64 {
+		t.Fatalf("splitting one 4096-rune run allocated %.0f times; want bounded builder growth", allocs)
+	}
+}
 
 func newFixtureFontMap(t *testing.T) *FontMap {
 	t.Helper()

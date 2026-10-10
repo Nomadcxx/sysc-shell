@@ -1,11 +1,72 @@
 package shell
 
 import (
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
+
+func TestLongMaskedPluginSettingCanSelectDeleteAndSave(t *testing.T) {
+	const pluginID = "org.sysc.screen-recorder"
+	const key = "test_api_key"
+	const action = "plugin-set:" + pluginID + ":" + key
+	value := strings.Repeat("a", 4096)
+	manifest := strings.ReplaceAll(testRecorderPanelManifest, `"resolution"`, `"`+key+`"`)
+	manifest = strings.ReplaceAll(manifest, `"original"`, `"`+value+`"`)
+	reg := bindManifestPlugin(t, "ok", pluginID, manifest, []string{pluginID})
+	keepInvalidationsDrained(t, reg)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	if _, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+	host := reg.panelHosts[PanelPlugin]
+	if err := host.configure(640, 720, 120); err != nil {
+		t.Fatal(err)
+	}
+	var field, save *ui.Node
+	for _, n := range host.focus {
+		if n.Action == action {
+			field = n
+		}
+		if n.Action == "plugin-set-save:"+pluginID+":"+key {
+			save = n
+		}
+	}
+	if field == nil || !field.Masked || save == nil {
+		t.Fatal("masked setting and Save pill must exist")
+	}
+	box := render.FieldTextRect(field)
+	start := time.Now()
+	pressAt(reg, host, box.X+1, box.Y+box.H/2, 0)
+	pressAt(reg, host, box.X+1, box.Y+box.H/2, 0)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("two clicks blocked input for %s", elapsed)
+	}
+	reg.mu.Lock()
+	selected := host.fieldFor(host.focused()).SelectedText()
+	reg.mu.Unlock()
+	if selected != value {
+		t.Fatal("double click did not select the complete masked value")
+	}
+	typeKeys(reg, host, ui.KeyInput{Sym: ui.SymBackSpace}, txt("replacement"))
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := host.fieldFor(host.focused()).Text; got != "replacement" {
+		t.Fatalf("edited draft = %q, want replacement", got)
+	}
+	if !reg.handlePluginManager(host, save) || reg.cfg.Plugins.Settings[pluginID][key] != "replacement" {
+		t.Fatal("Save did not persist the edited value")
+	}
+}
 
 // Typing into a host-built settings text field (an API-key bar) buffers in
 // the field without persisting per keystroke; Enter or the Save pill commits.

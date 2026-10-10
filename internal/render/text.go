@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"sync"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -95,6 +96,10 @@ type TextRenderer struct {
 	// cache fills. A shell's working set is a few dozen strings; the bound is
 	// there for text that keeps changing, such as a window title.
 	rasterOrder []rasterKey
+	// shaped retains immutable runs for measurement, truncation and painting.
+	// Changing fields must not retain an unbounded history of long prefixes.
+	shaped     map[rasterKey][]shapedFaceRun
+	shapedCost int
 }
 
 // rasterKey identifies one rasterised run. Every field changes the pixels:
@@ -109,6 +114,10 @@ type rasterKey struct {
 
 // rasterCacheMax bounds one renderer's cached runs.
 const rasterCacheMax = 256
+
+// ponytail: charge text bytes plus glyph count, and cap entries too. Flushing
+// the cache at 64K units bounds it to a few MB; use LRU only if churn warrants it.
+const shapeCacheBudget = 64 * 1024
 
 // cachedRaster returns a previously rasterised run.
 func (r *TextRenderer) cachedRaster(key rasterKey) (Mask, bool) {
@@ -198,7 +207,6 @@ func (r *TextRenderer) shapeFace(face *font.Face, text string, size int, tabular
 
 type shapedFaceRun struct {
 	face      *font.Face
-	text      string
 	runeStart int
 	output    shaping.Output
 }
@@ -206,6 +214,17 @@ type shapedFaceRun struct {
 func (r *TextRenderer) shapeRuns(text string, spec TextSpec, tabular bool) ([]shapedFaceRun, error) {
 	if r == nil || r.face == nil {
 		return nil, fmt.Errorf("render: nil face")
+	}
+	key := rasterKey{text: text, spec: spec, tabular: tabular}
+	if runs, ok := r.shaped[key]; ok {
+		// Bitmap strike selection belongs to the requested size even when a
+		// different-sized measurement used the same face since this shape.
+		if spec.Size > 0 && spec.Size <= 0xffff {
+			for _, run := range runs {
+				run.face.SetPpem(uint16(spec.Size), uint16(spec.Size))
+			}
+		}
+		return runs, nil
 	}
 	fontRuns := []Run{{Face: r.face, Text: text}}
 	if r.fontMap != nil {
@@ -222,9 +241,23 @@ func (r *TextRenderer) shapeRuns(text string, spec TextSpec, tabular bool) ([]sh
 			return nil, err
 		}
 		shaped = append(shaped, shapedFaceRun{
-			face: run.Face, text: run.Text, runeStart: runeStart, output: out,
+			face: run.Face, runeStart: runeStart, output: out,
 		})
 		runeStart += len([]rune(run.Text))
+	}
+	cost := len(text)
+	for _, run := range shaped {
+		cost += len(run.output.Glyphs)
+	}
+	if cost <= shapeCacheBudget {
+		if r.shaped == nil || len(r.shaped) >= rasterCacheMax || r.shapedCost+cost > shapeCacheBudget {
+			r.shaped = make(map[rasterKey][]shapedFaceRun)
+			r.shapedCost = 0
+		}
+		// A short prefix may share an arbitrarily large editor buffer.
+		key.text = strings.Clone(text)
+		r.shaped[key] = shaped
+		r.shapedCost += cost
 	}
 	return shaped, nil
 }
