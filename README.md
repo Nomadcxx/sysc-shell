@@ -1,12 +1,42 @@
-![sysc-shell](assets/wordmark.png)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark.png">
+    <img src="assets/wordmark-light.png" alt="sysc-shell" height="64">
+  </picture>
+</p>
+
 
 A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate daemons for
 notifications, clipboard history and the system tray.
+
+<p align="center">
+  <img src="assets/tour.webp" alt="sysc-shell panels opening over a terminal-art wallpaper" width="800"><br>
+  <sub>Terminal Art, Settings and the control centre opening over the wallpaper. <a href="assets/tour.mp4">Full-quality video</a></sub>
+</p>
 
 ## Quick Links
 
 - [Documentation](#documentation)
 - [The sysc ecosystem](https://github.com/Nomadcxx/sysc-shell/blob/main/docs/ecosystem.md)
+
+## Screenshots
+
+Captured from fixture data, so nothing here is a real account.
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.webp" alt="Control centre: Home" width="396"><br><sub>Control centre: Home</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-media.webp" alt="Control centre: Media" width="396"><br><sub>Control centre: Media</sub></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="assets/screens/shell-settings.webp" alt="Settings: Appearance" width="396"><br><sub>Settings: Appearance</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-monitor.webp" alt="System monitor" width="396"><br><sub>System monitor</sub></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="assets/screens/shell-launcher.webp" alt="Launcher" width="396"><br><sub>Launcher</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-weather.webp" alt="Weather" width="396"><br><sub>Weather</sub></td>
+  </tr>
+</table>
 
 ## Installation
 
