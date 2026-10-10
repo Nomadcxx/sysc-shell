@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -100,6 +101,10 @@ var onbIntros = [onbPages]string{
 // across rebuilds, the way the Settings body does.
 const onbBodyKey = "onboarding-body"
 
+// onbMarkHeight sizes the brand mark in the wizard header, near the bar's
+// 19px wordmark. Static accent tint, no gradient lease.
+const onbMarkHeight = 20
+
 func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 	m := h.theme.Metrics
 	step := &ui.Node{
@@ -107,9 +112,16 @@ func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 		Text:     fmt.Sprintf("Step %d / %d", int(h.onbPage)+1, int(onbPages)),
 		TextRole: theme.RoleCaption,
 	}
-	head := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: onbTitles[h.onbPage], Name: onbTitles[h.onbPage], Role: "heading", TextRole: theme.RoleTitle},
-		step,
+	brand := &ui.Node{
+		Kind:   ui.KindWordmark,
+		ImageH: onbMarkHeight, ImageW: render.WordmarkWidth(onbMarkHeight),
+	}
+	head := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
+		brand,
+		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: onbTitles[h.onbPage], Name: onbTitles[h.onbPage], Role: "heading", TextRole: theme.RoleTitle},
+			step,
+		}},
 	}}
 	body := &ui.Node{
 		Kind:         ui.KindScroll,
