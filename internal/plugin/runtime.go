@@ -99,6 +99,12 @@ type Runtime struct {
 	candidate Candidate
 	opts      RuntimeOptions
 	messages  chan v1.Message
+	// out queues host→plugin writes so callers never touch the plugin's
+	// stdin pipe directly: a plugin that stops draining would otherwise
+	// block whoever sent last — including the shell's main loop, which
+	// freezes the whole desktop. pumpOut is the only writer, so order is
+	// preserved; sendQueueDepth bounds what a stalled plugin can hold.
+	out chan outItem // current session's queue; nil when none
 
 	mu            sync.Mutex
 	state         State
@@ -119,13 +125,72 @@ type Runtime struct {
 
 // NewRuntime returns a stopped runtime for one discovered candidate.
 func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
-	return &Runtime{
+	r := &Runtime{
 		candidate: c,
 		opts:      opts,
 		messages:  make(chan v1.Message, 32),
 		state:     StateDisabled,
 		since:     opts.now(),
 		budget:    newRestartBudget(),
+	}
+	return r
+}
+
+// sendQueueDepth bounds queued host→plugin messages. Overflow is reported,
+// never absorbed by blocking the sender; a plugin that cannot drain 256
+// messages has bigger problems than a dropped view resync.
+const sendQueueDepth = 256
+
+// errSendQueueFull means a stalled plugin has not drained the queue.
+var errSendQueueFull = errors.New("plugin: send queue full")
+
+// outItem is one queued write, or, with flushed set, a barrier that Stop
+// waits on.
+type outItem struct {
+	m       v1.Message
+	flushed chan struct{}
+}
+
+// stopFlushTimeout bounds how long Stop waits for queued messages to reach
+// the plugin before closing it; a stalled plugin must not hold Stop forever.
+const stopFlushTimeout = time.Second
+
+// pumpOut is a session's only writer to the plugin's standard input. It may
+// block on a stalled plugin; that is the point — no caller of Send ever can.
+// It ends with the session: closing the session closes stdin, which also
+// wakes a blocked write.
+func (r *Runtime) pumpOut(ctx context.Context, sess *Session, q <-chan outItem) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case it := <-q:
+			if it.flushed != nil {
+				close(it.flushed)
+				continue
+			}
+			_ = sess.Send(it.m)
+		}
+	}
+}
+
+// flushOut waits, boundedly, for everything queued so far to be written.
+func (r *Runtime) flushOut() {
+	r.mu.Lock()
+	q := r.out
+	r.mu.Unlock()
+	if q == nil {
+		return
+	}
+	barrier := outItem{flushed: make(chan struct{})}
+	select {
+	case q <- barrier:
+	default:
+		return
+	}
+	select {
+	case <-barrier.flushed:
+	case <-time.After(stopFlushTimeout):
 	}
 }
 
@@ -161,15 +226,22 @@ func (r *Runtime) SetCalls(d *Dispatcher) {
 	}
 }
 
-// Send writes one host message to the live session.
+// Send queues one host message for the plugin's stdin writer. It never
+// blocks on the plugin: the shell's main loop sends here, and a stalled
+// plugin must not be able to stall the desktop with it.
 func (r *Runtime) Send(m v1.Message) error {
 	r.mu.Lock()
-	sess := r.session
+	q := r.out
 	r.mu.Unlock()
-	if sess == nil {
+	if q == nil {
 		return errors.New("plugin: not running")
 	}
-	return sess.Send(m)
+	select {
+	case q <- outItem{m: m}:
+		return nil
+	default:
+		return errSendQueueFull
+	}
 }
 
 // Allows reports whether the live session was granted c.
@@ -288,9 +360,12 @@ func (r *Runtime) launch(ctx context.Context) error {
 		sess.Close()
 		return nil
 	}
+	q := make(chan outItem, sendQueueDepth)
 	r.session = sess
 	r.sessionCancel = cancelSession
+	r.out = q
 	r.mu.Unlock()
+	go r.pumpOut(sessionCtx, sess, q)
 
 	r.setState(StateRunning, "")
 	if r.opts.SessionStarted != nil {
@@ -401,6 +476,7 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 
 // Stop ends the plugin. It is safe to call on a runtime that is not running.
 func (r *Runtime) Stop() {
+	r.flushOut()
 	r.mu.Lock()
 	r.stopping = true
 	r.generation++
@@ -408,6 +484,7 @@ func (r *Runtime) Stop() {
 	cancelSession := r.sessionCancel
 	r.session = nil
 	r.sessionCancel = nil
+	r.out = nil
 	r.early = nil
 	r.mu.Unlock()
 

@@ -3551,7 +3551,11 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	focusedKey := ""
 	focusedName := ""
 	focusedKind := ui.Kind(0)
-	if h.id == PanelClipboard || h.id == PanelPluginStore {
+	// Plugin panels rebuild on every view the plugin pushes. A restored
+	// roving index would then land on whatever node moved into the old
+	// position — focus must follow the node's identity, or keystrokes the
+	// user aims at a settings field get eaten as panel shortcuts.
+	if h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
 		if focused := h.focused(); focused != nil {
 			focusedKey = focused.StableKey()
 			focusedName = focused.Name
