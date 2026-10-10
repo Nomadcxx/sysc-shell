@@ -214,6 +214,7 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 		cb:    callbacks,
 		hosts: newHostSet(),
 		cfg:   &cfg,
+		stall: stallWatch{dump: writeStallDump},
 	}
 	defer func() { err = errors.Join(err, o.shutdown()) }()
 
@@ -227,6 +228,8 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 
 type owner struct {
 	cb Callbacks
+
+	stall stallWatch
 
 	display  *client.Display
 	registry *client.Registry
@@ -1367,7 +1370,9 @@ func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResul
 	// The idle emitter may fire from proxy dispatch between wakes; the owner
 	// needs the pipe to schedule delivery of anything that cannot be sent.
 	o.wake = wake
+	go o.stall.run(ctx)
 	for {
+		o.stall.working()
 		if o.fatal != nil {
 			return o.fatal
 		}
@@ -1385,6 +1390,7 @@ func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResul
 			continue
 		}
 
+		o.stall.waiting()
 		waylandReady, wakeReady, err := o.poll(wake.read, o.repeatTimeout())
 		if err != nil {
 			return err
