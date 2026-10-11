@@ -1105,3 +1105,73 @@ func TestTerminalArtKeepsTheInstallHintWhenNothingIsHeld(t *testing.T) {
 		t.Fatalf("without sysc-terminal and no recorded hold: %q, want the install hint", artTexts(h.root))
 	}
 }
+
+type blurArtEngine struct{ artWallpaperEngine }
+
+func (e blurArtEngine) Capabilities() wallpaper.Capabilities {
+	c := e.artWallpaperEngine.Capabilities()
+	c.Catalog.BlurMax = 64
+	return c
+}
+func (e blurArtEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
+func TestTerminalArtBlurSettings(t *testing.T) {
+	reg, _ := artRegistry(t, blurArtEngine{})
+	reg.cfg.TerminalArt.Blur = 16
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	slider := findAction(h.root, "set:terminal-art.blur")
+	texts := strings.Join(artTexts(h.root), " ")
+	reg.mu.Unlock()
+	if slider == nil || slider.Name != "Blur strength" || slider.Value != 16 || slider.State&ui.StateDisabled != 0 {
+		t.Fatalf("blur slider = %+v", slider)
+	}
+	if !strings.Contains(texts, "next select an effect") {
+		t.Fatalf("missing application timing: %q", texts)
+	}
+	reg, _ = artRegistry(t, artWallpaperEngine{})
+	h = openArtSettings(t, reg)
+	reg.mu.Lock()
+	slider = findAction(h.root, "set:terminal-art.blur")
+	texts = strings.Join(artTexts(h.root), " ")
+	reg.mu.Unlock()
+	if slider == nil || slider.State&ui.StateDisabled == 0 || !strings.Contains(texts, "Update sysc-terminal") {
+		t.Fatalf("old engine control %+v %q", slider, texts)
+	}
+}
+
+func TestTerminalArtBlurSearchCapability(t *testing.T) {
+	for _, engine := range []wallpaper.Engine{artWallpaperEngine{}, stubWallpaperEngine{}} {
+		reg, _ := artRegistry(t, engine)
+		h := openArtSettings(t, reg)
+		reg.mu.Lock()
+		h.query = "blur"
+		reg.rebuildPanel(h)
+		slider := findAction(h.root, "set:terminal-art.blur")
+		reg.mu.Unlock()
+		if slider == nil || slider.State&ui.StateDisabled == 0 || slider.Focusable {
+			t.Fatalf("unsupported search slider = %+v", slider)
+		}
+	}
+}
+
+func TestTerminalArtSettingsRefreshesCatalog(t *testing.T) {
+	initial := artWallpaperEngine{}.Capabilities()
+	updated := initial
+	updated.Catalog.BlurMax = 64
+	engine := &catalogRefreshArtEngine{initial: initial, refreshed: updated}
+	reg, svc := artRegistry(t, engine)
+	go reg.relayWallpaper(svc)
+	h := openArtSettings(t, reg)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		slider := findAction(h.root, "set:terminal-art.blur")
+		ready := slider != nil && slider.State&ui.StateDisabled == 0
+		reg.mu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("Settings did not enable blur after catalog refresh")
+}

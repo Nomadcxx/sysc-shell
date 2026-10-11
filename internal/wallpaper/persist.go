@@ -13,6 +13,7 @@ import (
 // than as numbers so the file survives a reordering of the constants and stays
 // legible to whoever opens it.
 type wireAssignment struct {
+	Blur            int    `json:"blur,omitempty"`
 	Kind            string `json:"kind"`
 	Path            string `json:"path"`
 	Effect          string `json:"effect,omitempty"`
@@ -72,6 +73,9 @@ func checkPath(path string) error {
 }
 
 func checkAssignment(a Assignment) error {
+	if a.Blur < 0 || a.Blur > 64 || (a.Kind != KindEffect && a.Blur != 0) {
+		return fmt.Errorf("wallpaper: invalid blur strength %d", a.Blur)
+	}
 	if a.Kind == KindEffect {
 		if err := checkToken("effect", a.Effect); err != nil {
 			return err
@@ -125,7 +129,7 @@ func SaveAssignments(path string, assignments map[string]Assignment) error {
 			playback = playbackNames[StateStatic]
 		}
 		wire[connector] = wireAssignment{
-			Kind: kind, Path: a.Path, Effect: a.Effect, Theme: a.Theme,
+			Kind: kind, Path: a.Path, Effect: a.Effect, Theme: a.Theme, Blur: a.Blur,
 			PreviewPath: a.PreviewPath, DesiredPlayback: playback,
 		}
 	}
@@ -192,7 +196,7 @@ func LoadAssignments(path string) (map[string]Assignment, error) {
 		if !ok {
 			return nil, fmt.Errorf("wallpaper: %s has unknown kind %q", connector, w.Kind)
 		}
-		a := Assignment{Kind: kind, Path: w.Path, Effect: w.Effect, Theme: w.Theme, PreviewPath: w.PreviewPath}
+		a := Assignment{Kind: kind, Path: w.Path, Effect: w.Effect, Theme: w.Theme, Blur: w.Blur, PreviewPath: w.PreviewPath}
 		if err := checkAssignment(a); err != nil {
 			return nil, err
 		}

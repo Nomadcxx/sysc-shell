@@ -674,6 +674,14 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Get:      func(c config.Config) string { return c.Wallpaper.Hidden },
 			Set:      setEnum("wallpaper.hidden", wallpaperHidden, func(c *config.Config, v string) { c.Wallpaper.Hidden = v }),
 		},
+
+		{
+			Path: "terminal-art.blur", Label: "Blur strength", Section: "Terminal Art", Group: "Effects",
+			Describe: "Softens the wallpaper. 0 is off. Applies when you next select an effect.",
+			Kind:     KindInt, Present: PresentSlider, Min: 0, Max: 64,
+			Get: getInt(func(c config.Config) int { return c.TerminalArt.Blur }),
+			Set: setInt("terminal-art.blur", 0, 64, func(c *config.Config, n int) { c.TerminalArt.Blur = n }),
+		},
 		{
 			Path: "terminal-art.palette", Label: "Default palette", Section: "Terminal Art", Group: "Effects",
 			Describe: "The sysc-Go palette Terminal Art starts on.",

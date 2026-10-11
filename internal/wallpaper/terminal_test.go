@@ -22,3 +22,16 @@ func TestParseListEmptyIsNotACatalog(t *testing.T) {
 		t.Fatalf("help text parsed as catalog: %+v", got)
 	}
 }
+
+func TestTerminalBlurCapability(t *testing.T) {
+	for _, input := range []string{"capability blur 64\n", "capability blur -1\n", "capability blur nope\n", "capability blur 1000\n", ""} {
+		got := ParseList("effect fire 0\n" + input)
+		want := 0
+		if input == "capability blur 64\n" {
+			want = 64
+		}
+		if got.BlurMax != want {
+			t.Fatalf("%q: blur limit %d, want %d", input, got.BlurMax, want)
+		}
+	}
+}

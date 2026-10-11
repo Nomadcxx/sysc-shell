@@ -1260,6 +1260,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.scale120 = bar.scale120()
 	}
 	if id == PanelSettings {
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			svc.RefreshTerminalCatalog()
+		}
 		h.set = r.settingsForLocked(r.cfg)
 		r.refreshPalettesAsync(h)
 		h.draft = r.cfg

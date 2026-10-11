@@ -22,6 +22,9 @@ var atomicReplace = os.Rename
 // rename. A deferred cleanup removes the temp on every error. Rename replaces
 // a symlink at path rather than following it.
 func Write(path string, c Config) error {
+	if c.TerminalArt.Blur < 0 || c.TerminalArt.Blur > 64 {
+		return fmt.Errorf("config: terminal-art.blur must be in 0..64")
+	}
 	if path == "" {
 		return fmt.Errorf("config: empty write path")
 	}
@@ -119,9 +122,9 @@ func toWire(c Config) wireConfig {
 	if p := wallpaperDiff(c.Wallpaper, d.Wallpaper); p != nil {
 		w.Wallpaper = p
 	}
-	if c.TerminalArt.Palette != "" {
-		palette := c.TerminalArt.Palette
-		w.TerminalArt = &wireTerminalArt{Palette: &palette}
+	if c.TerminalArt.Palette != "" || c.TerminalArt.Blur != 0 {
+		palette, blur := c.TerminalArt.Palette, c.TerminalArt.Blur
+		w.TerminalArt = &wireTerminalArt{Palette: &palette, Blur: &blur}
 	}
 	if p := panelsDiff(c.Panels, d.Panels); p != nil {
 		w.Panels = p

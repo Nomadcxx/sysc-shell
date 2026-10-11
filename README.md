@@ -258,3 +258,8 @@ Named palette changes publish an atomic selection to `sysc-shell/shell-theme` un
 The account selected during sysc-greet installation also publishes to `/var/lib/sysc-greet/shell-theme/theme`, when the installer has assigned that directory to it. Sysc-greet follows the selection at its next start. Other accounts control their own lockers without changing the machine greeter.
 
 Previews do not publish. Failed or superseded theme changes retain the previous selection. Wallpaper-generated, hex and custom palettes publish no named selection, so each consumer retains its configured fallback.
+
+Terminal Art blur: Settings → Terminal Art → Blur strength sets the default for
+new effect selections. 0 is off; 1–64 softens the wallpaper. Requires a
+sysc-terminal build advertising blur support. Running effects retain their
+applied strength until selected again.

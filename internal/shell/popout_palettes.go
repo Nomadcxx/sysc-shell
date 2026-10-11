@@ -494,6 +494,11 @@ func paletteFileReason(p theme.PaletteInfo) string {
 // its preview (P16, any route), and entering it re-reads the directory (R2).
 // Registry.mu is held.
 func (r *Registry) settingsSectionChangingLocked(h *PanelHost, section string) {
+	if section == "Terminal Art" && h.section != section {
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			svc.RefreshTerminalCatalog()
+		}
+	}
 	if h.section == "Palettes" && section != "Palettes" {
 		r.paletteLeaveEditor(h)
 		h.palettes.clearStatus()

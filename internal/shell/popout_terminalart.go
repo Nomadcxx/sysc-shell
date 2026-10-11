@@ -236,7 +236,7 @@ func (h *PanelHost) artSetPalette(r *Registry, name string) {
 			if a := h.wallpaperSnap.Assignments[connector]; artLive(h, connector) {
 				svc.Enqueue(wallpaper.Command{
 					Op: wallpaper.OpApply, Token: connector,
-					Kind: wallpaper.KindEffect, Effect: a.Effect, Theme: name,
+					Kind: wallpaper.KindEffect, Effect: a.Effect, Theme: name, Blur: a.Blur,
 				})
 			}
 		}
@@ -347,7 +347,7 @@ func (h *PanelHost) artApply(r *Registry, id string) {
 	if svc := r.wallpaperServiceLocked(); svc != nil {
 		svc.Enqueue(wallpaper.Command{
 			Op: wallpaper.OpApply, Token: h.wallpaperOutput,
-			Kind: wallpaper.KindEffect, Effect: id, Theme: artPalette(h),
+			Kind: wallpaper.KindEffect, Effect: id, Theme: artPalette(h), Blur: r.cfg.TerminalArt.Blur,
 		})
 	}
 }
@@ -418,6 +418,36 @@ func artUnavailable(r *Registry) string {
 	return artNotInstalled
 }
 
+// Apply capability gating to section rows and search results alike.
+func settingsDimTerminalBlur(r *Registry, root *ui.Node) {
+	var caps wallpaper.Capabilities
+	if r != nil {
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			caps = svc.Snapshot().Caps
+		}
+	}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if settingsRowPath(n) == "terminal-art.blur" {
+			if !caps.Terminal {
+				settingsDimRow(n, artUnavailable(r))
+			} else if caps.Catalog.BlurMax == 0 {
+				settingsDimRow(n, "Update sysc-terminal to enable wallpaper blur.")
+			}
+		}
+		if n.Action == "set:terminal-art.blur" && caps.Catalog.BlurMax > 0 {
+			n.Max = float64(caps.Catalog.BlurMax)
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
 // terminalArtSettingsTree is Settings → Terminal Art: whether the engine is
 // there, the palette the panel starts on, and the way into the panel. Picking
 // a palette here writes config only; a running effect is the panel's.
@@ -454,6 +484,11 @@ func terminalArtSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 			}
 			rows = append(rows, wallpaperOptionList(h, opts))
 		}
+	}
+
+	if e := h.set.ByPath("terminal-art.blur"); e != nil && caps.Terminal {
+		row := settingsEntryRow(h, *e, settingsBodyWidth(h))
+		rows = append(rows, row)
 	}
 	open := wallpaperButton(h, "art-open", "Open Terminal Art", false)
 	rows = append(rows, &ui.Node{Kind: ui.KindRow, Height: wallpaperChromeH(h), Children: []*ui.Node{open}})

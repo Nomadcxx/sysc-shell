@@ -125,3 +125,19 @@ func TestPersistIgnoresRetiredArtworkKey(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got["DP-1"], want)
 	}
 }
+
+func TestTerminalBlurPersistsAndReconnects(t *testing.T) {
+	a := Assignment{Kind: KindEffect, Effect: "fire", Theme: "nord", Blur: 16, DesiredPlayback: StatePaused}
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	if err := SaveAssignments(path, map[string]Assignment{"DP-1": a}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadAssignments(path)
+	if err != nil || got["DP-1"] != a {
+		t.Fatalf("restored %v %v", got, err)
+	}
+	a.Blur = -1
+	if err = SaveAssignments(path, map[string]Assignment{"DP-1": a}); err == nil {
+		t.Fatal("invalid blur saved")
+	}
+}

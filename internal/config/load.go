@@ -205,6 +205,7 @@ type wireWallpaper struct {
 }
 
 type wireTerminalArt struct {
+	Blur    *int    `json:"blur,omitempty"`
 	Palette *string `json:"palette,omitempty"`
 }
 
@@ -378,6 +379,13 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Wallpaper = paper
+	}
+	if wire.TerminalArt != nil && wire.TerminalArt.Blur != nil {
+		if n := *wire.TerminalArt.Blur; n < 0 || n > 64 {
+			return Config{}, pathErr("terminal-art.blur", "must be in 0..64")
+		} else {
+			cfg.TerminalArt.Blur = n
+		}
 	}
 	if wire.TerminalArt != nil && wire.TerminalArt.Palette != nil {
 		if p := *wire.TerminalArt.Palette; p != "" && !ValidPaletteName(p) {

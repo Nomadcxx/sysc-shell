@@ -385,6 +385,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 
 	body := func(content *ui.Node) *ui.Node {
 		settingsDimIdle(r, h, content)
+		settingsDimTerminalBlur(r, content)
 		if content.Kind == ui.KindScroll {
 			content.Height = settingsContentHeight(h, head)
 		}
