@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-notify/protocol"
@@ -187,6 +188,8 @@ type PanelHost struct {
 	// pluginStoreTreeScale is the same for the plugin store, whose cards,
 	// chip rows and wrapped text are measured as they are built.
 	pluginStoreTreeScale int
+	// onboardingTreeScale is the scale used when the wizard wrapped its copy.
+	onboardingTreeScale int
 	// pluginName resolves a plugin ID to its catalogue name for the bar
 	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
 	// falls back to the plugin ID.
@@ -1369,6 +1372,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.clipboardThumbnails = make(map[string]*ui.Image)
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
+	if id == PanelOnboarding {
+		// Its copy is wrapped while the tree is built, so load the real shaper
+		// first; Configure runs only after this initial tree has been created.
+		if err := h.ensureText(); err != nil {
+			return err
+		}
+	}
 	h.root = r.panelTree(h)
 	r.queueFilesPanelImages(h)
 	if id == PanelSession {
@@ -2148,7 +2158,9 @@ func (h *PanelHost) measureText() ui.MeasureText {
 				return scale.Logical(mw), scale.Logical(mh)
 			}
 		}
-		return len(s) * 8, 16
+		// ponytail: fallback assumes one 8px cell per rune; the configured text
+		// shaper owns script-aware widths whenever it is available.
+		return utf8.RuneCountInString(s) * 8, 16
 	}
 }
 
@@ -4664,6 +4676,8 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 		return h.pluginStoreTreeScale, true
 	case PanelWallpaper:
 		return h.wallpaperTreeScale, true
+	case PanelOnboarding:
+		return h.onboardingTreeScale, true
 	}
 	return 0, false
 }

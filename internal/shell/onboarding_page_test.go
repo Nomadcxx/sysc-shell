@@ -65,15 +65,27 @@ func TestOnboardingHasBrandedHeaderAndUniformPillActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := reg.panelHosts[PanelOnboarding]
-	var brandPill *ui.Node
-	for _, node := range findAllKind(h.root, ui.KindCapsule) {
-		if len(findAllKind(node, ui.KindWordmark)) > 0 {
-			brandPill = node
-			break
-		}
-	}
+	brandPill := onboardingNodeByKey(h.root, "onb-brand-pill")
 	if brandPill == nil || brandPill.Stroke == 0 || brandPill.Shape != ui.ShapeStadium {
 		t.Fatalf("wordmark header pill = %+v, want a visibly stroked stadium capsule", brandPill)
+	}
+	mark := onboardingNodeByKey(h.root, "onb-ascii-wordmark")
+	if mark == nil || mark.Kind != ui.KindColumn || len(mark.Children) != 9 {
+		t.Fatalf("ASCII wordmark = %+v, want eight mark rows and its tagline", mark)
+	}
+	if mark.Name != "SYSC" || mark.Role != "img" {
+		t.Fatalf("ASCII wordmark semantics = %q/%q, want image named SYSC", mark.Name, mark.Role)
+	}
+	for i, row := range mark.Children {
+		if got := len([]rune(row.Text)); got != 69 {
+			t.Errorf("ASCII wordmark row %d has %d cells, want 69", i, got)
+		}
+		if row.Kind != ui.KindText || row.TextRole != theme.RoleMono || row.Tone != ui.ToneAccent || row.Bold || !row.CenterX {
+			t.Errorf("ASCII wordmark row %d = %+v, want centred regular-weight mono accent text", i, row)
+		}
+	}
+	if !strings.Contains(mark.Children[8].Text, "SEE YOU IN SPACE COWBOY") {
+		t.Fatalf("ASCII wordmark lost its tagline: %q", mark.Children[8].Text)
 	}
 	if strings.Contains(strings.ToLower(onbIntroWelcome), "sysc-shell provides") {
 		t.Fatalf("welcome copy still explains shell architecture: %q", onbIntroWelcome)
@@ -166,18 +178,106 @@ func TestOnboardingKeepsAdvancedSettingsOutOfSetup(t *testing.T) {
 	}
 }
 
-func TestOnboardingStepRailAndStageLayout(t *testing.T) {
-	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+func TestOnboardingBrandPillFitsResponsivePanel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w, h int
+	}{
+		{"compact", 800, 500},
+		{"standard", 1536, 864},
+		{"wide", 2560, 1440},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := newPanelRegistry(t)
+			if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: tc.w, OutH: tc.h}); err != nil {
+				t.Fatal(err)
+			}
+			panel := drainAux(t, reg, 2)[1].Open
+			if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
+				t.Fatal(err)
+			}
+			root := reg.panelHosts[PanelOnboarding].root
+			mark := onboardingNodeByKey(root, "onb-ascii-wordmark")
+			if tc.name == "compact" {
+				if mark == nil || len(mark.Children) != 1 || mark.Children[0].Text != "SYSC" {
+					t.Fatalf("compact wordmark = %+v, want the compact SYSC row", mark)
+				}
+			} else if mark == nil || len(mark.Children) != 9 {
+				t.Fatalf("full wordmark = %+v, want the complete ASCII mark", mark)
+			}
+			pill := onboardingNodeByKey(root, "onb-brand-pill")
+			left := root.Bounds.X + root.Padding
+			right := root.Bounds.X + root.Bounds.W - root.Padding
+			if pill.Bounds.X < left || pill.Bounds.X+pill.Bounds.W > right {
+				t.Fatalf("brand pill bounds %+v exceed panel content [%d,%d]", pill.Bounds, left, right)
+			}
+		})
+	}
+}
+
+func TestOnboardingWrapsJapaneseCopyWithConfiguredShaper(t *testing.T) {
+	cfg := config.Default()
+	cfg.Session.Language = "ja"
+	cfg.Accessibility.ReducedMotion = true
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 800, OutH: 500}); err != nil {
 		t.Fatal(err)
 	}
 	panel := drainAux(t, reg, 2)[1].Open
 	h := reg.panelHosts[PanelOnboarding]
-	h.onbPage = onbAppearance
-	reg.rebuildPanel(h)
+	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 150); err != nil {
+		t.Fatal(err)
+	}
+	if h.onboardingTreeScale != 150 {
+		t.Fatalf("onboarding tree scale = %d, want configured 150", h.onboardingTreeScale)
+	}
+	intro := onboardingNodeByKey(h.root, "onb-intro")
+	if intro == nil || len(intro.Children) == 0 {
+		t.Fatalf("Japanese intro = %+v, want wrapped text", intro)
+	}
+	if treeText(intro) == onbIntroWelcome {
+		t.Fatal("onboarding intro did not use the configured Japanese locale")
+	}
+	measure := h.measureText()
+	width := onbContentWidth(h)
+	for _, line := range intro.Children {
+		got, _ := measure(line.Text, ui.TextAttrsOf(line))
+		if got > width {
+			t.Errorf("wrapped Japanese line width = %d, want at most %d: %q", got, width, line.Text)
+		}
+	}
+}
+
+func TestOnboardingStepRailAndStageLayout(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 2560, OutH: 1440}); err != nil {
+		t.Fatal(err)
+	}
+	panel := drainAux(t, reg, 2)[1].Open
+	h := reg.panelHosts[PanelOnboarding]
+	assertPinnedActions := func() {
+		t.Helper()
+		if len(h.root.Children) != 3 {
+			t.Fatalf("onboarding root has %d children, want header, body and action row", len(h.root.Children))
+		}
+		body, actions := h.root.Children[1], h.root.Children[2]
+		if body.Bounds.H <= 0 {
+			t.Fatalf("scroll viewport height = %d, want positive height", body.Bounds.H)
+		}
+		wantBottom := h.root.Bounds.Y + h.root.Bounds.H - h.root.Padding
+		if got := actions.Bounds.Y + actions.Bounds.H; got != wantBottom {
+			t.Fatalf("action row ends at %d, want panel interior bottom %d", got, wantBottom)
+		}
+	}
 	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
 		t.Fatal(err)
 	}
+	assertPinnedActions()
+	h.onbPage = onbAppearance
+	reg.rebuildPanel(h)
+	assertPinnedActions()
 	active := onboardingNodeByKey(h.root, "onb-step-appearance")
 	if active == nil || active.Fill != ui.FillAccent {
 		t.Fatalf("active step = %+v, want the Appearance step selected", active)
@@ -196,6 +296,7 @@ func TestOnboardingStepRailAndStageLayout(t *testing.T) {
 	}
 	h.onbPage = onbRegion
 	reg.rebuildPanel(h)
+	assertPinnedActions()
 	intro := onboardingNodeByKey(h.root, "onb-intro")
 	if intro == nil || intro.Kind != ui.KindColumn || intro.Width != onbContentWidth(h) || len(intro.Children) == 0 {
 		t.Fatalf("page intro = %+v, want measured text within the content width", intro)
@@ -279,15 +380,18 @@ func TestOnboardingPaintsItsCapturedBackdrop(t *testing.T) {
 	}
 	panel.Callbacks.Backdrop(shot)
 	withBackdrop := paint()
-	card := onboardingNodeByKey(reg.panelHosts[PanelOnboarding].root, "onb-content-card")
+	root := reg.panelHosts[PanelOnboarding].root
+	card := onboardingNodeByKey(root, "onb-content-card")
 	if card == nil {
 		t.Fatal("onboarding render has no content card")
 	}
-	sampleX, sampleY := width/2, max(card.Bounds.Y/2, 1)
+	// Sample the top interior gutter. The taller ASCII wordmark occupies the
+	// old card.Bounds.Y/2 point, where the opaque brand pill correctly hides blur.
+	sampleX, sampleY := width/2, max(root.Padding/2, 1)
 	index := (sampleY*width + sampleX) * 4
 	if plain[index] == withBackdrop[index] && plain[index+1] == withBackdrop[index+1] &&
 		plain[index+2] == withBackdrop[index+2] && plain[index+3] == withBackdrop[index+3] {
-		t.Fatal("captured backdrop did not reach the clear glass frame above the content card")
+		t.Fatal("captured backdrop did not reach the clear onboarding frame gutter")
 	}
 }
 
