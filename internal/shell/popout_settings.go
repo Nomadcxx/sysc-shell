@@ -979,10 +979,33 @@ func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	case !settingsControlFills(e):
 		room = 0
 	}
-	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
+	control := settingsControl(h, e, room)
+	browseFeedback := ""
+	if e.Kind == settings.KindPath && h.settingsBrowsePath == e.Path {
+		switch {
+		case h.settingsBrowsePending:
+			browseFeedback = "Loading directories…"
+		case h.settingsBrowseError != "":
+			browseFeedback = "Could not read directories: " + h.settingsBrowseError
+		}
+	}
+	if browseFeedback != "" {
+		tone := ui.ToneSubtle
+		if h.settingsBrowseError != "" {
+			tone = ui.ToneError
+		}
+		control = &ui.Node{
+			Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: room,
+			Children: []*ui.Node{
+				control,
+				{Kind: ui.KindText, Text: browseFeedback, Tone: tone, Role: "status"},
+			},
+		}
+	}
+	trailing.Children = append(trailing.Children, control)
 
 	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{label, trailing}}
-	if e.Describe == "" {
+	if e.Describe == "" && browseFeedback == "" {
 		// A one-line row takes the control height so a run of them reads as a
 		// ladder. A described row is two stacked lines and a fixed height
 		// would crop the caption, so it measures itself; every size inside it
@@ -1389,25 +1412,130 @@ func settingsFontOptions(e settings.Entry) (options, values []string) {
 	return options, values
 }
 
+// ponytail: cap published child directories at 256; add paging only if a real
+// library needs more of one directory in the menu.
+const settingsBrowseDirectoryLimit = 256
+
 // settingsBrowseOptions lists where a path setting can go from where it is:
-// the directories inside it, and the one above it. os.ReadDir is the whole
-// mechanism; no portal is involved.
+// the directories inside it, and the one above it. No portal is involved.
 func settingsBrowseOptions(current string) []string {
+	options, _ := settingsBrowseOptionsRead(current, os.ReadDir)
+	return options
+}
+
+func settingsBrowseOptionsRead(current string, readDir func(string) ([]os.DirEntry, error)) ([]string, error) {
 	dir := wallpaper.ExpandHome(current)
 	var out []string
 	if parent := filepath.Dir(dir); parent != dir && parent != "" {
 		out = append(out, parent)
 	}
-	items, err := os.ReadDir(dir)
-	if err != nil {
-		return out
+	if readDir == nil {
+		readDir = os.ReadDir
 	}
+	items, err := readDir(dir)
+	if err != nil {
+		return out, err
+	}
+	children := 0
 	for _, item := range items {
 		if item.IsDir() && !strings.HasPrefix(item.Name(), ".") {
 			out = append(out, filepath.Join(dir, item.Name()))
+			children++
+			if children == settingsBrowseDirectoryLimit {
+				break
+			}
 		}
 	}
-	return out
+	return out, nil
+}
+
+// openSettingsBrowse marks the path pending and starts its scan on a worker.
+// Registry.mu is held by the caller.
+func (r *Registry) openSettingsBrowse(h *PanelHost, path string) {
+	e := h.set.ByPath(path)
+	if e == nil || e.Kind != settings.KindPath || e.Get == nil {
+		return
+	}
+	current := e.Get(h.draft)
+	dir := wallpaper.ExpandHome(current)
+	if h.settingsBrowseReady && h.settingsBrowseError == "" &&
+		h.settingsBrowsePath == path && h.settingsBrowseDir == dir {
+		if m := h.menus[path]; m != nil {
+			if h.menu != nil && h.menu != m {
+				h.menu.Cancel()
+			}
+			m.Open()
+			h.menu, h.menuPath = m, path
+			r.rebuildPanel(h)
+			return
+		}
+	}
+
+	h.invalidateSettingsBrowse()
+	generation := h.settingsBrowseGeneration
+	h.settingsBrowsePath, h.settingsBrowseDir = path, dir
+	h.settingsBrowsePending = true
+	h.settingsBrowseReady = false
+	h.settingsBrowseError = ""
+	if focused := h.focused(); focused != nil {
+		h.settingsBrowseFocus = focused.StableKey()
+	}
+	readDir := r.settingsReadDir
+	r.rebuildPanel(h)
+	go r.finishSettingsBrowse(h, path, current, dir, generation, readDir)
+}
+
+func (h *PanelHost) invalidateSettingsBrowse() {
+	h.settingsBrowseGeneration++
+	if h.menu != nil && h.menuPath == h.settingsBrowsePath {
+		h.menu.Cancel()
+		h.menu, h.menuPath = nil, ""
+	}
+	h.settingsBrowsePath = ""
+	h.settingsBrowseDir = ""
+	h.settingsBrowseFocus = ""
+	h.settingsBrowsePending = false
+	h.settingsBrowseReady = false
+	h.settingsBrowseError = ""
+}
+
+func (r *Registry) finishSettingsBrowse(h *PanelHost, path, current, dir string, generation uint64, readDir func(string) ([]os.DirEntry, error)) {
+	options, err := settingsBrowseOptionsRead(current, readDir)
+	r.mu.Lock()
+	if r.panelHosts[PanelSettings] != h || h.settingsBrowseGeneration != generation ||
+		h.settingsBrowsePath != path || h.settingsBrowseDir != dir {
+		r.mu.Unlock()
+		return
+	}
+	e := h.set.ByPath(path)
+	if e == nil || e.Get == nil || wallpaper.ExpandHome(e.Get(h.draft)) != dir {
+		h.invalidateSettingsBrowse()
+		r.rebuildPanel(h)
+		output, id := h.output, panelSurfaceID(h.id)
+		r.mu.Unlock()
+		r.publishSurface(output, id)
+		return
+	}
+	if h.menus == nil {
+		h.menus = map[string]*Menu{}
+	}
+	m := NewMenu(options, 0)
+	h.menus[path] = m
+	h.settingsBrowsePending = false
+	h.settingsBrowseReady = err == nil
+	h.settingsBrowseError = ""
+	if err != nil {
+		h.settingsBrowseError = err.Error()
+	}
+	if focused := h.focused(); len(options) > 0 && focused != nil &&
+		focused.StableKey() == h.settingsBrowseFocus && focused.Action == "browse:"+path {
+		m.Open()
+		h.menu, h.menuPath = m, path
+	}
+	r.rebuildPanel(h)
+	output, id := h.output, panelSurfaceID(h.id)
+	r.mu.Unlock()
+	r.publishSurface(output, id)
 }
 
 // overlayIdleGets swaps in the idle getters that read live walls state, and

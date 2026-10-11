@@ -217,7 +217,8 @@ type Registry struct {
 	backgroundRequests  chan struct{}
 	backgroundError     string
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
-	lookPath func(string) (string, error)
+	lookPath        func(string) (string, error)
+	settingsReadDir func(string) ([]os.DirEntry, error)
 	// animClock is the clock a panel animator samples. Tests freeze it to
 	// watch the reveal's pacing without racing the wall clock; production
 	// leaves it nil and the animator runs on time.Now.
@@ -435,6 +436,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		dwell:              newDwell(defaultDwell),
 		runArgv:            runArgvDefault,
 		lookPath:           exec.LookPath,
+		settingsReadDir:    os.ReadDir,
 		runArgvOutput:      runArgvOutputDefault,
 		startInhibit:       startInhibitDefault,
 		signalProcess:      signalProcessDefault,

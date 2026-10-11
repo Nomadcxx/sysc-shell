@@ -194,19 +194,26 @@ type PanelHost struct {
 	pressed    string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
-	pointer        interaction
-	drag           ui.Drag
-	lastAction     string
-	hoverX, hoverY int
-	monthDelta     int
-	errLabel       string
-	menu           *Menu
-	menuPath       string
-	menus          map[string]*Menu
-	sliderDrag     *ui.Node
-	scrollDrag     *ui.Node
-	set            *settings.Registry
-	draft          config.Config
+	pointer                  interaction
+	drag                     ui.Drag
+	lastAction               string
+	hoverX, hoverY           int
+	monthDelta               int
+	errLabel                 string
+	menu                     *Menu
+	menuPath                 string
+	menus                    map[string]*Menu
+	settingsBrowseGeneration uint64
+	settingsBrowsePath       string
+	settingsBrowseDir        string
+	settingsBrowseFocus      string
+	settingsBrowsePending    bool
+	settingsBrowseReady      bool
+	settingsBrowseError      string
+	sliderDrag               *ui.Node
+	scrollDrag               *ui.Node
+	set                      *settings.Registry
+	draft                    config.Config
 	// barSelected is the chip the lane editor has selected, as the address
 	// barRefAction encodes. barOutput is the output whose lanes are being
 	// edited, empty for the shared bar (D7).
@@ -541,6 +548,7 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		return nil
 	}
 	if id == PanelSettings {
+		h.invalidateSettingsBrowse()
 		r.settingsSectionChangingLocked(h, section)
 	}
 	h.section, h.settingsPage = section, page
@@ -2651,6 +2659,11 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	}
 	switch key {
 	case keyEsc:
+		if h.id == PanelSettings && h.settingsBrowsePending {
+			h.invalidateSettingsBrowse()
+			r.rebuildPanel(h)
+			return true
+		}
 		if h.id == PanelFiles && r.files != nil {
 			if len(r.files.pendingDelete) > 0 {
 				r.files.pendingDelete = nil
@@ -3086,6 +3099,9 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 		return true
 	}
 	if n.Name == "Search" {
+		if h.id == PanelSettings {
+			h.invalidateSettingsBrowse()
+		}
 		h.query = f.Text
 		if h.id == PanelPluginStore {
 			h.pluginStoreQuery.Text = f.Text
@@ -3459,6 +3475,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 			return h.selectControlCentreSection(r, section)
 		}
 		if h.id == PanelSettings {
+			h.invalidateSettingsBrowse()
 			r.settingsSectionChangingLocked(h, section)
 		}
 		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
@@ -3466,6 +3483,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return true
 	}
 	if page, ok := strings.CutPrefix(n.Action, "page:"); ok {
+		h.invalidateSettingsBrowse()
 		h.settingsPage, h.settingsScrollTop = page, true
 		r.rebuildPanel(h)
 		return true
@@ -3498,21 +3516,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return true
 	}
 	if path, ok := strings.CutPrefix(n.Action, "browse:"); ok {
-		e := h.set.ByPath(path)
-		if e == nil {
-			return true
-		}
-		// The browser is the menu the enum entries already use, filled with
-		// where this path can go from where it is.
-		if h.menus == nil {
-			h.menus = map[string]*Menu{}
-		}
-		m := NewMenu(settingsBrowseOptions(e.Get(h.draft)), 0)
-		m.Open()
-		h.menus[path] = m
-		h.menu = m
-		h.menuPath = path
-		r.rebuildPanel(h)
+		r.openSettingsBrowse(h, path)
 		return true
 	}
 	if path, ok := strings.CutPrefix(n.Action, "reset:"); ok {
@@ -4117,6 +4121,9 @@ func settingNodeValue(n *ui.Node) string {
 // at open would keep offering the previous source's vocabulary for as long as
 // the panel stayed up.
 func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
+	if e != nil && h.id == PanelSettings && e.Kind == settings.KindPath {
+		h.invalidateSettingsBrowse()
+	}
 	if e != nil && (e.Path == "idle.after" || e.Path == "idle.delay") {
 		h.applyIdleSetting(r, e.Path, v)
 		return

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1332,6 +1333,216 @@ func TestPathBrowseListsDirectories(t *testing.T) {
 			t.Errorf("browse offered %q, which is not a directory to move into", unwanted)
 		}
 	}
+}
+
+func TestPathBrowseBoundsPublishedDirectories(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < settingsBrowseDirectoryLimit+1; i++ {
+		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("dir-%03d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := settingsBrowseOptions(root)
+	if len(got) > settingsBrowseDirectoryLimit+1 {
+		t.Fatalf("browse published %d options, limit including parent is %d", len(got), settingsBrowseDirectoryLimit+1)
+	}
+	if !slices.Contains(got, filepath.Dir(root)) {
+		t.Fatalf("bounded browse omitted parent %q", filepath.Dir(root))
+	}
+}
+
+func TestSettingsPathBrowseShowsLocalFeedback(t *testing.T) {
+	h := newSettingsHost()
+	e := h.set.ByPath("wallpaper.image-directory")
+	if e == nil {
+		t.Fatal("wallpaper image directory setting is missing")
+	}
+	h.settingsBrowsePath = e.Path
+	h.settingsBrowsePending = true
+	row := settingsEntryRow(h, *e, 600)
+	status := findNode(row, func(n *ui.Node) bool { return n.Kind == ui.KindText && n.Text == "Loading directories…" })
+	if status == nil {
+		t.Fatal("pending browse did not show local feedback")
+	}
+
+	h.settingsBrowsePending = false
+	h.settingsBrowseError = "permission denied"
+	row = settingsEntryRow(h, *e, 600)
+	status = findNode(row, func(n *ui.Node) bool {
+		return n.Kind == ui.KindText && strings.Contains(n.Text, "permission denied") && n.Tone == ui.ToneError
+	})
+	if status == nil {
+		t.Fatal("failed browse did not show its local error")
+	}
+}
+
+func TestSettingsPathBrowseDropsCompletionAfterValueChanges(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+	first, second := t.TempDir(), t.TempDir()
+	started, release := make(chan struct{}), make(chan struct{})
+	reg.settingsReadDir = func(string) ([]os.DirEntry, error) {
+		close(started)
+		<-release
+		return os.ReadDir(first)
+	}
+	reg.mu.Lock()
+	h.section = "Wallpaper"
+	h.draft.Wallpaper.ImageDirectory = first
+	reg.rebuildPanel(h)
+	h.setFocus(byAction(h.root, "browse:wallpaper.image-directory"))
+	reg.openSettingsBrowse(h, "wallpaper.image-directory")
+	reg.mu.Unlock()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("directory read did not start")
+	}
+	reg.mu.Lock()
+	h.draft.Wallpaper.ImageDirectory = second
+	reg.mu.Unlock()
+	close(release)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		pending, ready := h.settingsBrowsePending, h.settingsBrowseReady
+		menu := h.menus["wallpaper.image-directory"]
+		reg.mu.Unlock()
+		if !pending {
+			if ready || menu != nil {
+				t.Fatal("browse completion for the old path was published")
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("stale browse completion did not clear its pending state")
+}
+
+func TestSettingsPathBrowseDropsCompletionForRetiredHost(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	retired := &PanelHost{id: PanelSettings}
+	replacement := reg.panelHosts[PanelSettings]
+	root := t.TempDir()
+	reg.finishSettingsBrowse(retired, "wallpaper.image-directory", root, root, 1,
+		func(string) ([]os.DirEntry, error) { return nil, nil })
+	if retired.menus != nil || replacement.menus["wallpaper.image-directory"] != nil {
+		t.Fatal("completion for a retired host published a browse menu")
+	}
+}
+
+func TestSettingsPathBrowseOpensMenuWithFocusOnBrowse(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+	root := t.TempDir()
+	path := "wallpaper.image-directory"
+	reg.mu.Lock()
+	h.section = "Wallpaper"
+	h.draft.Wallpaper.ImageDirectory = root
+	reg.rebuildPanel(h)
+	browse := byAction(h.root, "browse:"+path)
+	if browse == nil {
+		reg.mu.Unlock()
+		t.Fatal("wallpaper browse control is missing")
+	}
+	h.setFocus(browse)
+	h.settingsBrowseGeneration = 1
+	h.settingsBrowsePath, h.settingsBrowseDir = path, root
+	h.settingsBrowseFocus = browse.StableKey()
+	h.settingsBrowsePending = true
+	reg.mu.Unlock()
+
+	reg.finishSettingsBrowse(h, path, root, root, 1, os.ReadDir)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if focused := h.focused(); focused == nil || focused.Action != "browse:"+path {
+		t.Fatalf("completion moved keyboard focus from Browse: %+v", focused)
+	}
+	if h.menu == nil || h.menuPath != path || !h.menu.Opened() {
+		t.Fatal("completion did not open the directory menu while Browse kept focus")
+	}
+}
+
+func TestSettingsPathBrowseDoesNotHoldPanelOwnerDuringRead(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	requests := drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+	root := t.TempDir()
+	started, release := make(chan struct{}), make(chan struct{})
+	reg.mu.Lock()
+	h.section = "Wallpaper"
+	h.draft.Wallpaper.ImageDirectory = root
+	reg.settingsReadDir = func(string) ([]os.DirEntry, error) {
+		close(started)
+		<-release
+		return os.ReadDir(root)
+	}
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+	t.Cleanup(func() { close(release) })
+
+	activated := make(chan struct{})
+	go func() {
+		reg.mu.Lock()
+		for i, n := range h.focus {
+			if n.Action == "browse:wallpaper.image-directory" {
+				h.roving.Set(i)
+				break
+			}
+		}
+		h.activate(reg)
+		reg.mu.Unlock()
+		close(activated)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("directory read did not start")
+	}
+	select {
+	case <-activated:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("browse activation waited for the held directory read")
+	}
+
+	complete := func(name string, run func() error) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- run() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		case <-time.After(50 * time.Millisecond):
+			t.Fatalf("%s waited for the held directory read", name)
+		}
+	}
+	handle := requests[1].Open.Callbacks.Handle
+	complete("unrelated input", func() error {
+		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyDown})
+		return nil
+	})
+	complete("close", func() error {
+		reg.ClosePanel(PanelSettings)
+		return nil
+	})
 }
 
 // TestSettingsBodyLeavesRoomForTheRail: the rows right-pin their controls, so
