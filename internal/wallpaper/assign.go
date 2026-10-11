@@ -36,6 +36,7 @@ type Assignment struct {
 	// missing image on disk.
 	Effect string
 	Theme  string
+	Blur   int
 	// PreviewPath is a still for a video, used for the theme seed and the
 	// static fallback on Restore. Empty when we could not extract one.
 	PreviewPath string
@@ -74,6 +75,7 @@ type Job struct {
 	Kind        Kind
 	Effect      string
 	Theme       string
+	Blur        int
 	// Previous captures the output assignment before this apply marks its
 	// runtime as starting. The engine uses it to roll back a failed replacement.
 	Previous       Assignment
@@ -219,7 +221,7 @@ func (s *Store) Commit(j Job, preview, engine string) bool {
 			desired = StatePaused
 		}
 	}
-	a := Assignment{Kind: j.Kind, Path: j.Path, Effect: j.Effect, Theme: j.Theme, PreviewPath: preview, DesiredPlayback: desired}
+	a := Assignment{Kind: j.Kind, Path: j.Path, Effect: j.Effect, Theme: j.Theme, Blur: j.Blur, PreviewPath: preview, DesiredPlayback: desired}
 	s.assigned[j.Connector] = a
 
 	rt := s.runtime[j.Connector]
@@ -311,6 +313,7 @@ func (s *Store) Reconnect(connector string) []Job {
 	for i := range jobs {
 		jobs[i].Effect = a.Effect
 		jobs[i].Theme = a.Theme
+		jobs[i].Blur = a.Blur
 	}
 	return jobs
 }

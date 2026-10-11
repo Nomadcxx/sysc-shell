@@ -99,9 +99,9 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 		case snap := <-ch:
 			r.mu.Lock()
 			var hosts []*PanelHost
-			for _, id := range []PanelID{PanelWallpaper, PanelTerminalArt} {
+			for _, id := range []PanelID{PanelWallpaper, PanelTerminalArt, PanelSettings} {
 				h := r.panelHosts[id]
-				if h == nil {
+				if h == nil || (id == PanelSettings && h.section != "Terminal Art" && strings.TrimSpace(h.query) == "") {
 					continue
 				}
 				h.wallpaperSnap = snap

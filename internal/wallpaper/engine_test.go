@@ -700,8 +700,9 @@ func TestFailedEffectLaunchRestoresStaticFallbackImage(t *testing.T) {
 func TestFailedEffectLaunchRestoresPriorEffectWithoutStill(t *testing.T) {
 	h := newEngineHarness(t)
 	h.withTerminal()
-	previous := Assignment{Kind: KindEffect, Effect: "fire", Theme: "nord"}
-	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: previous.Effect, Theme: previous.Theme}, defaultSettings()); err != nil {
+	h.eng.caps.Catalog.BlurMax = 64
+	previous := Assignment{Kind: KindEffect, Effect: "fire", Theme: "nord", Blur: 16}
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: previous.Effect, Theme: previous.Theme, Blur: previous.Blur}, defaultSettings()); err != nil {
 		t.Fatalf("prior effect: %v", err)
 	}
 
@@ -736,7 +737,7 @@ func TestFailedEffectLaunchRestoresPriorEffectWithoutStill(t *testing.T) {
 		t.Fatalf("apply error = %v, want prior effect runtime restored", err)
 	}
 	argvs := h.argvs()
-	if len(argvs) != 3 || !slices.Contains(argvs[2], "fire") || !slices.Contains(argvs[2], "nord") {
+	if len(argvs) != 3 || !slices.Contains(argvs[2], "fire") || !slices.Contains(argvs[2], "nord") || !slices.Contains(argvs[2], "--blur") || !slices.Contains(argvs[2], "16") {
 		t.Fatalf("launches = %v, want prior fire/nord effect relaunched", argvs)
 	}
 }
@@ -1513,5 +1514,38 @@ func TestOwnedExitedRejectsStaleGenerationAndStoppedOwnership(t *testing.T) {
 	}
 	if h.eng.OwnedExited("DP-1", 2) {
 		t.Fatal("restored output reported exited")
+	}
+}
+
+func TestTerminalBlurLaunchAndCompatibility(t *testing.T) {
+	h := newEngineHarness(t)
+	h.withTerminal()
+	job := Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire", Theme: "nord", Blur: 16}
+	if _, err := h.eng.Apply(job, defaultSettings()); err == nil {
+		t.Fatal("old engine accepted blur")
+	}
+	if len(h.argvs()) != 0 {
+		t.Fatal("unsupported blur replaced wallpaper")
+	}
+	h.eng.caps.Catalog.BlurMax = 64
+	if _, err := h.eng.Apply(job, defaultSettings()); err != nil {
+		t.Fatal(err)
+	}
+	args := h.argvs()[0]
+	found := false
+	for i, v := range args {
+		if v == "--blur" && i+1 < len(args) && args[i+1] == "16" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("launch omitted blur: %v", args)
+	}
+	job.Blur = 65
+	if _, err := h.eng.Apply(job, defaultSettings()); err == nil {
+		t.Fatal("out-of-range blur accepted")
+	}
+	if len(h.argvs()) != 1 {
+		t.Fatal("invalid blur restarted wallpaper")
 	}
 }

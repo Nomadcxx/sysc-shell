@@ -41,6 +41,7 @@ type Command struct {
 	Kind   Kind
 	Effect string
 	Theme  string
+	Blur   int
 }
 
 // Capabilities is what is installed, probed once at start and projected into
@@ -268,7 +269,7 @@ func (s *Service) reconcile() {
 		if !slices.Contains(s.store.Connectors(), connector) {
 			continue
 		}
-		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme})
+		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme, Blur: a.Blur})
 	}
 }
 
@@ -403,6 +404,7 @@ func (s *Service) handle(c Command) {
 		for i := range jobs {
 			jobs[i].Effect = c.Effect
 			jobs[i].Theme = c.Theme
+			jobs[i].Blur = c.Blur
 		}
 		s.dispatch(jobs)
 		return

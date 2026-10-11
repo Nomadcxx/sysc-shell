@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -11,6 +12,7 @@ import (
 // run without artwork: the shell offers no way to supply it, so text effects
 // are left out here rather than hidden by each caller.
 type Catalog struct {
+	BlurMax int
 	Effects []string
 	Themes  []string
 }
@@ -27,6 +29,13 @@ func ParseList(s string) Catalog {
 			if len(f) < 3 || f[2] == "0" {
 				c.Effects = append(c.Effects, f[1])
 			}
+		case "capability":
+			if len(f) == 3 && f[1] == "blur" {
+				n, err := strconv.Atoi(f[2])
+				if err == nil && n > 0 && n <= 64 {
+					c.BlurMax = n
+				}
+			}
 		case "theme":
 			c.Themes = append(c.Themes, f[1])
 		}
@@ -34,10 +43,13 @@ func ParseList(s string) Catalog {
 	return c
 }
 
-func terminalArgs(socket, connector, effect, theme string) []string {
+func terminalArgs(socket, connector, effect, theme string, blur int) []string {
 	args := []string{"sysc-terminal", "-I", socket, "--output", connector, "--effect", effect}
 	if theme != "" {
 		args = append(args, "--theme", theme)
+	}
+	if blur > 0 {
+		args = append(args, "--blur", strconv.Itoa(blur))
 	}
 	return args
 }
@@ -64,6 +76,9 @@ func (e *gslapperEngine) applyEffect(job Job, set Settings) (string, error) {
 	if !slices.Contains(caps.Catalog.Effects, job.Effect) {
 		return "", preserveApplyFailure(job, fmt.Errorf("wallpaper: sysc-terminal does not offer effect %q", job.Effect))
 	}
+	if job.Blur < 0 || job.Blur > caps.Catalog.BlurMax {
+		return "", preserveApplyFailure(job, errors.New("wallpaper: installed sysc-terminal does not support this blur strength; update the engine"))
+	}
 	socket := terminalSocketPath(e.dir, job.Connector)
 	if e.ownedProcess(job.Connector) == nil || e.currentSocket(job.Connector) != socket {
 		if err := clearDeadSocketIfPresent(job.Connector, socket); err != nil {
@@ -81,7 +96,7 @@ func (e *gslapperEngine) applyEffect(job Job, set Settings) (string, error) {
 		return "", preserveApplyFailure(job, err)
 	}
 	e.clearActive(job.Connector)
-	if err := e.launch(job.Connector, socket, terminalArgs(socket, job.Connector, job.Effect, job.Theme)); err != nil {
+	if err := e.launch(job.Connector, socket, terminalArgs(socket, job.Connector, job.Effect, job.Theme, job.Blur)); err != nil {
 		return "", e.restorePreviousAfterApplyFailure(job, set, err)
 	}
 	e.rememberApply(job, "", EngineTerminal, StatePlaying)
@@ -111,7 +126,7 @@ func (e *gslapperEngine) restorePreviousAfterApplyFailure(job Job, set Settings,
 	case previous.Kind == KindEffect && job.PreviousEngine == EngineTerminal &&
 		(job.PreviousState == StatePlaying || job.PreviousState == StatePaused):
 		socket := terminalSocketPath(e.dir, job.Connector)
-		restoreErr = e.launch(job.Connector, socket, terminalArgs(socket, job.Connector, previous.Effect, previous.Theme))
+		restoreErr = e.launch(job.Connector, socket, terminalArgs(socket, job.Connector, previous.Effect, previous.Theme, previous.Blur))
 		if restoreErr == nil {
 			if job.PreviousState == StatePaused {
 				if err := e.setPausedLocked(job.Connector, true); err != nil {

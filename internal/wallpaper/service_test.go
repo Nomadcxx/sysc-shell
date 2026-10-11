@@ -838,3 +838,20 @@ func TestServiceReportsTheOpenFolderProgress(t *testing.T) {
 		t.Fatalf("library total %d, want 3 files", snap.ThumbsTotal)
 	}
 }
+
+func TestTerminalBlurServiceReplay(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord", Blur: 16})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Blur == 16 })
+	svc.Enqueue(Command{Op: OpDisconnect, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return !slices.Contains(s.Connectors, "DP-1") })
+	svc.Enqueue(Command{Op: OpConnect, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { engine.mu.Lock(); defer engine.mu.Unlock(); return len(engine.applied) >= 2 })
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.applied[len(engine.applied)-1].Blur != 16 {
+		t.Fatal("reconnect lost blur")
+	}
+}

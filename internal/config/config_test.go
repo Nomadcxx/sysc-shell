@@ -1496,3 +1496,30 @@ func TestApplyIdleLock(t *testing.T) {
 		t.Fatal("want error on non-duration")
 	}
 }
+
+func TestTerminalArtBlurRoundTrip(t *testing.T) {
+	for _, value := range []int{0, 16, 64} {
+		cfg, err := Parse([]byte(fmt.Sprintf(`{"terminal-art":{"palette":"nord","blur":%d}}`, value)))
+		if err != nil || cfg.TerminalArt.Blur != value {
+			t.Fatalf("blur %d: %+v %v", value, cfg.TerminalArt, err)
+		}
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err = Write(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		back, err := Load(path)
+		if err != nil || back.TerminalArt.Blur != value {
+			t.Fatalf("round trip: %+v %v", back.TerminalArt, err)
+		}
+	}
+	cfg := Default()
+	cfg.TerminalArt.Blur = 65
+	if err := Write(filepath.Join(t.TempDir(), "invalid.json"), cfg); err == nil {
+		t.Fatal("invalid blur written")
+	}
+	for _, value := range []int{-1, 65} {
+		if _, err := Parse([]byte(fmt.Sprintf(`{"terminal-art":{"blur":%d}}`, value))); err == nil {
+			t.Fatalf("blur %d accepted", value)
+		}
+	}
+}

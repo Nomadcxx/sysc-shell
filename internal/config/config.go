@@ -349,6 +349,7 @@ type Wallpaper struct {
 // name; empty means the catalog's first. The catalog is only known at run
 // time, so the loader checks the name's shape and the panel checks it exists.
 type TerminalArt struct {
+	Blur    int
 	Palette string
 }
 

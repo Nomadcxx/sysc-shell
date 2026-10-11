@@ -1197,3 +1197,19 @@ func TestTerminalOpacityEntry(t *testing.T) {
 		t.Fatal("40 is below the floor and must be refused")
 	}
 }
+
+func TestTerminalArtBlurEntry(t *testing.T) {
+	e := Default().ByPath("terminal-art.blur")
+	if e == nil || e.Min != 0 || e.Max != 64 || e.Present != PresentSlider {
+		t.Fatalf("entry = %+v", e)
+	}
+	cfg := config.Default()
+	if err := e.Set(&cfg, "16"); err != nil || cfg.TerminalArt.Blur != 16 {
+		t.Fatalf("blur = %d %v", cfg.TerminalArt.Blur, err)
+	}
+	for _, v := range []string{"-1", "65", "bad"} {
+		if err := e.Set(&cfg, v); err == nil {
+			t.Fatalf("%q accepted", v)
+		}
+	}
+}

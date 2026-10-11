@@ -571,6 +571,27 @@ func TestTrayRootReplacementDropsThePendingMenu(t *testing.T) {
 	}
 }
 
+// Panels share one root generation, but opening a new panel still ends the
+// gesture that requested a tray menu. Exercise that case without depending
+// on whether first-start onboarding happened to open the initial group.
+func TestTrayPanelAddedDropsThePendingMenu(t *testing.T) {
+	h := newHarness(t, barOnly(), map[uint32]string{7: "DP-1"})
+	if err := h.reg.OpenPanel(shell.PanelClock, 7, shell.Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	mail := item("org.mail", "/item/1", "mail", "Mail", 1)
+	h.reg.ApplyTray(snapshot(1, mail))
+	h.sweep(t, 7, buttonRight, func() bool { return h.service.count(tray.CommandMenuOpen) > 0 })
+	if err := h.reg.OpenPanel(shell.PanelWeather, 7, shell.Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	h.reg.ApplyTray(trayclient.Message{Generation: 1, Kind: trayclient.KindMenuUpdated,
+		Menu: tray.MenuUpdate{Key: mail.Key, Menu: flatMenu(1, "Open")}})
+	if _, ok := h.compositor.outputOf("tray-menu"); ok {
+		t.Fatal("a late tray menu opened after another panel joined the group")
+	}
+}
+
 // A menu whose siblings repeat an ID is malformed. The shell shows an empty
 // menu rather than guessing, and a selection against it sends nothing.
 func TestTrayMalformedSiblingsSelectNothing(t *testing.T) {
