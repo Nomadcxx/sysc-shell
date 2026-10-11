@@ -307,9 +307,10 @@ type PanelHost struct {
 	notifyExpand string
 	notifyMenu   bool
 
-	profiles      []string
-	profileActive string
-	profilesOK    bool
+	profiles       []string
+	profileActive  string
+	profilesOK     bool
+	profilePending bool
 
 	audioTab    string
 	mixerLease  *services.MixerLease
