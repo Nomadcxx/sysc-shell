@@ -161,22 +161,31 @@ func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 	h.onboardingTreeScale = h.scale120
 	m := h.theme.Metrics
 	step := &ui.Node{
+		Key:      "onb-progress-label",
 		Kind:     ui.KindText,
 		Text:     fmt.Sprintf("// %02d / %02d", int(h.onbPage)+1, int(onbPages)),
 		Name:     onbText(h, "progress_name", "Setup progress"),
 		Role:     "status",
 		TextRole: theme.RoleMono,
 		Tone:     ui.ToneAccent,
+		CenterX:  true,
 	}
 	brand := onboardingSyscWordmark(h)
 	brandPill := &ui.Node{
-		Kind: ui.KindCapsule, Key: "onb-brand-pill", Padding: m.ButtonPadding,
+		Kind: ui.KindCapsule, Key: "onb-brand-pill", Padding: m.PanelPadding,
+		PaddingX: m.PanelPadding + theme.MarginS, CenterX: true,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeStadium, Stroke: 1, // token-exempt: a hairline border, not a ladder value
 		StrokeFill: ui.FillOutline,
-		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
-			brand,
-			{Kind: ui.KindText, Text: onbText(h, "label", "SETUP"), TextRole: theme.RoleMono, Tone: ui.ToneAccent},
-		}}},
+		Children:   []*ui.Node{brand},
+	}
+	setupLabel := &ui.Node{
+		Kind: ui.KindText, Key: "onb-setup-label", Text: onbText(h, "label", "SETUP"),
+		Name: "Setup", Role: "heading", TextRole: theme.RoleTitle,
+		Tone: ui.ToneAccent, CenterX: true,
+	}
+	head := &ui.Node{
+		Kind: ui.KindColumn, Key: "onb-header", Gap: theme.MarginS, Padding: m.PanelPadding,
+		Children: []*ui.Node{step, brandPill, setupLabel},
 	}
 	moveButton := h.button("onb-move", onbText(h, "action.move", "Move window"), "drag_indicator")
 	moveButton.Fill = ui.FillOutline
@@ -186,22 +195,19 @@ func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 		moveHintText = onbText(h, "move_mode_hint", "Use arrows or click a position. Enter or Escape exits move mode.")
 	}
 	moveHint := &ui.Node{
-		Kind: ui.KindText, Text: moveHintText, Role: "status",
+		Kind: ui.KindText, Key: "onb-move-hint", Text: moveHintText, Role: "status",
 		TextRole: theme.RoleMono, Tone: ui.ToneSubtle,
 	}
-	headerControls := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{step, moveButton}}
-	if onbBodyWidth(h) < onbStepRailMinWidth {
-		headerControls = &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{step, moveButton}}
-	}
-	head := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, CenterY: true, Children: []*ui.Node{
-		&ui.Node{Kind: ui.KindRow, PinEnd: true, CenterY: true, Children: []*ui.Node{
-			brandPill,
-			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-				headerControls,
-				moveHint,
-			}},
-		}},
+	moveControls := &ui.Node{Kind: ui.KindRow, Key: "onb-move-controls", Gap: theme.MarginS, Children: []*ui.Node{moveButton, moveHint}}
+	navigation := onbActions(r, h)
+	footer := &ui.Node{Kind: ui.KindRow, Key: "onb-footer", Gap: theme.MarginXL, PinEnd: true, Children: []*ui.Node{
+		moveControls, navigation,
 	}}
+	if onbBodyWidth(h) < onbStepRailMinWidth {
+		footer = &ui.Node{Kind: ui.KindColumn, Key: "onb-footer", Gap: theme.MarginXS, Children: []*ui.Node{
+			moveControls, navigation,
+		}}
+	}
 	stageChildren := append([]*ui.Node{{
 		Kind: ui.KindText, Text: onbTitle(h, h.onbPage), Name: onbTitle(h, h.onbPage),
 		Role: "heading", TextRole: theme.RoleTitle,
@@ -224,7 +230,6 @@ func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 		Kind: ui.KindCapsule, Key: "onb-content-card", Width: onbBodyWidth(h),
 		Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
-		CenterY:  true,
 		Children: []*ui.Node{row},
 	}
 	frame := &ui.Node{
@@ -238,8 +243,8 @@ func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 		ScrollOffset: h.onbScroll,
 		Children:     []*ui.Node{frame},
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: []*ui.Node{
-		head, body, onbActions(r, h),
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: m.PanelPadding, Children: []*ui.Node{
+		head, body, footer,
 	}}
 }
 
@@ -443,8 +448,10 @@ func onbActions(r *Registry, h *PanelHost) *ui.Node {
 		}
 	}
 	skip := h.button("onb-skip", onbText(h, "action.not_now", onbSkipLabel), "")
-	skip.Fill = ui.FillOutline
+	skip.Fill = ui.FillOutlineVariant
 	skip.Shape = ui.ShapeStadium
+	skip.Stroke = 1
+	skip.StrokeFill = ui.FillAccent
 	navigation := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
 		skip,
 		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{back, main}},

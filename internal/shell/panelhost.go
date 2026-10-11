@@ -1262,8 +1262,11 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelAudio {
 		size = audioPanelSize(outW, outH)
 	}
-	if id == PanelSettings || id == PanelOnboarding {
+	if id == PanelSettings {
 		size = settingsPanelSize(outW, outH)
+	}
+	if id == PanelOnboarding {
+		size = onboardingPanelSize(outW, outH)
 	}
 	trig.OutW, trig.OutH = outW, outH
 	place := r.panelPlacementLocked(id, output, trig, size)
@@ -1796,6 +1799,15 @@ func (h *PanelHost) rootStyle(t Theme, blurBehind bool) render.Style {
 // width and 88 percent of its height, capped at 1120x820.
 func settingsPanelSize(outputW, outputH int) ui.Rect {
 	return ui.Rect{W: min(1120, outputW*72/100), H: min(820, outputH*88/100)}
+}
+
+// onboardingPanelSize keeps the wizard compact on desktop outputs. Shorter
+// outputs retain the settings panel's responsive height, while longer setup
+// content scrolls inside the 640-pixel frame.
+func onboardingPanelSize(outputW, outputH int) ui.Rect {
+	size := settingsPanelSize(outputW, outputH)
+	size.H = min(size.H, 640)
+	return size
 }
 
 // settingsOpacityFloor is the least alpha the settings root paints at (D7):
@@ -3980,7 +3992,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// and a preview pane, not the compact network-list width.
 		return ui.Rect{W: 800, H: 650}
 	case PanelOnboarding:
-		return settingsPanelSize(1920, 1080)
+		return onboardingPanelSize(1920, 1080)
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
