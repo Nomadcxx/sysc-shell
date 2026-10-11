@@ -58,14 +58,18 @@ type Brightness struct {
 	i2cSysfsRoot string
 	probe        func(bus int) (connector string, current, max int, err error)
 
-	devices      []brightnessDevice
-	lastDisplays []DisplayInfo
-	knownDDC     map[int]ddcIdent
-	cooldown     map[int]time.Time
-	lastScan     time.Time
-	failures     map[string]int
-	firstScan    bool
-	poke         chan struct{}
+	devices          []brightnessDevice
+	deviceGeneration uint64
+	// ponytail: one generation invalidates all display reads on any write; use per-device counters only if write bursts starve unrelated refreshes.
+	writeGeneration  uint64
+	writesInProgress int
+	lastDisplays     []DisplayInfo
+	knownDDC         map[int]ddcIdent
+	cooldown         map[int]time.Time
+	lastScan         time.Time
+	failures         map[string]int
+	firstScan        bool
+	poke             chan struct{}
 }
 
 type ddcIdent struct {
@@ -204,30 +208,41 @@ func seedOf(d brightnessDevice) (int, bool) {
 
 // SetDisplay and StepDisplay address one display by its ID.
 func (b *Brightness) SetDisplay(id string, level int) error {
-	d := b.deviceByID(id)
+	d := b.deviceForWrite(id)
 	if d == nil {
 		return fmt.Errorf("services: no display %q", id)
 	}
+	defer b.endWrite()
 	return d.Set(level)
 }
 
 func (b *Brightness) StepDisplay(id string, delta int) error {
-	d := b.deviceByID(id)
+	d := b.deviceForWrite(id)
 	if d == nil {
 		return fmt.Errorf("services: no display %q", id)
 	}
+	defer b.endWrite()
 	return d.Step(delta)
 }
 
-func (b *Brightness) deviceByID(id string) brightnessDevice {
+func (b *Brightness) deviceForWrite(id string) brightnessDevice {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, d := range b.devices {
 		if d.ID() == id {
+			b.writeGeneration++
+			b.writesInProgress++
 			return d
 		}
 	}
 	return nil
+}
+
+func (b *Brightness) endWrite() {
+	b.mu.Lock()
+	b.writeGeneration++
+	b.writesInProgress--
+	b.mu.Unlock()
 }
 
 // CachedState returns the last completed poll without touching sysfs. The
@@ -316,28 +331,45 @@ func (b *Brightness) run(stop, done chan struct{}) {
 
 func (b *Brightness) poll(baseline bool) {
 	b.refresh()
+	b.pollDevices(baseline)
+}
+
+// pollDevices reads one device snapshot off-lock, then publishes it only if
+// neither hotplug nor a brightness write made that snapshot stale.
+func (b *Brightness) pollDevices(baseline bool) {
 	b.mu.Lock()
 	devices := append([]brightnessDevice(nil), b.devices...)
 	def := b.defaultDeviceLocked()
+	deviceGeneration, writeGeneration := b.deviceGeneration, b.writeGeneration
+	b.mu.Unlock()
+
 	var st BrightnessState
-	err := error(errNoDisplay)
+	defaultErr := error(errNoDisplay)
 	infos := make([]DisplayInfo, 0, len(devices))
-	for _, d := range devices {
+	readErrs := make([]error, len(devices))
+	for i, d := range devices {
 		level, dErr := d.Read()
+		readErrs[i] = dErr
 		infos = append(infos, DisplayInfo{ID: d.ID(), Label: d.Label(), Kind: d.Kind(), Level: level, OK: dErr == nil})
-		b.trackFailureLocked(d, dErr)
 		if d == def {
 			st = BrightnessState{Level: level}
-			err = dErr
+			defaultErr = dErr
 		}
 	}
-	b.lastDisplays = infos
-	b.ok = len(b.devices) > 0
-	if err != nil {
-		b.mu.Unlock()
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if deviceGeneration != b.deviceGeneration || writeGeneration != b.writeGeneration || b.writesInProgress > 0 {
 		return
 	}
-	defer b.mu.Unlock()
+	for i, d := range devices {
+		b.trackFailureLocked(d, readErrs[i])
+	}
+	b.lastDisplays = infos
+	b.ok = len(devices) > 0
+	if defaultErr != nil {
+		return
+	}
 	if baseline || !b.hasLast {
 		b.last, b.hasLast = st, true
 		return
@@ -399,6 +431,7 @@ func (b *Brightness) refresh() {
 	if !needScan {
 		b.mu.Lock()
 		b.devices = assemble(sysfs, known, b.devRoot, b.devices)
+		b.deviceGeneration++
 		b.seedDisplaysLocked()
 		b.mu.Unlock()
 		return
@@ -438,6 +471,7 @@ func (b *Brightness) refresh() {
 	b.mu.Lock()
 	b.knownDDC = found
 	b.devices = assemble(sysfs, found, b.devRoot, b.devices)
+	b.deviceGeneration++
 	b.seedDisplaysLocked()
 	for bus, until := range cooldown {
 		if time.Now().After(until) {
@@ -531,20 +565,30 @@ func nameOf(d brightnessDevice) string {
 func (b *Brightness) Step(delta int) error {
 	b.mu.Lock()
 	def := b.defaultDeviceLocked()
+	if def != nil {
+		b.writeGeneration++
+		b.writesInProgress++
+	}
 	b.mu.Unlock()
 	if def == nil {
 		return errNoDisplay
 	}
+	defer b.endWrite()
 	return def.Step(delta)
 }
 
 func (b *Brightness) Set(level int) error {
 	b.mu.Lock()
 	def := b.defaultDeviceLocked()
+	if def != nil {
+		b.writeGeneration++
+		b.writesInProgress++
+	}
 	b.mu.Unlock()
 	if def == nil {
 		return errNoDisplay
 	}
+	defer b.endWrite()
 	return def.Set(level)
 }
 

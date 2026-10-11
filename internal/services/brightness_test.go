@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -66,6 +67,258 @@ func TestBrightnessCachedStateDoesNotReadSysfs(t *testing.T) {
 	st, ok := b.CachedState()
 	if !ok || st.Level != 40 {
 		t.Fatalf("CachedState() = %+v, %v, want level 40 from the completed poll", st, ok)
+	}
+}
+
+type blockedBrightnessDevice struct {
+	id          string
+	readStarted chan struct{}
+	allowRead   chan struct{}
+	setStarted  chan struct{}
+	allowSet    chan struct{}
+	mu          sync.Mutex
+	level       int
+}
+
+func (d *blockedBrightnessDevice) ID() string    { return d.id }
+func (d *blockedBrightnessDevice) Label() string { return d.id }
+func (d *blockedBrightnessDevice) Kind() string  { return "ddc" }
+func (d *blockedBrightnessDevice) Read() (int, error) {
+	d.mu.Lock()
+	level := d.level
+	d.mu.Unlock()
+	if d.readStarted != nil {
+		close(d.readStarted)
+	}
+	<-d.allowRead
+	return level, nil
+}
+func (d *blockedBrightnessDevice) Set(level int) error {
+	if d.setStarted != nil {
+		close(d.setStarted)
+		<-d.allowSet
+	}
+	d.mu.Lock()
+	d.level = level
+	d.mu.Unlock()
+	return nil
+}
+func (d *blockedBrightnessDevice) Step(delta int) error {
+	d.mu.Lock()
+	d.level += delta
+	d.mu.Unlock()
+	return nil
+}
+func (d *blockedBrightnessDevice) setLevel(level int) {
+	d.mu.Lock()
+	d.level = level
+	d.mu.Unlock()
+}
+
+func TestBrightnessCachedViewsStayAvailableDuringDeviceReadAndWrite(t *testing.T) {
+	b := testBrightness(t, t.TempDir(), "/nonexistent", time.Hour)
+	d := &blockedBrightnessDevice{id: "ddc:DP-1", readStarted: make(chan struct{}), allowRead: make(chan struct{}), level: 42}
+	b.devices = []brightnessDevice{d}
+	b.deviceGeneration, b.firstScan = 1, true
+	b.lastDisplays = []DisplayInfo{{ID: d.ID(), Level: 42, OK: true}}
+	b.last, b.hasLast = BrightnessState{Level: 42}, true
+
+	pollDone := make(chan struct{})
+	go func() { b.pollDevices(false); close(pollDone) }()
+	<-d.readStarted // the read is held here, after the device snapshot was taken
+	released := false
+	defer func() {
+		if !released {
+			close(d.allowRead)
+		}
+		select {
+		case <-pollDone:
+		case <-time.After(time.Second):
+			t.Error("poll goroutine did not stop")
+		}
+	}()
+
+	type cachedViews struct {
+		state     BrightnessState
+		hasState  bool
+		displays  []DisplayInfo
+		available bool
+	}
+	got := make(chan cachedViews, 1)
+	go func() {
+		state, hasState := b.CachedState()
+		got <- cachedViews{state: state, hasState: hasState, displays: b.CachedDisplays(), available: b.Available()}
+	}()
+	select {
+	case views := <-got:
+		if !views.hasState || views.state.Level != 42 || len(views.displays) != 1 || !views.available {
+			t.Fatalf("cached views = %+v, want the last completed display state", views)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("cached brightness views waited for a device read")
+	}
+	select {
+	case <-pollDone:
+		t.Fatal("poll completed while its device read was deliberately held")
+	default:
+	}
+
+	if err := b.SetDisplay(d.ID(), 73); err != nil {
+		t.Fatal(err)
+	}
+	close(d.allowRead)
+	released = true
+	select {
+	case <-pollDone:
+	case <-time.After(time.Second):
+		t.Fatal("poll did not finish after the read was released")
+	}
+	if state, ok := b.CachedState(); !ok || state.Level != 42 {
+		t.Fatalf("stale poll replaced cached state after a write: %+v, %v", state, ok)
+	}
+	if displays := b.CachedDisplays(); len(displays) != 1 || displays[0].Level != 42 {
+		t.Fatalf("stale poll replaced cached display details after a write: %+v", displays)
+	}
+}
+
+func TestBrightnessPollDuringWriteDoesNotPublishPreWriteRead(t *testing.T) {
+	b := testBrightness(t, t.TempDir(), "/nonexistent", time.Hour)
+	d := &blockedBrightnessDevice{
+		id: "ddc:DP-1", readStarted: make(chan struct{}), allowRead: make(chan struct{}),
+		setStarted: make(chan struct{}), allowSet: make(chan struct{}), level: 42,
+	}
+	b.devices = []brightnessDevice{d}
+	b.deviceGeneration, b.firstScan = 1, true
+	b.lastDisplays = []DisplayInfo{{ID: d.ID(), Level: 40, OK: true}}
+	b.last, b.hasLast = BrightnessState{Level: 40}, true
+
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- b.SetDisplay(d.ID(), 73) }()
+	<-d.setStarted
+
+	pollDone := make(chan struct{})
+	go func() { b.pollDevices(false); close(pollDone) }()
+	<-d.readStarted
+
+	close(d.allowSet)
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	close(d.allowRead)
+	<-pollDone
+
+	if state, ok := b.CachedState(); !ok || state.Level != 40 {
+		t.Fatalf("poll started during a write published stale state: %+v, %v", state, ok)
+	}
+	if displays := b.CachedDisplays(); len(displays) != 1 || displays[0].Level != 40 {
+		t.Fatalf("poll started during a write published stale display details: %+v", displays)
+	}
+}
+
+func TestBrightnessPollDoesNotPublishWhileWriteIsInProgress(t *testing.T) {
+	b := testBrightness(t, t.TempDir(), "/nonexistent", time.Hour)
+	d := &blockedBrightnessDevice{
+		id: "ddc:DP-1", readStarted: make(chan struct{}), allowRead: make(chan struct{}),
+		setStarted: make(chan struct{}), allowSet: make(chan struct{}), level: 42,
+	}
+	b.devices = []brightnessDevice{d}
+	b.deviceGeneration, b.firstScan = 1, true
+	b.lastDisplays = []DisplayInfo{{ID: d.ID(), Level: 40, OK: true}}
+	b.last, b.hasLast = BrightnessState{Level: 40}, true
+
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- b.SetDisplay(d.ID(), 73) }()
+	<-d.setStarted
+	pollDone := make(chan struct{})
+	readReleased, writeReleased, writeCompleted, pollCompleted := false, false, false, false
+	defer func() {
+		if !readReleased {
+			close(d.allowRead)
+		}
+		if !writeReleased {
+			close(d.allowSet)
+		}
+		if !pollCompleted {
+			select {
+			case <-pollDone:
+			case <-time.After(time.Second):
+				t.Error("poll goroutine did not stop")
+			}
+		}
+		if !writeCompleted {
+			select {
+			case <-writeDone:
+			case <-time.After(time.Second):
+				t.Error("write goroutine did not stop")
+			}
+		}
+	}()
+
+	go func() { b.pollDevices(false); close(pollDone) }()
+	<-d.readStarted
+	close(d.allowRead)
+	readReleased = true
+	select {
+	case <-pollDone:
+	case <-time.After(time.Second):
+		t.Fatal("poll did not finish after releasing the read")
+	}
+	pollCompleted = true
+	if state, ok := b.CachedState(); !ok || state.Level != 40 {
+		t.Fatalf("poll published level %d while a write was still in progress", state.Level)
+	}
+	if displays := b.CachedDisplays(); len(displays) != 1 || displays[0].Level != 40 {
+		t.Fatalf("poll published display details while a write was still in progress: %+v", displays)
+	}
+
+	close(d.allowSet)
+	writeReleased = true
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	writeCompleted = true
+}
+
+func TestBrightnessPollDiscardsSnapshotAfterDeviceRefresh(t *testing.T) {
+	b := testBrightness(t, t.TempDir(), "/nonexistent", time.Hour)
+	d := &blockedBrightnessDevice{id: "ddc:DP-1", readStarted: make(chan struct{}), allowRead: make(chan struct{}), level: 42}
+	b.devices = []brightnessDevice{d}
+	b.deviceGeneration = 1
+	b.lastDisplays = []DisplayInfo{{ID: d.ID(), Level: 42, OK: true}}
+	b.last, b.hasLast = BrightnessState{Level: 42}, true
+
+	pollDone := make(chan struct{})
+	go func() { b.pollDevices(false); close(pollDone) }()
+	<-d.readStarted
+	released := false
+	defer func() {
+		if !released {
+			close(d.allowRead)
+		}
+		select {
+		case <-pollDone:
+		case <-time.After(time.Second):
+			t.Error("poll goroutine did not stop")
+		}
+	}()
+
+	d.setLevel(73)
+	b.mu.Lock()
+	b.devices = []brightnessDevice{&blockedBrightnessDevice{id: "ddc:DP-2"}}
+	b.deviceGeneration++
+	b.mu.Unlock()
+	close(d.allowRead)
+	released = true
+	select {
+	case <-pollDone:
+	case <-time.After(time.Second):
+		t.Fatal("poll did not finish after the read was released")
+	}
+	if state, ok := b.CachedState(); !ok || state.Level != 42 {
+		t.Fatalf("stale poll replaced cached state after a device refresh: %+v, %v", state, ok)
+	}
+	if displays := b.CachedDisplays(); len(displays) != 1 || displays[0].ID != d.ID() || displays[0].Level != 42 {
+		t.Fatalf("stale poll replaced cached display details after a device refresh: %+v", displays)
 	}
 }
 
