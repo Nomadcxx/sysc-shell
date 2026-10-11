@@ -73,6 +73,9 @@ func TestOnboardingHasBrandedHeaderAndUniformPillActions(t *testing.T) {
 	if mark == nil || mark.Kind != ui.KindColumn || len(mark.Children) != 9 {
 		t.Fatalf("ASCII wordmark = %+v, want eight mark rows and its tagline", mark)
 	}
+	if mark.Name != "SYSC" || mark.Role != "img" {
+		t.Fatalf("ASCII wordmark semantics = %q/%q, want image named SYSC", mark.Name, mark.Role)
+	}
 	for i, row := range mark.Children {
 		if got := len([]rune(row.Text)); got != 69 {
 			t.Errorf("ASCII wordmark row %d has %d cells, want 69", i, got)
@@ -209,6 +212,41 @@ func TestOnboardingBrandPillFitsResponsivePanel(t *testing.T) {
 				t.Fatalf("brand pill bounds %+v exceed panel content [%d,%d]", pill.Bounds, left, right)
 			}
 		})
+	}
+}
+
+func TestOnboardingWrapsJapaneseCopyWithConfiguredShaper(t *testing.T) {
+	cfg := config.Default()
+	cfg.Session.Language = "ja"
+	cfg.Accessibility.ReducedMotion = true
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 800, OutH: 500}); err != nil {
+		t.Fatal(err)
+	}
+	panel := drainAux(t, reg, 2)[1].Open
+	h := reg.panelHosts[PanelOnboarding]
+	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 150); err != nil {
+		t.Fatal(err)
+	}
+	if h.onboardingTreeScale != 150 {
+		t.Fatalf("onboarding tree scale = %d, want configured 150", h.onboardingTreeScale)
+	}
+	intro := onboardingNodeByKey(h.root, "onb-intro")
+	if intro == nil || len(intro.Children) == 0 {
+		t.Fatalf("Japanese intro = %+v, want wrapped text", intro)
+	}
+	if treeText(intro) == onbIntroWelcome {
+		t.Fatal("onboarding intro did not use the configured Japanese locale")
+	}
+	measure := h.measureText()
+	width := onbContentWidth(h)
+	for _, line := range intro.Children {
+		got, _ := measure(line.Text, ui.TextAttrsOf(line))
+		if got > width {
+			t.Errorf("wrapped Japanese line width = %d, want at most %d: %q", got, width, line.Text)
+		}
 	}
 }
 

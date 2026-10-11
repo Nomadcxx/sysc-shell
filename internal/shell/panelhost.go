@@ -188,6 +188,8 @@ type PanelHost struct {
 	// pluginStoreTreeScale is the same for the plugin store, whose cards,
 	// chip rows and wrapped text are measured as they are built.
 	pluginStoreTreeScale int
+	// onboardingTreeScale is the scale used when the wizard wrapped its copy.
+	onboardingTreeScale int
 	// pluginName resolves a plugin ID to its catalogue name for the bar
 	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
 	// falls back to the plugin ID.
@@ -1369,6 +1371,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.search = ui.NewField("")
 		h.clipboardThumbnails = make(map[string]*ui.Image)
 		h.clipboardThumbnailRequest = make(map[string]struct{})
+	}
+	if id == PanelOnboarding {
+		// Its copy is wrapped while the tree is built, so load the real shaper
+		// first; Configure runs only after this initial tree has been created.
+		if err := h.ensureText(); err != nil {
+			return err
+		}
 	}
 	h.root = r.panelTree(h)
 	r.queueFilesPanelImages(h)
@@ -4667,6 +4676,8 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 		return h.pluginStoreTreeScale, true
 	case PanelWallpaper:
 		return h.wallpaperTreeScale, true
+	case PanelOnboarding:
+		return h.onboardingTreeScale, true
 	}
 	return 0, false
 }

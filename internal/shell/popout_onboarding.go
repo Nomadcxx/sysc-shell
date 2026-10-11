@@ -142,7 +142,7 @@ func onboardingSyscWordmark(h *PanelHost) *ui.Node {
 			Tone: ui.ToneAccent, CenterX: true,
 		})
 	}
-	return &ui.Node{Kind: ui.KindColumn, Key: "onb-ascii-wordmark", Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Key: "onb-ascii-wordmark", Name: "SYSC", Role: "img", Children: children}
 }
 
 // onbBodyKey names the wizard's one scroll so its offset can be restored
@@ -158,6 +158,7 @@ var onbStepKeys = [onbPages]string{
 }
 
 func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
+	h.onboardingTreeScale = h.scale120
 	m := h.theme.Metrics
 	step := &ui.Node{
 		Kind:     ui.KindText,
