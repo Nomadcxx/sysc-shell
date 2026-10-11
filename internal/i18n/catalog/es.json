@@ -302,7 +302,6 @@
  "session.battery": "Batería",
  "session.battery.remaining": "%s restante",
  "session.power_profile": "Perfil de energía",
- "session.profile.applying": "Aplicando perfil de energía…",
  "session.profile.balanced": "Equilibrado",
  "session.profile.performance": "Rendimiento",
  "session.profile.power-saver": "Ahorro de energía",

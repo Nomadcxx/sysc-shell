@@ -302,7 +302,6 @@
  "session.battery": "배터리",
  "session.battery.remaining": "%s 남음",
  "session.power_profile": "전원 프로필",
- "session.profile.applying": "전원 프로필 적용 중…",
  "session.profile.balanced": "균형",
  "session.profile.performance": "고성능",
  "session.profile.power-saver": "전원 절약",

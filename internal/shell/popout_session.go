@@ -23,12 +23,6 @@ func sessionTree(h *PanelHost, snap services.Snapshot, locker string) *ui.Node {
 	if h.errLabel != "" {
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
-	if h.profilePending {
-		children = append(children, &ui.Node{
-			Kind: ui.KindText, Text: h.tr("session.profile.applying", "Applying power profile…"),
-			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
-		})
-	}
 	if card := sessionBatteryCard(h.theme.Metrics, h.tr, snap.Battery); card != nil {
 		children = append(children, card)
 	}
@@ -259,8 +253,11 @@ func (r *Registry) setSessionProfile(h *PanelHost, name string) {
 	look := r.lookPath
 	list := r.runArgvOutput
 	h.profilePending = true
+	clearError := h.errLabel != ""
 	h.errLabel = ""
-	r.rebuildPanel(h)
+	if clearError {
+		r.rebuildPanel(h)
+	}
 	go func() {
 		err := run(powerProfileSetArgv(name))
 		var names []string

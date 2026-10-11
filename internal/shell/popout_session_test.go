@@ -265,13 +265,6 @@ func TestSessionProfileSetLeavesInputAndRenderResponsiveWhileCommandWaits(t *tes
 	case <-time.After(2 * time.Second):
 		t.Fatal("profile activation held Registry.mu while the command waited")
 	}
-	reg.mu.Lock()
-	pendingText := strings.Join(texts(h.root), " ")
-	reg.mu.Unlock()
-	if !strings.Contains(pendingText, "Applying power profile") {
-		t.Fatalf("pending feedback = %q", pendingText)
-	}
-
 	responsive := make(chan error, 1)
 	go func() {
 		handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 12, Y: 12})

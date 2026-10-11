@@ -302,7 +302,6 @@
  "session.battery": "バッテリ",
  "session.battery.remaining": "残り %s",
  "session.power_profile": "電源プロファイル",
- "session.profile.applying": "電源プロファイルを適用中…",
  "session.profile.balanced": "バランス",
  "session.profile.performance": "高パフォーマンス",
  "session.profile.power-saver": "省電力",

@@ -306,7 +306,6 @@
  "session.battery": "Батарея",
  "session.battery.remaining": "осталось %s",
  "session.power_profile": "Профиль питания",
- "session.profile.applying": "Применение профиля питания…",
  "session.profile.balanced": "Сбалансированный",
  "session.profile.performance": "Производительность",
  "session.profile.power-saver": "Экономия энергии",
