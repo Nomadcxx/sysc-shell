@@ -61,14 +61,15 @@ type Brightness struct {
 	devices          []brightnessDevice
 	deviceGeneration uint64
 	// ponytail: one generation invalidates all display reads on any write; use per-device counters only if write bursts starve unrelated refreshes.
-	writeGeneration uint64
-	lastDisplays    []DisplayInfo
-	knownDDC        map[int]ddcIdent
-	cooldown        map[int]time.Time
-	lastScan        time.Time
-	failures        map[string]int
-	firstScan       bool
-	poke            chan struct{}
+	writeGeneration  uint64
+	writesInProgress int
+	lastDisplays     []DisplayInfo
+	knownDDC         map[int]ddcIdent
+	cooldown         map[int]time.Time
+	lastScan         time.Time
+	failures         map[string]int
+	firstScan        bool
+	poke             chan struct{}
 }
 
 type ddcIdent struct {
@@ -230,6 +231,7 @@ func (b *Brightness) deviceForWrite(id string) brightnessDevice {
 	for _, d := range b.devices {
 		if d.ID() == id {
 			b.writeGeneration++
+			b.writesInProgress++
 			return d
 		}
 	}
@@ -239,6 +241,7 @@ func (b *Brightness) deviceForWrite(id string) brightnessDevice {
 func (b *Brightness) endWrite() {
 	b.mu.Lock()
 	b.writeGeneration++
+	b.writesInProgress--
 	b.mu.Unlock()
 }
 
@@ -356,7 +359,7 @@ func (b *Brightness) pollDevices(baseline bool) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if deviceGeneration != b.deviceGeneration || writeGeneration != b.writeGeneration {
+	if deviceGeneration != b.deviceGeneration || writeGeneration != b.writeGeneration || b.writesInProgress > 0 {
 		return
 	}
 	for i, d := range devices {
@@ -564,6 +567,7 @@ func (b *Brightness) Step(delta int) error {
 	def := b.defaultDeviceLocked()
 	if def != nil {
 		b.writeGeneration++
+		b.writesInProgress++
 	}
 	b.mu.Unlock()
 	if def == nil {
@@ -578,6 +582,7 @@ func (b *Brightness) Set(level int) error {
 	def := b.defaultDeviceLocked()
 	if def != nil {
 		b.writeGeneration++
+		b.writesInProgress++
 	}
 	b.mu.Unlock()
 	if def == nil {

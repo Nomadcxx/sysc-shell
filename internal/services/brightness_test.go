@@ -215,6 +215,70 @@ func TestBrightnessPollDuringWriteDoesNotPublishPreWriteRead(t *testing.T) {
 	}
 }
 
+func TestBrightnessPollDoesNotPublishWhileWriteIsInProgress(t *testing.T) {
+	b := testBrightness(t, t.TempDir(), "/nonexistent", time.Hour)
+	d := &blockedBrightnessDevice{
+		id: "ddc:DP-1", readStarted: make(chan struct{}), allowRead: make(chan struct{}),
+		setStarted: make(chan struct{}), allowSet: make(chan struct{}), level: 42,
+	}
+	b.devices = []brightnessDevice{d}
+	b.deviceGeneration, b.firstScan = 1, true
+	b.lastDisplays = []DisplayInfo{{ID: d.ID(), Level: 40, OK: true}}
+	b.last, b.hasLast = BrightnessState{Level: 40}, true
+
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- b.SetDisplay(d.ID(), 73) }()
+	<-d.setStarted
+	pollDone := make(chan struct{})
+	readReleased, writeReleased, writeCompleted, pollCompleted := false, false, false, false
+	defer func() {
+		if !readReleased {
+			close(d.allowRead)
+		}
+		if !writeReleased {
+			close(d.allowSet)
+		}
+		if !pollCompleted {
+			select {
+			case <-pollDone:
+			case <-time.After(time.Second):
+				t.Error("poll goroutine did not stop")
+			}
+		}
+		if !writeCompleted {
+			select {
+			case <-writeDone:
+			case <-time.After(time.Second):
+				t.Error("write goroutine did not stop")
+			}
+		}
+	}()
+
+	go func() { b.pollDevices(false); close(pollDone) }()
+	<-d.readStarted
+	close(d.allowRead)
+	readReleased = true
+	select {
+	case <-pollDone:
+	case <-time.After(time.Second):
+		t.Fatal("poll did not finish after releasing the read")
+	}
+	pollCompleted = true
+	if state, ok := b.CachedState(); !ok || state.Level != 40 {
+		t.Fatalf("poll published level %d while a write was still in progress", state.Level)
+	}
+	if displays := b.CachedDisplays(); len(displays) != 1 || displays[0].Level != 40 {
+		t.Fatalf("poll published display details while a write was still in progress: %+v", displays)
+	}
+
+	close(d.allowSet)
+	writeReleased = true
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	writeCompleted = true
+}
+
 func TestBrightnessPollDiscardsSnapshotAfterDeviceRefresh(t *testing.T) {
 	b := testBrightness(t, t.TempDir(), "/nonexistent", time.Hour)
 	d := &blockedBrightnessDevice{id: "ddc:DP-1", readStarted: make(chan struct{}), allowRead: make(chan struct{}), level: 42}
