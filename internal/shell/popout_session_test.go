@@ -15,6 +15,7 @@ import (
 	metrics "github.com/Nomadcxx/sysc-metrics"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -204,16 +205,132 @@ func TestSelectingAListedProfileRunsSet(t *testing.T) {
 	h.profiles = []string{"power-saver", "balanced", "performance"}
 	h.profileActive = "balanced"
 	reg.rebuildPanel(h)
-	var got [][]string
+	got := make(chan []string, 1)
 	reg.runArgv = func(argv []string) error {
-		got = append(got, append([]string(nil), argv...))
+		got <- append([]string(nil), argv...)
 		return nil
 	}
 	activateNamed(h, reg, "Performance")
-	if len(got) != 1 || !reflect.DeepEqual(got[0], []string{"powerprofilesctl", "set", "performance"}) {
-		t.Fatalf("argv = %v", got)
+	select {
+	case argv := <-got:
+		if !reflect.DeepEqual(argv, []string{"powerprofilesctl", "set", "performance"}) {
+			t.Fatalf("argv = %v", argv)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("profile set command never ran")
 	}
 	waitProfileTabNames(t, reg, "Power saver", "Balanced", "Performance")
+}
+
+func TestSessionProfileSetLeavesInputAndRenderResponsiveWhileCommandWaits(t *testing.T) {
+	t.Parallel()
+	reg, h := sessionWithProfiles(t)
+	reg.lookPath = func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }
+	listStarted := make(chan struct{})
+	releaseList := make(chan struct{})
+	var releaseListOnce sync.Once
+	releaseProfileList := func() { releaseListOnce.Do(func() { close(releaseList) }) }
+	t.Cleanup(releaseProfileList)
+	reg.runArgvOutput = func([]string) (string, error) {
+		close(listStarted)
+		<-releaseList
+		return strings.ReplaceAll(strings.ReplaceAll(starredPowerProfilesList, "* balanced:", "  balanced:"), "  performance:", "* performance:"), nil
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseCommand := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseCommand)
+	reg.runArgv = func([]string) error {
+		close(started)
+		<-release
+		return nil
+	}
+	drainInvalidations(reg)
+
+	reg.mu.Lock()
+	for i, n := range h.focus {
+		if n.Name == "Performance" {
+			h.roving.Set(i)
+			break
+		}
+	}
+	reg.mu.Unlock()
+	handle := h.handle(reg)
+	handled := make(chan bool, 1)
+	go func() { handled <- handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEnter}) }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("profile command never started")
+	}
+	select {
+	case ok := <-handled:
+		if !ok {
+			t.Fatal("profile activation did not request a redraw")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("profile activation held Registry.mu while the command waited")
+	}
+	checkResponsive := func(waitingFor string) {
+		t.Helper()
+		responsive := make(chan error, 1)
+		go func() {
+			handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 12, Y: 12})
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			size := panelTargetSize(PanelSession)
+			if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
+				responsive <- err
+				return
+			}
+			pixels := make([]byte, size.W*size.H*4)
+			responsive <- h.render(false, pixels, size.W, size.H, size.W*4)
+		}()
+		select {
+		case err := <-responsive:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("unrelated input and render stayed blocked while %s was waiting", waitingFor)
+		}
+	}
+	checkResponsive("the profile command")
+
+	releaseCommand()
+	select {
+	case <-listStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("follow-up profile list never started")
+	}
+	checkResponsive("the profile list")
+	releaseProfileList()
+	waitSessionProfileActive(t, reg, "performance")
+	select {
+	case invalidation := <-reg.Invalidations():
+		if invalidation.SurfaceID != panelSurfaceID(PanelSession) {
+			t.Fatalf("completion invalidated %q, want the session surface", invalidation.SurfaceID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("profile completion was not published")
+	}
+}
+
+func waitSessionProfileActive(t *testing.T, reg *Registry, active string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelSession]
+		ready := h != nil && h.profileActive == active
+		reg.mu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("profile did not become active=%q", active)
 }
 
 func TestASuccessfulProfileSetClearsAPriorError(t *testing.T) {
@@ -223,18 +340,54 @@ func TestASuccessfulProfileSetClearsAPriorError(t *testing.T) {
 	h.profiles = []string{"power-saver", "balanced", "performance"}
 	h.profileActive = "balanced"
 	reg.rebuildPanel(h)
+	drainInvalidations(reg)
 	reg.runArgv = func([]string) error { return errors.New("set failed") }
 	activateNamed(h, reg, "Performance")
-	if h.errLabel == "" {
-		t.Fatal("failed set left errLabel empty")
+	waitSessionProfileResult(t, reg, "set failed")
+	waitSessionSurfaceInvalidation(t, reg)
+	reg.mu.Lock()
+	failedTree := h.root
+	reg.mu.Unlock()
+	if !hasToneError(failedTree) {
+		t.Fatal("failed set error was not rendered")
 	}
+	drainInvalidations(reg)
 	reg.runArgv = func([]string) error { return nil }
 	activateNamed(h, reg, "Performance")
-	if h.errLabel != "" {
-		t.Fatalf("errLabel = %q after a successful set", h.errLabel)
-	}
-	if hasToneError(h.root) {
+	waitSessionProfileResult(t, reg, "")
+	reg.mu.Lock()
+	hasError := hasToneError(h.root)
+	reg.mu.Unlock()
+	if hasError {
 		t.Fatal("ToneError text still in the tree after a successful set")
+	}
+}
+
+func waitSessionProfileResult(t *testing.T, reg *Registry, errLabel string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelSession]
+		ready := h != nil && !h.profilePending && h.errLabel == errLabel
+		reg.mu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("session profile result did not publish errLabel=%q", errLabel)
+}
+
+func waitSessionSurfaceInvalidation(t *testing.T, reg *Registry) {
+	t.Helper()
+	select {
+	case invalidation := <-reg.Invalidations():
+		if invalidation.SurfaceID != panelSurfaceID(PanelSession) {
+			t.Fatalf("invalidation surface = %q, want the session panel", invalidation.SurfaceID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("session profile result was not invalidated")
 	}
 }
 

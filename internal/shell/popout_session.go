@@ -246,17 +246,50 @@ func (r *Registry) scheduleLoadProfiles(h *PanelHost) {
 }
 
 func (r *Registry) setSessionProfile(h *PanelHost, name string) {
-	if !profileSupports(h.profiles, name) {
+	if h.profilePending || !profileSupports(h.profiles, name) {
 		return
 	}
-	if err := r.runArgv(powerProfileSetArgv(name)); err != nil {
-		h.errLabel = err.Error()
-		r.rebuildPanel(h)
-		return
-	}
+	run := r.runArgv
+	look := r.lookPath
+	list := r.runArgvOutput
+	h.profilePending = true
+	clearError := h.errLabel != ""
 	h.errLabel = ""
-	r.scheduleLoadProfiles(h)
-	r.rebuildPanel(h)
+	if clearError {
+		r.rebuildPanel(h)
+	}
+	go func() {
+		err := run(powerProfileSetArgv(name))
+		var names []string
+		active := ""
+		ok := false
+		if err == nil {
+			names, active, ok = fetchProfileList(look, list)
+		}
+
+		r.mu.Lock()
+		if r.panelHosts[h.id] != h {
+			r.mu.Unlock()
+			return
+		}
+		h.profilePending = false
+		if err != nil {
+			h.errLabel = err.Error()
+		} else {
+			h.errLabel = ""
+			if ok {
+				h.profiles, h.profileActive, h.profilesOK = names, active, true
+			} else {
+				// The set command succeeded; keep the visible selection truthful
+				// when a follow-up list cannot be read.
+				h.profileActive = name
+			}
+		}
+		r.rebuildPanel(h)
+		output, id := h.output, panelSurfaceID(h.id)
+		r.mu.Unlock()
+		r.publishSurface(output, id)
+	}()
 }
 
 // runArgvDefault starts or runs one argv slice. A Registry holds this in a
