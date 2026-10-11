@@ -19,7 +19,7 @@ import (
 )
 
 func sessionTree(h *PanelHost, snap services.Snapshot, locker string) *ui.Node {
-	children := make([]*ui.Node, 0, 5)
+	children := make([]*ui.Node, 0, 4)
 	if h.errLabel != "" {
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
