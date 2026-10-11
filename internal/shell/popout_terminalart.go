@@ -38,6 +38,12 @@ func terminalArtTree(r *Registry, h *PanelHost) *ui.Node {
 	effects := artEffects(h)
 	if h.wallpaperSnap.Caps.Terminal && len(effects) > 0 {
 		children = append(children, artEffectsHeader(h, len(effects)))
+		if e := h.set.ByPath("terminal-art.blur"); e != nil {
+			row := settingsEntryRow(h, *e, artInnerW)
+			row.Height = 2 * h.metrics().StandardControl
+			settingsDimTerminalBlur(r, row)
+			children = append(children, row)
+		}
 		used := 0
 		for _, child := range children {
 			used += childHeightFor(child)
@@ -347,7 +353,7 @@ func (h *PanelHost) artApply(r *Registry, id string) {
 	if svc := r.wallpaperServiceLocked(); svc != nil {
 		svc.Enqueue(wallpaper.Command{
 			Op: wallpaper.OpApply, Token: h.wallpaperOutput,
-			Kind: wallpaper.KindEffect, Effect: id, Theme: artPalette(h), Blur: r.cfg.TerminalArt.Blur,
+			Kind: wallpaper.KindEffect, Effect: id, Theme: artPalette(h), Blur: h.draft.TerminalArt.Blur,
 		})
 	}
 }
@@ -486,10 +492,6 @@ func terminalArtSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 	}
 
-	if e := h.set.ByPath("terminal-art.blur"); e != nil && caps.Terminal {
-		row := settingsEntryRow(h, *e, settingsBodyWidth(h))
-		rows = append(rows, row)
-	}
 	open := wallpaperButton(h, "art-open", "Open Terminal Art", false)
 	rows = append(rows, &ui.Node{Kind: ui.KindRow, Height: wallpaperChromeH(h), Children: []*ui.Node{open}})
 	return settingsBody(h, theme.MarginM, rows...)

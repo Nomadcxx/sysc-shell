@@ -1114,10 +1114,19 @@ func (e blurArtEngine) Capabilities() wallpaper.Capabilities {
 	return c
 }
 func (e blurArtEngine) RefreshTerminalCatalog() wallpaper.Capabilities { return e.Capabilities() }
-func TestTerminalArtBlurSettings(t *testing.T) {
-	reg, _ := artRegistry(t, blurArtEngine{})
+func TestTerminalArtBlurPicker(t *testing.T) {
+	reg, svc := artRegistry(t, blurArtEngine{})
+	path := filepath.Join(t.TempDir(), "config.json")
+	reg.mu.Lock()
 	reg.cfg.TerminalArt.Blur = 16
-	h := openArtSettings(t, reg)
+	reg.configPath = path
+	latest := reg.cfg
+	reg.mu.Unlock()
+	latest.Wallpaper.FPS = 60 // An unrelated config edit made before the picker writes.
+	if err := config.Write(path, latest); err != nil {
+		t.Fatal(err)
+	}
+	h := openArtPanel(t, reg)
 	reg.mu.Lock()
 	slider := findAction(h.root, "set:terminal-art.blur")
 	texts := strings.Join(artTexts(h.root), " ")
@@ -1128,8 +1137,44 @@ func TestTerminalArtBlurSettings(t *testing.T) {
 	if !strings.Contains(texts, "next select an effect") {
 		t.Fatalf("missing application timing: %q", texts)
 	}
+	reg.mu.Lock()
+	h.setFocus(slider)
+	changed := h.adjustSlider(reg, keyRight)
+	h.artApply(reg, "fire")
+	reg.mu.Unlock()
+	if !changed {
+		t.Fatal("keyboard did not adjust blur")
+	}
+	for _, connector := range []string{"DP-1", "DP-3"} {
+		awaitArt(t, svc, connector, func(a wallpaper.Assignment) bool {
+			return a.Effect == "fire" && a.Blur == 17
+		})
+	}
+	// Closing before the debounce expires must still save the edit.
+	reg.ClosePanel(PanelTerminalArt)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		saved, err := config.Load(path)
+		if err == nil && saved.TerminalArt.Blur == 17 {
+			if saved.Wallpaper.FPS != 60 {
+				t.Fatal("picker overwrote an unrelated config edit")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("picker blur was not persisted: blur=%d err=%v", saved.TerminalArt.Blur, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	landing := openArtSettings(t, reg)
+	reg.mu.Lock()
+	landingSlider := findAction(landing.root, "set:terminal-art.blur")
+	reg.mu.Unlock()
+	if landingSlider != nil {
+		t.Fatal("blur must live inside Open Terminal Art, not on the landing page")
+	}
 	reg, _ = artRegistry(t, artWallpaperEngine{})
-	h = openArtSettings(t, reg)
+	h = openArtPanel(t, reg)
 	reg.mu.Lock()
 	slider = findAction(h.root, "set:terminal-art.blur")
 	texts = strings.Join(artTexts(h.root), " ")
@@ -1161,17 +1206,16 @@ func TestTerminalArtSettingsRefreshesCatalog(t *testing.T) {
 	engine := &catalogRefreshArtEngine{initial: initial, refreshed: updated}
 	reg, svc := artRegistry(t, engine)
 	go reg.relayWallpaper(svc)
-	h := openArtSettings(t, reg)
+	_ = openArtSettings(t, reg)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		reg.mu.Lock()
-		slider := findAction(h.root, "set:terminal-art.blur")
-		ready := slider != nil && slider.State&ui.StateDisabled == 0
+		ready := svc.Snapshot().Caps.Catalog.BlurMax == 64
 		reg.mu.Unlock()
 		if ready {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("Settings did not enable blur after catalog refresh")
+	t.Fatal("Settings did not refresh blur capability")
 }

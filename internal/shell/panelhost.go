@@ -1299,6 +1299,8 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		}
 	}
 	if id == PanelTerminalArt {
+		h.set = r.settingsForLocked(r.cfg)
+		h.draft = r.cfg
 		h.wallpaperOutput = wallpaper.AllOutputs
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()
@@ -4011,6 +4013,11 @@ func (h *PanelHost) deferDraft(r *Registry) {
 			return
 		}
 		h.writeTimer = nil
+		if h.id == PanelTerminalArt {
+			h.persistDraft(r)
+			r.mu.Unlock()
+			return
+		}
 		cfg := h.draft
 		r.mu.Unlock()
 		// scheduleControl runs the write off the Wayland owner, re-takes the

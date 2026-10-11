@@ -2004,9 +2004,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// next control write, which puts that draft back whole. The
 				// registry is rebuilt with it because an entry's options can
 				// depend on another setting.
-				if h := r.panelHosts[PanelSettings]; h != nil {
-					h.draft = cfg
-					h.set = r.settingsForLocked(cfg)
+				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
+					if h := r.panelHosts[id]; h != nil {
+						h.draft = cfg
+						h.set = r.settingsForLocked(cfg)
+					}
 				}
 				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media
