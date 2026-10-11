@@ -703,6 +703,9 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 		r.closePanelLocked(id)
 	}
 
+	// A new panel gesture supersedes the pending menu even when the group
+	// keeps its root generation.
+	r.pendingTrayMenu = pendingTrayMenu{}
 	owner, generation, open := r.roots.current()
 	panelGroupOpen := open && owner == panelGroupRoot()
 	if !panelGroupOpen {
