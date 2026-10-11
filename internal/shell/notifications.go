@@ -195,6 +195,11 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 			batteryAction = r.batteryWarning.disconnect(m.Generation)
 		}
 	}
+	if m.Kind == notifyclient.KindReply {
+		// ponytail: replies only refresh protocol state; rebuilding unchanged surfaces would restart the renewal loop.
+		r.dispatchBatteryWarning(batteryAction)
+		return
+	}
 	r.mu.Lock()
 	if r.toasts != nil {
 		r.toasts.recompute()

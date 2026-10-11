@@ -401,6 +401,30 @@ func TestToastReportsVisiblePresentation(t *testing.T) {
 	}
 }
 
+func TestToastLifetimeRepliesDoNotRenewOrRebuild(t *testing.T) {
+	r, h, sender := wiredToast(t)
+	keepInvalidationsDrained(t, r)
+	r.applyNotify(snap(1, note(1, "a")))
+	renewals := len(sender.ofKind(protocol.CommandPresentationRenew))
+	updates := len(h.harness().updates)
+
+	for i := 0; i < 10; i++ {
+		r.applyNotify(notifyclient.Message{Generation: 1, Kind: notifyclient.KindReply,
+			RequestID: uint64(i + 1), Reply: protocol.Reply{OK: true,
+				Lifetimes: []protocol.Lifetime{{ID: 1, DurationMS: 5000, RemainingMS: 4000, Running: true}}}})
+	}
+
+	if got := len(sender.ofKind(protocol.CommandPresentationRenew)); got != renewals {
+		t.Fatalf("renewals after unchanged lifetime replies = %d, want %d", got, renewals)
+	}
+	if got := len(h.harness().updates); got != updates {
+		t.Fatalf("toast surface updates after unchanged lifetime replies = %d, want %d", got, updates)
+	}
+	if got := r.notifyLifetime(1); got == nil || got.RemainingMS != 4000 {
+		t.Fatalf("cached lifetime = %+v, want the authoritative reply", got)
+	}
+}
+
 func TestOpeningTheCentreHidesToasts(t *testing.T) {
 	r, h, sender := wiredToast(t)
 	r.cfg.Accessibility.ReducedMotion = true
