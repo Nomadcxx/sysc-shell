@@ -1,6 +1,20 @@
 package wayland
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+)
+
+func TestPointerMotionEventCarriesCurrentModifiers(t *testing.T) {
+	t.Parallel()
+	o := &owner{}
+	o.setModifiers(1<<6, 0, 0, 0)
+	e := o.pointerMotionEvent(12.5, 8.25)
+	if e.Kind != EventPointerMotion || e.X != 12.5 || e.Y != 8.25 || !e.Mods.Has(ui.ModSuper) {
+		t.Fatalf("pointer motion event = %+v, want coordinates and current Super modifier", e)
+	}
+}
 
 func newFocusOwner() (*owner, *OutputHost, *OutputHost, *[]Event) {
 	s := newHostSet()

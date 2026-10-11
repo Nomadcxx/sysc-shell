@@ -54,10 +54,14 @@ type Registry struct {
 	cfg     config.Config
 	outputs map[string]outputState
 	bars    map[uint32]*Bar
-	// onboardingPending asks the first adopted output to host the setup
-	// wizard. Set at construction when the lifecycle marker is absent;
-	// consumed once, so hotplug never stacks a second wizard.
+	// onboardingPending keeps the first-start offer until an interactive,
+	// focused output can host it. Output loss restores the offer and its small
+	// view state for the next usable output.
 	onboardingPending bool
+	onboardingResume  bool
+	onboardingPage    onboardingPage
+	onboardingDraft   config.Config
+	onboardingError   string
 	// effectOutputs names the connectors whose wallpaper is a playing or
 	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
 	effectOutputs map[string]bool
@@ -457,6 +461,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		log.Printf("shell: onboarding state: %v", err)
 	}
 	r.onboardingPending = state.Unseen()
+	r.roots.onEmpty = func() { r.tryOpenOnboardingLocked(0) }
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.polkitHost = newPolkitHost(r)
 	r.nightLight = services.NewNightLight(services.NightLightOptions{
@@ -1645,30 +1650,112 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 		plugins.outputLost(global)
 		plugins.syncBars()
 	}
+	host := r.bindHost(global, bar, callbacks)
 	// An output that comes back gets its wallpaper back (D20). This is the
 	// arrival seam; DropHost is the departure one.
 	r.wallpaperOutputConnected(connector)
-	if r.consumeOnboardingOffer() {
-		// The first host to arrive is the first interactive output; the
-		// wizard lives on that one only. A failed open leaves the marker
-		// absent, so the offer simply stands until the next start.
-		if err := r.OpenPanel(PanelOnboarding, global, Trigger{}); err != nil {
-			r.mu.Lock()
-			r.onboardingPending = true
-			r.mu.Unlock()
-			log.Printf("shell: open onboarding: %v", err)
-		}
-	}
-	return r.bindHost(global, bar, callbacks), nil
+	r.mu.Lock()
+	r.tryOpenOnboardingLocked(global)
+	r.mu.Unlock()
+	return host, nil
 }
 
-// consumeOnboardingOffer claims the one first-start offer exactly once.
-func (r *Registry) consumeOnboardingOffer() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	claim := r.onboardingPending
+// onboardingTargetLocked waits for Niri's focused connector when it is known,
+// so startup never puts the wizard on a different monitor just because that
+// output's wl_output event arrived later. Before focus is known, the lowest
+// ready output global is the deterministic fallback.
+func (r *Registry) onboardingTargetLocked(first uint32) (uint32, Trigger, bool) {
+	if r.focused == "" {
+		var output uint32
+		if bar := r.bars[first]; bar != nil {
+			w, h := bar.outputSize()
+			if w > 0 && h > 0 {
+				output = first
+			}
+		}
+		for candidate, bar := range r.bars {
+			w, h := bar.outputSize()
+			if w > 0 && h > 0 && (output == 0 || candidate < output) {
+				output = candidate
+			}
+		}
+		bar := r.bars[output]
+		if output == 0 || bar == nil {
+			return 0, Trigger{}, false
+		}
+		return output, r.triggerLocked(output, bar.connector()), true
+	}
+	for output, bar := range r.bars {
+		if bar.connector() == r.focused {
+			w, h := bar.outputSize()
+			if w <= 0 || h <= 0 {
+				return 0, Trigger{}, false
+			}
+			return output, r.triggerLocked(output, r.focused), true
+		}
+	}
+	return 0, Trigger{}, false
+}
+
+// tryOpenOnboardingLocked opens only when the user can safely interact with
+// the shell. Deferred offers are retried when outputs, focus, lock state or
+// authentication state change.
+func (r *Registry) tryOpenOnboardingLocked(first uint32) {
+	if !r.onboardingPending || r.lockerRunning || r.lockerAcquired || len(r.panelHosts) > 0 ||
+		(r.polkitHost != nil && r.polkitHost.open_) {
+		return
+	}
+	select {
+	case <-r.closed:
+		return
+	default:
+	}
+	if owner, _, open := r.roots.current(); open && owner != panelGroupRoot() {
+		return
+	}
+	output, trigger, ready := r.onboardingTargetLocked(first)
+	if !ready {
+		return
+	}
+	// Consume the offer during the open attempt so a failed panel-root cleanup
+	// cannot synchronously retry itself through roots.onEmpty.
 	r.onboardingPending = false
-	return claim
+	if err := r.openPanelRootLocked(PanelOnboarding, output, trigger); err != nil {
+		r.onboardingPending = true
+		log.Printf("shell: open onboarding: %v", err)
+	}
+}
+
+// markOnboardingOutcomeLocked records a user decision and retires any
+// in-memory resume state. Reopening setup from Settings must not turn a
+// completed install back into a dismissed one.
+func (r *Registry) markOnboardingOutcomeLocked(outcome onboarding.Outcome) error {
+	path := onboarding.StatePath()
+	if outcome == onboarding.OutcomeDismissed {
+		state, err := onboarding.Load(path)
+		if err == nil && state.Outcome == onboarding.OutcomeCompleted {
+			r.onboardingPending = false
+			r.onboardingResume = false
+			return nil
+		}
+	}
+	r.onboardingPending = false
+	r.onboardingResume = false
+	return onboarding.Mark(path, outcome)
+}
+
+// preserveOnboardingLocked saves a live wizard when shell teardown removes its
+// surface without a user dismissal, such as output loss or root replacement.
+func (r *Registry) preserveOnboardingLocked(h *PanelHost) {
+	if h == nil || h.id != PanelOnboarding {
+		return
+	}
+	h.flushDraft(r)
+	r.onboardingPending = true
+	r.onboardingResume = true
+	r.onboardingPage = h.onbPage
+	r.onboardingDraft = h.draft
+	r.onboardingError = h.errLabel
 }
 
 // adoptBar installs a freshly built bar as the one for its output and reports
@@ -2477,6 +2564,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.outputs = next
 	r.niriSnapshot = cloneNiriSnapshot(s)
 	r.focused = s.FocusedOutput
+	r.tryOpenOnboardingLocked(0)
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
 	if h := r.runningMenu; h != nil && h.open_ && !runningSlotPresent(r.running, h.slot.Key) {
@@ -2708,6 +2796,13 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		}
 		if r.depthClocks != nil {
 			r.depthClocks.outputSize(bar.connector(), global, width, height)
+		}
+		if width > 0 && height > 0 {
+			r.mu.Lock()
+			if r.bars[global] == bar {
+				r.tryOpenOnboardingLocked(global)
+			}
+			r.mu.Unlock()
 		}
 	}
 	innerConfigure := hooks.Configure

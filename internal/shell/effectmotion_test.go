@@ -168,7 +168,7 @@ func TestWeatherSurfaceRendersAndPublishesAnimatedFrames(t *testing.T) {
 		value.start = base.Add(-time.Duration(phase * float64(effectTrip)))
 		h.anim.values[key] = value
 		pixels := make([]byte, width*height*4)
-		err := h.render(pixels, width, height, width*4)
+		err := h.render(r.cfg.Theme.BlurBehind, pixels, width, height, width*4)
 		r.mu.Unlock()
 		if err != nil {
 			t.Fatal(err)

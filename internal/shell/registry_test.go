@@ -149,12 +149,12 @@ func TestAttachedPanelKeepsItsOwnAlphaOnceItHasABackdrop(t *testing.T) {
 	th := panel.paintTheme()
 	barRoot := th.Style().RootFill()
 
-	if got := panel.rootStyle(th).RootFill(); got != barRoot {
+	if got := panel.rootStyle(th, reg.cfg.Theme.BlurBehind).RootFill(); got != barRoot {
 		t.Errorf("without a backdrop an attached panel must share the bar root: got %+v want %+v", got, barRoot)
 	}
 
 	panel.backdrop = &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: []byte{0, 0, 0, 0xff}}
-	if got := panel.rootStyle(th).RootFill(); got == barRoot {
+	if got := panel.rootStyle(th, reg.cfg.Theme.BlurBehind).RootFill(); got == barRoot {
 		t.Errorf("with a backdrop the panel kept the bar's opaque root %+v; the blur would be painted over", got)
 	}
 }

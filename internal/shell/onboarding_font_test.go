@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -38,7 +39,7 @@ func TestCJKFontCommandForOS(t *testing.T) {
 
 func TestOnboardingFontOfferFollowsLanguageAndCoverage(t *testing.T) {
 	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 800, OutH: 500}); err != nil {
 		t.Fatal(err)
 	}
 	reg.mu.Lock()
@@ -55,6 +56,8 @@ func TestOnboardingFontOfferFollowsLanguageAndCoverage(t *testing.T) {
 	if byAction(h.root, "onb-font-install") == nil {
 		t.Fatal("missing Japanese fonts did not offer an install")
 	}
+	button := byAction(h.root, "onb-font-install")
+	metrics := h.metrics()
 	actions := onboardingActions(h.root)
 	languageIndex, installIndex := -1, -1
 	for i, action := range actions {
@@ -66,8 +69,39 @@ func TestOnboardingFontOfferFollowsLanguageAndCoverage(t *testing.T) {
 		}
 	}
 	reg.mu.Unlock()
+	if button.Width != 0 || button.Shape != ui.ShapeStadium || button.Padding != metrics.ButtonPadding || button.Height != metrics.StandardControl {
+		t.Fatalf("font install pill = %+v; want natural width with shared pill metrics", button)
+	}
 	if languageIndex < 0 || installIndex < 0 || languageIndex >= installIndex {
 		t.Fatalf("language/install action order = %v", actions)
+	}
+}
+
+func TestOnboardingFontCopyUsesSelectedLanguage(t *testing.T) {
+	cfg := config.Default()
+	cfg.Session.Language = "es"
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 800, OutH: 500}); err != nil {
+		t.Fatal(err)
+	}
+	panel := drainAux(t, reg, 2)[1].Open
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelOnboarding]
+	h.onbPage = onbRegion
+	h.onbFontLocale = "ja"
+	h.onbFontState = onboardingFontMissing
+	h.set = reg.settingsForLocked(h.draft)
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
+		t.Fatalf("configure narrow Spanish Region page: %v", err)
+	}
+	reg.mu.Lock()
+	copy := treeText(h.root)
+	reg.mu.Unlock()
+	if !strings.Contains(copy, "Las fuentes instaladas no incluyen japonés") || !strings.Contains(copy, "Instalar Noto CJK") {
+		t.Fatalf("Spanish font guidance = %q; want localized status and install action", copy)
 	}
 }
 
@@ -126,7 +160,7 @@ func TestOnboardingFontInstallRequiresExplicitAction(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("font install calls = %d, want 1", calls)
 	}
-	if got := onboardingFontCopy("ja", reg.panelHosts[PanelOnboarding].onbFontState); got != "Noto CJK is installed. Restart sysc-shell to use the new fonts." {
+	if got := onboardingFontCopy(reg.panelHosts[PanelOnboarding], "ja", reg.panelHosts[PanelOnboarding].onbFontState); got != "Noto CJK is installed. Restart sysc-shell to use the new fonts." {
 		t.Fatalf("restart guidance = %q", got)
 	}
 }
@@ -229,9 +263,9 @@ func TestOnboardingFontRestartGuidancePersistsAfterCompletedInstallAndReopen(t *
 	h.draft.Session.Language = "ja"
 	reg.checkOnboardingFont(h)
 	state := h.onbFontState
-	copy := onboardingFontCopy(h.onbFontLocale, h.onbFontState)
+	copy := onboardingFontCopy(h, h.onbFontLocale, h.onbFontState)
 	reg.mu.Unlock()
-	if state != onboardingFontInstalled || copy != "Noto CJK is installed. Restart sysc-shell to use the new fonts." {
+	if state != onboardingFontInstalled || copy != "Noto CJKをインストールしました。反映するにはsysc-shellを再起動してください。" {
 		t.Fatalf("reopened installed font state = %v (%q), want restart guidance", state, copy)
 	}
 }
