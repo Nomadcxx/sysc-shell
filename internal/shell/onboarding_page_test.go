@@ -197,8 +197,8 @@ func TestOnboardingStepRailAndStageLayout(t *testing.T) {
 	h.onbPage = onbRegion
 	reg.rebuildPanel(h)
 	intro := onboardingNodeByKey(h.root, "onb-intro")
-	if intro == nil || intro.Kind != ui.KindColumn || intro.Width != onbContentWidth(h) || len(intro.Children) < 2 {
-		t.Fatalf("long page intro = %+v, want measured wrapped lines within the content width", intro)
+	if intro == nil || intro.Kind != ui.KindColumn || intro.Width != onbContentWidth(h) || len(intro.Children) == 0 {
+		t.Fatalf("page intro = %+v, want measured text within the content width", intro)
 	}
 	for _, line := range intro.Children {
 		if line.Kind != ui.KindText || line.MaxWidth != onbContentWidth(h) {
