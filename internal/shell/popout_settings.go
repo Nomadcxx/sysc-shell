@@ -1633,6 +1633,17 @@ func (h *PanelHost) persistDraft(r *Registry) {
 	if r == nil {
 		return
 	}
+	if h.id == PanelTerminalArt {
+		blur := h.draft.TerminalArt.Blur
+		// Persist only the picker edit against the latest config, off the owner.
+		r.scheduleControl(h, func() error {
+			_, err := r.updateConfig(func(cfg *config.Config, registryFor func(config.Config) *settings.Registry) error {
+				return registryFor(*cfg).ByPath("terminal-art.blur").Set(cfg, strconv.Itoa(blur))
+			})
+			return err
+		})
+		return
+	}
 	if err := r.writeConfig(h.draft); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
