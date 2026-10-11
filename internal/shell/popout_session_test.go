@@ -226,7 +226,14 @@ func TestSessionProfileSetLeavesInputAndRenderResponsiveWhileCommandWaits(t *tes
 	t.Parallel()
 	reg, h := sessionWithProfiles(t)
 	reg.lookPath = func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }
+	listStarted := make(chan struct{})
+	releaseList := make(chan struct{})
+	var releaseListOnce sync.Once
+	releaseProfileList := func() { releaseListOnce.Do(func() { close(releaseList) }) }
+	t.Cleanup(releaseProfileList)
 	reg.runArgvOutput = func([]string) (string, error) {
+		close(listStarted)
+		<-releaseList
 		return strings.ReplaceAll(strings.ReplaceAll(starredPowerProfilesList, "* balanced:", "  balanced:"), "  performance:", "* performance:"), nil
 	}
 	started := make(chan struct{})
@@ -265,29 +272,40 @@ func TestSessionProfileSetLeavesInputAndRenderResponsiveWhileCommandWaits(t *tes
 	case <-time.After(2 * time.Second):
 		t.Fatal("profile activation held Registry.mu while the command waited")
 	}
-	responsive := make(chan error, 1)
-	go func() {
-		handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 12, Y: 12})
-		reg.mu.Lock()
-		defer reg.mu.Unlock()
-		size := panelTargetSize(PanelSession)
-		if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
-			responsive <- err
-			return
+	checkResponsive := func(waitingFor string) {
+		t.Helper()
+		responsive := make(chan error, 1)
+		go func() {
+			handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 12, Y: 12})
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			size := panelTargetSize(PanelSession)
+			if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
+				responsive <- err
+				return
+			}
+			pixels := make([]byte, size.W*size.H*4)
+			responsive <- h.render(false, pixels, size.W, size.H, size.W*4)
+		}()
+		select {
+		case err := <-responsive:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("unrelated input and render stayed blocked while %s was waiting", waitingFor)
 		}
-		pixels := make([]byte, size.W*size.H*4)
-		responsive <- h.render(false, pixels, size.W, size.H, size.W*4)
-	}()
-	select {
-	case err := <-responsive:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("unrelated input and render stayed blocked by the profile command")
 	}
+	checkResponsive("the profile command")
 
 	releaseCommand()
+	select {
+	case <-listStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("follow-up profile list never started")
+	}
+	checkResponsive("the profile list")
+	releaseProfileList()
 	waitSessionProfileActive(t, reg, "performance")
 	select {
 	case invalidation := <-reg.Invalidations():
