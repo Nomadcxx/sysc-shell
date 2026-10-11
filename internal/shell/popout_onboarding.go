@@ -3,9 +3,9 @@ package shell
 import (
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
@@ -40,9 +40,8 @@ func (p onboardingPage) prev() onboardingPage {
 	return p - 1
 }
 
-// onboardingCopy centralizes the wizard's English strings (decision D2).
-// Product localization has not landed; when it does, this block is the one
-// place to extract from.
+// onboardingCopy holds English source strings; translations live in the
+// existing internal/i18n catalogs.
 const (
 	onbTitleWelcome    = "Welcome to sysc-shell"
 	onbTitleAppearance = "Appearance"
@@ -50,28 +49,26 @@ const (
 	onbTitleIdle       = "When idle"
 	onbTitleReady      = "You are ready"
 
-	onbIntroWelcome = "sysc-shell provides the bar, panels and launcher; " +
-		"notifications, clipboard, tray and locking are companions beside it. " +
-		"These steps set appearance and regional basics. Everything can change " +
-		"later in Settings, and choices apply as you pick them."
+	onbIntroWelcome = "Set up the basics for a comfortable start. Changes apply as " +
+		"you make them and stay available later in Settings."
 	onbIntroAppearance = "Set the theme mode and wallpaper. Detailed palettes, " +
 		"schemes and bar layout stay in Settings."
 	onbIntroRegion = "Weather location and units. The interface language follows " +
 		"your session locale; keyboard layouts stay with the OS."
-	onbIntroIdle = "Choose what happens when the session is idle, or leave the " +
-		"current behaviour alone."
+	onbIntroIdle = "Choose the action for an idle session, or keep the current " +
+		"behaviour. Timing and availability stay in Settings."
 	onbIntroReady = "Review what applied. Settings holds every control this " +
 		"wizard used, plus the rest of the shell."
 
-	onbDocsHint = "Docs: https://nomadcxx.github.io/sysc/docs/"
-
-	onbWallpaperHint = "The picker browses images, sets per-output assignments " +
-		"and updates its folder; presets and bar layout live in Settings."
-	onbRegionHint = "Language affects interface text only. Keyboard layout and timezone " +
-		"stay with your OS. Coordinates accept 0; blank a field to clear it."
-	onbIdleHint = "A screensaver does not secure the session. The lock choice " +
-		"needs a locker command set below."
-	onbEntryHint = "Settings holds every control used here, beside the rest of " +
+	onbWallpaperHint = "Choose an image now; you can change it later in the Wallpaper panel."
+	onbRegionHint    = "The interface language does not change your keyboard layout. " +
+		"Set precise weather coordinates in Settings if needed."
+	onbIdleHint = "Timing and availability are managed in Settings, under Session. " +
+		"Unavailable actions stay disabled."
+	onbIdleModeDescription = "Choose one action to run when the session is idle."
+	onbCityDescription     = "Enter a city or town for local weather."
+	onbLanguageDescription = "Choose the interface language; your keyboard layout stays with the OS."
+	onbEntryHint           = "Settings holds every control used here, beside the rest of " +
 		"the shell: launcher, notifications, clipboard and tray panels sit in " +
 		"the bar."
 
@@ -93,97 +90,202 @@ var onbTitles = [onbPages]string{
 	onbTitleWelcome, onbTitleAppearance, onbTitleRegion, onbTitleIdle, onbTitleReady,
 }
 
+var onbTitleKeys = [onbPages]string{
+	"onboarding.title.welcome", "onboarding.title.appearance", "onboarding.title.region",
+	"onboarding.title.idle", "onboarding.title.ready",
+}
+
 var onbIntros = [onbPages]string{
 	onbIntroWelcome, onbIntroAppearance, onbIntroRegion, onbIntroIdle, onbIntroReady,
+}
+
+var onbIntroKeys = [onbPages]string{
+	"onboarding.intro.welcome", "onboarding.intro.appearance", "onboarding.intro.region",
+	"onboarding.intro.idle", "onboarding.intro.ready",
 }
 
 // onbBodyKey names the wizard's one scroll so its offset can be restored
 // across rebuilds, the way the Settings body does.
 const onbBodyKey = "onboarding-body"
 
-// onbMarkHeight sizes the brand mark in the wizard header, near the bar's
-// 19px wordmark. Static accent tint, no gradient lease.
-const onbMarkHeight = 20
+// onbMarkHeight gives the brand mark enough weight to anchor the setup header.
+const onbMarkHeight = 26
+
+const onbStepRailMinWidth = 900
+const onbStepRailWidth = 240
+const onbCardViewportFillPercent = 75
+
+var onbStepKeys = [onbPages]string{
+	"onb-step-welcome", "onb-step-appearance", "onb-step-region", "onb-step-idle", "onb-step-ready",
+}
 
 func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 	m := h.theme.Metrics
 	step := &ui.Node{
 		Kind:     ui.KindText,
-		Text:     fmt.Sprintf("Step %d / %d", int(h.onbPage)+1, int(onbPages)),
-		TextRole: theme.RoleCaption,
+		Text:     fmt.Sprintf("// %02d / %02d", int(h.onbPage)+1, int(onbPages)),
+		Name:     onbText(h, "progress_name", "Setup progress"),
+		Role:     "status",
+		TextRole: theme.RoleMono,
+		Tone:     ui.ToneAccent,
 	}
 	brand := &ui.Node{
 		Kind:   ui.KindWordmark,
 		ImageH: onbMarkHeight, ImageW: render.WordmarkWidth(onbMarkHeight),
 	}
-	head := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-		brand,
-		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: onbTitles[h.onbPage], Name: onbTitles[h.onbPage], Role: "heading", TextRole: theme.RoleTitle},
-			step,
+	brandPill := &ui.Node{
+		Kind: ui.KindCapsule, Height: m.StandardControl, Padding: m.ButtonPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeStadium, Stroke: 1, // token-exempt: a hairline border, not a ladder value
+		StrokeFill: ui.FillOutline,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
+			brand,
+			{Kind: ui.KindText, Text: onbText(h, "label", "SETUP"), TextRole: theme.RoleMono, Tone: ui.ToneAccent},
+		}}},
+	}
+	moveButton := h.button("onb-move", onbText(h, "action.move", "Move window"), "drag_indicator")
+	moveButton.Fill = ui.FillOutline
+	moveButton.Shape = ui.ShapeStadium
+	moveHintText := onbText(h, "move_hint", "SUPER + LEFT-DRAG TO MOVE")
+	if h.onbMoveMode {
+		moveHintText = onbText(h, "move_mode_hint", "Use arrows or click a position. Enter or Escape exits move mode.")
+	}
+	moveHint := &ui.Node{
+		Kind: ui.KindText, Text: moveHintText, Role: "status",
+		TextRole: theme.RoleMono, Tone: ui.ToneSubtle,
+	}
+	headerControls := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{step, moveButton}}
+	if onbBodyWidth(h) < onbStepRailMinWidth {
+		headerControls = &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{step, moveButton}}
+	}
+	head := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, CenterY: true, Children: []*ui.Node{
+		&ui.Node{Kind: ui.KindRow, PinEnd: true, CenterY: true, Children: []*ui.Node{
+			brandPill,
+			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
+				headerControls,
+				moveHint,
+			}},
 		}},
 	}}
+	stageChildren := append([]*ui.Node{{
+		Kind: ui.KindText, Text: onbTitle(h, h.onbPage), Name: onbTitle(h, h.onbPage),
+		Role: "heading", TextRole: theme.RoleTitle,
+	}}, onboardingBody(r, h)...)
+	stage := &ui.Node{
+		Kind: ui.KindColumn, Key: "onb-stage", Width: onbContentWidth(h),
+		Gap: theme.MarginM, CenterY: true, Children: stageChildren,
+	}
+	main := &ui.Node{
+		Kind: ui.KindColumn, Key: "onb-content-main", Width: onbContentWidth(h),
+		Children: []*ui.Node{stage},
+	}
+	rowChildren := []*ui.Node{main}
+	withRail := onbBodyWidth(h) >= onbStepRailMinWidth
+	if withRail {
+		rowChildren = []*ui.Node{onbStepRail(h), main}
+	}
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: withRail, Children: rowChildren}
+	card := &ui.Node{
+		Kind: ui.KindCapsule, Key: "onb-content-card", Width: onbBodyWidth(h),
+		Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
+		CenterY:  true,
+		Children: []*ui.Node{row},
+	}
+	frame := &ui.Node{
+		Kind: ui.KindColumn, Key: "onb-content-frame", Width: onbBodyWidth(h),
+		Children: []*ui.Node{card},
+	}
 	body := &ui.Node{
 		Kind:         ui.KindScroll,
 		Key:          onbBodyKey,
 		Width:        onbBodyWidth(h),
-		Gap:          theme.MarginM,
 		ScrollOffset: h.onbScroll,
-		Children:     onboardingBody(r, h),
+		Children:     []*ui.Node{frame},
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: m.PanelPadding, Children: []*ui.Node{
-		head, body, onbActions(h),
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: []*ui.Node{
+		head, body, onbActions(r, h),
 	}}
+}
+
+func onbStepRail(h *PanelHost) *ui.Node {
+	m := h.metrics()
+	items := make([]*ui.Node, 0, onbPages)
+	for page := onboardingPage(0); page < onbPages; page++ {
+		number := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%02d", int(page)+1), TextRole: theme.RoleMono}
+		item := &ui.Node{
+			Kind: ui.KindCapsule, Key: onbStepKeys[page], Width: onbStepRailWidth,
+			Height: m.StandardControl, Padding: m.ButtonPadding,
+			Fill: ui.FillOutline, Shape: ui.ShapeMedium,
+			Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
+			Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{
+				number,
+				{Kind: ui.KindText, Text: onbTitle(h, page), Name: onbTitle(h, page)},
+			}}},
+		}
+		if page == h.onbPage {
+			item.Fill = ui.FillAccent
+		}
+		items = append(items, item)
+	}
+	return &ui.Node{Kind: ui.KindColumn, Width: onbStepRailWidth, Children: []*ui.Node{{
+		Kind: ui.KindColumn, CenterY: true, Gap: theme.MarginS, Children: items,
+	}}}
 }
 
 // onboardingBody holds the page content. Every control is the Settings
 // panel's own entry row, so the wizard writes through the same validated
 // setters and never grows a second settings model.
 func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
-	children := []*ui.Node{
-		{Kind: ui.KindText, Text: onbIntros[h.onbPage]},
-	}
+	intro := h.wrappedText(onbIntro(h, h.onbPage), theme.RoleBody, ui.ToneNormal, onbContentWidth(h), 0)
+	intro.Key = "onb-intro"
+	children := []*ui.Node{intro}
 	switch h.onbPage {
 	case onbWelcome:
-		children = append(children, onbCaption("Session locale: "+onboardingLocale()))
 		children = append(children, onbSummary(r, h)...)
-		children = append(children, onbCaption(onbDocsHint))
+		children = append(children, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{onbDocsButton(h)}})
 	case onbAppearance:
-		children = append(children, onbRows(h, "appearance.mode", "appearance.source",
-			"appearance.palette", "appearance.scheme")...)
-		pick := h.button("onb-wallpaper", onbWallpaperButton, "wallpaper")
-		pick.Width = onbBodyWidth(h)
-		children = append(children, pick)
-		children = append(children, onbCaption(onbWallpaperHint))
+		children = append(children, onbRows(r, h, "appearance.mode")...)
+		children = append(children, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+			onbActionButton(h, "onb-wallpaper", "action.wallpaper", onbWallpaperButton, "wallpaper"),
+		}})
+		children = append(children, onbCaption(h, onbText(h, "hint.wallpaper", onbWallpaperHint)))
 	case onbRegion:
-		children = append(children, onbRows(h, "session.language")...)
+		children = append(children, onbRows(r, h, "session.language")...)
 		children = append(children, onboardingFontOption(h)...)
-		children = append(children, onbRows(h, "weather.city", "weather.latitude",
-			"weather.longitude", "weather.unit")...)
-		children = append(children, onbCaption(onbRegionHint))
+		children = append(children, onbRows(r, h, "weather.city", "weather.unit")...)
+		children = append(children, onbCaption(h, onbText(h, "hint.region", onbRegionHint)))
 	case onbIdle:
-		rows := onbRows(h, "idle.after", "idle.delay", "session.locker")
+		rows := onbRows(r, h, "idle.after")
 		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: rows}
 		settingsDimIdle(r, h, body)
 		children = append(children, body)
-		children = append(children, onbCaption(onbIdleHint))
+		children = append(children, onbCaption(h, onbText(h, "hint.idle", onbIdleHint)))
 	case onbReady:
 		children = append(children, onbSummary(r, h)...)
-		children = append(children, onbCaption(onbEntryHint))
-		children = append(children, onbCaption(onbDocsHint))
+		children = append(children, onbCaption(h, onbText(h, "hint.ready", onbEntryHint)))
+		children = append(children,
+			&ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+				onbActionButton(h, "onb-settings", "action.settings", "Open Settings", "settings"),
+				onbActionButton(h, "onb-launcher", "action.launcher", "Open launcher", "apps"),
+			}},
+			&ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+				onbActionButton(h, "onb-wallpaper", "action.wallpaper", onbWallpaperButton, "wallpaper"),
+				onbDocsButton(h),
+			}},
+		)
 	}
 	return children
 }
 
 func onboardingFontOption(h *PanelHost) []*ui.Node {
-	copy := onboardingFontCopy(h.onbFontLocale, h.onbFontState)
+	copy := onboardingFontCopy(h, h.onbFontLocale, h.onbFontState)
 	if copy == "" {
 		return nil
 	}
-	out := []*ui.Node{onbCaption(copy)}
+	out := []*ui.Node{onbCaption(h, copy)}
 	if h.onbFontState == onboardingFontMissing || h.onbFontState == onboardingFontFailed {
-		button := h.button("onb-font-install", "Install Noto CJK", "download")
-		button.Width = onbBodyWidth(h)
+		button := h.button("onb-font-install", onbText(h, "font.install", "Install Noto CJK"), "download")
+		button.Shape = ui.ShapeStadium
 		out = append(out, button)
 	}
 	return out
@@ -191,15 +293,31 @@ func onboardingFontOption(h *PanelHost) []*ui.Node {
 
 // onbRows renders the named settings entries as Settings renders them. An
 // unknown path is a programmer error, not a user one, so it simply drops.
-func onbRows(h *PanelHost, paths ...string) []*ui.Node {
+func onbRows(r *Registry, h *PanelHost, paths ...string) []*ui.Node {
 	var out []*ui.Node
-	width := onbBodyWidth(h)
+	width := onbContentWidth(h)
+	var entries []settings.Entry
 	for _, p := range paths {
 		e := h.set.ByPath(p)
-		if e == nil {
-			continue
+		if e != nil {
+			entries = append(entries, *e)
 		}
-		out = append(out, settingsEntryRow(h, *e, width))
+	}
+	entries = overlayIdleGets(r, h.draft.Session.Locker, entries)
+	if h.id == PanelOnboarding {
+		for i := range entries {
+			switch entries[i].Path {
+			case "idle.after":
+				entries[i].Describe = onbText(h, "idle.mode_description", onbIdleModeDescription)
+			case "weather.city":
+				entries[i].Describe = onbText(h, "region.city_description", onbCityDescription)
+			case "session.language":
+				entries[i].Describe = onbText(h, "region.language_description", onbLanguageDescription)
+			}
+		}
+	}
+	for _, e := range entries {
+		out = append(out, settingsEntryRow(h, e, width))
 	}
 	return out
 }
@@ -208,22 +326,24 @@ func onbRows(h *PanelHost, paths ...string) []*ui.Node {
 // writes nothing, so the wizard can always open.
 func onbSummary(r *Registry, h *PanelHost) []*ui.Node {
 	mode := settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin())
+	mode = onbIdleMode(h, mode)
 	weather := strings.TrimSpace(h.draft.Weather.City)
 	if weather == "" {
 		if h.draft.Weather.Configured {
-			weather = "coordinates set"
+			weather = onbText(h, "summary.coordinates_set", "coordinates set")
 		} else {
-			weather = "not set"
+			weather = onbText(h, "summary.not_set", "not set")
 		}
 	}
 	lines := []string{
-		"Theme: " + onbGet(h, "appearance.mode") + ", " + onbGet(h, "appearance.source"),
-		"Weather location: " + weather,
-		"Idle: " + mode,
+		fmt.Sprintf(onbText(h, "interface_language", "Interface language: %s"), onboardingLocale(h)),
+		fmt.Sprintf(onbText(h, "summary.theme", "Theme: %s, %s"), onbGet(h, "appearance.mode"), onbGet(h, "appearance.source")),
+		fmt.Sprintf(onbText(h, "summary.weather", "Weather location: %s"), weather),
+		fmt.Sprintf(onbText(h, "summary.idle", "Idle: %s"), mode),
 	}
 	out := make([]*ui.Node, 0, len(lines))
 	for _, l := range lines {
-		out = append(out, onbCaption(l))
+		out = append(out, h.wrappedText(l, theme.RoleCaption, ui.ToneNormal, onbContentWidth(h), 0))
 	}
 	return out
 }
@@ -231,50 +351,125 @@ func onbSummary(r *Registry, h *PanelHost) []*ui.Node {
 func onbGet(h *PanelHost, path string) string {
 	if e := h.set.ByPath(path); e != nil {
 		if v := strings.TrimSpace(e.Get(h.draft)); v != "" {
+			for i, option := range e.Options {
+				if option == v {
+					return settingsEntryOptionLabel(*e, i)
+				}
+			}
 			return v
 		}
 	}
-	return "default"
+	return onbText(h, "summary.default", "default")
 }
 
-func onbCaption(text string) *ui.Node {
-	return &ui.Node{Kind: ui.KindText, Text: text, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+func onbCaption(h *PanelHost, text string) *ui.Node {
+	return h.wrappedText(text, theme.RoleCaption, ui.ToneSubtle, onbContentWidth(h), 0)
 }
 
-// onboardingLocale reads the session's locale the way libc does: the first
-// non-empty of LC_ALL, LC_MESSAGES, LANG. Product localization has not
-// landed; this reports what the session says, nothing more.
-func onboardingLocale() string {
-	for _, key := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-			return v
-		}
+// onboardingLocale shows the configured interface language, or the language
+// selected by the shared system-locale resolver when the preference follows
+// the session.
+func onboardingLocale(h *PanelHost) string {
+	code := i18n.Match(h.draft.Session.Language)
+	if code == "" {
+		code = i18n.Resolve("")
 	}
-	return "not set"
+	name := i18n.Native[code]
+	if name == "" {
+		name = code
+	}
+	if h.draft.Session.Language == "" {
+		return fmt.Sprintf(onbText(h, "language.follow_system", "Follow system (%s)"), name)
+	}
+	return name
 }
 
 // onbActions keeps one primary action per step (Next/Finish, default fill);
-// Back and Not now wear the Settings panel's outline style so they read as
-// subordinate, the way Noctalia's wizard puts one Get-started button forward.
-func onbActions(h *PanelHost) *ui.Node {
-	back := h.button("onb-back", onbBackLabel, "")
+// Back and Not now use the existing outlined button style.
+func onbActions(r *Registry, h *PanelHost) *ui.Node {
+	back := h.button("onb-back", onbText(h, "action.back", onbBackLabel), "")
 	back.Fill = ui.FillOutline
-	back.Shape = ui.ShapeMedium
+	back.Shape = ui.ShapeStadium
 	if h.onbPage == onbWelcome {
 		back.State |= ui.StateDisabled
 		back.AriaDisabled = true
 	}
-	main := h.button("onb-next", onbNextLabel, "chevron_right")
+	main := h.button("onb-next", onbText(h, "action.next", onbNextLabel), "chevron_right")
+	main.Shape = ui.ShapeStadium
+	main.Fill = ui.FillAccent
 	if h.onbPage == onbReady {
-		main = h.button("onb-finish", onbFinishLabel, "check")
+		main = h.button("onb-finish", onbText(h, "action.finish", onbFinishLabel), "check")
+		main.Shape = ui.ShapeStadium
+		main.Fill = ui.FillAccent
+		if r.idleApplying {
+			main.State |= ui.StateDisabled
+			main.AriaDisabled = true
+		}
 	}
-	skip := h.button("onb-skip", onbSkipLabel, "")
+	skip := h.button("onb-skip", onbText(h, "action.not_now", onbSkipLabel), "")
 	skip.Fill = ui.FillOutline
-	skip.Shape = ui.ShapeMedium
-	skip.Tone = ui.ToneSubtle
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-		skip, back, main,
+	skip.Shape = ui.ShapeStadium
+	navigation := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
+		skip,
+		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{back, main}},
 	}}
+	if h.errLabel == "" {
+		return navigation
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
+		{Kind: ui.KindText, Key: "onb-error", Text: h.errLabel, Tone: ui.ToneError},
+		navigation,
+	}}
+}
+
+func onbActionButton(h *PanelHost, action, key, fallback, icon string) *ui.Node {
+	button := h.button(action, onbText(h, key, fallback), icon)
+	button.Fill = ui.FillOutline
+	button.Shape = ui.ShapeStadium
+	return button
+}
+
+func onbDocsButton(h *PanelHost) *ui.Node {
+	return onbActionButton(h, "onb-docs", "action.docs", "Read the documentation", "link")
+}
+
+func onbText(h *PanelHost, key, english string) string {
+	return h.tr("onboarding."+key, english)
+}
+
+func onbTitle(h *PanelHost, page onboardingPage) string {
+	return h.tr(onbTitleKeys[page], onbTitles[page])
+}
+
+func onbIntro(h *PanelHost, page onboardingPage) string {
+	return h.tr(onbIntroKeys[page], onbIntros[page])
+}
+
+// moveOnboardingTo places the window with its full frame inside the output.
+// Registry.mu is held by the event handler.
+func (h *PanelHost) moveOnboardingTo(r *Registry, x, y int) {
+	next := h.rect
+	next.X = clampAxis(x, next.W, h.place.Output.W, h.place.Padding)
+	next.Y = clampAxis(y, next.H, h.place.Output.H, h.place.Padding)
+	r.updatePanelPlacementLocked(h, next)
+}
+
+func onbMainLabelFor(h *PanelHost, page onboardingPage) string {
+	if page == onbReady {
+		return onbText(h, "action.finish", onbFinishLabel)
+	}
+	return onbText(h, "action.next", onbNextLabel)
+}
+
+func onbIdleMode(h *PanelHost, mode string) string {
+	key, english := "summary.idle_nothing", "Nothing"
+	switch mode {
+	case "screensaver":
+		key, english = "summary.idle_screensaver", "Screensaver"
+	case "lock":
+		key, english = "summary.idle_lock", "Lock the session"
+	}
+	return onbText(h, key, english)
 }
 
 func (h *PanelHost) button(action, label, icon string) *ui.Node {
@@ -302,6 +497,14 @@ func onbBodyWidth(h *PanelHost) int {
 	return max(w-2*h.metrics().PanelPadding, 0)
 }
 
+func onbContentWidth(h *PanelHost) int {
+	width := max(onbBodyWidth(h)-2*h.metrics().CardPadding, 0)
+	if onbBodyWidth(h) >= onbStepRailMinWidth {
+		width = max(width-onbStepRailWidth-theme.MarginL, 0)
+	}
+	return width
+}
+
 // onboardingScrollOffset reads the body scroll back out of the built tree so
 // the next rebuild restores the position.
 func onboardingScrollOffset(root *ui.Node) int {
@@ -327,11 +530,15 @@ func onboardingScrollOffset(root *ui.Node) int {
 // everything else, so pick:, set: and browse: keep the shared handlers.
 func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 	switch n.Action {
+	case "onb-move":
+		h.onbMoveMode = !h.onbMoveMode
+		r.rebuildPanel(h)
+		return true
 	case "onb-back":
 		h.onbPage = h.onbPage.prev()
 		h.onbScroll = 0
 		r.rebuildPanel(h)
-		h.focusByName(onbMainLabel(h.onbPage))
+		h.focusByName(onbMainLabelFor(h, h.onbPage))
 		return true
 	case "onb-next":
 		h.onbPage = h.onbPage.next()
@@ -340,7 +547,7 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 			r.checkOnboardingFont(h)
 		}
 		r.rebuildPanel(h)
-		h.focusByName(onbMainLabel(h.onbPage))
+		h.focusByName(onbMainLabelFor(h, h.onbPage))
 		return true
 	case "onb-font-install":
 		r.installOnboardingFont(h)
@@ -353,12 +560,66 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		}
 		return true
 	case "onb-skip":
-		markOnboardingOutcome(onboarding.OutcomeDismissed)
+		if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeDismissed); err != nil {
+			log.Printf("shell: dismiss onboarding: %v", err)
+		}
 		r.closePanelLocked(h.id)
 		return true
 	case "onb-finish":
-		markOnboardingOutcome(onboarding.OutcomeCompleted)
+		if r.idleApplying {
+			h.errLabel = onbText(h, "error.idle_applying", "Wait for the idle setting to finish applying.")
+			r.rebuildPanel(h)
+			return true
+		}
+		if h.writeTimer != nil {
+			h.writeTimer.Stop()
+			h.writeTimer = nil
+		}
+		if err := r.writeConfig(h.draft); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return true
+		}
+		if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeCompleted); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return true
+		}
 		r.closePanelLocked(h.id)
+		return true
+	case "onb-settings", "onb-launcher":
+		if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeDismissed); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return true
+		}
+		id := PanelSettings
+		if n.Action == "onb-launcher" {
+			id = PanelLauncher
+		}
+		output := h.output
+		r.closePanelLocked(h.id)
+		if err := r.openPanelLocked(id, output, Trigger{}); err != nil {
+			log.Printf("shell: open %s from onboarding: %v", id, err)
+		}
+		return true
+	case "onb-docs":
+		go func() {
+			err := openURL("https://nomadcxx.github.io/sysc/docs/")
+			if err == nil {
+				return
+			}
+			r.mu.Lock()
+			if r.panelHosts[PanelOnboarding] != h {
+				r.mu.Unlock()
+				return
+			}
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			output := h.output
+			r.mu.Unlock()
+			r.publishSurface(output, panelSurfaceID(PanelOnboarding))
+		}()
 		return true
 	}
 	return false
@@ -369,7 +630,7 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 // reopening is not a reset.
 func onboardingReopenCard(h *PanelHost) *ui.Node {
 	m := h.metrics()
-	label := "Reopen setup wizard"
+	label := onbText(h, "action.reopen", "Run setup again")
 	return &ui.Node{
 		Kind: ui.KindButton, Action: "onboarding:open",
 		Name: label, Role: "button", Focusable: true,
@@ -377,14 +638,5 @@ func onboardingReopenCard(h *PanelHost) *ui.Node {
 		Gap: m.ButtonPadding / 2, Padding: m.ButtonPadding,
 		Fill:     ui.FillOutline,
 		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
-	}
-}
-
-// markOnboardingOutcome records the lifecycle marker. Failure is logged, not
-// surfaced: a crash or refused write leaves the marker absent, so the wizard
-// simply offers itself again instead of lying about completion.
-func markOnboardingOutcome(outcome onboarding.Outcome) {
-	if err := onboarding.Mark(onboarding.StatePath(), outcome); err != nil {
-		log.Printf("shell: onboarding %s marker: %v", outcome, err)
 	}
 }

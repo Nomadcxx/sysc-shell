@@ -2065,11 +2065,11 @@ func TestSettingsPaintsAtLeastTheOpaqueFloor(t *testing.T) {
 	h := newSettingsHost()
 	h.theme = DefaultTheme()
 	h.theme.Surfaces.Panel = 0x80
-	if a := h.rootStyle(h.theme).SurfaceOpacity; a < settingsOpacityFloor {
+	if a := h.rootStyle(h.theme, false).SurfaceOpacity; a < settingsOpacityFloor {
 		t.Fatalf("settings root alpha %#x, want at least %#x", a, settingsOpacityFloor)
 	}
 	other := &PanelHost{id: PanelClock, theme: h.theme}
-	if a := other.rootStyle(other.theme).SurfaceOpacity; a != 0x80 {
+	if a := other.rootStyle(other.theme, false).SurfaceOpacity; a != 0x80 {
 		t.Fatalf("clock root alpha %#x changed", a)
 	}
 }

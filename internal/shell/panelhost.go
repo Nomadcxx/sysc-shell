@@ -342,6 +342,10 @@ type PanelHost struct {
 	onbScroll     int
 	onbFontLocale string
 	onbFontState  onboardingFontState
+	onbMoving     bool
+	onbMoveMode   bool
+	onbGrabX      int
+	onbGrabY      int
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -723,6 +727,10 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 		}
 		return err
 	}
+	if id == PanelOnboarding {
+		r.onboardingPending = false
+		r.onboardingResume = false
+	}
 	if id == PanelNotifications {
 		r.setCenterOpen(true)
 		// The badge clears when the daemon confirms with a history-seen
@@ -772,7 +780,15 @@ func (r *Registry) closePanelGroupLocked() {
 func (r *Registry) ClosePanel(id PanelID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if id == PanelOnboarding && r.panelHosts[id] != nil {
+		if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeDismissed); err != nil {
+			log.Printf("shell: dismiss onboarding: %v", err)
+		}
+	}
 	r.closePanelLocked(id)
+	if id != PanelOnboarding {
+		r.tryOpenOnboardingLocked(0)
+	}
 }
 
 // closePanelLocked closes one panel and releases the group root when it was
@@ -809,6 +825,9 @@ func (r *Registry) closePanelLocked(id PanelID) {
 }
 
 func (r *Registry) closePanelsOnOutputLocked(output uint32) {
+	if h := r.panelHosts[PanelOnboarding]; h != nil && h.output == output {
+		r.preserveOnboardingLocked(h)
+	}
 	ids := r.panelIDsOnOutputLocked(output)
 	hadPluginPanel := false
 	for _, id := range ids {
@@ -940,6 +959,9 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	h := r.panelHosts[id]
 	if h == nil || h.output != output {
 		return
+	}
+	if id == PanelOnboarding {
+		r.preserveOnboardingLocked(h)
 	}
 	r.closePanelLocked(id)
 }
@@ -1224,7 +1246,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelAudio {
 		size = audioPanelSize(outW, outH)
 	}
-	if id == PanelSettings {
+	if id == PanelSettings || id == PanelOnboarding {
 		size = settingsPanelSize(outW, outH)
 	}
 	trig.OutW, trig.OutH = outW, outH
@@ -1277,6 +1299,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelOnboarding {
 		h.set = r.settingsForLocked(r.cfg)
 		h.draft = r.cfg
+		if r.onboardingResume {
+			h.onbPage = r.onboardingPage
+			h.draft = r.onboardingDraft
+			h.set = r.settingsForLocked(h.draft)
+			h.errLabel = r.onboardingError
+		}
 	}
 	if id == PanelPluginStore {
 		h.search = ui.NewField("")
@@ -1373,7 +1401,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelOnboarding {
 		// Keyboard users land on the primary action, not the Not now button
 		// that happens to be first in the tree.
-		h.focusByName(onbMainLabel(h.onbPage))
+		h.focusByName(onbMainLabelFor(h, h.onbPage))
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
@@ -1458,8 +1486,8 @@ func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger,
 		bt := bar.themeSnapshot()
 		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
 	}
-	// Settings, the launcher, the clipboard, the plugin store and the file
-	// browser float; other panels attach to the bar.
+	// Settings, the launcher, the clipboard, the plugin store, the file browser,
+	// and onboarding float; other panels attach to the bar.
 	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore || id == PanelFiles || id == PanelOnboarding {
 		place.CenterY = true
 	}
@@ -1482,6 +1510,13 @@ func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger,
 		place.Gap = 0
 		place.CenterY = true
 		place.Align = "center"
+	}
+	if id == PanelOnboarding {
+		// A setup dialog is centred on the output, independent of the bar edge
+		// or the widget that happened to launch it.
+		place.BarZone, place.Gap = 0, 0
+		place.AnchorX, place.AnchorY = 0, 0
+		place.Align, place.CenterY = "center", true
 	}
 	return place
 }
@@ -1654,7 +1689,12 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 					return false
 				}
 				r.mu.Lock()
-				defer r.mu.Unlock()
+				defer func() {
+					if newest := r.newestPanelOnOutputLocked(h.output); newest == nil || newest.id != PanelOnboarding {
+						r.tryOpenOnboardingLocked(0)
+					}
+					r.mu.Unlock()
+				}()
 				if !r.roots.owns(panelGroupRoot()) || r.roots.gen() != generation ||
 					time.Now().Before(h.shieldQuiet) {
 					return false
@@ -1664,7 +1704,7 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 				// Taking it as one closed Settings under a click on its rail,
 				// and said nothing about why.
 				for _, open := range r.panelHosts {
-					if open.output == h.output && open.place.Rect().Contains(int(e.X), int(e.Y)) {
+					if open.output == h.output && open.rect.Contains(int(e.X), int(e.Y)) {
 						log.Printf("shell: shield took a press inside %s at %.0f,%.0f; keeping the panel open", open.id, e.X, e.Y)
 						return false
 					}
@@ -1673,8 +1713,15 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 				if newest == nil {
 					return false
 				}
+				if newest.id == PanelOnboarding && newest.onbMoveMode {
+					newest.moveOnboardingTo(r, int(math.Floor(e.X))-newest.rect.W/2,
+						int(math.Floor(e.Y))-newest.rect.H/2)
+					return true
+				}
 				if newest.id == PanelOnboarding {
-					markOnboardingOutcome(onboarding.OutcomeDismissed)
+					if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeDismissed); err != nil {
+						log.Printf("shell: dismiss onboarding: %v", err)
+					}
 				}
 				r.closePanelLocked(newest.id)
 				return true
@@ -1698,7 +1745,7 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 // directly on the shared surface and leave it zero. An attached panel paints
 // none either: it and the bar are one ground, and a stroke would read as a
 // seam between them.
-func (h *PanelHost) rootStyle(t Theme) render.Style {
+func (h *PanelHost) rootStyle(t Theme, blurBehind bool) render.Style {
 	var s render.Style
 	switch {
 	case h.place.Attached() && h.backdrop == nil:
@@ -1711,6 +1758,11 @@ func (h *PanelHost) rootStyle(t Theme) render.Style {
 	}
 	if h.id == PanelSettings {
 		s.SurfaceOpacity = max(s.SurfaceOpacity, settingsOpacityFloor)
+	} else if h.id == PanelOnboarding && blurBehind && !t.Outlined {
+		// Standard and Compact are fully opaque by default, which hides the
+		// onboarding backdrop. Keep the setup frame lightly translucent when
+		// blur is enabled; its content card remains independently opaque.
+		s.SurfaceOpacity = min(s.SurfaceOpacity, opacityAlpha(onboardingBlurOpacityPercent, true))
 	}
 	return s
 }
@@ -1725,6 +1777,10 @@ func settingsPanelSize(outputW, outputH int) ui.Rect {
 // the pane is read for minutes at a time, over whatever is behind it.
 const settingsOpacityFloor uint8 = 0xf0
 
+// onboardingBlurOpacityPercent leaves enough of the backdrop visible to read
+// as glass under the otherwise-opaque Standard and Compact presets.
+const onboardingBlurOpacityPercent = 90
+
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
 	switch h.place.BarEdge {
@@ -1734,7 +1790,10 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight)
 	}
 	// Body is the one output-space rectangle shared by placement and capture.
-	region := h.place.Rect()
+	region := h.rect
+	if region.W <= 0 || region.H <= 0 {
+		region = h.place.Rect()
+	}
 	if h.place.CenterY {
 		// Floating roots keep one output anchor as the bar moves between
 		// edges; their margins already describe an output-space body.
@@ -1745,6 +1804,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	m = panelSurfaceMargins(h.place, m)
 	width, height := h.surfaceSize()
 	opaque := h.theme.BackgroundOpaque()
+	if !h.place.Attached() {
+		// Floating panels paint at their panel opacity, not the bar's. The
+		// opaque-region promise must match the actual root fill or the
+		// compositor will skip blending the backdrop.
+		opaque = h.rootStyle(h.theme, r.cfg.Theme.BlurBehind).WithPaper(h.paper).RootFill().A == 0xff
+	}
 	var input []ui.Rect
 	if joints != (Joints{}) {
 		// The joints and a flush panel's screen-edge wedge hang past the body
@@ -1981,7 +2046,7 @@ func (h *PanelHost) renderLocking(r *Registry) func([]byte, int, int, int) error
 	return func(pixels []byte, width, height, stride int) error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return h.render(pixels, width, height, stride)
+		return h.render(r.cfg.Theme.BlurBehind, pixels, width, height, stride)
 	}
 }
 
@@ -1998,6 +2063,32 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 		return err
 	}
 	box := h.surfaceBody(w, height)
+	if h.id == PanelOnboarding && h.root != nil && len(h.root.Children) == 3 {
+		measure := h.measureText()
+		contentWidth := max(box.W-2*h.root.Padding, 0)
+		headHeight, err := ui.ContentHeight(h.root.Children[0], contentWidth, measure)
+		if err != nil {
+			return err
+		}
+		actionsHeight, err := ui.ContentHeight(h.root.Children[2], contentWidth, measure)
+		if err != nil {
+			return err
+		}
+		body := h.root.Children[1]
+		body.Height = max(box.H-2*h.root.Padding-headHeight-actionsHeight-2*h.root.Gap, 0)
+		if len(body.Children) == 1 {
+			frame := body.Children[0]
+			if len(frame.Children) == 1 {
+				card := frame.Children[0]
+				cardHeight, err := ui.ContentHeight(card, onbBodyWidth(h), measure)
+				if err != nil {
+					return err
+				}
+				card.Height = max(cardHeight, body.Height*onbCardViewportFillPercent/100)
+				frame.Height = max(body.Height, card.Height)
+			}
+		}
+	}
 	var err error
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		err = ui.Layout(h.root, box, h.measureText())
@@ -2099,7 +2190,7 @@ func markMenuRowHover(root *ui.Node, path string, m *Menu, x, y int) {
 	walk(root)
 }
 
-func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
+func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride int) error {
 	if err := h.ensureText(); err != nil {
 		return err
 	}
@@ -2139,7 +2230,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	resolveSpriteMotion(h.anim, root)
 
 	paintTheme := h.paintTheme()
-	style := h.rootStyle(paintTheme).WithPaper(h.paper)
+	style := h.rootStyle(paintTheme, blurBehind).WithPaper(h.paper)
 	style.Scale120 = scale
 	style.Body = body
 	opacity, offsetX, offsetY := h.panelReveal()
@@ -2183,7 +2274,12 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 	return func(e wayland.Event) bool {
 		r.mu.Lock()
-		defer r.mu.Unlock()
+		defer func() {
+			if r.onboardingPending && r.panelHosts[PanelOnboarding] == nil {
+				r.tryOpenOnboardingLocked(0)
+			}
+			r.mu.Unlock()
+		}()
 		switch e.Kind {
 		case wayland.EventKeyPress, wayland.EventPointerPress:
 			h.inputSerial = e.Serial
@@ -2203,6 +2299,10 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return false
 		case wayland.EventPointerEnter, wayland.EventPointerMotion:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			if h.id == PanelOnboarding && h.onbMoving && e.Kind == wayland.EventPointerMotion {
+				h.moveOnboardingTo(r, h.rect.X+h.hoverX-h.onbGrabX, h.rect.Y+h.hoverY-h.onbGrabY)
+				return false
+			}
 			if h.drag.Source != nil {
 				h.drag.Move(e.X, e.Y)
 				if !h.drag.Active() {
@@ -2254,6 +2354,19 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
 			// A click acts on the control; its hint has done its job.
 			r.dwell.leave()
+			if h.id == PanelOnboarding && h.onbMoveMode && e.Button == btnLeft && !e.Mods.Has(ui.ModSuper) {
+				if n := h.hitFocusable(h.hoverX, h.hoverY); n == nil || n.Action != "onb-move" {
+					h.moveOnboardingTo(r, h.rect.X+h.hoverX-h.rect.W/2,
+						h.rect.Y+h.hoverY-h.rect.H/2)
+					return false
+				}
+			}
+			if h.id == PanelOnboarding && e.Button == btnLeft && e.Mods.Has(ui.ModSuper) {
+				h.onbMoving = true
+				h.onbGrabX, h.onbGrabY = h.hoverX, h.hoverY
+				h.pressed = ""
+				return false
+			}
 			// The clear glyph sits inside the field's own bounds, so it is
 			// resolved before any panel's hit testing gets a look at the point.
 			if h.searchClearPress(r, e) {
@@ -2296,6 +2409,11 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return false
 		case wayland.EventPointerRelease:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			if h.id == PanelOnboarding && h.onbMoving && e.Button == btnLeft {
+				h.onbMoving = false
+				h.pressed = ""
+				return false
+			}
 			h.fieldDrag = nil
 			if h.sliderDrag != nil {
 				n := h.sliderDrag
@@ -2417,6 +2535,30 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 
 func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	key := k.Code
+	if h.id == PanelOnboarding && h.onbMoveMode {
+		dx, dy := 0, 0
+		switch key {
+		case keyLeft:
+			dx = -theme.MarginL
+		case keyRight:
+			dx = theme.MarginL
+		case keyUp:
+			dy = -theme.MarginL
+		case keyDown:
+			dy = theme.MarginL
+		case keyEnter, keySpace, keyEsc:
+			h.onbMoveMode = false
+			r.rebuildPanel(h)
+			return true
+		case keyTab:
+			h.onbMoveMode = false
+			r.rebuildPanel(h)
+		}
+		if dx != 0 || dy != 0 {
+			h.moveOnboardingTo(r, h.rect.X+dx, h.rect.Y+dy)
+			return true
+		}
+	}
 	if h.menu != nil && h.menu.Opened() {
 		if !h.menu.Handle(key) {
 			// A picker's well takes the keys the menu itself does not: the
@@ -2531,7 +2673,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 			return true
 		}
 		if h.id == PanelOnboarding {
-			markOnboardingOutcome(onboarding.OutcomeDismissed)
+			if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeDismissed); err != nil {
+				log.Printf("shell: dismiss onboarding: %v", err)
+			}
 		}
 		r.closePanelLocked(h.id)
 		return true
@@ -3813,7 +3957,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// and a preview pane, not the compact network-list width.
 		return ui.Rect{W: 800, H: 650}
 	case PanelOnboarding:
-		return ui.Rect{W: 560, H: 640}
+		return settingsPanelSize(1920, 1080)
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

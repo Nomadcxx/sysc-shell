@@ -146,26 +146,33 @@ func runCJKFontInstall() error {
 	return nil
 }
 
-func onboardingFontCopy(locale string, state onboardingFontState) string {
-	language := cjkFontLanguageName(locale)
+func onboardingFontCopy(h *PanelHost, locale string, state onboardingFontState) string {
+	language := h.tr("onboarding.font.language."+locale, cjkFontLanguageName(locale))
+	key, fallback := "", ""
 	switch state {
 	case onboardingFontChecking:
-		return "Checking installed fonts for " + language + "…"
+		key, fallback = "checking", "Checking installed fonts for %s…"
 	case onboardingFontCovered:
-		return "Installed fonts already cover " + language + ". No extra package is needed."
+		key, fallback = "covered", "Installed fonts already cover %s. No extra package is needed."
 	case onboardingFontMissing:
-		return "No installed fonts cover " + language + ". Noto CJK can add the missing glyphs system-wide."
+		key, fallback = "missing", "No installed fonts cover %s. Noto CJK can add the missing glyphs system-wide."
 	case onboardingFontUnavailable:
-		return "No installed fonts cover " + language + ". Automatic installation is unavailable on this system; use its package manager to add a CJK font."
+		key, fallback = "unavailable", "No installed fonts cover %s. Automatic installation is unavailable on this system; use its package manager to add a CJK font."
 	case onboardingFontInstalling:
-		return "Installing Noto CJK. Approve the request in the system authorization prompt."
+		key, fallback = "installing", "Installing Noto CJK. Approve the request in the system authorization prompt."
 	case onboardingFontInstalled:
-		return "Noto CJK is installed. Restart sysc-shell to use the new fonts."
+		key, fallback = "installed", "Noto CJK is installed. Restart sysc-shell to use the new fonts."
 	case onboardingFontFailed:
-		return "The font install did not complete. Check the authorization prompt or package manager, then retry."
-	default:
+		key, fallback = "failed", "The font install did not complete. Check the authorization prompt or package manager, then retry."
+	}
+	if key == "" {
 		return ""
 	}
+	copy := onbText(h, "font."+key, fallback)
+	if strings.Contains(copy, "%s") {
+		return fmt.Sprintf(copy, language)
+	}
+	return copy
 }
 
 // checkOnboardingFont runs fontconfig and package-manager availability probes

@@ -711,6 +711,7 @@ func (h *polkitHost) finishLocked(cancel bool) {
 	if gen != 0 {
 		h.r.roots.closeRoot(gen)
 	}
+	h.r.tryOpenOnboardingLocked(0)
 }
 
 func (h *polkitHost) closeSurface() {

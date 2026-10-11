@@ -262,6 +262,7 @@ func (r *Registry) applyManagedSnapshot(state locksession.State) {
 			publish = append(publish, waylandSurface{output: h.output, id: panelSurfaceID(id)})
 		}
 	}
+	r.tryOpenOnboardingLocked(0)
 	r.mu.Unlock()
 	for _, surface := range publish {
 		r.publishSurface(surface.output, surface.id)

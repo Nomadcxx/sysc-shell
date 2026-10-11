@@ -237,7 +237,7 @@ func TestAttachedPanelJoinsTheBarAsOneGround(t *testing.T) {
 
 	reg, session := open(t, "solid", false, PanelSession)
 	reg.mu.Lock()
-	if rim := session.rootStyle(session.paintTheme()).Rim; rim.A != 0 {
+	if rim := session.rootStyle(session.paintTheme(), reg.cfg.Theme.BlurBehind).Rim; rim.A != 0 {
 		t.Errorf("attached session rim %+v, want none", rim)
 	}
 	if got := session.place.Margins().Top; got != 39 {
@@ -254,7 +254,7 @@ func TestAttachedPanelJoinsTheBarAsOneGround(t *testing.T) {
 
 	reg, settings := open(t, "solid", false, PanelSettings)
 	reg.mu.Lock()
-	if rim := settings.rootStyle(settings.paintTheme()).Rim; rim.A == 0 {
+	if rim := settings.rootStyle(settings.paintTheme(), reg.cfg.Theme.BlurBehind).Rim; rim.A == 0 {
 		t.Error("floating settings lost its rim")
 	}
 	reg.mu.Unlock()

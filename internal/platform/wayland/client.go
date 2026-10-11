@@ -62,7 +62,7 @@ type Event struct {
 	// Sym, Text and Mods are the key resolved through the active layout:
 	// the keysym, the UTF-8 it types ("" for non-printing keys and while a
 	// compose sequence is open), and the modifiers held. Set on every key
-	// press, release and repeat; Mods is also set on pointer buttons.
+	// press, release and repeat, and on pointer motion and button events.
 	Sym  uint32
 	Text string
 	Mods ui.Mods
@@ -78,6 +78,10 @@ type Event struct {
 	AxisValue    float64
 	AxisDiscrete int32
 	AxisValue120 int32
+}
+
+func (o *owner) pointerMotionEvent(x, y float64) Event {
+	return Event{Kind: EventPointerMotion, X: x, Y: y, Mods: o.mods}
 }
 
 // Invalidation requests a redraw. Global names the wl_registry output; a zero
@@ -663,9 +667,7 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 				return
 			}
 			o.focus.x, o.focus.y = e.SurfaceX, e.SurfaceY
-			o.deliverUnit(o.focus.host, o.focus.unit, Event{
-				Kind: EventPointerMotion, X: e.SurfaceX, Y: e.SurfaceY,
-			})
+			o.deliverUnit(o.focus.host, o.focus.unit, o.pointerMotionEvent(e.SurfaceX, e.SurfaceY))
 			o.syncCursor(o.focus.unit, e.SurfaceX, e.SurfaceY, o.focus.serial)
 		})
 		pointer.SetButtonHandler(func(e client.PointerButtonEvent) {
