@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-notify/protocol"
@@ -2148,7 +2149,9 @@ func (h *PanelHost) measureText() ui.MeasureText {
 				return scale.Logical(mw), scale.Logical(mh)
 			}
 		}
-		return len(s) * 8, 16
+		// ponytail: fallback assumes one 8px cell per rune; the configured text
+		// shaper owns script-aware widths whenever it is available.
+		return utf8.RuneCountInString(s) * 8, 16
 	}
 }
 

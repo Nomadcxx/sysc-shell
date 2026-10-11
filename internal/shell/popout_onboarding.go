@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -104,12 +104,50 @@ var onbIntroKeys = [onbPages]string{
 	"onboarding.intro.idle", "onboarding.intro.ready",
 }
 
+// onboardingSyscWordmarkRows is the desktop's SYSC.txt art, rendered like
+// the Moonbit plugin's mono wordmark. The source's leading tab is expanded to
+// eight spaces so the tagline keeps its terminal alignment in shaped text.
+var onboardingSyscWordmarkRows = padOnboardingRows(
+	`  ██████████████░████░       ████░   ██████████████░  ██████████████░`,
+	`████████████████░████░       ████░ ████████████████░████████████████░`,
+	`████░            ██████░   ██████░ ████░            ████░`,
+	`██████████████░    ████████████░   ██████████████░  ████░`,
+	`  ██████████████░    ████████░       ██████████████░████░`,
+	`            ████░      ████░                   ████░████░`,
+	`████████████████░      ████░       ████████████████░████████████████░`,
+	`██████████████░        ████░       ██████████████░    ██████████████░`,
+	`        //////////////SEE YOU IN SPACE COWBOY//////////`,
+)
+
+func padOnboardingRows(rows ...string) []string {
+	width := 0
+	for _, row := range rows {
+		width = max(width, utf8.RuneCountInString(row))
+	}
+	for i, row := range rows {
+		rows[i] += strings.Repeat(" ", width-utf8.RuneCountInString(row))
+	}
+	return rows
+}
+
+func onboardingSyscWordmark(h *PanelHost) *ui.Node {
+	rows := onboardingSyscWordmarkRows
+	if onbBodyWidth(h) < onbStepRailMinWidth {
+		rows = []string{"SYSC"}
+	}
+	children := make([]*ui.Node, 0, len(rows))
+	for _, row := range rows {
+		children = append(children, &ui.Node{
+			Kind: ui.KindText, Text: row, TextRole: theme.RoleMono,
+			Tone: ui.ToneAccent, CenterX: true,
+		})
+	}
+	return &ui.Node{Kind: ui.KindColumn, Key: "onb-ascii-wordmark", Children: children}
+}
+
 // onbBodyKey names the wizard's one scroll so its offset can be restored
 // across rebuilds, the way the Settings body does.
 const onbBodyKey = "onboarding-body"
-
-// onbMarkHeight gives the brand mark enough weight to anchor the setup header.
-const onbMarkHeight = 26
 
 const onbStepRailMinWidth = 900
 const onbStepRailWidth = 240
@@ -129,12 +167,9 @@ func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 		TextRole: theme.RoleMono,
 		Tone:     ui.ToneAccent,
 	}
-	brand := &ui.Node{
-		Kind:   ui.KindWordmark,
-		ImageH: onbMarkHeight, ImageW: render.WordmarkWidth(onbMarkHeight),
-	}
+	brand := onboardingSyscWordmark(h)
 	brandPill := &ui.Node{
-		Kind: ui.KindCapsule, Height: m.StandardControl, Padding: m.ButtonPadding,
+		Kind: ui.KindCapsule, Key: "onb-brand-pill", Padding: m.ButtonPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeStadium, Stroke: 1, // token-exempt: a hairline border, not a ladder value
 		StrokeFill: ui.FillOutline,
 		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
