@@ -945,6 +945,38 @@ func TestOnboardingOutputLossRequeuesOfferAndPage(t *testing.T) {
 	}
 }
 
+func TestOnboardingResumesAfterAnotherModalReplacesItsRoot(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	reg := newPanelRegistry(t)
+	bar := withTestBar(t, reg, 7, reg.cfg)
+	bar.setOutputSize(1536, 864)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	wizard := reg.panelHosts[PanelOnboarding]
+	wizard.onbPage = onbRegion
+	wizard.draft.Weather.City = "Melbourne"
+	reg.windowSwitcher = newWindowSwitcherHost(reg)
+	reg.windowSwitcher.openLocked(7, "DP-1", windowSwitcherModel{})
+	if reg.panelHosts[PanelOnboarding] != nil {
+		reg.mu.Unlock()
+		t.Fatal("replacing the root left onboarding's panel host open")
+	}
+	reg.windowSwitcher.closeLocked()
+	resumed := reg.panelHosts[PanelOnboarding]
+	if resumed == nil {
+		reg.mu.Unlock()
+		t.Fatal("onboarding did not resume when the replacing modal closed")
+	}
+	if resumed.onbPage != onbRegion || resumed.draft.Weather.City != "Melbourne" {
+		reg.mu.Unlock()
+		t.Fatalf("resumed page=%d city=%q; want region and preserved draft", resumed.onbPage, resumed.draft.Weather.City)
+	}
+	reg.mu.Unlock()
+}
+
 func TestOnboardingIdlePageUsesSharedIdleEntries(t *testing.T) {
 	reg := newPanelRegistry(t)
 	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {

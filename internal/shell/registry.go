@@ -461,6 +461,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		log.Printf("shell: onboarding state: %v", err)
 	}
 	r.onboardingPending = state.Unseen()
+	r.roots.onEmpty = func() { r.tryOpenOnboardingLocked(0) }
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.polkitHost = newPolkitHost(r)
 	r.nightLight = services.NewNightLight(services.NightLightOptions{
@@ -1716,6 +1717,9 @@ func (r *Registry) tryOpenOnboardingLocked(first uint32) {
 	if !ready {
 		return
 	}
+	// Consume the offer during the open attempt so a failed panel-root cleanup
+	// cannot synchronously retry itself through roots.onEmpty.
+	r.onboardingPending = false
 	if err := r.openPanelRootLocked(PanelOnboarding, output, trigger); err != nil {
 		r.onboardingPending = true
 		log.Printf("shell: open onboarding: %v", err)
@@ -1740,9 +1744,8 @@ func (r *Registry) markOnboardingOutcomeLocked(outcome onboarding.Outcome) error
 	return onboarding.Mark(path, outcome)
 }
 
-// preserveOnboardingLocked is called only when an output destroys a live
-// wizard surface. User dismissal writes a marker before teardown and never
-// passes through this path.
+// preserveOnboardingLocked saves a live wizard when shell teardown removes its
+// surface without a user dismissal, such as output loss or root replacement.
 func (r *Registry) preserveOnboardingLocked(h *PanelHost) {
 	if h == nil || h.id != PanelOnboarding {
 		return

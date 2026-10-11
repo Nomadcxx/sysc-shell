@@ -758,6 +758,10 @@ func (r *Registry) panelOpenLocked(id PanelID) bool {
 // panel in teardownPanelLocked.
 func (r *Registry) closePanelGroupLocked() {
 	hadPluginPanel := r.panelHosts[PanelPlugin] != nil
+	if h := r.panelHosts[PanelOnboarding]; h != nil {
+		// A replacement root interrupted setup; preserve it until that root closes.
+		r.preserveOnboardingLocked(h)
+	}
 	ids := make([]PanelID, 0, len(r.panelHosts))
 	for id := range r.panelHosts {
 		ids = append(ids, id)

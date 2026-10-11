@@ -75,6 +75,8 @@ func mediaStripRoot(outputGlobal uint32) rootID {
 type rootChain struct {
 	generation uint64
 	open       bool
+	// onEmpty runs after an explicit root close, never during openRoot's replacement.
+	onEmpty func()
 
 	owner        rootID
 	ownerCleanup []func()
@@ -132,6 +134,9 @@ func (c *rootChain) closeRoot(generation uint64) bool {
 		return false
 	}
 	c.release()
+	if c.onEmpty != nil {
+		c.onEmpty()
+	}
 	return true
 }
 
