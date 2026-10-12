@@ -356,6 +356,12 @@ type toastCard struct {
 	critical bool
 }
 
+type toastCardLayout struct {
+	root     *ui.Node
+	height   int
+	critical bool
+}
+
 // glass reports whether toast cards take the see-through panel ground: only
 // when blur-behind is on and the compositor blurs, the condition panels use.
 // Caller holds r.mu.
@@ -699,7 +705,42 @@ func (h *toastHost) rebuild(connector string) {
 	// (GitHub #29).
 	h.style = h.cardStyle()
 	ids := h.visible[connector]
-	rects := h.cardRects(connector, ids)
+	measure := h.measureText()
+	layouts := h.cardLayouts(ids, measure)
+	h.rebuildWithLayouts(connector, ids, layouts, measure)
+}
+
+func (h *toastHost) cardLayouts(ids []uint32, measure ui.MeasureText) map[uint32]toastCardLayout {
+	layouts := make(map[uint32]toastCardLayout, len(ids))
+	width := h.cardWidth()
+	for _, id := range ids {
+		n, ok := h.record(id)
+		if !ok {
+			layouts[id] = toastCardLayout{height: 96}
+			continue
+		}
+		root := h.cardOf(n)
+		layouts[id] = toastCardLayout{
+			root: root, height: toastCardHeight(root, width, measure), critical: n.Urgency == protocol.UrgencyCritical,
+		}
+	}
+	return layouts
+}
+
+func (h *toastHost) rebuildWithLayouts(connector string, ids []uint32, layouts map[uint32]toastCardLayout, measure ui.MeasureText) {
+	heights := make([]int, len(ids))
+	for i, id := range ids {
+		layout, ok := layouts[id]
+		if ok {
+			heights[i] = layout.height
+		} else {
+			heights[i] = 96
+		}
+	}
+	var rects []ui.Rect
+	if geometry, known := h.geometryFor(connector); known {
+		rects, _ = toastLayout(geometry, heights)
+	}
 	var moved bool
 	if h.text != nil {
 		moved = h.noteTargets(connector, ids[:min(len(ids), len(rects))], rects)
@@ -720,24 +761,23 @@ func (h *toastHost) rebuild(connector string) {
 			return settled
 		}, h.publishSlideFrame, func() time.Duration { return frameCap })
 	}
-	measure := h.measureText()
 	cards := make([]toastCard, 0, len(ids))
 	for i, id := range ids {
 		if i >= len(rects) {
 			break
 		}
-		n, ok := h.record(id)
-		if !ok {
+		layout, ok := layouts[id]
+		if !ok || layout.root == nil {
 			continue
 		}
-		root := h.cardOf(n)
+		root := layout.root
 		if err := ui.LayoutColumn(root, ui.Rect{W: rects[i].W, H: rects[i].H}, measure); err != nil {
 			continue
 		}
 		if h.replyingOn(connector, id) {
 			h.showReply(root, id, measure)
 		}
-		cards = append(cards, toastCard{root: root, rect: rects[i], critical: n.Urgency == protocol.UrgencyCritical})
+		cards = append(cards, toastCard{root: root, rect: rects[i], critical: layout.critical})
 	}
 	h.cards[connector] = cards
 }
@@ -859,7 +899,7 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 // cardOf builds a record's card at the width cards lay out at, wrapped over
 // several lines once a drag has expanded it.
 func (h *toastHost) cardOf(n protocol.Notification) *ui.Node {
-	icon := h.r.notifyIcon(n.AppIcon, n.DesktopEntry)
+	icon := h.r.notificationLeadImageLocked(n.AppIcon, n.DesktopEntry, n.Image)
 	var wrap func(string) []string
 	if h.expanded[n.ID] {
 		wrap = h.wrapBody
@@ -924,11 +964,15 @@ func (h *toastHost) recompute() {
 		if known {
 			h.geometry[connector] = geom
 		}
+		h.style = h.cardStyle()
+		measure := h.measureText()
+		layouts := make(map[uint32]toastCardLayout, len(records))
 		heights := make([]int, 0, len(records))
 		ids := make([]uint32, 0, len(records))
 		if !suppressed && known {
+			layouts = h.cardLayouts(records, measure)
 			for _, id := range records {
-				heights = append(heights, h.cardHeight(id))
+				heights = append(heights, layouts[id].height)
 				ids = append(ids, id)
 			}
 		}
@@ -940,7 +984,7 @@ func (h *toastHost) recompute() {
 		if h.editing != nil && h.editing.connector == connector && !slices.Contains(visible, h.resolver.replyID) {
 			h.endReply()
 		}
-		h.rebuild(connector)
+		h.rebuildWithLayouts(connector, visible, layouts, measure)
 		h.updateHover(connector)
 
 		h.request(wayland.AuxRequest{

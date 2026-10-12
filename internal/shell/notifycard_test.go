@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -23,6 +24,21 @@ func baseNotification() protocol.Notification {
 		Timestamp:       time.Unix(1_756_000_000, 0),
 		ExpireTimeoutMS: 5000,
 	}
+}
+
+func notificationTestImage(t testing.TB, width, height int, pixel color.RGBA) *protocol.Image {
+	t.Helper()
+	source := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			source.SetRGBA(x, y, pixel)
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, source); err != nil {
+		t.Fatal(err)
+	}
+	return &protocol.Image{MediaType: "image/png", Width: uint32(width), Height: uint32(height), Data: encoded.Bytes()}
 }
 
 func collectByKind(n *ui.Node, kind ui.Kind, out *[]*ui.Node) {
@@ -506,6 +522,59 @@ func TestProtocolImageDecodesPNGData(t *testing.T) {
 	}
 	if got := protocolImage(&protocol.Image{MediaType: "image/png", Data: bomb.Bytes()}); got != nil {
 		t.Fatal("oversized PNG was not dropped")
+	}
+}
+
+func TestNotificationRasterCacheEvictsByRetainedBytes(t *testing.T) {
+	cache := notificationRasterCache{maxBytes: (1 << 20) + (64 << 10)}
+	if cache.get(&protocol.Image{}) != nil || len(cache.entries) != 0 {
+		t.Fatal("empty image created a zero-cost cache entry")
+	}
+	firstImage := notificationTestImage(t, 512, 512, color.RGBA{R: 0x10, A: 0xff})
+	secondImage := notificationTestImage(t, 512, 512, color.RGBA{B: 0x20, A: 0xff})
+
+	first := cache.get(firstImage)
+	if first == nil || cache.get(firstImage) != first {
+		t.Fatal("the same image revision was not reused")
+	}
+	if cache.get(secondImage) == nil {
+		t.Fatal("second image did not decode")
+	}
+	if _, ok := cache.entries[firstImage]; ok {
+		t.Fatal("old raster survived byte-budget eviction")
+	}
+	if cache.bytes > cache.maxBytes {
+		t.Fatalf("retained bytes = %d, budget = %d", cache.bytes, cache.maxBytes)
+	}
+	if again := cache.get(firstImage); again == first {
+		t.Fatal("evicted raster was unexpectedly retained")
+	}
+}
+
+func BenchmarkNotificationCardRasterWork(b *testing.B) {
+	image := notificationTestImage(b, 256, 256, color.RGBA{R: 0x10, G: 0x20, B: 0x30, A: 0xff})
+	n := protocol.Notification{ID: 1, AppName: "Mail", Summary: "New message", Timestamp: time.Now(), Image: image}
+	for _, cached := range []bool{false, true} {
+		name := "decode_each_build"
+		if cached {
+			name = "cached_raster"
+		}
+		b.Run(name, func(b *testing.B) {
+			r := NewRegistry(config.Default())
+			defer r.Close()
+			h := newToastHost(r, &hostHarness{})
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				r.mu.Lock()
+				if cached {
+					h.cardOf(n)
+				} else {
+					notificationCard(n, protocolImage(n.Image), h.r.linksAllowed(), h.measureText(), nil, time.Now(), h.cardWidth(), cfgT(h.r.cfg))
+				}
+				r.mu.Unlock()
+			}
+		})
 	}
 }
 

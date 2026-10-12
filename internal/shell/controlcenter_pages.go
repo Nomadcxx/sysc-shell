@@ -691,10 +691,13 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	}
 	var cards []*ui.Node
 	for _, group := range activeGroups(active) {
-		cards = append(cards, ActiveGroupCard(group, now, false, nil, false, tr))
+		latest := group.members[0]
+		raster := r.notificationLeadImageLocked(latest.AppIcon, latest.DesktopEntry, latest.Image)
+		cards = append(cards, ActiveGroupCard(group, now, false, raster, false, tr))
 	}
 	for _, entry := range history {
-		cards = append(cards, HistoryCard(entry, now, nil, false, tr))
+		raster := r.notificationLeadImageLocked(entry.AppIcon, entry.DesktopEntry, entry.Image)
+		cards = append(cards, HistoryCard(entry, now, raster, false, tr))
 	}
 	if len(cards) == 0 {
 		empty := monitorCard(m, []*ui.Node{
