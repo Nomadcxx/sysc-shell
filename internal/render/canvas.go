@@ -204,11 +204,15 @@ func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
 // body are emptied.
 func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, jointL, jointR int, attachEdge string) {
 	radius = min(radius, min(r.W, r.H)/2)
+	clipX0, clipY0, clipX1, clipY1 := c.clip(ui.Rect{W: c.Width, H: c.Height})
+	if clipX0 >= clipX1 || clipY0 >= clipY1 {
+		return
+	}
 	if attachEdge == "left" || attachEdge == "right" {
-		for x := 0; x < c.Width; x++ {
+		for x := clipX0; x < clipX1; x++ {
 			col := c.Pix[x*4:]
 			if x < r.X || x >= r.X+r.W || r.W <= 0 || r.H <= 0 {
-				for y := 0; y < c.Height; y++ {
+				for y := clipY0; y < clipY1; y++ {
 					clear(col[y*c.Stride : y*c.Stride+4])
 				}
 				continue
@@ -233,17 +237,17 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, j
 			extTop, extBottom := ui.FilletExtent(near, jointL), ui.FilletExtent(near, jointR)
 			y0 := max(0, r.Y+insetTop-extTop)
 			y1 := min(c.Height, r.Y+r.H-insetBottom+extBottom)
-			for y := 0; y < y0; y++ {
+			for y := clipY0; y < min(y0, clipY1); y++ {
 				clear(col[y*c.Stride : y*c.Stride+4])
 			}
-			for y := y1; y < c.Height; y++ {
+			for y := max(y1, clipY0); y < clipY1; y++ {
 				clear(col[y*c.Stride : y*c.Stride+4])
 			}
 		}
 		return
 	}
-	for y := 0; y < c.Height; y++ {
-		row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
+	for y := clipY0; y < clipY1; y++ {
+		row := c.Pix[y*c.Stride+clipX0*4 : y*c.Stride+clipX1*4]
 		if y < r.Y || y >= r.Y+r.H || r.W <= 0 || r.H <= 0 {
 			clear(row)
 			continue
@@ -271,10 +275,10 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, j
 				insetR = inset
 			}
 		}
-		x0 := max(0, min(c.Width, r.X+insetL-extL))
-		x1 := max(x0, min(c.Width, r.X+r.W-insetR+extR))
-		clear(row[:x0*4])
-		clear(row[x1*4:])
+		x0 := max(clipX0, min(c.Width, r.X+insetL-extL))
+		x1 := max(x0, min(clipX1, r.X+r.W-insetR+extR))
+		clear(row[:(x0-clipX0)*4])
+		clear(row[(x1-clipX0)*4:])
 	}
 }
 
