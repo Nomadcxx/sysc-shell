@@ -158,7 +158,7 @@ func TestClipboardTreeUsesFocusedSearchAndStableMetadataRows(t *testing.T) {
 	if treeHasText(tree, "payload") {
 		t.Fatalf("tree contains raw payload text: %v", texts(tree))
 	}
-	if got := clipboardTooltip(r.clipboard); got != "Clipboard: 2 items (durable)" {
+	if got := clipboardTooltip(r.clipboard.barSummary()); got != "Clipboard: 2 items (durable)" {
 		t.Fatalf("tooltip = %q", got)
 	}
 }

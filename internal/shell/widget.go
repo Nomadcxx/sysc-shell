@@ -41,7 +41,7 @@ type barView struct {
 	// Running is the session-wide application slot list. Every bar paints it.
 	Running   []runningAppSlot
 	Audio     services.AudioState
-	Clipboard clipboardProjection
+	Clipboard clipboardBarSummary
 	// Network is the newest connectivity state. Its zero value is Unknown with
 	// the radio off, which the wifi widget paints as the no-signal glyph.
 	Network   services.NetworkState
