@@ -93,6 +93,9 @@ func (o *owner) deliverUnit(h *OutputHost, u *surfaceUnit, e Event) {
 	if h == nil || u == nil || !h.alive || u.app.Handle == nil {
 		return
 	}
+	if region := startTraceRegion("shell.input.handle"); region != nil {
+		defer region.End()
+	}
 	if u.app.Handle(e) {
 		u.sched.Invalidate()
 	}

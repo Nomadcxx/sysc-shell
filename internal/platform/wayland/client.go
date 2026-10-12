@@ -929,8 +929,13 @@ func (o *owner) reconfigure(h *OutputHost, u *surfaceUnit) error {
 			u.app.OutputSize(w, hgt)
 		}
 	}
-	if err := u.app.Configure(u.ss.logicalWidth, u.ss.logicalHeight, int(u.ss.scale120)); err != nil {
-		return err
+	region := startTraceRegion("shell.layout")
+	configureErr := u.app.Configure(u.ss.logicalWidth, u.ss.logicalHeight, int(u.ss.scale120))
+	if region != nil {
+		region.End()
+	}
+	if configureErr != nil {
+		return configureErr
 	}
 
 	// The outstanding frame callback belongs to a retired generation.
@@ -1034,6 +1039,9 @@ func (o *owner) renderJob(h *OutputHost, u *surfaceUnit, job render.Job) error {
 	gen := u.current
 	if gen == nil {
 		return errors.New("wayland: render requested with no buffer generation")
+	}
+	if region := startTraceRegion("shell.paint-to-commit"); region != nil {
+		defer region.End()
 	}
 
 	if err := u.app.Render(gen.pixels(job.Slot), int(gen.width), int(gen.height), int(gen.stride)); err != nil {
