@@ -1,6 +1,7 @@
 package render
 
 import (
+	"container/list"
 	"image"
 	"image/color"
 	"math"
@@ -24,6 +25,79 @@ const (
 
 type ringKey struct{ radius, w, h, width int }
 
+type geometryCacheKind uint8
+
+const (
+	geometryRounded geometryCacheKind = iota
+	geometryRing
+	geometryShadow
+	geometryGlyph
+)
+
+type geometryCacheKey struct {
+	kind   geometryCacheKind
+	mask   maskKey
+	ring   ringKey
+	shadow shadowKey
+	glyph  glyphKey
+}
+
+type geometryCacheEntry struct {
+	key    geometryCacheKey
+	mask   *image.Alpha
+	weight int
+}
+
+const (
+	geometryCacheBudget        = 32 << 20
+	geometryCacheMaxEntries    = 1024
+	geometryCacheEntryOverhead = 512
+)
+
+// alphaMaskCache is used under maskMu. The budget includes pixel storage and
+// a conservative allowance for each map/list entry and image descriptor.
+// The entry cap also bounds streams of zero-sized geometry keys.
+type alphaMaskCache struct {
+	entries map[geometryCacheKey]*list.Element
+	lru     list.List
+	bytes   int
+}
+
+func (c *alphaMaskCache) get(key geometryCacheKey) *image.Alpha {
+	element := c.entries[key]
+	if element == nil {
+		return nil
+	}
+	c.lru.MoveToFront(element)
+	return element.Value.(*geometryCacheEntry).mask
+}
+
+func (c *alphaMaskCache) add(key geometryCacheKey, mask *image.Alpha) {
+	weight := len(mask.Pix) + geometryCacheEntryOverhead
+	if weight > geometryCacheBudget {
+		return
+	}
+	if element := c.entries[key]; element != nil {
+		c.remove(element)
+	}
+	if c.entries == nil {
+		c.entries = make(map[geometryCacheKey]*list.Element)
+	}
+	element := c.lru.PushFront(&geometryCacheEntry{key: key, mask: mask, weight: weight})
+	c.entries[key] = element
+	c.bytes += weight
+	for c.bytes > geometryCacheBudget || len(c.entries) > geometryCacheMaxEntries {
+		c.remove(c.lru.Back())
+	}
+}
+
+func (c *alphaMaskCache) remove(element *list.Element) {
+	entry := element.Value.(*geometryCacheEntry)
+	delete(c.entries, entry.key)
+	c.lru.Remove(element)
+	c.bytes -= entry.weight
+}
+
 type Elevation int
 
 const (
@@ -37,10 +111,8 @@ type shadowKey struct {
 }
 
 var (
-	maskMu  sync.Mutex
-	masks   = map[maskKey]*image.Alpha{}
-	rings   = map[ringKey]*image.Alpha{}
-	shadows = map[shadowKey]*image.Alpha{}
+	maskMu        sync.Mutex
+	geometryCache alphaMaskCache
 )
 
 // RoundedMask returns a cached antialiased rounded-rectangle alpha mask.
@@ -54,7 +126,8 @@ func CornerMask(radius, w, h int, square Corners) *image.Alpha {
 	key := maskKey{radius, w, h, square}
 	maskMu.Lock()
 	defer maskMu.Unlock()
-	if mask := masks[key]; mask != nil {
+	cacheKey := geometryCacheKey{kind: geometryRounded, mask: key}
+	if mask := geometryCache.get(cacheKey); mask != nil {
 		return mask
 	}
 	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
@@ -70,7 +143,7 @@ func CornerMask(radius, w, h int, square Corners) *image.Alpha {
 			}
 		}
 	}
-	masks[key] = mask
+	geometryCache.add(cacheKey, mask)
 	return mask
 }
 
@@ -86,7 +159,8 @@ func RingMask(radius, w, h, width int) *image.Alpha {
 	key := ringKey{radius, w, h, width}
 	maskMu.Lock()
 	defer maskMu.Unlock()
-	if mask := rings[key]; mask != nil {
+	cacheKey := geometryCacheKey{kind: geometryRing, ring: key}
+	if mask := geometryCache.get(cacheKey); mask != nil {
 		return mask
 	}
 	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
@@ -116,7 +190,7 @@ func RingMask(radius, w, h, width int) *image.Alpha {
 			}
 		}
 	}
-	rings[key] = mask
+	geometryCache.add(cacheKey, mask)
 	return mask
 }
 
@@ -180,7 +254,8 @@ func ShadowTexture(w, h, radius int, e Elevation) *image.Alpha {
 	key := shadowKey{w, h, radius, e}
 	maskMu.Lock()
 	defer maskMu.Unlock()
-	if shadow := shadows[key]; shadow != nil {
+	cacheKey := geometryCacheKey{kind: geometryShadow, shadow: key}
+	if shadow := geometryCache.get(cacheKey); shadow != nil {
 		return shadow
 	}
 	spread, strength := 12, 0.55
@@ -200,7 +275,7 @@ func ShadowTexture(w, h, radius int, e Elevation) *image.Alpha {
 			texture.Pix[i] = uint8(float64(texture.Pix[i]) * strength)
 		}
 	}
-	shadows[key] = texture
+	geometryCache.add(cacheKey, texture)
 	return texture
 }
 
@@ -263,8 +338,6 @@ type glyphKey struct {
 	size, stroke int
 }
 
-var glyphs = map[glyphKey]*image.Alpha{}
-
 // SearchGlyphMask returns a cached antialiased magnifier: a lens ring and a
 // handle, both drawn as distance fields so the stroke keeps its width all the
 // way round and the diagonal does not stair-step.
@@ -280,7 +353,8 @@ func SearchGlyphMask(size, stroke int) *image.Alpha {
 	key := glyphKey{glyphSearch, size, stroke}
 	maskMu.Lock()
 	defer maskMu.Unlock()
-	if mask := glyphs[key]; mask != nil {
+	cacheKey := geometryCacheKey{kind: geometryGlyph, glyph: key}
+	if mask := geometryCache.get(cacheKey); mask != nil {
 		return mask
 	}
 	mask := image.NewAlpha(image.Rect(0, 0, max(size, 0), max(size, 0)))
@@ -306,7 +380,7 @@ func SearchGlyphMask(size, stroke int) *image.Alpha {
 			}
 		}
 	}
-	glyphs[key] = mask
+	geometryCache.add(cacheKey, mask)
 	return mask
 }
 
@@ -322,7 +396,8 @@ func ClearGlyphMask(size, stroke int) *image.Alpha {
 	key := glyphKey{glyphClear, size, stroke}
 	maskMu.Lock()
 	defer maskMu.Unlock()
-	if mask := glyphs[key]; mask != nil {
+	cacheKey := geometryCacheKey{kind: geometryGlyph, glyph: key}
+	if mask := geometryCache.get(cacheKey); mask != nil {
 		return mask
 	}
 	mask := image.NewAlpha(image.Rect(0, 0, max(size, 0), max(size, 0)))
@@ -344,7 +419,7 @@ func ClearGlyphMask(size, stroke int) *image.Alpha {
 			}
 		}
 	}
-	glyphs[key] = mask
+	geometryCache.add(cacheKey, mask)
 	return mask
 }
 

@@ -1,6 +1,9 @@
 package render
 
 import (
+	"bytes"
+	"image"
+	"sync"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -34,6 +37,81 @@ func TestShadowTextureExtendsBeyondBounds(t *testing.T) {
 	}
 	if s.AlphaAt(s.Bounds().Dx()/2, 12).A <= s.AlphaAt(0, 0).A {
 		t.Fatal("shadow alpha must be stronger along the panel edge")
+	}
+}
+
+func TestGeometryMaskCacheBoundsRetainedBytesAndRegeneratesSamePixels(t *testing.T) {
+	type retained struct {
+		name string
+		get  func() *image.Alpha
+		mask *image.Alpha
+		pix  []byte
+	}
+	kept := []retained{
+		{name: "rounded", get: func() *image.Alpha { return RoundedMask(11, 37, 25) }},
+		{name: "corner", get: func() *image.Alpha { return CornerMask(11, 37, 25, SquareTR) }},
+		{name: "ring", get: func() *image.Alpha { return RingMask(11, 37, 25, 2) }},
+		{name: "shadow", get: func() *image.Alpha { return ShadowTexture(37, 25, 11, ElevMenu) }},
+		{name: "search glyph", get: func() *image.Alpha { return SearchGlyphMask(18, 2) }},
+		{name: "clear glyph", get: func() *image.Alpha { return ClearGlyphMask(18, 2) }},
+	}
+	for i := range kept {
+		kept[i].mask = kept[i].get()
+		kept[i].pix = append([]byte(nil), kept[i].mask.Pix...)
+	}
+	var workers sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		workers.Add(1)
+		go func(worker int) {
+			defer workers.Done()
+			for i := 0; i < 16; i++ {
+				w := 24 + (worker+i)%8
+				RoundedMask(6, w, 20)
+				RingMask(6, w, 20, 2)
+				ShadowTexture(w, 20, 6, ElevMenu)
+				SearchGlyphMask(w, 2)
+				ClearGlyphMask(w, 2)
+			}
+		}(worker)
+	}
+	workers.Wait()
+
+	first := RoundedMask(40, 3001, 80)
+	for w := 3002; w <= 3144; w++ {
+		RoundedMask(40, w, 80)
+	}
+
+	maskMu.Lock()
+	retainedBytes := geometryCache.bytes
+	maskMu.Unlock()
+	if retainedBytes > geometryCacheBudget {
+		t.Fatalf("geometry cache retains %d bytes, over %d bytes", retainedBytes, geometryCacheBudget)
+	}
+
+	if got := RoundedMask(40, 3001, 80); got == first {
+		t.Fatal("oldest mask survived enough varied sizes to exceed the byte budget")
+	}
+	for _, tc := range kept {
+		got := tc.get()
+		if got == tc.mask {
+			t.Errorf("%s mask survived cache pressure; expected regeneration", tc.name)
+		}
+		if !bytes.Equal(got.Pix, tc.pix) {
+			t.Errorf("%s pixels changed after eviction and regeneration", tc.name)
+		}
+		if again := tc.get(); again != got {
+			t.Errorf("%s repeated lookup did not reuse the regenerated mask", tc.name)
+		}
+	}
+
+	for radius := 0; radius < geometryCacheMaxEntries+100; radius++ {
+		CornerMask(radius, 0, 0, 0)
+	}
+	maskMu.Lock()
+	entries := len(geometryCache.entries)
+	maskMu.Unlock()
+	if entries > geometryCacheMaxEntries {
+		t.Fatalf("geometry cache retains %d entries, over %d", entries, geometryCacheMaxEntries)
 	}
 }
 
