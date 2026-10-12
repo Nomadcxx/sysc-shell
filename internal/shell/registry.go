@@ -2611,7 +2611,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		Metrics:   r.sample,
 		History:   r.historyLocked(),
 		Weather:   r.reading,
-		Clipboard: r.clipboard.clone(),
+		Clipboard: r.clipboard.barSummary(),
 		Unread:    r.notify.unread(),
 		Running:   r.running,
 	}

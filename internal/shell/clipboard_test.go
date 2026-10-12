@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -69,7 +71,7 @@ func TestClipboardTooltipReportsConnectionAndPersistence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := clipboardTooltip(tc.view); got != tc.want {
+			if got := clipboardTooltip(tc.view.barSummary()); got != tc.want {
 				t.Fatalf("tooltip = %q, want %q", got, tc.want)
 			}
 		})
@@ -101,6 +103,39 @@ func TestClipboardProjectionCopiesMetadataAndCoalescesUnchangedUpdates(t *testin
 	unchanged := clipboardclient.Update{Connected: true, Snapshot: r.clipboard.Snapshot}
 	if got := r.applyClipboard(unchanged); len(got) != 0 {
 		t.Fatalf("unchanged clipboard update changed %v", got)
+	}
+}
+
+func TestBarViewClipboardAllocationsDoNotScaleWithHistory(t *testing.T) {
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+
+	entries := func(count int) []clipboardprotocol.Entry {
+		out := make([]clipboardprotocol.Entry, count)
+		for i := range out {
+			out[i] = clipboardprotocol.Entry{
+				ID: strconv.Itoa(i), OfferedMIME: []string{"text/plain", "text/html"},
+			}
+		}
+		return out
+	}
+	var view barView
+	measure := func(history []clipboardprotocol.Entry) float64 {
+		r.mu.Lock()
+		r.clipboard = clipboardProjection{Connected: true, Snapshot: clipboardprotocol.Snapshot{
+			Entries: history, Persistence: clipboardprotocol.PersistenceDurable,
+			Wayland: clipboardprotocol.WaylandReady,
+		}}
+		allocs := testing.AllocsPerRun(10, func() { view = r.viewLocked("eDP-1") })
+		r.mu.Unlock()
+		runtime.KeepAlive(view)
+		return allocs
+	}
+
+	small := measure(entries(1))
+	large := measure(entries(1000))
+	if large > small+1 {
+		t.Fatalf("bar view allocations grew with clipboard history: one entry %.0f, 1000 entries %.0f", small, large)
 	}
 }
 

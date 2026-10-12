@@ -19,6 +19,15 @@ type clipboardProjection struct {
 	Connected bool
 }
 
+// clipboardBarSummary omits entry metadata because the bar only displays a
+// count and persistence state. The clipboard panel reads the full projection.
+type clipboardBarSummary struct {
+	Connected   bool
+	Count       int
+	Persistence clipboardprotocol.PersistenceState
+	Wayland     clipboardprotocol.WaylandState
+}
+
 type clipboardUpdate = clipboardclient.Update
 
 type clipboardCommandSender interface {
@@ -37,9 +46,11 @@ func newClipboardProjection() clipboardProjection {
 	}}
 }
 
-func (p clipboardProjection) clone() clipboardProjection {
-	p.Snapshot = cloneClipboardSnapshot(p.Snapshot)
-	return p
+func (p clipboardProjection) barSummary() clipboardBarSummary {
+	return clipboardBarSummary{
+		Connected: p.Connected, Count: len(p.Snapshot.Entries),
+		Persistence: p.Snapshot.Persistence, Wayland: p.Snapshot.Wayland,
+	}
 }
 
 func cloneClipboardSnapshot(snapshot clipboardprotocol.Snapshot) clipboardprotocol.Snapshot {
@@ -70,20 +81,20 @@ func sameClipboardProjection(a, b clipboardProjection) bool {
 	return true
 }
 
-func clipboardTooltip(view clipboardProjection) string {
-	if !view.Connected || view.Snapshot.Wayland != clipboardprotocol.WaylandReady {
+func clipboardTooltip(view clipboardBarSummary) string {
+	if !view.Connected || view.Wayland != clipboardprotocol.WaylandReady {
 		return "Clipboard unavailable"
 	}
-	count := len(view.Snapshot.Entries)
+	count := view.Count
 	itemWord := "items"
 	if count == 1 {
 		itemWord = "item"
 	}
-	persistence := string(view.Snapshot.Persistence)
+	persistence := string(view.Persistence)
 	if persistence == "" {
 		persistence = "unknown"
 	}
-	if view.Snapshot.Persistence == clipboardprotocol.PersistenceUnavailable {
+	if view.Persistence == clipboardprotocol.PersistenceUnavailable {
 		persistence = "persistence unavailable"
 	}
 	return fmt.Sprintf("Clipboard: %d %s (%s)", count, itemWord, persistence)
