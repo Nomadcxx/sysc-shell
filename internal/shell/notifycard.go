@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"container/list"
 	"fmt"
 	"image/png"
 	"time"
@@ -29,11 +30,88 @@ const (
 	centreIconPad    = 6
 )
 
+const notificationRasterCacheBytes = 16 << 20
+const notificationRasterEntryBytes = 128
+
+type notificationRasterEntry struct {
+	image  *protocol.Image
+	raster *ui.Image
+	bytes  int
+}
+
+// notificationRasterCache is owned by Registry.mu. Image pointers are
+// immutable after a notification revision is published, so pointer identity
+// is the revision key; the byte budget includes retained wire and raster data.
+type notificationRasterCache struct {
+	maxBytes int
+	bytes    int
+	entries  map[*protocol.Image]*list.Element
+	lru      list.List
+}
+
+func (c *notificationRasterCache) get(img *protocol.Image) *ui.Image {
+	if img == nil || len(img.Data) == 0 || len(img.Data) > protocol.MaxWireImageBytes {
+		return nil
+	}
+	if c.maxBytes <= 0 {
+		c.maxBytes = notificationRasterCacheBytes
+	}
+	if c.entries == nil {
+		c.entries = make(map[*protocol.Image]*list.Element)
+	}
+	if element := c.entries[img]; element != nil {
+		c.lru.MoveToBack(element)
+		return element.Value.(notificationRasterEntry).raster
+	}
+
+	raster := protocolImage(img)
+	retained := notificationRasterEntryBytes + len(img.Data)
+	if raster != nil {
+		retained += len(raster.Pix)
+	}
+	if retained > c.maxBytes {
+		return raster
+	}
+	for c.bytes+retained > c.maxBytes {
+		c.remove(c.lru.Front())
+	}
+	entry := notificationRasterEntry{image: img, raster: raster, bytes: retained}
+	c.entries[img] = c.lru.PushBack(entry)
+	c.bytes += retained
+	return raster
+}
+
+func (c *notificationRasterCache) prune(live map[*protocol.Image]struct{}) {
+	for element := c.lru.Front(); element != nil; {
+		next := element.Next()
+		entry := element.Value.(notificationRasterEntry)
+		if _, ok := live[entry.image]; !ok {
+			c.remove(element)
+		}
+		element = next
+	}
+}
+
+func (c *notificationRasterCache) remove(element *list.Element) {
+	if element == nil {
+		return
+	}
+	entry := element.Value.(notificationRasterEntry)
+	delete(c.entries, entry.image)
+	c.bytes -= entry.bytes
+	c.lru.Remove(element)
+}
+
 // protocolImage decodes the notification's wire image. The sysc-notify
 // protocol carries PNG bytes (protocol.Image.Validate rejects any other
 // media type), so the data is decoded rather than treated as a raw raster.
 func protocolImage(img *protocol.Image) *ui.Image {
-	if img == nil || len(img.Data) == 0 {
+	if img == nil || len(img.Data) == 0 || len(img.Data) > protocol.MaxWireImageBytes {
+		return nil
+	}
+	config, err := png.DecodeConfig(bytes.NewReader(img.Data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 ||
+		config.Width > protocol.MaxWireImageLongEdge || config.Height > protocol.MaxWireImageLongEdge {
 		return nil
 	}
 	source, err := png.Decode(bytes.NewReader(img.Data))
@@ -228,12 +306,18 @@ func toneFor(urgency protocol.Urgency) ui.Tone {
 // icon, or nil for the glyph tile. measure packs action pills into rows; nil
 // stacks them one per row.
 func NotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText) *ui.Node {
+	if raster == nil {
+		raster = protocolImage(n.Image)
+	}
 	return notificationCard(n, raster, allowLinks, measure, nil, time.Now(), toastCardWidth, nil)
 }
 
 // ExpandedNotificationCard is a toast whose body is wrapped over several
 // lines after a vertical drag.
 func ExpandedNotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string) *ui.Node {
+	if raster == nil {
+		raster = protocolImage(n.Image)
+	}
 	return notificationCard(n, raster, allowLinks, measure, wrap, time.Now(), toastCardWidth, nil)
 }
 
@@ -241,9 +325,6 @@ func ExpandedNotificationCard(n protocol.Notification, raster *ui.Image, allowLi
 // ground, rim and blur around it. width is the card's laid-out width, which
 // the action rows pack against.
 func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time, width int, tr translateFunc) *ui.Node {
-	if raster == nil {
-		raster = protocolImage(n.Image)
-	}
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardSectionGap, Padding: cardPadding, Children: []*ui.Node{
 		notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, raster, n.Value, allowLinks, wrap, now, n.Timestamp),
 	}}
@@ -335,9 +416,6 @@ func markDefault(root *ui.Node, id uint32) {
 // HistoryCard builds one closed history row. A right-pinned remove control
 // is present when the pinned service accepts history.remove.
 func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allowLinks bool, tr translateFunc) *ui.Node {
-	if raster == nil {
-		raster = protocolImage(e.Image)
-	}
 	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, nil, now, e.Timestamp)
 	if historyRemoveSupported() {
 		inner = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
@@ -355,9 +433,6 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 		return &ui.Node{Kind: ui.KindColumn}
 	}
 	latest := g.members[0]
-	if raster == nil {
-		raster = protocolImage(latest.Image)
-	}
 	critical := groupCritical(g.members)
 	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, nil, now, latest.Timestamp)
 	head = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{

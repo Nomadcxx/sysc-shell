@@ -1034,6 +1034,71 @@ func TestControlCentreNotificationsClearAllUsesServiceScopes(t *testing.T) {
 	}
 }
 
+func TestControlCentreNotificationCardsKeepNotificationImages(t *testing.T) {
+	iconPath := filepath.Join(t.TempDir(), "app-icon.png")
+	writeLauncherPNG(t, iconPath)
+	decoded := make(chan *ui.Image, 1)
+	worker := icons.NewWorker(icons.NewResolver("", nil), func(key icons.Key, image *ui.Image) {
+		if key.Name == iconPath {
+			decoded <- image
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = worker.Run(ctx) }()
+	key := icons.Square(iconPath, notifyIconRaster)
+	if _, _, err := worker.Request(key); err != nil {
+		t.Fatal(err)
+	}
+	var appIcon *ui.Image
+	select {
+	case appIcon = <-decoded:
+	case <-time.After(time.Second):
+		t.Fatal("app icon was not decoded")
+	}
+	if appIcon == nil {
+		t.Fatal("app icon did not decode")
+	}
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.trayIcons = worker
+	n := note(71, "active")
+	n.AppIcon = iconPath
+	n.Image = notificationTestImage(t, 2, 2, color.RGBA{R: 0x90, A: 0xff})
+	r.applyNotify(snap(1, n))
+	history := protocol.HistoryEntry{ID: 72, AppName: n.AppName, AppIcon: iconPath, Timestamp: n.Timestamp, Image: n.Image}
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded, History: &history}))
+
+	h := &PanelHost{id: PanelControlCenter, section: "notifications", theme: DefaultTheme()}
+	r.mu.Lock()
+	want := r.notificationRasterLocked(n.Image)
+	page := ccNotifications(r, h)
+	r.mu.Unlock()
+	if want == nil || want == appIcon {
+		t.Fatal("notification raster did not differ from the cached app icon")
+	}
+	var leadImages []*ui.Image
+	var visit func(*ui.Node)
+	visit = func(node *ui.Node) {
+		if node.Kind == ui.KindImage && node.Name == n.AppName {
+			leadImages = append(leadImages, node.Image)
+		}
+		for _, child := range node.Children {
+			visit(child)
+		}
+	}
+	visit(page)
+	if len(leadImages) != 2 {
+		t.Fatalf("notification lead images = %d, want active and history cards", len(leadImages))
+	}
+	for _, got := range leadImages {
+		if got != want {
+			t.Fatal("control centre replaced notification artwork with the app icon")
+		}
+	}
+}
+
 func TestCalendarPageUsesTheHostMonthDelta(t *testing.T) {
 	r := &Registry{now: time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)}
 	h := &PanelHost{id: PanelControlCenter, section: "calendar", monthDelta: 1, theme: DefaultTheme()}

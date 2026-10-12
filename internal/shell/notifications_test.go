@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"errors"
+	"image/color"
 	"sync"
 	"testing"
 	"time"
@@ -41,6 +42,70 @@ func TestNotificationSnapshotEstablishesTheProjection(t *testing.T) {
 	}
 	if r.notifyLifetime(1) == nil || r.notifyLifetime(1).RemainingMS != 5000 {
 		t.Fatalf("lifetime for 1 = %+v", r.notifyLifetime(1))
+	}
+}
+
+func TestNotificationRastersPruneOnReplaceRemoveAndReconnect(t *testing.T) {
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	oldImage := notificationTestImage(t, 1, 1, color.RGBA{R: 0x11, A: 0xff})
+	newImage := notificationTestImage(t, 1, 1, color.RGBA{G: 0x22, A: 0xff})
+	n := note(7, "first")
+	n.Image = oldImage
+	r.applyNotify(snap(1, n))
+
+	r.mu.Lock()
+	if r.notificationRasterLocked(oldImage) == nil {
+		r.mu.Unlock()
+		t.Fatal("active notification image did not decode")
+	}
+	r.mu.Unlock()
+
+	replacement := n
+	replacement.Image = newImage
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaReplaced, Notification: &replacement}))
+	r.mu.Lock()
+	if _, ok := r.notificationImages.entries[oldImage]; ok {
+		r.mu.Unlock()
+		t.Fatal("replaced notification raster was retained")
+	}
+	if r.notificationRasterLocked(newImage) == nil {
+		r.mu.Unlock()
+		t.Fatal("replacement image did not decode")
+	}
+	r.mu.Unlock()
+
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaClosed, ID: n.ID}))
+	r.mu.Lock()
+	if len(r.notificationImages.entries) != 0 {
+		r.mu.Unlock()
+		t.Fatal("closed notification raster was retained")
+	}
+	r.mu.Unlock()
+
+	historyImage := notificationTestImage(t, 1, 1, color.RGBA{B: 0x33, A: 0xff})
+	entry := protocol.HistoryEntry{ID: 8, Timestamp: time.Now(), Urgency: protocol.UrgencyNormal, Image: historyImage}
+	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistoryAdded, History: &entry}))
+	r.mu.Lock()
+	r.notificationRasterLocked(historyImage)
+	r.mu.Unlock()
+	r.applyNotify(delta(1, 5, protocol.Delta{Kind: protocol.DeltaHistoryRemoved, ID: entry.ID}))
+	r.mu.Lock()
+	if len(r.notificationImages.entries) != 0 {
+		r.mu.Unlock()
+		t.Fatal("removed history raster was retained")
+	}
+	r.mu.Unlock()
+
+	r.applyNotify(delta(1, 6, protocol.Delta{Kind: protocol.DeltaHistoryAdded, History: &entry}))
+	r.mu.Lock()
+	r.notificationRasterLocked(historyImage)
+	r.mu.Unlock()
+	r.applyNotify(disconnect(1))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.notificationImages.entries) != 0 {
+		t.Fatal("reconnect retained the previous generation's raster")
 	}
 }
 

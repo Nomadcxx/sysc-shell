@@ -257,7 +257,8 @@ type Registry struct {
 	signalProcess func(services.ProcessIdentity, syscall.Signal) error
 
 	// notify is the service-owned notification projection.
-	notify *notifyState
+	notify             *notifyState
+	notificationImages notificationRasterCache
 	// batteryWarning is the shell-owned desired-state reducer for the one
 	// keyed battery producer notification.
 	batteryWarning *batteryWarning

@@ -239,14 +239,16 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		return !historyFilter(filter, n.Timestamp, now)
 	})
 	for _, g := range activeGroups(active) {
-		raster := r.notifyIcon(g.members[0].AppIcon, g.members[0].DesktopEntry)
+		latest := g.members[0]
+		raster := r.notificationLeadImageLocked(latest.AppIcon, latest.DesktopEntry, latest.Image)
 		live = append(live, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed(), tr))
 	}
 	for _, e := range history {
 		if !historyFilter(filter, e.Timestamp, now) {
 			continue
 		}
-		closed = append(closed, HistoryCard(e, now, r.notifyIcon(e.AppIcon, e.DesktopEntry), r.linksAllowed(), tr))
+		raster := r.notificationLeadImageLocked(e.AppIcon, e.DesktopEntry, e.Image)
+		closed = append(closed, HistoryCard(e, now, raster, r.linksAllowed(), tr))
 	}
 
 	body := []*ui.Node{}

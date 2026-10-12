@@ -11,6 +11,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -40,6 +41,49 @@ func newNotifyState() *notifyState {
 		active:    make(map[uint32]protocol.Notification),
 		lifetimes: make(map[uint32]protocol.Lifetime),
 	}
+}
+
+func (r *Registry) notificationRasterLocked(img *protocol.Image) *ui.Image {
+	return r.notificationImages.get(img)
+}
+
+func (r *Registry) notificationLeadImageLocked(appIcon, desktopEntry string, img *protocol.Image) *ui.Image {
+	if icon := r.notifyIcon(appIcon, desktopEntry); icon != nil {
+		return icon
+	}
+	return r.notificationRasterLocked(img)
+}
+
+func (r *Registry) pruneNotificationRastersLocked() {
+	live := make(map[*protocol.Image]struct{})
+	if r.notify != nil {
+		r.notify.mu.Lock()
+		for _, notification := range r.notify.active {
+			if notification.Image != nil {
+				live[notification.Image] = struct{}{}
+			}
+		}
+		for _, entry := range r.notify.history {
+			if entry.Image != nil {
+				live[entry.Image] = struct{}{}
+			}
+		}
+		r.notify.mu.Unlock()
+	}
+	r.notificationImages.prune(live)
+}
+
+func notificationMessageRetiresImages(m notifyclient.Message) bool {
+	switch m.Kind {
+	case notifyclient.KindSnapshot, notifyclient.KindDisconnected:
+		return true
+	case notifyclient.KindDelta:
+		switch m.Delta.Kind {
+		case protocol.DeltaReplaced, protocol.DeltaClosed, protocol.DeltaHistoryRemoved, protocol.DeltaHistoryCleared:
+			return true
+		}
+	}
+	return false
 }
 
 // applyNotify applies one immutable client message. Messages from a stale
@@ -201,6 +245,9 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 		return
 	}
 	r.mu.Lock()
+	if notificationMessageRetiresImages(m) {
+		r.pruneNotificationRastersLocked()
+	}
 	if r.toasts != nil {
 		r.toasts.recompute()
 	}

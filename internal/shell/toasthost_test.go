@@ -2,6 +2,7 @@ package shell
 
 import (
 	"errors"
+	"image/color"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,28 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func TestToastCardReusesRasterForNotificationRevision(t *testing.T) {
+	n := protocol.Notification{
+		ID: 77, AppName: "Mail", Summary: "New message", Timestamp: time.Now(),
+		Image: notificationTestImage(t, 2, 2, color.RGBA{R: 0x11, G: 0x22, B: 0x33, A: 0xff}),
+	}
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	h := newToastHost(r, &hostHarness{})
+
+	r.mu.Lock()
+	first, second := h.cardOf(n), h.cardOf(n)
+	r.mu.Unlock()
+	firstLead := first.Children[0].Children[0]
+	secondLead := second.Children[0].Children[0]
+	if firstLead.Image == nil || secondLead.Image == nil {
+		t.Fatal("notification image did not reach the toast cards")
+	}
+	if firstLead.Image != secondLead.Image {
+		t.Fatal("the same notification revision decoded a new raster for each card")
+	}
+}
 
 func TestToastHostOpensOneOverlayPerOutput(t *testing.T) {
 	r := NewRegistry(config.Default())
