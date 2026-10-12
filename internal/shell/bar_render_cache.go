@@ -119,7 +119,7 @@ func barDamageRegions(previous, current *ui.Node, scale ui.Scale120, width, heig
 func samePaintNode(a, b *ui.Node) bool {
 	left, right := reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()
 	for i := 0; i < left.NumField(); i++ {
-		if left.Type().Field(i).Name == "Children" {
+		if i == nodeChildrenFieldIndex {
 			continue
 		}
 		if !samePaintValue(left.Field(i), right.Field(i)) {
@@ -128,6 +128,14 @@ func samePaintNode(a, b *ui.Node) bool {
 	}
 	return true
 }
+
+var nodeChildrenFieldIndex = func() int {
+	field, ok := reflect.TypeOf(ui.Node{}).FieldByName("Children")
+	if !ok {
+		panic("shell: ui.Node.Children field is missing")
+	}
+	return field.Index[0]
+}()
 
 func samePaintValue(a, b reflect.Value) bool {
 	if a.Type() != b.Type() {
