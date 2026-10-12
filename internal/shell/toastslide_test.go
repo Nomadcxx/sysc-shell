@@ -242,3 +242,30 @@ func TestSlideInputRegionFollowsTheDrawnCard(t *testing.T) {
 		t.Fatalf("mid-slide input region = %+v, want y strictly between destination %d and drawn %d", moved, dest.Y, drawn.Y)
 	}
 }
+
+func TestToastResizeKeepsAnimatedInputInsideAcceptedSurface(t *testing.T) {
+	r, h, _ := wiredToast(t)
+	now := time.Unix(100, 0)
+	h.anim = newAnimator(func() time.Time { return now }, false, DefaultTheme().Motion)
+	h.text = render.NewTextRenderer(nil)
+	// Keep the animation clock at its start so the resize path is deterministic.
+	h.sliding = true
+
+	r.applyNotify(snap(1, note(1, "resize")))
+	spec := h.harness().opens[0]
+	spec.Callbacks.OutputSize(300, 800)
+	if err := spec.Callbacks.Configure(300, 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	if !h.anim.has(toastSlideKey("eDP-1", 1), animVisible) {
+		t.Fatal("the output resize did not exercise an active card animation")
+	}
+
+	region := lastToastInput(h)
+	if len(region) != 1 {
+		t.Fatalf("animated input region = %+v, want the visible part of one card", region)
+	}
+	if got := region[0]; got != (ui.Rect{X: 0, Y: 12, W: 288, H: 56}) {
+		t.Fatalf("animated input rect = %+v, want the visible card area inside the accepted surface", got)
+	}
+}

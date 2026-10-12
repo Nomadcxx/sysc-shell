@@ -17,18 +17,24 @@ func (h *OutputHost) applyMode(width, height int32) {
 	h.modeWidth, h.modeHeight = width, height
 }
 
-// logicalSize converts the reported mode to the coordinate space surfaces are
-// configured in. A 1920x1080 panel at scale 1.25 is a 1536x864 screen, and a
-// popout placed against the raw mode would run off the bottom of it.
+// logicalSize converts the reported mode and transform to the coordinate
+// space surfaces are configured in. A 1920x1080 panel at scale 1.25 is a
+// 1536x864 screen, and a popout placed against the raw mode would run off it.
 func (h *OutputHost) logicalSize(scale120 ui.Scale120) (w, hgt int) {
 	if h.modeWidth <= 0 || h.modeHeight <= 0 {
 		return 0, 0
+	}
+	width, height := h.modeWidth, h.modeHeight
+	switch client.OutputTransform(h.transform) {
+	case client.OutputTransform90, client.OutputTransform270,
+		client.OutputTransformFlipped90, client.OutputTransformFlipped270:
+		width, height = height, width
 	}
 	scale := int(scale120)
 	if scale <= 0 {
 		scale = 120
 	}
-	return int(h.modeWidth) * 120 / scale, int(h.modeHeight) * 120 / scale
+	return int(width) * 120 / scale, int(height) * 120 / scale
 }
 
 // applyName records wl_output.name, which version 4 supplies directly. It is

@@ -43,9 +43,10 @@ type toastHost struct {
 	geometry map[string]toastGeometry
 	scale120 map[string]int
 	measured map[string]bool
-	// surfaceWidth is the accepted surface width in logical pixels. The
-	// Wayland surface is a narrow strip; geometry still records the full output.
+	// surfaceWidth and surfaceHeight are the accepted surface dimensions in
+	// logical pixels. Geometry still records the full output.
 	surfaceWidth    map[string]int
+	surfaceHeight   map[string]int
 	outputSized     map[string]bool
 	resizePending   map[string]int
 	pendingGeometry map[string]toastGeometry
@@ -131,6 +132,7 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 		scale120:        map[string]int{},
 		measured:        map[string]bool{},
 		surfaceWidth:    map[string]int{},
+		surfaceHeight:   map[string]int{},
 		outputSized:     map[string]bool{},
 		resizePending:   map[string]int{},
 		pendingGeometry: map[string]toastGeometry{},
@@ -179,6 +181,7 @@ func (h *toastHost) drop(connector string) {
 	delete(h.scale120, connector)
 	delete(h.measured, connector)
 	delete(h.surfaceWidth, connector)
+	delete(h.surfaceHeight, connector)
 	delete(h.outputSized, connector)
 	delete(h.resizePending, connector)
 	delete(h.pendingGeometry, connector)
@@ -288,6 +291,7 @@ func (h *toastHost) configureLocked(connector string, width, height, scale120 in
 	if width > 0 && height > 0 {
 		oldWidth := h.surfaceWidth[connector]
 		h.surfaceWidth[connector] = width
+		h.surfaceHeight[connector] = height
 		if pending, ok := h.pendingGeometry[connector]; ok && width >= toastSurfaceWidth(pending) {
 			h.geometry[connector] = pending
 			delete(h.pendingGeometry, connector)
@@ -1152,10 +1156,31 @@ func (h *toastHost) recompute() {
 	h.publishPresentation()
 }
 
-// inputRegion is in the accepted surface's coordinates. A pending resize does
-// not change those coordinates until the compositor accepts its configure.
+// inputRegion is clipped to the accepted surface's coordinates. A pending
+// resize does not change those bounds until the compositor accepts configure.
 func (h *toastHost) inputRegion(connector string) []ui.Rect {
-	return toastInputRegion(h.interactiveRects(connector))
+	rects := h.interactiveRects(connector)
+	width := h.surfaceWidth[connector]
+	height := h.surfaceHeight[connector]
+	if height <= 0 {
+		// Before the first configure, output geometry is the available height.
+		if geometry, known := h.geometryFor(connector); known {
+			height = geometry.OutputH
+		}
+	}
+	if width <= 0 || height <= 0 {
+		return toastInputRegion(rects)
+	}
+	clipped := make([]ui.Rect, 0, len(rects))
+	for _, rect := range rects {
+		x, y := max(0, rect.X), max(0, rect.Y)
+		right := min(width, rect.X+rect.W)
+		bottom := min(height, rect.Y+rect.H)
+		if right > x && bottom > y {
+			clipped = append(clipped, ui.Rect{X: x, Y: y, W: right - x, H: bottom - y})
+		}
+	}
+	return toastInputRegion(clipped)
 }
 
 func (h *toastHost) publishPresentation() {
