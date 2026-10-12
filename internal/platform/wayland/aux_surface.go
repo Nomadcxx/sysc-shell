@@ -68,7 +68,8 @@ type AuxUpdate struct {
 	Layer                                            *layershell.ZwlrLayerShellV1Layer
 	MarginTop, MarginBottom, MarginLeft, MarginRight *int32
 	// Width and Height resize the surface in surface-local coordinates. A nil
-	// pointer leaves that axis alone; both nil leaves the size alone.
+	// pointer leaves that axis alone; zero keeps an axis stretched between its
+	// opposite anchors, as in AuxSpec.
 	Width  *uint32
 	Height *uint32
 	// SetInputRegion replaces the surface input region. An empty InputRects
@@ -82,6 +83,7 @@ type AuxUpdate struct {
 type auxPolicy struct {
 	keyboard                                         uint32
 	layer                                            layershell.ZwlrLayerShellV1Layer
+	anchor                                           uint32
 	marginTop, marginBottom, marginLeft, marginRight int32
 	width, height                                    uint32
 	inputRects                                       []ui.Rect
@@ -266,6 +268,7 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	// The policy starts at the size the surface was opened with, so a
 	// later one-axis update resolves the other axis against reality.
 	u.policy.width, u.policy.height = uint32(max(spec.Width, 0)), uint32(max(spec.Height, 0))
+	u.policy.anchor = spec.Anchor
 	u.policy.layer = spec.Layer
 	u.policy.marginTop, u.policy.marginBottom = spec.MarginTop, spec.MarginBottom
 	u.policy.marginLeft, u.policy.marginRight = spec.MarginLeft, spec.MarginRight
@@ -370,7 +373,8 @@ func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
 		if upd.Height != nil {
 			hgt = *upd.Height
 		}
-		if w == 0 || hgt == 0 {
+		if (w == 0 && !auxAxisStretches(next.anchor, layershell.ZwlrLayerSurfaceV1AnchorLeft, layershell.ZwlrLayerSurfaceV1AnchorRight)) ||
+			(hgt == 0 && !auxAxisStretches(next.anchor, layershell.ZwlrLayerSurfaceV1AnchorTop, layershell.ZwlrLayerSurfaceV1AnchorBottom)) {
 			return auxPolicy{}, fmt.Errorf("wayland: aux %s size %dx%d is empty", u.id, w, hgt)
 		}
 		next.width, next.height = w, hgt
@@ -381,8 +385,11 @@ func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
 	// The region applies to the surface this update asks for, so a resize is
 	// checked against its new size, not the one it replaces.
 	bounds := ui.Rect{W: u.ss.logicalWidth, H: u.ss.logicalHeight}
-	if upd.Width != nil || upd.Height != nil {
-		bounds.W, bounds.H = int(next.width), int(next.height)
+	if upd.Width != nil && next.width > 0 {
+		bounds.W = int(next.width)
+	}
+	if upd.Height != nil && next.height > 0 {
+		bounds.H = int(next.height)
 	}
 	rects := make([]ui.Rect, 0, len(upd.InputRects))
 	for _, r := range upd.InputRects {
@@ -397,6 +404,11 @@ func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
 	next.inputRects = rects
 	next.hasInputRegion = true
 	return next, nil
+}
+
+func auxAxisStretches(anchor uint32, first, second layershell.ZwlrLayerSurfaceV1Anchor) bool {
+	mask := uint32(first | second)
+	return anchor&mask == mask
 }
 
 // applyAuxPolicy performs the compositor calls for one update and commits once.

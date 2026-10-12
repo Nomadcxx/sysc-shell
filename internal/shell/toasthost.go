@@ -43,6 +43,11 @@ type toastHost struct {
 	geometry map[string]toastGeometry
 	scale120 map[string]int
 	measured map[string]bool
+	// surfaceWidth is the accepted surface width in logical pixels. The
+	// Wayland surface is a narrow strip; geometry still records the full output.
+	surfaceWidth  map[string]int
+	outputSized   map[string]bool
+	resizePending map[string]int
 	// cards is the arranged stack per output, rebuilt whenever the projection
 	// or the geometry changes.
 	cards map[string][]toastCard
@@ -112,19 +117,22 @@ func (h *hostHarness) request(r wayland.AuxRequest) {
 
 func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	h := &toastHost{
-		r:        r,
-		outputs:  map[string]uint32{},
-		visible:  map[string][]uint32{},
-		queued:   map[string][]uint32{},
-		hovered:  map[string]map[uint32]bool{},
-		expanded: map[uint32]bool{},
-		shown:    map[string]map[uint32]ui.Rect{},
-		from:     map[string]map[uint32]ui.Rect{},
-		geometry: map[string]toastGeometry{},
-		scale120: map[string]int{},
-		measured: map[string]bool{},
-		cards:    map[string][]toastCard{},
-		pointer:  map[string]ui.Rect{},
+		r:             r,
+		outputs:       map[string]uint32{},
+		visible:       map[string][]uint32{},
+		queued:        map[string][]uint32{},
+		hovered:       map[string]map[uint32]bool{},
+		expanded:      map[uint32]bool{},
+		shown:         map[string]map[uint32]ui.Rect{},
+		from:          map[string]map[uint32]ui.Rect{},
+		geometry:      map[string]toastGeometry{},
+		scale120:      map[string]int{},
+		measured:      map[string]bool{},
+		surfaceWidth:  map[string]int{},
+		outputSized:   map[string]bool{},
+		resizePending: map[string]int{},
+		cards:         map[string][]toastCard{},
+		pointer:       map[string]ui.Rect{},
 	}
 	if r != nil {
 		r.mu.Lock()
@@ -167,6 +175,9 @@ func (h *toastHost) drop(connector string) {
 	delete(h.geometry, connector)
 	delete(h.scale120, connector)
 	delete(h.measured, connector)
+	delete(h.surfaceWidth, connector)
+	delete(h.outputSized, connector)
+	delete(h.resizePending, connector)
 	delete(h.cards, connector)
 	delete(h.pointer, connector)
 	if h.editing != nil && h.editing.connector == connector {
@@ -199,25 +210,31 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 	h.recompute()
 }
 
-// spec describes one output's toast surface. It is anchored to all four edges
-// so the compositor reports the output's own logical size, which is what the
-// stack lays out against; the input region is narrowed to the visible cards
-// immediately afterwards, so the rest of the output still takes clicks.
-// Each card blurs through the compositor: BlurShape hands it the cards'
-// silhouettes, so nothing is captured and only the cards blur, not the
-// output the surface spans (the cost design D13 exempted toasts over).
+// spec describes a narrow strip at the output's right edge. The strip spans
+// the output vertically and leaves room for the card, its margin and a right
+// bar inset. OutputSize supplies full-output metrics for layout; pointer and
+// blur regions stay local to the strip and cover only the visible cards.
 func (h *toastHost) spec(connector string) *wayland.AuxSpec {
+	barGeometry := h.applyBarEdge(connector, toastGeometry{})
+	_, rightInset := toastSideInsets(barGeometry)
+	width := toastCardWidth + 2*toastMargin + rightInset
+	h.surfaceWidth[connector] = width
+	delete(h.outputSized, connector)
+	delete(h.resizePending, connector)
 	return &wayland.AuxSpec{
 		ID:        toastSurfaceID(connector),
 		Namespace: toastNamespace,
 		Layer:     layershell.ZwlrLayerShellV1LayerOverlay,
 		Anchor: uint32(layershell.ZwlrLayerSurfaceV1AnchorTop |
 			layershell.ZwlrLayerSurfaceV1AnchorBottom |
-			layershell.ZwlrLayerSurfaceV1AnchorLeft |
 			layershell.ZwlrLayerSurfaceV1AnchorRight),
+		Width:         int32(width),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardNone,
 		Callbacks: wayland.HostCallbacks{
+			OutputSize: func(width, height int) {
+				h.outputSize(connector, width, height)
+			},
 			Configure: func(width, height, scale120 int) error {
 				return h.configure(connector, width, height, scale120)
 			},
@@ -249,9 +266,8 @@ func (h *toastHost) blurShape(connector string) []ui.Rect {
 	return out
 }
 
-// configure records the output's real logical size and relays out the stack
-// against it. Nothing is placed before it arrives, because the only honest
-// answer to "how wide is this output" until then is that we do not know.
+// configure records the strip's accepted size and relays out the stack against
+// its current output metrics. OutputSize provides the full output dimensions.
 func (h *toastHost) configure(connector string, width, height, scale120 int) error {
 	h.r.mu.Lock()
 	defer h.r.mu.Unlock()
@@ -260,11 +276,43 @@ func (h *toastHost) configure(connector string, width, height, scale120 int) err
 
 func (h *toastHost) configureLocked(connector string, width, height, scale120 int) error {
 	if width > 0 && height > 0 {
-		h.geometry[connector] = h.applyBarEdge(connector, toastGeometry{OutputW: width, OutputH: height})
+		oldWidth := h.surfaceWidth[connector]
+		h.surfaceWidth[connector] = width
+		if h.resizePending[connector] == width {
+			delete(h.resizePending, connector)
+		}
+		if oldWidth > 0 && oldWidth != width {
+			delta := width - oldWidth
+			if pointer, ok := h.pointer[connector]; ok {
+				pointer.X += delta
+				h.pointer[connector] = pointer
+			}
+			for id, rect := range h.shown[connector] {
+				rect.X += delta
+				h.shown[connector][id] = rect
+			}
+			for id, rect := range h.from[connector] {
+				rect.X += delta
+				h.from[connector][id] = rect
+			}
+		}
+		if !h.outputSized[connector] {
+			h.geometry[connector] = h.applyBarEdge(connector, toastGeometry{OutputW: width, OutputH: height})
+		}
 	}
 	h.scale120[connector] = scale120
 	h.recompute()
 	return nil
+}
+
+func (h *toastHost) outputSize(connector string, width, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	h.outputSized[connector] = true
+	h.geometry[connector] = h.applyBarEdge(connector, toastGeometry{OutputW: width, OutputH: height})
 }
 
 // toastCornerForEdge anchors a bottom bar's stack above the bar. Every other
@@ -320,7 +368,7 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 				ID:     toastSurfaceID(connector),
 				Update: &wayland.AuxUpdate{
 					SetInputRegion: true,
-					InputRects:     toastInputRegion(h.interactiveRects(connector)),
+					InputRects:     h.inputRegion(connector),
 				},
 			})
 		}
@@ -332,11 +380,9 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 	style := h.style
 	style.Scale120 = ui.Scale120(max(h.scale120[connector], int(ui.ScaleUnit)))
 
-	// The surface covers the whole output and the cards are separate bodies on
-	// it, which the painter cannot express in one pass: it fills exactly one
-	// rounded body and clears everything outside it. So the surface is cleared
-	// here and each card is painted into its own buffer and copied in, which
-	// leaves the gaps and the rest of the output transparent.
+	// The surface is a narrow strip at the output's right edge. Clear its full
+	// buffer, then paint each card into its own buffer and copy it in; gaps and
+	// the rest of the output stay transparent without a fullscreen allocation.
 	clear(pixels)
 	for _, card := range h.cards[connector] {
 		drawn := card
@@ -740,6 +786,13 @@ func (h *toastHost) rebuildWithLayouts(connector string, ids []uint32, layouts m
 	var rects []ui.Rect
 	if geometry, known := h.geometryFor(connector); known {
 		rects, _ = toastLayout(geometry, heights)
+		surfaceWidth := h.surfaceWidth[connector]
+		if surfaceWidth <= 0 {
+			surfaceWidth = geometry.OutputW
+		}
+		for i := range rects {
+			rects[i] = toastSurfaceRect(geometry, surfaceWidth, rects[i])
+		}
 	}
 	var moved bool
 	if h.text != nil {
@@ -800,7 +853,7 @@ func (h *toastHost) publishSlideFrame() {
 		frames = append(frames, slideFrame{
 			output: output,
 			id:     toastSurfaceID(connector),
-			rects:  toastInputRegion(h.interactiveRects(connector)),
+			rects:  h.inputRegion(connector),
 		})
 	}
 	h.r.mu.Unlock()
@@ -964,6 +1017,24 @@ func (h *toastHost) recompute() {
 		if known {
 			h.geometry[connector] = geom
 		}
+<<<<<<< HEAD
+		surfaceWidth := h.surfaceWidth[connector]
+		if surfaceWidth <= 0 && known {
+			surfaceWidth = geom.OutputW
+		}
+		var resizeWidth *uint32
+		if known && h.outputSized[connector] {
+			desiredWidth := toastSurfaceWidth(geom)
+			if desiredWidth == surfaceWidth {
+				delete(h.resizePending, connector)
+			} else {
+				if h.resizePending[connector] != desiredWidth {
+					width := uint32(desiredWidth)
+					resizeWidth = &width
+					h.resizePending[connector] = desiredWidth
+				}
+			}
+		}
 		h.style = h.cardStyle()
 		measure := h.measureText()
 		layouts := make(map[uint32]toastCardLayout, len(records))
@@ -986,18 +1057,40 @@ func (h *toastHost) recompute() {
 		}
 		h.rebuildWithLayouts(connector, visible, layouts, measure)
 		h.updateHover(connector)
-
 		h.request(wayland.AuxRequest{
 			Output: global,
 			ID:     toastSurfaceID(connector),
 			Update: &wayland.AuxUpdate{
+				Width:          resizeWidth,
 				SetInputRegion: true,
-				InputRects:     toastInputRegion(h.interactiveRects(connector)),
+				InputRects:     h.inputRegion(connector),
 			},
 		})
 		h.r.publishSurface(global, toastSurfaceID(connector))
 	}
 	h.publishPresentation()
+}
+
+// inputRegion maps the cards' current local rectangles to the requested strip
+// width while a configure for a pending resize is in flight.
+func (h *toastHost) inputRegion(connector string) []ui.Rect {
+	rects := toastInputRegion(h.interactiveRects(connector))
+	currentWidth := h.surfaceWidth[connector]
+	if currentWidth <= 0 {
+		if geometry, ok := h.geometryFor(connector); ok {
+			currentWidth = geometry.OutputW
+		}
+	}
+	targetWidth := currentWidth
+	if pending := h.resizePending[connector]; pending > 0 {
+		targetWidth = pending
+	}
+	if currentWidth > 0 && targetWidth != currentWidth {
+		for i := range rects {
+			rects[i].X += targetWidth - currentWidth
+		}
+	}
+	return rects
 }
 
 func (h *toastHost) publishPresentation() {
@@ -1144,7 +1237,7 @@ func (h *toastHost) interactiveRects(connector string) []ui.Rect {
 	return out
 }
 
-// cardRects lays out the visible ids for one output and returns their rects.
+// cardRects lays out the visible ids in output-local coordinates.
 func (h *toastHost) cardRects(connector string, ids []uint32) []ui.Rect {
 	heights := make([]int, len(ids))
 	for i := range ids {

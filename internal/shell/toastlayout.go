@@ -66,6 +66,26 @@ func toastFitWidth(g toastGeometry) int {
 	return width
 }
 
+// toastSurfaceWidth leaves the card and its margins inside a right-anchored
+// strip. The strip also covers a right-side bar inset so card coordinates stay
+// fixed in output space.
+func toastSurfaceWidth(g toastGeometry) int {
+	width := max(1, toastFitWidth(g))
+	_, right := toastSideInsets(g)
+	width += 2*toastMargin + right
+	if g.OutputW > 0 {
+		width = min(width, g.OutputW)
+	}
+	return width
+}
+
+// toastSurfaceRect converts an output-local card rectangle to coordinates in
+// the right-anchored strip.
+func toastSurfaceRect(g toastGeometry, surfaceWidth int, rect ui.Rect) ui.Rect {
+	rect.X -= g.OutputW - surfaceWidth
+	return rect
+}
+
 // toastLayout places as many cards as the geometry holds, stacking away from
 // the configured edge, and returns the visible rectangles plus the indexes
 // that did not fit. Geometry, not a fixed count, decides overflow.
