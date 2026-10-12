@@ -45,9 +45,10 @@ type toastHost struct {
 	measured map[string]bool
 	// surfaceWidth is the accepted surface width in logical pixels. The
 	// Wayland surface is a narrow strip; geometry still records the full output.
-	surfaceWidth  map[string]int
-	outputSized   map[string]bool
-	resizePending map[string]int
+	surfaceWidth    map[string]int
+	outputSized     map[string]bool
+	resizePending   map[string]int
+	pendingGeometry map[string]toastGeometry
 	// cards is the arranged stack per output, rebuilt whenever the projection
 	// or the geometry changes.
 	cards map[string][]toastCard
@@ -60,8 +61,9 @@ type toastHost struct {
 	resolver *notifyResolver
 	// press holds the card a button went down on, so a swipe can release
 	// outside it.
-	press    toastCard
-	pressing bool
+	press          toastCard
+	pressConnector string
+	pressing       bool
 
 	anim      *animator
 	shown     map[string]map[uint32]ui.Rect
@@ -117,22 +119,23 @@ func (h *hostHarness) request(r wayland.AuxRequest) {
 
 func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	h := &toastHost{
-		r:             r,
-		outputs:       map[string]uint32{},
-		visible:       map[string][]uint32{},
-		queued:        map[string][]uint32{},
-		hovered:       map[string]map[uint32]bool{},
-		expanded:      map[uint32]bool{},
-		shown:         map[string]map[uint32]ui.Rect{},
-		from:          map[string]map[uint32]ui.Rect{},
-		geometry:      map[string]toastGeometry{},
-		scale120:      map[string]int{},
-		measured:      map[string]bool{},
-		surfaceWidth:  map[string]int{},
-		outputSized:   map[string]bool{},
-		resizePending: map[string]int{},
-		cards:         map[string][]toastCard{},
-		pointer:       map[string]ui.Rect{},
+		r:               r,
+		outputs:         map[string]uint32{},
+		visible:         map[string][]uint32{},
+		queued:          map[string][]uint32{},
+		hovered:         map[string]map[uint32]bool{},
+		expanded:        map[uint32]bool{},
+		shown:           map[string]map[uint32]ui.Rect{},
+		from:            map[string]map[uint32]ui.Rect{},
+		geometry:        map[string]toastGeometry{},
+		scale120:        map[string]int{},
+		measured:        map[string]bool{},
+		surfaceWidth:    map[string]int{},
+		outputSized:     map[string]bool{},
+		resizePending:   map[string]int{},
+		pendingGeometry: map[string]toastGeometry{},
+		cards:           map[string][]toastCard{},
+		pointer:         map[string]ui.Rect{},
 	}
 	if r != nil {
 		r.mu.Lock()
@@ -178,8 +181,14 @@ func (h *toastHost) drop(connector string) {
 	delete(h.surfaceWidth, connector)
 	delete(h.outputSized, connector)
 	delete(h.resizePending, connector)
+	delete(h.pendingGeometry, connector)
 	delete(h.cards, connector)
 	delete(h.pointer, connector)
+	if h.pressConnector == connector {
+		h.press = toastCard{}
+		h.pressConnector = ""
+		h.pressing = false
+	}
 	if h.editing != nil && h.editing.connector == connector {
 		h.endReply() // the surface, and its keyboard, are already gone
 		h.publishPresentation()
@@ -221,6 +230,7 @@ func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 	h.surfaceWidth[connector] = width
 	delete(h.outputSized, connector)
 	delete(h.resizePending, connector)
+	delete(h.pendingGeometry, connector)
 	return &wayland.AuxSpec{
 		ID:        toastSurfaceID(connector),
 		Namespace: toastNamespace,
@@ -278,6 +288,10 @@ func (h *toastHost) configureLocked(connector string, width, height, scale120 in
 	if width > 0 && height > 0 {
 		oldWidth := h.surfaceWidth[connector]
 		h.surfaceWidth[connector] = width
+		if pending, ok := h.pendingGeometry[connector]; ok && width >= toastSurfaceWidth(pending) {
+			h.geometry[connector] = pending
+			delete(h.pendingGeometry, connector)
+		}
 		if h.resizePending[connector] == width {
 			delete(h.resizePending, connector)
 		}
@@ -295,6 +309,9 @@ func (h *toastHost) configureLocked(connector string, width, height, scale120 in
 				rect.X += delta
 				h.from[connector][id] = rect
 			}
+			if h.pressing && h.pressConnector == connector {
+				h.press.rect.X += delta
+			}
 		}
 		if !h.outputSized[connector] {
 			h.geometry[connector] = h.applyBarEdge(connector, toastGeometry{OutputW: width, OutputH: height})
@@ -311,8 +328,43 @@ func (h *toastHost) outputSize(connector string, width, height int) {
 	}
 	h.r.mu.Lock()
 	defer h.r.mu.Unlock()
+	wasSized := h.outputSized[connector]
+	previous, hadGeometry := h.geometry[connector]
+	next := h.applyBarEdge(connector, toastGeometry{OutputW: width, OutputH: height})
+	currentWidth := h.surfaceWidth[connector]
+	if currentWidth <= 0 && hadGeometry {
+		currentWidth = previous.OutputW
+	}
 	h.outputSized[connector] = true
-	h.geometry[connector] = h.applyBarEdge(connector, toastGeometry{OutputW: width, OutputH: height})
+	if wasSized && currentWidth > 0 && toastSurfaceWidth(next) > currentWidth {
+		h.pendingGeometry[connector] = next
+		if hadGeometry {
+			layoutGeometry := next
+			layoutGeometry.OutputW = previous.OutputW
+			h.geometry[connector] = layoutGeometry
+			if previous != layoutGeometry {
+				h.recompute()
+			}
+		}
+		desiredWidth := toastSurfaceWidth(next)
+		if h.resizePending[connector] != desiredWidth {
+			h.resizePending[connector] = desiredWidth
+			if output, ok := h.outputs[connector]; ok {
+				size := uint32(desiredWidth)
+				h.request(wayland.AuxRequest{
+					Output: output,
+					ID:     toastSurfaceID(connector),
+					Update: &wayland.AuxUpdate{Width: &size},
+				})
+			}
+		}
+		return
+	}
+	delete(h.pendingGeometry, connector)
+	h.geometry[connector] = next
+	if wasSized && hadGeometry && previous != next {
+		h.recompute()
+	}
 }
 
 // toastCornerForEdge anchors a bottom bar's stack above the bar. Every other
@@ -507,6 +559,7 @@ func (h *toastHost) handle(connector string, event wayland.Event) bool {
 			return false
 		}
 		h.press = card
+		h.pressConnector = connector
 		h.pressing = true
 		h.resolver.press(card.root, x-card.rect.X, y-card.rect.Y)
 		return true
@@ -517,6 +570,7 @@ func (h *toastHost) handle(connector string, event wayland.Event) bool {
 		card := h.press
 		h.pressing = false
 		h.press = toastCard{}
+		h.pressConnector = ""
 		h.resolver.release(card.root, x-card.rect.X, y-card.rect.Y)
 		if h.resolver.takeReplyHit() {
 			h.focusReply(connector)
@@ -1011,11 +1065,26 @@ func (h *toastHost) recompute() {
 			continue
 		}
 		geom, known := h.geometryFor(connector)
-		geom = h.applyBarEdge(connector, geom)
+		candidateGeometry := h.applyBarEdge(connector, geom)
 		// An unmeasured output keeps no geometry: writing one back would make
 		// the placeholder indistinguishable from a real measurement.
 		if known {
-			h.geometry[connector] = geom
+			acceptedWidth := h.surfaceWidth[connector]
+			pending, hasPending := h.pendingGeometry[connector]
+			if hasPending && acceptedWidth > 0 && toastSurfaceWidth(pending) > acceptedWidth {
+				// Keep the current layout until the compositor accepts a strip
+				// wide enough for the pending geometry.
+			} else if !hasPending && acceptedWidth > 0 && toastSurfaceWidth(candidateGeometry) > acceptedWidth {
+				h.pendingGeometry[connector] = candidateGeometry
+			} else {
+				if hasPending {
+					geom = pending
+					delete(h.pendingGeometry, connector)
+				} else {
+					geom = candidateGeometry
+				}
+				h.geometry[connector] = geom
+			}
 		}
 <<<<<<< HEAD
 		surfaceWidth := h.surfaceWidth[connector]
@@ -1024,7 +1093,11 @@ func (h *toastHost) recompute() {
 		}
 		var resizeWidth *uint32
 		if known && h.outputSized[connector] {
-			desiredWidth := toastSurfaceWidth(geom)
+			desiredGeometry := geom
+			if pending, ok := h.pendingGeometry[connector]; ok {
+				desiredGeometry = pending
+			}
+			desiredWidth := toastSurfaceWidth(desiredGeometry)
 			if desiredWidth == surfaceWidth {
 				delete(h.resizePending, connector)
 			} else {
@@ -1057,40 +1130,32 @@ func (h *toastHost) recompute() {
 		}
 		h.rebuildWithLayouts(connector, visible, layouts, measure)
 		h.updateHover(connector)
+		// The region is surface-local to the accepted width. Commit it before a
+		// resize request; configure relays out cards in the new coordinates.
 		h.request(wayland.AuxRequest{
 			Output: global,
 			ID:     toastSurfaceID(connector),
 			Update: &wayland.AuxUpdate{
-				Width:          resizeWidth,
 				SetInputRegion: true,
 				InputRects:     h.inputRegion(connector),
 			},
 		})
+		if resizeWidth != nil {
+			h.request(wayland.AuxRequest{
+				Output: global,
+				ID:     toastSurfaceID(connector),
+				Update: &wayland.AuxUpdate{Width: resizeWidth},
+			})
+		}
 		h.r.publishSurface(global, toastSurfaceID(connector))
 	}
 	h.publishPresentation()
 }
 
-// inputRegion maps the cards' current local rectangles to the requested strip
-// width while a configure for a pending resize is in flight.
+// inputRegion is in the accepted surface's coordinates. A pending resize does
+// not change those coordinates until the compositor accepts its configure.
 func (h *toastHost) inputRegion(connector string) []ui.Rect {
-	rects := toastInputRegion(h.interactiveRects(connector))
-	currentWidth := h.surfaceWidth[connector]
-	if currentWidth <= 0 {
-		if geometry, ok := h.geometryFor(connector); ok {
-			currentWidth = geometry.OutputW
-		}
-	}
-	targetWidth := currentWidth
-	if pending := h.resizePending[connector]; pending > 0 {
-		targetWidth = pending
-	}
-	if currentWidth > 0 && targetWidth != currentWidth {
-		for i := range rects {
-			rects[i].X += targetWidth - currentWidth
-		}
-	}
-	return rects
+	return toastInputRegion(h.interactiveRects(connector))
 }
 
 func (h *toastHost) publishPresentation() {

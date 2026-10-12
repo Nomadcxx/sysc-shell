@@ -71,29 +71,42 @@ func TestToastHostShrinksStripToNarrowOutput(t *testing.T) {
 	r.outputsForTest([]string{"eDP-1"})
 	h.syncOutputs(map[string]uint32{"eDP-1": 5})
 	spec := hh.opens[0]
-	spec.Callbacks.OutputSize(300, 800)
+	spec.Callbacks.OutputSize(1920, 800)
 	if err := spec.Callbacks.Configure(int(spec.Width), 800, 120); err != nil {
 		t.Fatal(err)
 	}
 	r.applyNotify(snap(1, note(1, "a")))
 	h.recompute()
+	h.anim.reduced = true
+	spec.Callbacks.OutputSize(300, 800)
+	h.recompute()
 
-	var resized bool
-	for _, update := range hh.updates {
+	resizeIndex := -1
+	for i, update := range hh.updates {
 		if update.Width != nil && *update.Width == 300 {
-			resized = true
+			resizeIndex = i
 		}
 	}
-	if !resized {
+	if resizeIndex < 0 {
 		t.Fatal("narrow output kept the oversized toast strip")
+	}
+	if resize := hh.updates[resizeIndex]; resize.SetInputRegion {
+		t.Fatalf("resize update changed the input region before configure: %+v", resize)
+	}
+	if resizeIndex == 0 {
+		t.Fatal("width request had no accepted-width input region before it")
+	}
+	previous := hh.updates[resizeIndex-1]
+	if !previous.SetInputRegion || len(previous.InputRects) != 1 || previous.InputRects[0] != h.cards["eDP-1"][0].rect {
+		t.Fatalf("input update before resize = %+v, want the card at its accepted-width coordinates %+v", previous, h.cards["eDP-1"][0].rect)
 	}
 	oldWidth := int(spec.Width)
 	if err := spec.Callbacks.Render(make([]byte, oldWidth*4*800), oldWidth, 800, oldWidth*4); err != nil {
 		t.Fatal(err)
 	}
 	last := hh.updates[len(hh.updates)-1]
-	if len(last.InputRects) != 1 || last.InputRects[0].X != toastMargin || last.InputRects[0].X+last.InputRects[0].W > 300 {
-		t.Fatalf("narrow surface input region = %+v, want the card inside a 300px strip", last.InputRects)
+	if len(last.InputRects) != 1 || last.InputRects[0] != h.cards["eDP-1"][0].rect || last.InputRects[0].X+last.InputRects[0].W > oldWidth {
+		t.Fatalf("pending resize input region = %+v, want the drawn card inside the accepted %dpx strip", last.InputRects, oldWidth)
 	}
 
 	if err := spec.Callbacks.Configure(300, 800, 120); err != nil {
@@ -101,6 +114,93 @@ func TestToastHostShrinksStripToNarrowOutput(t *testing.T) {
 	}
 	if got := h.cards["eDP-1"][0].rect; got.X != toastMargin || got.W != 300-2*toastMargin {
 		t.Fatalf("narrow surface card = %+v, want x=%d width=%d", got, toastMargin, 300-2*toastMargin)
+	}
+	if got := lastToastInput(h); len(got) != 1 || got[0] != h.cards["eDP-1"][0].rect {
+		t.Fatalf("configured input region = %+v, want the resized card %+v", got, h.cards["eDP-1"][0].rect)
+	}
+}
+
+func TestToastConfigureMovesAnInFlightPressWithTheCard(t *testing.T) {
+	r, h, sender := unmeasuredToast(t)
+	hh := h.harness()
+	spec := hh.opens[0]
+	spec.Callbacks.OutputSize(300, 800)
+	if err := spec.Callbacks.Configure(int(spec.Width), 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	n := note(1, "a")
+	n.Actions = []protocol.Action{{Key: "open", Label: "Open"}}
+	h.anim.reduced = true
+	r.applyNotify(snap(1, n))
+	h.recompute()
+
+	r.mu.Lock()
+	card := h.cards["eDP-1"][0]
+	var action *ui.Node
+	var findAction func(*ui.Node)
+	findAction = func(node *ui.Node) {
+		if node.Action == "notify:1:action:open" {
+			action = node
+			return
+		}
+		for _, child := range node.Children {
+			findAction(child)
+		}
+	}
+	findAction(card.root)
+	oldWidth := h.surfaceWidth["eDP-1"]
+	r.mu.Unlock()
+	if action == nil {
+		t.Fatal("notification action was not laid out")
+	}
+
+	x := float64(card.rect.X + action.Bounds.X + action.Bounds.W/2)
+	y := float64(card.rect.Y + action.Bounds.Y + action.Bounds.H/2)
+	if !spec.Callbacks.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y}) {
+		t.Fatal("press on the notification action was not handled")
+	}
+	if err := spec.Callbacks.Configure(300, 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	newX := x + float64(300-oldWidth)
+	if !spec.Callbacks.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: newX, Y: y}) {
+		t.Fatal("release after the surface resize was not handled")
+	}
+	if got := sender.ofKind(protocol.CommandAction); len(got) != 1 || got[0].ActionKey != "open" {
+		t.Fatalf("action commands = %+v, want open after resize", got)
+	}
+}
+
+func TestToastOutputWideningWaitsForAUsableStripWidth(t *testing.T) {
+	r, h, _ := unmeasuredToast(t)
+	spec := h.harness().opens[0]
+	spec.Callbacks.OutputSize(300, 800)
+	if err := spec.Callbacks.Configure(300, 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	h.anim.reduced = true
+	r.applyNotify(snap(1, note(1, "a")))
+	h.recompute()
+	if got := h.cards["eDP-1"][0].rect; got.X != toastMargin || got.W != 300-2*toastMargin {
+		t.Fatalf("narrow card before output change = %+v", got)
+	}
+
+	spec.Callbacks.OutputSize(1920, 800)
+	if got := h.geometry["eDP-1"].OutputW; got != 300 {
+		t.Fatalf("geometry width while resize is pending = %d, want accepted 300px geometry", got)
+	}
+	if got := h.resizePending["eDP-1"]; got != toastCardWidth+2*toastMargin {
+		t.Fatalf("pending strip width = %d, want %d", got, toastCardWidth+2*toastMargin)
+	}
+
+	if err := spec.Callbacks.Configure(toastCardWidth+2*toastMargin, 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.geometry["eDP-1"].OutputW; got != 1920 {
+		t.Fatalf("accepted output width = %d, want 1920", got)
+	}
+	if got := h.cards["eDP-1"][0].rect; got.X != toastMargin || got.W != toastCardWidth {
+		t.Fatalf("wide card after resize = %+v, want x=%d width=%d", got, toastMargin, toastCardWidth)
 	}
 }
 
@@ -1034,7 +1134,13 @@ func TestToastHostPlacesCardsClearOfEveryBarEdge(t *testing.T) {
 			r.mu.Lock()
 			r.bars[h.outputs["eDP-1"]] = bar
 			h.recompute()
+			pendingWidth := h.resizePending["eDP-1"]
 			r.mu.Unlock()
+			if pendingWidth > 0 {
+				if err := h.configure("eDP-1", pendingWidth, outH, 120); err != nil {
+					t.Fatal(err)
+				}
+			}
 
 			r.applyNotify(snap(1, note(1, "older"), note(2, "newer")))
 
@@ -1096,9 +1202,6 @@ func TestToastHostPlacesCardsClearOfEveryBarEdge(t *testing.T) {
 				t.Fatalf("input region = %+v, want the cards %+v", inputs, rects)
 			}
 			inputWidth := h.surfaceWidth["eDP-1"]
-			if h.resizePending["eDP-1"] > 0 {
-				inputWidth = h.resizePending["eDP-1"]
-			}
 			for i, rect := range rects {
 				surfaceRect := toastSurfaceRect(geom, inputWidth, rect)
 				if inputs[i] != surfaceRect {

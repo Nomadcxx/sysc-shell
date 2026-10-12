@@ -42,6 +42,36 @@ func TestApplyDoneWithoutNameLeavesHostUnready(t *testing.T) {
 	}
 }
 
+func TestOutputDoneReportsModeChangesToConfiguredAuxSurfaces(t *testing.T) {
+	t.Parallel()
+	h := newHost(4, nil)
+	h.state = hostMapped
+	u := newSurfaceUnit("toast:DP-1")
+	u.ss.configure(404, 800)
+	u.ss.acknowledge()
+	var got [][2]int
+	u.app.OutputSize = func(width, height int) {
+		got = append(got, [2]int{width, height})
+	}
+	h.aux[u.id] = u
+	o := &owner{}
+
+	h.applyMode(1920, 1080)
+	o.onOutputDone(h)
+	h.applyMode(2560, 1080)
+	o.onOutputDone(h)
+
+	want := [][2]int{{1920, 1080}, {2560, 1080}}
+	if len(got) != len(want) {
+		t.Fatalf("reported output sizes = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("reported output sizes = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestTransformedOutputUsesSwappedConfigureDimensions(t *testing.T) {
 	t.Parallel()
 	h := newHost(1, nil)

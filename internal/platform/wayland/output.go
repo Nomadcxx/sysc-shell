@@ -77,6 +77,19 @@ func (o *owner) attachOutputHandlers(h *OutputHost) {
 		}
 		if h.applyDone() {
 			o.fail(o.hostBecameReady(h))
+			return
 		}
+		o.onOutputDone(h)
 	})
+}
+
+func (o *owner) onOutputDone(h *OutputHost) {
+	for _, u := range h.units() {
+		if u == nil || u.app.OutputSize == nil || u.ss == nil || !u.ss.eligible() {
+			continue
+		}
+		if width, height := h.logicalSize(u.ss.scale120); width > 0 && height > 0 {
+			u.app.OutputSize(width, height)
+		}
+	}
 }
