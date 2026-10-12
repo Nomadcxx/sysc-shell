@@ -268,4 +268,33 @@ func TestToastResizeKeepsAnimatedInputInsideAcceptedSurface(t *testing.T) {
 	if got := region[0]; got != (ui.Rect{X: 0, Y: 12, W: 288, H: 56}) {
 		t.Fatalf("animated input rect = %+v, want the visible card area inside the accepted surface", got)
 	}
+	r.mu.Lock()
+	drawn := h.drawnRect("eDP-1", h.cards["eDP-1"][0])
+	scale := ui.Scale120(h.scale120["eDP-1"])
+	r.mu.Unlock()
+	box := scale.PhysicalRect(drawn)
+	if box.X >= 0 || box.X+box.W >= 300 {
+		t.Fatalf("drawn card = %+v, want a partially clipped active slide", box)
+	}
+	fonts, err := render.NewSystemFontMap(r.cfg.Bar.FontFamily, render.DefaultFontCacheDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.text = render.NewTextRendererWithFontMap(fonts)
+	h.measured["eDP-1"] = true
+	const width, height, stride = 300, 800, 300 * 4
+	pixels := make([]byte, stride*height)
+	if err := spec.Callbacks.Render(pixels, width, height, stride); err != nil {
+		t.Fatal(err)
+	}
+	// A negative destination X must not wrap the left-clipped card into the
+	// preceding row; this point is inside the body past its rounded corner.
+	leakX, leakY := width+box.X+60, box.Y-1
+	if leakX >= width || leakY < 0 {
+		t.Fatalf("outside-card probe (%d,%d) is outside the surface", leakX, leakY)
+	}
+	offset := leakY*stride + leakX*4
+	if pixels[offset] != 0 || pixels[offset+1] != 0 || pixels[offset+2] != 0 || pixels[offset+3] != 0 {
+		t.Fatalf("pixel above the clipped card = %v, want transparent", pixels[offset:offset+4])
+	}
 }

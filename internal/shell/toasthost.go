@@ -508,17 +508,24 @@ func (h *toastHost) paintCard(canvas *render.Canvas, card toastCard, style rende
 	if err := render.Paint(cardCanvas, card.root, h.text, cardStyle); err != nil {
 		return err
 	}
+	left := max(0, box.X)
+	right := min(canvas.Width, box.X+box.W)
+	if right <= left {
+		return nil
+	}
+	sourceX := left - box.X
+	copyWidth := (right - left) * 4
 	for y := range box.H {
 		target := box.Y + y
 		if target < 0 || target >= canvas.Height {
 			continue
 		}
-		width := min(stride, canvas.Stride-box.X*4)
-		to := target*canvas.Stride + box.X*4
-		if width <= 0 || to < 0 || to+width > len(canvas.Pix) {
+		to := target*canvas.Stride + left*4
+		from := y*stride + sourceX*4
+		if to < 0 || to+copyWidth > len(canvas.Pix) || from < 0 || from+copyWidth > len(h.scratch) {
 			continue
 		}
-		copy(canvas.Pix[to:to+width], h.scratch[y*stride:y*stride+width])
+		copy(canvas.Pix[to:to+copyWidth], h.scratch[from:from+copyWidth])
 	}
 	return nil
 }
