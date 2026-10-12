@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"runtime/trace"
 	"slices"
 	"sort"
 	"strconv"
@@ -2062,8 +2063,8 @@ func (h *PanelHost) ensureText() error {
 // configure directly, which is why the locking wrapper is separate.
 func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
 	return func(w, height, scale120 int) error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
+		held := r.lockPanelOwner()
+		defer r.unlockPanelOwner(held)
 		// Settings and the plugin store measure text as their trees are
 		// built, first at the bar's scale or none. At another scale the tree
 		// is rebuilt before it is laid out: laying out the stale one first
@@ -2081,10 +2082,36 @@ func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
 
 func (h *PanelHost) renderLocking(r *Registry) func([]byte, int, int, int) error {
 	return func(pixels []byte, width, height, stride int) error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
+		held := r.lockPanelOwner()
+		defer r.unlockPanelOwner(held)
 		return h.render(r.cfg.Theme.BlurBehind, pixels, width, height, stride)
 	}
+}
+
+// lockPanelOwner times only panel lock wait and hold while SIGUSR2 tracing is
+// active. Ordinary input and paint keep the existing mutex path.
+func (r *Registry) lockPanelOwner() *trace.Region {
+	wait := shellTraceRegion("shell.Registry.mu.wait")
+	r.mu.Lock()
+	if wait == nil {
+		return nil
+	}
+	wait.End()
+	return shellTraceRegion("shell.Registry.mu.held")
+}
+
+func (r *Registry) unlockPanelOwner(held *trace.Region) {
+	if held != nil {
+		held.End()
+	}
+	r.mu.Unlock()
+}
+
+func shellTraceRegion(name string) *trace.Region {
+	if !trace.IsEnabled() {
+		return nil
+	}
+	return trace.StartRegion(context.Background(), name)
 }
 
 func (h *PanelHost) configure(w, height, scale120 int) error {
@@ -2312,12 +2339,12 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 
 func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 	return func(e wayland.Event) bool {
-		r.mu.Lock()
+		held := r.lockPanelOwner()
 		defer func() {
 			if r.onboardingPending && r.panelHosts[PanelOnboarding] == nil {
 				r.tryOpenOnboardingLocked(0)
 			}
-			r.mu.Unlock()
+			r.unlockPanelOwner(held)
 		}()
 		switch e.Kind {
 		case wayland.EventKeyPress, wayland.EventPointerPress:

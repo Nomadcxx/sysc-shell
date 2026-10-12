@@ -405,6 +405,9 @@ func (b *Bar) relayoutLocked() {
 	if !b.needsLayout || !b.configured.set {
 		return
 	}
+	if region := shellTraceRegion("shell.layout"); region != nil {
+		defer region.End()
+	}
 	b.needsLayout = false
 	err := b.layoutLocked(b.configured.width, b.configured.height)
 	switch {
