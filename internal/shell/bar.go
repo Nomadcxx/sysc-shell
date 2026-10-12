@@ -95,6 +95,11 @@ type Bar struct {
 	text  *render.TextRenderer
 	style render.Style
 
+	// Render owns the font map and cached frame. Serializing renders keeps the
+	// cache coherent across the compositor's alternating shared-memory buffers.
+	renderMu   sync.Mutex
+	paintCache barPaintCache
+
 	// pointer is the bar's resolved hover/press state as stable keys, and anim
 	// is its one clock. Only clickable capsules carry either: a CPU or memory
 	// display group has no action, so it never animates.
@@ -615,6 +620,9 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 		return err
 	}
 
+	b.renderMu.Lock()
+	defer b.renderMu.Unlock()
+
 	b.mu.Lock()
 	// The arrangement is brought up to date here rather than in apply, because
 	// this is the goroutine that owns the font map.
@@ -622,7 +630,7 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 	root, style := b.renderViewLocked()
 	b.mu.Unlock()
 
-	return render.Paint(canvas, root, b.text, style)
+	return b.paintCache.paint(canvas, root, b.text, style)
 }
 
 // renderViewLocked copies the mutable values painting reads, so the Niri

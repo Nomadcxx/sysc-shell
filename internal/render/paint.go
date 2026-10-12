@@ -164,6 +164,17 @@ func (s Style) accent() Color {
 // Paint draws the arranged row into the canvas. Node bounds are logical; every
 // write is converted to buffer pixels and clipped to the canvas.
 func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
+	return paint(c, root, text, style, nil)
+}
+
+// PaintRegion redraws one physical-pixel rectangle and leaves every pixel
+// outside it untouched. The caller must restore the old frame inside damage
+// before calling: translucent fills composite over the current destination.
+func PaintRegion(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage ui.Rect) error {
+	return paint(c, root, text, style, &damage)
+}
+
+func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui.Rect) error {
 	switch {
 	case c == nil:
 		return fmt.Errorf("render: nil canvas")
@@ -179,7 +190,23 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 		return fmt.Errorf("render: body %dx%d has a non-positive dimension", style.Body.W, style.Body.H)
 	}
 
-	clear(c.Pix)
+	if damage == nil {
+		clear(c.Pix)
+	} else {
+		region := intersectClip(c.restrict, *damage)
+		if region.W <= 0 || region.H <= 0 {
+			return nil
+		}
+		// Scope root-level paint and direct-pixel helpers to the damage. A
+		// private canvas copy keeps the caller's existing clip unchanged.
+		clipped := *c
+		clipped.restrict = region
+		c = &clipped
+		x0, y0, x1, y1 := c.clip(region)
+		for y := y0; y < y1; y++ {
+			clear(c.Pix[y*c.Stride+x0*4 : y*c.Stride+x1*4])
+		}
+	}
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
 	square := style.squareCorners()
@@ -267,6 +294,15 @@ func (s Style) squareCorners() Corners {
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	if n == nil {
 		return fmt.Errorf("nil node")
+	}
+	// Partial paints still walk the arranged tree to preserve paint order, but
+	// leaf content outside the damage cannot contribute pixels. Skip shaping,
+	// raster work, and value scans for those nodes.
+	if len(n.Children) == 0 && c.restrict.W > 0 && c.restrict.H > 0 {
+		x0, y0, x1, y1 := c.clip(style.Scale120.PhysicalRect(n.Bounds))
+		if x0 >= x1 || y0 >= y1 {
+			return nil
+		}
 	}
 	if n.ClipBounds {
 		previous := c.restrict

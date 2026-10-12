@@ -73,6 +73,10 @@ func blendCoverage(c *Canvas, x, y int, col Color, coverage float64) {
 	if coverage <= 0 || col.A == 0 {
 		return
 	}
+	if c.restrict.W > 0 && c.restrict.H > 0 &&
+		(x < c.restrict.X || y < c.restrict.Y || x >= c.restrict.X+c.restrict.W || y >= c.restrict.Y+c.restrict.H) {
+		return
+	}
 	coverage = min(coverage, 1)
 	src := col.premultiply()
 	for i := range src {
