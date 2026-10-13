@@ -66,8 +66,8 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		rows := make([]map[string]any, 0, len(list))
 		for _, p := range list {
 			row := map[string]any{"slug": p.Slug, "name": p.Name, "active": p.Active}
-			// Not "error": the CLI reads that key anywhere in a reply as a
-			// failed call, and a listing that names a broken file succeeded.
+			// Not "error": a listing that names a broken file still
+			// succeeded, and a caller reads per-item problems as data.
 			if p.Err != "" {
 				row["unavailable"] = p.Err
 			}
