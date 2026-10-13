@@ -3,6 +3,7 @@ package theming
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -257,6 +258,81 @@ func TestKittyPIDsFromProc(t *testing.T) {
 	got := procPIDs(root, "kitty")
 	if len(got) != 2 || got[0] != 100 || got[1] != 102 {
 		t.Fatalf("kittyPIDs = %v, want [100 102]", got)
+	}
+}
+
+// writeProc lays out a synthetic /proc/<pid> directory owned by uid.
+func writeProc(t *testing.T, root string, pid int, comm string, uid int) {
+	t.Helper()
+	dir := filepath.Join(root, strconv.Itoa(pid))
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "comm"), []byte(comm+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	u := strconv.Itoa(uid)
+	status := "Name:\t" + comm + "\nUid:\t" + u + "\t" + u + "\t" + u + "\t" + u + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcOwnedByUs(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeProc(t, root, 1234, "kitty", os.Getuid())
+	if !procOwnedByUs(filepath.Join(root, "1234")) {
+		t.Fatal("our own UID was reported as foreign")
+	}
+	writeProc(t, root, 1235, "kitty", os.Getuid()+1)
+	if procOwnedByUs(filepath.Join(root, "1235")) {
+		t.Fatal("a foreign UID was reported as ours")
+	}
+	if err := os.Mkdir(filepath.Join(root, "1236"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !procOwnedByUs(filepath.Join(root, "1236")) {
+		t.Fatal("a vanished process (no status) was dropped as foreign")
+	}
+}
+
+// reapChildPID starts a process that exits at once and waits for it, returning
+// a PID that is guaranteed dead: signalling it proves ESRCH tolerance without
+// ever touching a live desktop or greeter process (see TestMain).
+func reapChildPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
+}
+
+// A process that exits between the scan and the signal is a race, not a
+// failure: the config files are already written and the next launch reads them.
+// It used to surface as ESRCH and made applyTemplateTarget report the whole
+// apply as failed (#209).
+func TestSignalCommIgnoresFinishedProcesses(t *testing.T) {
+	pid := reapChildPID(t)
+	root := t.TempDir()
+	writeProc(t, root, pid, "kitty", os.Getuid())
+	if err := signalComm(root, "kitty", syscall.SIGUSR1); err != nil {
+		t.Fatalf("a finished process was reported as a failure: %v", err)
+	}
+}
+
+// A reload signal aimed at another user's terminal can only ever yield EPERM;
+// it must not be reported as a template failure while every file write that
+// succeeded stands (#209).
+func TestSignalCommSkipsForeignProcesses(t *testing.T) {
+	root := t.TempDir()
+	writeProc(t, root, reapChildPID(t), "kitty", os.Getuid()+1)
+	if err := signalComm(root, "kitty", syscall.SIGUSR1); err != nil {
+		t.Fatalf("a foreign process was signalled and reported: %v", err)
 	}
 }
 

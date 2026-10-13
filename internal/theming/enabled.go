@@ -246,10 +246,18 @@ func procPIDs(root, name string) []int {
 	return pids
 }
 
-// signalComm sends sig to every process named name.
+// signalComm sends sig to every process this user owns that is named name.
+// A process owned by another user is skipped rather than signalled: sending to
+// it only ever yields EPERM, which used to be reported back as though the
+// template apply itself had failed. A process that exits between the scan and
+// the signal is likewise not a failure - the config files are already written
+// and the next launch reads them.
 func signalComm(root, name string, sig syscall.Signal) error {
 	var first error
 	for _, pid := range procPIDs(root, name) {
+		if !procOwnedByUs(filepath.Join(root, strconv.Itoa(pid))) {
+			continue
+		}
 		p, err := os.FindProcess(pid)
 		if err != nil {
 			if first == nil {
@@ -257,11 +265,35 @@ func signalComm(root, name string, sig syscall.Signal) error {
 			}
 			continue
 		}
-		if err := p.Signal(sig); err != nil && first == nil {
+		if err := p.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) && first == nil {
 			first = err
 		}
 	}
 	return first
+}
+
+// procOwnedByUs reports whether the process whose directory is pidDir runs as
+// this user, by the real UID on its status "Uid:" line. A directory with no
+// readable status is treated as ours: /proc exposes status for every live
+// process, so an unreadable one is a race with a process that just vanished,
+// which signalComm tolerates as ESRCH.
+func procOwnedByUs(pidDir string) bool {
+	b, err := os.ReadFile(filepath.Join(pidDir, "status"))
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		rest, found := strings.CutPrefix(line, "Uid:")
+		if !found {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return true
+		}
+		return fields[0] == strconv.Itoa(os.Getuid())
+	}
+	return true
 }
 
 func signalKitty(root string) error { return signalComm(root, "kitty", syscall.SIGUSR1) }
