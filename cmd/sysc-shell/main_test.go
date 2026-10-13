@@ -27,6 +27,27 @@ func TestRunRequiresNiriSocket(t *testing.T) {
 	}
 }
 
+func TestReplyFailed(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"nested error field in a successful reply", `{"id":1,"ok":true,"sources":[{"error":""}]}`, false},
+		{"plugin store state", `{"id":1,"ok":true,"busy":"","listings":[],"sources":[{"name":"official","error":""}]}`, false},
+		{"top-level error envelope", `{"id":1,"error":"unknown method"}`, true},
+		{"plain success", `{"id":1,"ok":true}`, false},
+		{"malformed json", `not json`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replyFailed(tc.out); got != tc.want {
+				t.Fatalf("replyFailed(%q) = %v, want %v", tc.out, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPumpNiriDrainsTerminalErrorAfterSnapshotsClose(t *testing.T) {
 	wantErr := errors.New("terminal stream failure")
 	snapshots := make(chan niri.Snapshot)
