@@ -18,11 +18,18 @@ type Calendar struct {
 	Weeks [][]calCell
 }
 
-func calendarGrid(now time.Time) Calendar {
-	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	days := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
+// calendarMonth is the first of the month delta steps away from now.
+// AddDate would keep the day of the month and normalize, so 31 Jan +1
+// month lands in March; anchoring on day 1 never overflows.
+func calendarMonth(now time.Time, delta int) time.Time {
+	return time.Date(now.Year(), now.Month()+time.Month(delta), 1, 0, 0, 0, 0, now.Location())
+}
+
+func calendarGrid(month, today time.Time) Calendar {
+	first := month
+	days := time.Date(first.Year(), first.Month()+1, 0, 0, 0, 0, 0, first.Location()).Day()
 	lead := int(first.Weekday())
-	prevDays := time.Date(now.Year(), now.Month(), 0, 0, 0, 0, 0, now.Location()).Day()
+	prevDays := time.Date(first.Year(), first.Month(), 0, 0, 0, 0, 0, first.Location()).Day()
 
 	var cells []calCell
 	for i := lead; i > 0; i-- {
@@ -32,7 +39,7 @@ func calendarGrid(now time.Time) Calendar {
 		cells = append(cells, calCell{
 			Day:     d,
 			InMonth: true,
-			Today:   d == now.Day() && now.Month() == first.Month() && now.Year() == first.Year(),
+			Today:   d == today.Day() && today.Month() == first.Month() && today.Year() == first.Year(),
 		})
 	}
 	for len(cells)%7 != 0 {
@@ -46,8 +53,8 @@ func calendarGrid(now time.Time) Calendar {
 }
 
 func clockTree(now time.Time, monthDelta int, th Theme) *ui.Node {
-	view := now.AddDate(0, monthDelta, 0)
-	g := calendarGrid(view)
+	view := calendarMonth(now, monthDelta)
+	g := calendarGrid(view, now)
 	header := view.Format("January 2006")
 	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: th.Metrics.PanelPadding, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: now.Format("15:04"), Name: "time"},
