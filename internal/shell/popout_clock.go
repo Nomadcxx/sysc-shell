@@ -18,11 +18,22 @@ type Calendar struct {
 	Weeks [][]calCell
 }
 
-func calendarGrid(now time.Time) Calendar {
-	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	days := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
+// calendarMonth returns the first of the month delta months from now. Going
+// through the first of the month keeps the step exact: AddDate on the current
+// day-of-month normalises, so Jan 29 plus one month lands on Mar 1 in a
+// non-leap year and February is skipped entirely.
+func calendarMonth(now time.Time, delta int) time.Time {
+	return time.Date(now.Year(), now.Month()+time.Month(delta), 1, 0, 0, 0, 0, now.Location())
+}
+
+// calendarGrid lays out the month that month falls in. today is the real
+// current time and is separate, so only the current month marks a cell as
+// Today no matter which month the view has been paged to.
+func calendarGrid(month, today time.Time) Calendar {
+	first := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, month.Location())
+	days := time.Date(month.Year(), month.Month()+1, 0, 0, 0, 0, 0, month.Location()).Day()
 	lead := int(first.Weekday())
-	prevDays := time.Date(now.Year(), now.Month(), 0, 0, 0, 0, 0, now.Location()).Day()
+	prevDays := time.Date(month.Year(), month.Month(), 0, 0, 0, 0, 0, month.Location()).Day()
 
 	var cells []calCell
 	for i := lead; i > 0; i-- {
@@ -32,7 +43,7 @@ func calendarGrid(now time.Time) Calendar {
 		cells = append(cells, calCell{
 			Day:     d,
 			InMonth: true,
-			Today:   d == now.Day() && now.Month() == first.Month() && now.Year() == first.Year(),
+			Today:   d == today.Day() && today.Month() == first.Month() && today.Year() == first.Year(),
 		})
 	}
 	for len(cells)%7 != 0 {
@@ -46,8 +57,8 @@ func calendarGrid(now time.Time) Calendar {
 }
 
 func clockTree(now time.Time, monthDelta int, th Theme) *ui.Node {
-	view := now.AddDate(0, monthDelta, 0)
-	g := calendarGrid(view)
+	view := calendarMonth(now, monthDelta)
+	g := calendarGrid(view, now)
 	header := view.Format("January 2006")
 	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: th.Metrics.PanelPadding, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: now.Format("15:04"), Name: "time"},
