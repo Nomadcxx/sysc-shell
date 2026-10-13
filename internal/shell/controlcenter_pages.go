@@ -560,12 +560,12 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	view := now.AddDate(0, h.monthDelta, 0)
-	grid := calendarGrid(view)
+	view := calendarMonth(now, h.monthDelta)
+	grid := calendarGrid(view, now)
 	snapshot := ccCalendarSnapshotFor(r)
 	var dates []time.Time
 	if snapshot != nil {
-		first := time.Date(view.Year(), view.Month(), 1, 0, 0, 0, 0, view.Location())
+		first := view
 		gridStart := first.AddDate(0, 0, -int(first.Weekday()))
 		dates = make([]time.Time, len(grid.Weeks)*7)
 		for i := range dates {

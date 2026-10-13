@@ -9,7 +9,8 @@ import (
 
 func TestCalendarGridSevenColumns(t *testing.T) {
 	t.Parallel()
-	g := calendarGrid(time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC))
+	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	g := calendarGrid(calendarMonth(day, 0), day)
 	if len(g.Weeks) < 4 || len(g.Weeks[0]) != 7 {
 		t.Fatalf("grid shape wrong: %+v", g)
 	}
@@ -30,7 +31,7 @@ func TestCalendarGridSevenColumns(t *testing.T) {
 func TestCalendarMarksToday(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 30, 15, 4, 0, 0, time.UTC)
-	g := calendarGrid(now)
+	g := calendarGrid(calendarMonth(now, 0), now)
 	var marked int
 	for _, week := range g.Weeks {
 		for _, cell := range week {
@@ -44,6 +45,56 @@ func TestCalendarMarksToday(t *testing.T) {
 	}
 	if marked != 1 {
 		t.Fatalf("today marks = %d, want 1", marked)
+	}
+}
+
+func TestCalendarMonthNavigationFromLateMonthDay(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
+	for delta, want := range map[int]string{
+		-13: "December 2024", -1: "December 2025", 0: "January 2026",
+		1: "February 2026", 2: "March 2026", 25: "February 2028",
+	} {
+		if got := calendarMonth(now, delta).Format("January 2006"); got != want {
+			t.Errorf("delta %d -> %s, want %s", delta, got, want)
+		}
+	}
+}
+
+func TestCalendarMarksTodayOnlyInCurrentMonth(t *testing.T) {
+	t.Parallel()
+	today := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
+	for delta, wantMarked := range map[int]bool{-1: false, 0: true, 1: false, 2: false} {
+		g := calendarGrid(calendarMonth(today, delta), today)
+		var marked int
+		for _, week := range g.Weeks {
+			for _, cell := range week {
+				if !cell.Today {
+					continue
+				}
+				marked++
+				if !wantMarked || cell.Day != today.Day() {
+					t.Fatalf("delta %d marks %+v", delta, cell)
+				}
+			}
+		}
+		if wantMarked && marked != 1 {
+			t.Fatalf("delta %d marks %d cells, want 1", delta, marked)
+		}
+		if !wantMarked && marked != 0 {
+			t.Fatalf("delta %d marks %d cells, want none", delta, marked)
+		}
+	}
+}
+
+func TestClockTreeNavigatesFromLateMonthDay(t *testing.T) {
+	t.Parallel()
+	tree := clockTree(time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC), 1, DefaultTheme())
+	if findNode(tree, func(n *ui.Node) bool { return n.Text == "February 2026" }) == nil {
+		t.Fatal("header did not move exactly one month from 31 January")
+	}
+	if findNode(tree, func(n *ui.Node) bool { return n.Text == "March 2026" }) != nil {
+		t.Fatal("header skipped February")
 	}
 }
 
