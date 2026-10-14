@@ -146,6 +146,41 @@ func TestSystemFontMapKeepsBitmapEmojiFallback(t *testing.T) {
 	}
 }
 
+func TestSystemFontCatalogKeepsBitmapEmojiFallback(t *testing.T) {
+	t.Parallel()
+	probe := newSystemMap(t)
+	const glyph = '👋'
+	probe.inner.SetScript(language.LookupScript(glyph))
+	resolved := probe.inner.ResolveFace(glyph)
+	if resolved == nil {
+		t.Skip("system font set has no emoji fallback")
+	}
+	gid, ok := resolved.NominalGlyph(glyph)
+	if !ok {
+		t.Skip("resolved emoji face has no nominal glyph")
+	}
+	if _, ok := resolved.GlyphDataBitmap(gid); !ok {
+		t.Skip("resolved emoji face has no bitmap glyph")
+	}
+
+	catalog := NewSystemFontCatalog(t.TempDir())
+	m, err := catalog.NewFontMap(probe.Family())
+	if err != nil {
+		t.Skipf("no system fonts available: %v", err)
+	}
+	selected := m.Face(glyph, FaceRequest{})
+	if selected == m.Primary() {
+		t.Fatal("catalog-backed map resolved the emoji rune to the primary notdef face")
+	}
+	gid, ok = selected.NominalGlyph(glyph)
+	if !ok {
+		t.Fatal("catalog-backed emoji face has no nominal glyph")
+	}
+	if _, ok := selected.GlyphDataBitmap(gid); !ok {
+		t.Fatal("catalog-backed emoji fallback lost its bitmap glyph")
+	}
+}
+
 func TestSplitRunsGroupsAdjacentRunesSharingAFace(t *testing.T) {
 	t.Parallel()
 	m := newSystemMap(t)
@@ -426,9 +461,17 @@ func TestSystemFontCatalogPreservesVariableWeightInstances(t *testing.T) {
 	}
 	regular := first.Face('1', FaceRequest{Family: "Inter Variable", Weight: 400})
 	semibold := first.Face('1', FaceRequest{Family: "Inter Variable", Weight: 600})
+	otherRuneSemibold := first.Face(':', FaceRequest{Family: "Inter Variable", Weight: 600})
 	otherSemibold := second.Face('1', FaceRequest{Family: "Inter Variable", Weight: 600})
 	if semibold == regular || len(semibold.Coords()) == 0 {
 		t.Fatal("catalog-backed map did not apply the variable font weight")
+	}
+	if semibold != otherRuneSemibold {
+		t.Fatal("catalog-backed map resolved different mutable faces at one variable weight")
+	}
+	runs := first.SplitRuns("1:", FaceRequest{Family: "Inter Variable", Weight: 600})
+	if len(runs) != 1 {
+		t.Fatalf("catalog-backed variable run split into %d faces, want 1", len(runs))
 	}
 	if semibold == otherSemibold {
 		t.Fatal("catalog shared a mutable variable-weight face across maps")

@@ -253,10 +253,12 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 	// style do not apply: the icon inventory has one cut.
 	face := m.iconFaceFor(r)
 	if face == nil {
+		var weightedFace *font.Face
 		if m.catalog != nil {
 			fontData := m.catalog.resolveFont(m.family, req, r)
 			if req.Weight > 0 && m.weighted != nil {
-				face = m.weighted[weightedKey{font: fontData, weight: req.Weight}]
+				weightedFace = m.weighted[weightedKey{font: fontData, weight: req.Weight}]
+				face = weightedFace
 			}
 			if face == nil {
 				face = m.faceForFont(fontData)
@@ -269,7 +271,9 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 			face = m.inner.ResolveFace(r)
 		}
 		face = outlineFaceForRune(face, m.primary, r)
-		face = m.atWeight(face, req.Weight)
+		if face != weightedFace {
+			face = m.atWeight(face, req.Weight)
+		}
 	}
 	if len(m.order) >= faceCacheLimit {
 		delete(m.cache, m.order[0])
