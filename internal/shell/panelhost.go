@@ -132,6 +132,9 @@ type PanelHost struct {
 	// taken before either of its surfaces existed. Nil means no blur, and the
 	// panel then paints over whatever the compositor shows, as it always has.
 	backdrop *ui.Image
+	// backdropSharp is the reduced pre-blur capture, present only when the
+	// resolved material compares the two halves (auto-frost).
+	backdropSharp *ui.Image
 	// paper is the sticky-note fill a floating plugin surface paints as its
 	// ground; FillNone keeps the theme's panel ground.
 	paper    ui.Fill
@@ -1764,6 +1767,80 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 	}
 }
 
+// backdropFor is the image this panel composites beneath its root fill: the
+// material's ground when the theme names one, and the blurred capture
+// otherwise. A material whose capture never arrived falls back to the capture
+// path rather than painting a guess. Its strength is bounded by the text floor,
+// not by taste.
+func (h *PanelHost) backdropFor(t Theme, style render.Style) *ui.Image {
+	m := materialFor(t, h.backdrop != nil)
+	if m.Tone == render.ToneNone || m.Intensity == 0 {
+		return h.backdrop
+	}
+	return render.Materialize(h.backdropSharp, h.backdrop, m)
+}
+
+// clampMaterialIntensity returns the highest intensity at which the material
+// keeps the ground behind a panel's text as legible as that surface already is.
+//
+// Contrast is not monotone in the ground: it falls as the ground approaches the
+// text's own luma, so the bound has to look at every ground, not the extremes
+// alone. It sweeps all 256, which is affordable because it is resolved once per
+// theme rather than per frame, and takes the strongest intensity that leaves
+// every ground at least as legible as it was without the material and never
+// below the theme's text floor. Where a surface is already under that floor, the
+// material may not make it worse either.
+//
+// Panels are opaque at the default preset, where no ground shows through and
+// nothing binds; at the translucent end the bound bites in the tens.
+func clampMaterialIntensity(t Theme, m render.Material, fill render.Color) int {
+	if m.Tone == render.ToneNone || fill.A == 0 {
+		return 0
+	}
+	text := theme.Color{R: t.OnSurface.R, G: t.OnSurface.G, B: t.OnSurface.B, A: 0xff}
+	contrastAt := func(intensity uint8, ground uint8) float64 {
+		l := overlayLuma(fill, render.TransferLuma(m.Tone, intensity, ground))
+		return theme.ContrastRatio(text, theme.Color{R: l, G: l, B: l, A: 0xff})
+	}
+	allowed := 0
+	for i := 1; i <= theme.GlassIntensityMax; i++ {
+		i8 := uint8(i)
+		ok := true
+		for g := 0; g <= 255; g++ {
+			g8 := uint8(g)
+			want := math.Min(theme.TextContrast, contrastAt(0, g8)) - materialContrastTolerance
+			if contrastAt(i8, g8) < want {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			break
+		}
+		allowed = i
+	}
+	if limit := int(m.Intensity); allowed > limit {
+		allowed = limit
+	}
+	return allowed
+}
+
+// materialContrastTolerance is how much contrast the material may cost a
+// ground, in ratio units, before the bound stops it. A material is a deliberate
+// change to what shows through, so requiring it to be exact to the last decimal
+// would resolve every translucent panel to no material at all; a tenth is below
+// the resolution of the floors themselves and far below a visible difference.
+const materialContrastTolerance = 0.1
+
+// overlayLuma composites a root fill over a grey ground: the luma the painter
+// leaves in a panel's interior. Colour is dropped because the floor is a
+// luminance rule and the worst-case contents are achromatic.
+func overlayLuma(fill render.Color, ground uint8) uint8 {
+	a := float64(fill.A) / 255
+	l := float64(fill.R)*0.299 + float64(fill.G)*0.587 + float64(fill.B)*0.114
+	return uint8(l*a + float64(ground)*(1-a) + 0.5)
+}
+
 // rootStyle picks the alpha this panel's root fill paints at.
 //
 // An attached panel normally resolves its root at the *bar's* opacity, because
@@ -1864,9 +1941,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	}
 	// Nil disables the capture entirely, so a shell with blur off pays none of
 	// its cost rather than capturing and discarding. A compositor that blurs
-	// does the job itself, through BlurShape.
+	// does the job itself, through BlurShape — unless this surface paints a
+	// material, which needs the captured pixels and therefore takes the capture
+	// whichever compositor it is on.
+	material := materialFor(h.theme, r.cfg.Theme.BlurBehind)
 	var blurRegion *ui.Rect
-	if r.cfg.Theme.BlurBehind && !r.caps.Blur {
+	if r.cfg.Theme.BlurBehind && (material.Tone != render.ToneNone || !r.caps.Blur) {
 		blurRegion = &region
 	}
 	return &wayland.AuxSpec{
@@ -1885,14 +1965,15 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Keyboard:      keyboardExclusive,
 		BlurRegion:    blurRegion,
 		BlurRadius:    r.cfg.Theme.BlurRadius,
+		BackdropSharp: material.Tone == render.ToneAuto,
 		OnDrop:        func() { r.dropPanelAux(h) },
 		Callbacks: wayland.HostCallbacks{
 			// Delivered from the Wayland goroutine before the surface exists,
 			// so it takes the registry lock exactly as Render does.
-			Backdrop: func(img *ui.Image) {
+			Backdrop: func(sharp, ground *ui.Image) {
 				r.mu.Lock()
 				defer r.mu.Unlock()
-				h.backdrop = img
+				h.backdropSharp, h.backdrop = sharp, ground
 			},
 			BlurShape: func() []ui.Rect {
 				r.mu.Lock()
@@ -1928,6 +2009,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 // panel blurs when blur-behind is on and the compositor can. Caller holds
 // r.mu.
 func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
+	// A material paints its own ground from the capture, so the compositor's
+	// blur would be a second blur over it.
+	if materialFor(h.theme, r.cfg.Theme.BlurBehind).Tone != render.ToneNone {
+		return nil
+	}
 	if !(h.place.Attached() && h.theme.Blur) && !(r.cfg.Theme.BlurBehind && r.caps.Blur) {
 		return nil
 	}
@@ -2321,7 +2407,7 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 		style.JointLeft, style.JointRight, style.EdgeFillet = h.revealJoints(opacity)
 		style.EdgeLeft, style.EdgeRight = j.FlushLeft, j.FlushRight
 	}
-	style.Backdrop = h.backdrop
+	style.Backdrop = h.backdropFor(paintTheme, style)
 	err = render.Paint(c, root, h.text, style)
 	if err != nil {
 		return err

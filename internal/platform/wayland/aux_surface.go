@@ -30,6 +30,10 @@ type AuxSpec struct {
 	// before it is created. Nil disables the backdrop and all of its cost.
 	BlurRegion *ui.Rect
 	BlurRadius int
+	// BackdropSharp asks for the reduced pre-blur capture beside the blurred
+	// one. Only a material that compares the halves needs it, and it changes
+	// what Backdrop receives rather than what this surface captures.
+	BackdropSharp bool
 	// Freeze captures the whole output, unblurred and without the cursor,
 	// before the surface exists, and hands it to Callbacks.Backdrop. The
 	// surface can then show and crop the screen as it was without appearing in
@@ -195,10 +199,15 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 		if shot == nil {
 			return fmt.Errorf("wayland: aux %s could not capture output %d", spec.ID, h.global)
 		}
-		spec.Callbacks.Backdrop(shot)
+		spec.Callbacks.Backdrop(nil, shot)
 	} else if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
 		if shot := o.captureBackdrop(h.proxy, spec.BlurRegion); shot != nil {
-			spec.Callbacks.Backdrop(render.Blur(shot, backdropDownsample, spec.BlurRadius))
+			if spec.BackdropSharp {
+				sharp, blurred := render.BlurPair(shot, backdropDownsample, spec.BlurRadius)
+				spec.Callbacks.Backdrop(sharp, blurred)
+			} else {
+				spec.Callbacks.Backdrop(nil, render.Blur(shot, backdropDownsample, spec.BlurRadius))
+			}
 		}
 		// The capture round trips, and a global_remove dispatched in one of
 		// them tears this host down. Creating the surface now would bind a

@@ -55,12 +55,17 @@ type HostCallbacks struct {
 	// every surface reports until it tracks its own regions. Damage is an
 	// optimisation; the fallback is always correct.
 	Damaged func() []ui.Rect
-	// Backdrop delivers the blurred capture taken before this surface existed,
-	// once, from the Wayland goroutine. The shell assembles the Style for its
-	// own surfaces, so the image has to travel back to it rather than being
-	// handed to a painter here. Nil leaves the surface without a backdrop,
-	// which is how every surface painted before this existed.
-	Backdrop func(*ui.Image)
+	// Backdrop delivers the capture taken before this surface existed, once,
+	// from the Wayland goroutine. sharp is the reduced pre-blur capture, and is
+	// nil unless the surface asked for it (AuxSpec.BackdropSharp): a material
+	// that compares the two needs the sharp half, and every other surface must
+	// not pay for it. ground is what the surface composites, which is the
+	// blurred capture, or a whole-output freeze for the selector. The shell
+	// assembles the Style for its own surfaces, so the image has to travel back
+	// to it rather than being handed to a painter here. Nil leaves the surface
+	// without a backdrop, which is how every surface painted before this
+	// existed.
+	Backdrop func(sharp, ground *ui.Image)
 	// BlurShape reports, in surface-local logical pixels, the region the
 	// compositor should blur behind. It is read after every Render, on the
 	// Wayland goroutine, and only when the compositor can blur. Nil or empty

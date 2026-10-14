@@ -162,7 +162,7 @@ func paintAssetPanel(t *testing.T, reg *Registry, id PanelID, panel *wayland.Aux
 	wall := assetBackdrop(t)
 	crop := image.Rect(s.Physical(region.X), s.Physical(region.Y), s.Physical(region.X+region.W), s.Physical(region.Y+region.H)).Intersect(wall.Bounds())
 	if blurred := render.Blur(bgraImage(wall.SubImage(crop).(*image.NRGBA)), 4, radius); blurred != nil {
-		panel.Callbacks.Backdrop(blurred)
+		panel.Callbacks.Backdrop(nil, blurred)
 	}
 	pw, ph := s.Physical(w), s.Physical(hgt)
 	pix := make([]byte, pw*ph*4)

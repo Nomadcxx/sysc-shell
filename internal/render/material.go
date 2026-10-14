@@ -141,6 +141,25 @@ func toneTransfer(src *ui.Image, intensity uint8, lift bool) *ui.Image {
 	return out
 }
 
+// TransferLuma returns what a tone leaves of one input luma, 0..255. It is the
+// scalar view of the same curves Materialize applies, so a caller can reason
+// about what a material does to legibility without an image.
+func TransferLuma(t Tone, intensity uint8, luma uint8) uint8 {
+	if intensity > intensityMax {
+		intensity = intensityMax
+	}
+	gain := float64(intensity) / 100
+	v := float64(luma)
+	switch t {
+	case ToneSmoke:
+		v *= 1 - smokeCap*gain*(v/255)
+	case ToneMilk:
+		lift := milkCap * gain * (1 - v/255)
+		v += (255 - v) * lift
+	}
+	return uint8(v + 0.5)
+}
+
 // Busyness scores how much detail the blur destroyed, 0..255. Content with
 // fine detail scores high, which is what makes auto-frost frost behind it and
 // leave a plain wallpaper clear.
