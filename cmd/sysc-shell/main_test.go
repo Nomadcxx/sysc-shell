@@ -87,3 +87,28 @@ func TestPumpClipboardStopsWhenRegistryContextCloses(t *testing.T) {
 		t.Fatal("clipboard pump did not stop after context cancellation")
 	}
 }
+
+// The exit code has to come from the envelope, not from a substring: nested
+// per-item "error" keys are data on a reply the server marked successful.
+func TestReplyFailedReadsTheEnvelope(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"nested error on a healthy store reply", `{"id":1,"ok":true,"sources":[{"name":"official","error":""}]}`, false},
+		{"nested error with a message still succeeds", `{"id":1,"ok":true,"listings":[{"error":"404 not found"}]}`, false},
+		{"ok with no error key", `{"id":1,"ok":true}`, false},
+		{"top level error", `{"id":1,"error":"unknown method"}`, true},
+		{"empty top level error", `{"id":1,"error":""}`, true},
+		{"no ok and no error", `{"id":1}`, true},
+		{"not json", `not json`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replyFailed(tc.out); got != tc.want {
+				t.Errorf("replyFailed(%s) = %v, want %v", tc.out, got, tc.want)
+			}
+		})
+	}
+}

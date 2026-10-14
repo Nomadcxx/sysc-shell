@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -465,8 +464,22 @@ func runIPC(args []string) error {
 		return err
 	}
 	fmt.Println(out)
-	if strings.Contains(out, `"error"`) {
+	if replyFailed(out) {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// replyFailed reports whether an ipc reply is an error envelope. The server
+// sets a top-level "error" and no "ok" on failure, so anything nested under a
+// successful reply is data, not a failure.
+func replyFailed(out string) bool {
+	var env struct {
+		OK    bool            `json:"ok"`
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		return true
+	}
+	return !env.OK || len(env.Error) > 0
 }
