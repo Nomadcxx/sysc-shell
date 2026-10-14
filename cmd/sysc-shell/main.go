@@ -97,13 +97,9 @@ func run(ctx context.Context) (err error) {
 		}
 		return err
 	}
-	// A start that fails between here and Serve must not leave the bound
-	// socket behind for the next launch to mistake for a live one.
-	defer func() {
-		if err != nil {
-			_ = srv.Close()
-		}
-	}()
+	// Release the claim on startup failure and normal shutdown. Otherwise a
+	// stale socket remains until the next launch probes and replaces it.
+	defer srv.Close()
 
 	registry := shell.NewRegistry(cfg)
 	registry.SetWallsService(walls.NewService())

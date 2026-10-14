@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	clipboardclient "github.com/Nomadcxx/sysc-clipboard/client"
+	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 )
 
@@ -24,6 +27,53 @@ func TestRunRequiresNiriSocket(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "NIRI_SOCKET") {
 		t.Fatalf("error %q does not name the missing variable", err)
+	}
+}
+
+// A duplicate shell must stop at the instance socket instead of reaching the
+// Niri stream or starting services owned by the live shell.
+func TestRunRefusesADuplicate(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	niriSock := filepath.Join(t.TempDir(), "niri.sock")
+	t.Setenv("NIRI_SOCKET", niriSock)
+	quiet, err := net.Listen("unix", niriSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = quiet.Close() })
+	go func() {
+		for {
+			conn, err := quiet.Accept()
+			if err != nil {
+				return
+			}
+			// Hold any unexpected connection so reaching Niri cannot look like
+			// the expected early duplicate refusal.
+			t.Cleanup(func() { _ = conn.Close() })
+		}
+	}()
+
+	live := ipc.NewServer(ipc.DefaultSocket(), ipc.Handlers{})
+	if err := live.Listen(); err != nil {
+		t.Fatalf("first Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = live.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- run(ctx) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("run succeeded with another sysc-shell already running")
+		}
+		if !strings.Contains(err.Error(), "already running") {
+			t.Fatalf("error %q does not name the running shell", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("duplicate launch kept starting instead of stopping at the instance socket")
 	}
 }
 
