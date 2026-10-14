@@ -1097,7 +1097,6 @@ func (h *toastHost) recompute() {
 				h.geometry[connector] = geom
 			}
 		}
-<<<<<<< HEAD
 		surfaceWidth := h.surfaceWidth[connector]
 		if surfaceWidth <= 0 && known {
 			surfaceWidth = geom.OutputW
