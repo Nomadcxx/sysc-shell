@@ -91,6 +91,13 @@ const (
 	animSprite
 	// animRipple is one press ripple's linear phase.
 	animRipple
+	// animStackX/Y/W/H are one toast card's drawn rectangle: the four
+	// components move as separate scalars so an interrupted stack keeps each
+	// component's position and velocity. They are internal to the toast host.
+	animStackX
+	animStackY
+	animStackW
+	animStackH
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -267,6 +274,10 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 		// A value glide reads as one motion whatever its direction: a battery
 		// filling and draining both travel the same road.
 		return a.motion.Medium
+	case animStackX, animStackY, animStackW, animStackH:
+		// Toast geometry reads as one motion whatever its direction, and one
+		// token keeps the four components of a card moving together.
+		return a.motion.Medium
 	case animRipple:
 		return rippleGrow + rippleFade
 	}
@@ -277,7 +288,8 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 // ripple, and every looping channel keep their duration curves.
 func springCapable(channel animChannel) bool {
 	switch channel {
-	case animHover, animSelect, animVisible, animProgress:
+	case animHover, animSelect, animVisible, animProgress,
+		animStackX, animStackY, animStackW, animStackH:
 		return true
 	}
 	return false
@@ -321,11 +333,19 @@ func (a *animator) springFor(channel animChannel, rising bool) *ui.Spring {
 		factor = 1.1
 	}
 	omega := 12 * factor / t.Seconds()
+	positionEpsilon, velocityEpsilon := 0.001, 0.001/t.Seconds()
+	switch channel {
+	case animStackX, animStackY, animStackW, animStackH:
+		// Toast geometry is logical pixels, so its rest thresholds are pixels:
+		// a card is settled when it is within a tenth of a pixel and its speed
+		// is a tenth of a pixel a second for each second of token.
+		positionEpsilon, velocityEpsilon = 0.1, 0.1/t.Seconds()
+	}
 	return &ui.Spring{
 		Stiffness:       omega * omega,
 		Damping:         2 * omega,
-		PositionEpsilon: 0.001,
-		VelocityEpsilon: 0.001 / t.Seconds(),
+		PositionEpsilon: positionEpsilon,
+		VelocityEpsilon: velocityEpsilon,
 	}
 }
 
@@ -546,6 +566,60 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 	dur := a.duration(channel, to > from)
 	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel)}
 	a.nudge()
+}
+
+// TargetStackRect aims one card's drawn rectangle at its new slot through four
+// fixed components, so an interrupted stack keeps each component's position and
+// velocity instead of restarting a shared progress. Missing components are
+// seeded at the old rectangle and left resting when that component does not
+// move; components already in flight only change destination. Reduced motion
+// creates no geometry state at all: the card is drawn at its slot.
+func (a *animator) TargetStackRect(node string, from, to ui.Rect) {
+	if a == nil {
+		return
+	}
+	now := a.now()
+	components := [4]struct {
+		channel  animChannel
+		from, to int
+	}{
+		{animStackX, from.X, to.X},
+		{animStackY, from.Y, to.Y},
+		{animStackW, from.W, to.W},
+		{animStackH, from.H, to.H},
+	}
+	for _, c := range components {
+		key := animKey{node: node, channel: c.channel}
+		if _, ok := a.values[key]; !ok {
+			if spring := a.springFor(c.channel, float64(c.to) > float64(c.from)); spring != nil {
+				a.values[key] = animValue{
+					from: float64(c.from), to: float64(c.from), start: now, spring: spring,
+					position: float64(c.from), advanced: now,
+				}
+			}
+		}
+		// A component that did not move is already resting at its value; the
+		// ordinary target path is a no-op for it.
+		a.Target(node, c.channel, float64(c.to))
+	}
+}
+
+// shiftStackRectX moves one card's stored x -- both where it is drawn and
+// where it is heading -- by dx logical pixels, so a card still in flight keeps
+// its drawn offset and its destination when a surface resizes. The y, width
+// and height components are unaffected by a horizontal coordinate change.
+func (a *animator) shiftStackRectX(node string, dx float64) {
+	if a == nil || dx == 0 {
+		return
+	}
+	key := animKey{node: node, channel: animStackX}
+	v, ok := a.values[key]
+	if !ok {
+		return
+	}
+	v.position += dx
+	v.to += dx
+	a.values[key] = v
 }
 
 // TargetLoop runs a linear paint offset until the node leaves the tree. An
