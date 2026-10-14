@@ -112,6 +112,8 @@ type wireTheme struct {
 	OverlayOpacity *int    `json:"overlay-opacity,omitempty"`
 	BlurBehind     *bool   `json:"blur-behind,omitempty"`
 	BlurRadius     *int    `json:"blur-radius,omitempty"`
+	Glass          *string `json:"glass,omitempty"`
+	GlassIntensity *int    `json:"glass-intensity,omitempty"`
 	Elevation      *string `json:"elevation,omitempty"`
 }
 
@@ -1512,6 +1514,14 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	if w.BlurBehind != nil {
 		out.BlurBehind = *w.BlurBehind
 	}
+	if w.Glass != nil {
+		m := theme.GlassMaterial(*w.Glass)
+		if !slices.Contains(theme.GlassMaterialNames(), *w.Glass) {
+			return Theme{}, pathErr(path+".glass", "%q is not one of %s",
+				*w.Glass, strings.Join(theme.GlassMaterialNames(), ", "))
+		}
+		out.Glass = m
+	}
 	for _, f := range []struct {
 		key      string
 		supplied *string
@@ -1547,6 +1557,7 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 		{"panel-opacity", w.PanelOpacity, &out.PanelOpacity, theme.OpacityMinBlurred, theme.OpacityMax},
 		{"overlay-opacity", w.OverlayOpacity, &out.OverlayOpacity, theme.OpacityMin, theme.OpacityMax},
 		{"blur-radius", w.BlurRadius, &out.BlurRadius, theme.BlurRadiusMin, theme.BlurRadiusMax},
+		{"glass-intensity", w.GlassIntensity, &out.GlassIntensity, theme.GlassIntensityMin, theme.GlassIntensityMax},
 	} {
 		if f.supplied == nil {
 			continue

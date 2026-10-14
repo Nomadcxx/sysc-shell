@@ -315,6 +315,24 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				func(c *config.Config, n int) { c.Theme.BlurRadius = n }),
 		},
 		{
+			Path: "appearance.glass", Label: "Glass material", Section: "Appearance", Group: "Blur & elevation",
+			Describe: "Smoke or milk tone, or automatic frost, over the panel backdrop.",
+			Kind:     KindEnum,
+			Options:  glassNames,
+			Get:      func(c config.Config) string { return string(c.Theme.Glass) },
+			Set: setEnum("appearance.glass", glassNames,
+				func(c *config.Config, v string) { c.Theme.Glass = theme.GlassMaterial(v) }),
+		},
+		{
+			Path: "appearance.glass-intensity", Present: PresentSlider, Unit: "%", Label: "Glass intensity", Section: "Appearance", Group: "Blur & elevation",
+			Describe: "How strong the material is. No effect while the material is off.",
+			Kind:     KindInt,
+			Min:      theme.GlassIntensityMin, Max: theme.GlassIntensityMax,
+			Get: getInt(func(c config.Config) int { return c.Theme.GlassIntensity }),
+			Set: setInt("appearance.glass-intensity", theme.GlassIntensityMin, theme.GlassIntensityMax,
+				func(c *config.Config, n int) { c.Theme.GlassIntensity = n }),
+		},
+		{
 			Path: "appearance.elevation", Label: "Shadow depth", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "How much shadow separates a surface from what is under it.",
 			Kind:     KindEnum,
@@ -782,7 +800,8 @@ func presetAxisPaths() []string {
 		"appearance.font-scale", "appearance.font-weight", "appearance.radius",
 		"appearance.motion", "appearance.motion-speed", "appearance.bar-opacity",
 		"appearance.panel-opacity", "appearance.overlay-opacity", "appearance.blur-behind",
-		"appearance.blur-radius", "appearance.elevation",
+		"appearance.blur-radius", "appearance.glass", "appearance.glass-intensity",
+		"appearance.elevation",
 	}
 }
 
@@ -882,6 +901,7 @@ var (
 		string(theme.DensityComfortable), string(theme.DensitySpacious),
 	}
 	motionNames    = []string{string(theme.MotionStandard), string(theme.MotionExpressive)}
+	glassNames     = theme.GlassMaterialNames()
 	elevationNames = []string{
 		string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
 	}

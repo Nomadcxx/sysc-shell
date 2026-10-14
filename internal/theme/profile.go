@@ -2,6 +2,7 @@ package theme
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -90,6 +91,16 @@ const (
 	// so the ceiling is a matter of taste rather than budget.
 	BlurRadiusMin = 0
 	BlurRadiusMax = 64
+
+	// GlassIntensity bounds the material's strength, in percent. The axis is
+	// dormant while Glass is off; it exists so turning a material on does not
+	// also force a choice of strength.
+	GlassIntensityMin = 0
+	GlassIntensityMax = 100
+
+	// GlassIntensityDefault is the strength a preset names, so the axis has a
+	// value to fall back to and the reset rule has something to resolve.
+	GlassIntensityDefault = 60
 )
 
 // Metrics is one row of the density table from design D8.
@@ -461,6 +472,46 @@ func (s MotionStyle) SpatialCurve() Curve {
 	return CurveOutCubic
 }
 
+// GlassMaterial is the material painted over the captured backdrop. The zero
+// value is GlassOff, so a configuration that names no material keeps today's
+// paint.
+type GlassMaterial string
+
+const (
+	// GlassOff paints the backdrop and the root fill, as before.
+	GlassOff GlassMaterial = "off"
+	// GlassSmoke lowers what is seen through the backdrop in proportion to its
+	// luma, capped by the intensity axis.
+	GlassSmoke GlassMaterial = "smoke"
+	// GlassMilk lifts the backdrop toward white by the same capped proportion.
+	GlassMilk GlassMaterial = "milk"
+	// GlassFrost blurs the backdrop without consulting its content.
+	GlassFrost GlassMaterial = "frost"
+	// GlassAuto frosts only where the content behind the surface is busy.
+	GlassAuto GlassMaterial = "auto"
+	// GlassFull is the value spelled "glass": automatic frost plus refraction.
+	// Refraction is wired by the material's second stage; the tone path is what
+	// this value already selects.
+	GlassFull GlassMaterial = "glass"
+)
+
+// GlassMaterials lists the material set in a stable order, for the settings
+// registry and for error messages.
+func GlassMaterials() []GlassMaterial {
+	return []GlassMaterial{GlassOff, GlassSmoke, GlassMilk, GlassFrost, GlassAuto, GlassFull}
+}
+
+// GlassMaterialNames lists the material set as strings, so the settings
+// registry and the loader read one source rather than a second copy.
+func GlassMaterialNames() []string {
+	materials := GlassMaterials()
+	out := make([]string, len(materials))
+	for i, m := range materials {
+		out[i] = string(m)
+	}
+	return out
+}
+
 // Composition is the resolved set of independent theme axes. It excludes
 // palette source, seed, scheme, and mode, which theme-gen continues to own.
 type Composition struct {
@@ -485,7 +536,11 @@ type Composition struct {
 	// below OpacityMin. BlurRadius is that blur's radius.
 	BlurBehind bool
 	BlurRadius int
-	Elevation  Elevation
+	// Glass is the material painted over the captured backdrop, and
+	// GlassIntensity is its strength in percent. Off is today's paint.
+	Glass          GlassMaterial
+	GlassIntensity int
+	Elevation      Elevation
 }
 
 // presets are the three bundled compositions from design D2.
@@ -504,7 +559,8 @@ var presets = map[Preset]Composition{
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 		BlurBehind: true,
 		BlurRadius: 24,
-		Elevation:  ElevationSubtle,
+		Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
+		Elevation: ElevationSubtle,
 	},
 	PresetCompact: {
 		Density:     DensityCompact,
@@ -514,7 +570,8 @@ var presets = map[Preset]Composition{
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 		BlurBehind: true,
 		BlurRadius: 24,
-		Elevation:  ElevationSubtle,
+		Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
+		Elevation: ElevationSubtle,
 	},
 	PresetExpressive: {
 		Density:     DensityDefault,
@@ -524,7 +581,8 @@ var presets = map[Preset]Composition{
 		BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
 		BlurBehind: true,
 		BlurRadius: 24,
-		Elevation:  ElevationStandard,
+		Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
+		Elevation: ElevationStandard,
 	},
 }
 
@@ -611,6 +669,10 @@ func Rebase(current, from, to Composition) Composition {
 		out.BlurBehind = to.BlurBehind
 	}
 	rebaseInt(current.BlurRadius, from.BlurRadius, to.BlurRadius, &out.BlurRadius)
+	if current.Glass == from.Glass {
+		out.Glass = to.Glass
+	}
+	rebaseInt(current.GlassIntensity, from.GlassIntensity, to.GlassIntensity, &out.GlassIntensity)
 	return out
 }
 
@@ -681,6 +743,12 @@ func (c Composition) Valid() error {
 	default:
 		return fmt.Errorf("elevation %q is not one of none, subtle, standard", c.Elevation)
 	}
+	switch c.Glass {
+	case GlassOff, GlassSmoke, GlassMilk, GlassFrost, GlassAuto, GlassFull:
+	default:
+		return fmt.Errorf("glass %q is not one of %s",
+			c.Glass, strings.Join(GlassMaterialNames(), ", "))
+	}
 	for _, b := range []struct {
 		name     string
 		got      int
@@ -700,6 +768,7 @@ func (c Composition) Valid() error {
 		{"panel-opacity", c.PanelOpacity, OpacityMinBlurred, OpacityMax},
 		{"overlay-opacity", c.OverlayOpacity, OpacityMin, OpacityMax},
 		{"blur-radius", c.BlurRadius, BlurRadiusMin, BlurRadiusMax},
+		{"glass-intensity", c.GlassIntensity, GlassIntensityMin, GlassIntensityMax},
 	} {
 		if b.got < b.min || b.got > b.max {
 			return fmt.Errorf("%s %d is outside %d..%d", b.name, b.got, b.min, b.max)
