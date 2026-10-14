@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -21,25 +22,27 @@ const (
 )
 
 type runningAppMenuHost struct {
-	r          *Registry
-	request    func(wayland.AuxRequest)
-	open_      bool
-	closed     bool
-	output     uint32
-	rootGen    uint64
-	slot       runningAppSlot
-	rows       []runningAppMenuRow
-	menu       *Menu
-	root       *ui.Node
-	logicalW   int
-	logicalH   int
-	scale120   int
-	place      trayMenuPlacement
-	pressed    int
-	pointerRow int
-	keyed      bool
-	text       *render.TextRenderer
-	style      render.Style
+	r              *Registry
+	request        func(wayland.AuxRequest)
+	open_          bool
+	closed         bool
+	output         uint32
+	rootGen        uint64
+	slot           runningAppSlot
+	rows           []runningAppMenuRow
+	visibleRows    []int
+	menu           *Menu
+	root           *ui.Node
+	logicalW       int
+	logicalH       int
+	scale120       int
+	place          trayMenuPlacement
+	pressed        int
+	pointerRow     int
+	keyed          bool
+	wheelRemainder float64
+	text           *render.TextRenderer
+	style          render.Style
 }
 
 func newRunningAppMenuHost(r *Registry) *runningAppMenuHost {
@@ -59,7 +62,9 @@ func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anch
 	h.pressed = -1
 	h.pointerRow = -1
 	h.keyed = false
+	h.wheelRemainder = 0
 	h.slot = slot
+	_ = h.prepareRenderStateLocked(output)
 	h.rows = runningAppMenu(slot, h.r.niriSnapshot.Workspaces)
 	labels := make([]string, len(h.rows))
 	for i, row := range h.rows {
@@ -117,15 +122,25 @@ func (h *runningAppMenuHost) spec() *wayland.AuxSpec {
 }
 
 func (h *runningAppMenuHost) size() (int, int) {
-	n := len(h.rows)
-	if n == 0 {
-		n = 1
+	width := h.menuWidth()
+	height := 0
+	if h.root != nil {
+		height, _ = ui.ContentHeight(h.root, width, h.measureText())
 	}
-	height := n*trayMenuRowHeight + 2*runningAppMenuPad
-	if h.hasCloseSeparator() {
-		height += runningAppMenuSep
+	if height <= 0 {
+		n := len(h.visibleRows)
+		if n == 0 {
+			n = min(len(h.rows), menuVisibleRows)
+		}
+		if n == 0 {
+			n = 1
+		}
+		height = n*trayMenuRowHeight + 2*runningAppMenuPad
+		if h.hasCloseSeparator() && n == len(h.rows) {
+			height += runningAppMenuSep
+		}
 	}
-	return h.menuWidth(), height
+	return width, min(max(height, trayMenuRowHeight+2*runningAppMenuPad), trayMenuMaxHeight)
 }
 
 func (h *runningAppMenuHost) hasCloseSeparator() bool {
@@ -146,6 +161,53 @@ func (h *runningAppMenuHost) menuWidth() int {
 		}
 	}
 	return min(max(maxW+2*6+2*runningAppMenuPad, 140), 220)
+}
+
+func (h *runningAppMenuHost) measureText() ui.MeasureText {
+	return func(text string, attrs ui.TextAttrs) (int, int) {
+		if h.text != nil && h.style.Size > 0 {
+			if w, height, err := h.text.Measure(text, render.SpecFor(h.style, attrs), attrs.Tabular); err == nil {
+				return w, height
+			}
+		}
+		return len([]rune(text)) * 8, 16
+	}
+}
+
+func (h *runningAppMenuHost) prepareRenderStateLocked(output uint32) error {
+	scale := ui.ScaleUnit
+	if bar := h.r.bars[output]; bar != nil {
+		if configured := ui.Scale120(bar.scale120()); configured.Valid() {
+			scale = configured
+		}
+	}
+	h.scale120 = int(scale)
+	body := h.style.Body
+	h.style = h.r.surfaceTheme().OverlayStyle()
+	h.style.Scale120, h.style.Body = scale, body
+	h.style.Background = h.style.Capsule
+	if h.text == nil {
+		text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
+		if err != nil {
+			return err
+		}
+		h.text = text
+	}
+	return nil
+}
+
+func runningAppMenuWheelDelta(event wayland.Event) float64 {
+	if event.Axis != 0 {
+		return 0
+	}
+	switch {
+	case event.AxisDiscrete != 0:
+		return float64(event.AxisDiscrete) * wheelStepPixels
+	case event.AxisValue120 != 0:
+		return float64(event.AxisValue120) * wheelStepPixels / 120
+	default:
+		return event.AxisValue
+	}
 }
 
 func (h *runningAppMenuHost) configureLocking(width, height, scale120 int) error {
@@ -221,17 +283,10 @@ func (h *runningAppMenuHost) shieldHandleLocking(event wayland.Event) bool {
 func (h *runningAppMenuHost) render(pixels []byte, width, height, stride int) error {
 	createdText := false
 	if h.text == nil {
-		text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
-		if err != nil {
-			return err
+		if err := h.prepareRenderStateLocked(h.output); err != nil {
+			return fmt.Errorf("running apps menu text renderer: %w", err)
 		}
-		h.text = text
 		createdText = true
-		theme := h.r.surfaceTheme()
-		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.OverlayStyle()
-		h.style.Scale120, h.style.Body = scale, body
-		h.style.Background = h.style.Capsule
 	}
 	if createdText && h.logicalW > 0 {
 		if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
@@ -292,6 +347,25 @@ func (h *runningAppMenuHost) handle(event wayland.Event) bool {
 		h.rebuild()
 		h.r.publishSurface(h.output, runningAppMenuSurfaceID)
 		return true
+	case wayland.EventPointerAxis:
+		delta := runningAppMenuWheelDelta(event)
+		if delta == 0 || h.menu == nil {
+			return false
+		}
+		h.wheelRemainder += delta
+		steps := int(h.wheelRemainder / float64(wheelStepPixels))
+		h.wheelRemainder -= float64(steps * wheelStepPixels)
+		if steps == 0 {
+			return true
+		}
+		if !h.menu.wheel(steps) {
+			return false
+		}
+		h.keyed = true
+		h.pointerRow = -1
+		h.rebuild()
+		h.r.publishSurface(h.output, runningAppMenuSurfaceID)
+		return true
 	case wayland.EventPointerPress:
 		i, ok := h.hitRow(int(math.Floor(event.X)), int(math.Floor(event.Y)))
 		if !ok {
@@ -317,15 +391,18 @@ func (h *runningAppMenuHost) hitRow(x, y int) (int, bool) {
 	if h.root == nil {
 		return 0, false
 	}
-	n := 0
+	visible := 0
 	for _, c := range h.root.Children {
 		if c == nil || c.Kind != ui.KindCapsule {
 			continue
 		}
 		if c.Bounds.Contains(x, y) {
-			return n, true
+			if visible >= len(h.visibleRows) {
+				return 0, false
+			}
+			return h.visibleRows[visible], true
 		}
-		n++
+		visible++
 	}
 	return 0, false
 }
@@ -346,9 +423,12 @@ func (h *runningAppMenuHost) highlight() int {
 // CTA stadium; KindMenu is a panel combobox. Neither is a popup list.
 func (h *runningAppMenuHost) rebuild() {
 	col := &ui.Node{Kind: ui.KindColumn, Padding: runningAppMenuPad}
+	h.visibleRows = h.visibleRows[:0]
 	on := h.highlight()
 	if h.menu != nil {
-		for i, opt := range h.menu.options {
+		start, end := h.menu.visibleRange()
+		for i := start; i < end; i++ {
+			opt := h.menu.options[i]
 			if i > 0 && i == len(h.rows)-1 && h.rows[i].CloseAll {
 				col.Children = append(col.Children, &ui.Node{
 					Kind: ui.KindRow, Padding: theme.MarginXS,
@@ -368,6 +448,10 @@ func (h *runningAppMenuHost) rebuild() {
 				Fill: fill, Focusable: true, Role: "menuitem",
 				Children: []*ui.Node{label},
 			})
+			h.visibleRows = append(h.visibleRows, i)
+		}
+		if h.hasCloseSeparator() && end < len(h.rows) {
+			col.Children = append(col.Children, &ui.Node{Kind: ui.KindRow, Height: runningAppMenuSep})
 		}
 	}
 	h.root = col
@@ -390,14 +474,8 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 	slot := h.slot
 	h.closeLocked()
 	if row.CloseAll {
-		seen := map[int]struct{}{}
 		for _, w := range slot.Members {
-			if w.Pid > 0 {
-				if _, ok := seen[w.Pid]; ok {
-					continue
-				}
-				seen[w.Pid] = struct{}{}
-				h.r.signalPIDLocked(w.Pid)
+			if _, foldedSteamGame := slot.SteamGameIDs[w.ID]; w.ID == 0 || foldedSteamGame {
 				continue
 			}
 			h.r.sendNiriLocked(niri.CloseWindow{ID: w.ID})

@@ -53,9 +53,10 @@ func TestGroupRunningApps(t *testing.T) {
 			},
 			lookup: []runningAppEntry{steam},
 			want: []runningAppSlot{{
-				Key:     "steam",
-				Icon:    "steam",
-				Members: []niri.Window{{ID: 1, AppID: "steam_app_123"}, {ID: 2, AppID: "steam"}},
+				Key:          "steam",
+				Icon:         "steam",
+				Members:      []niri.Window{{ID: 1, AppID: "steam_app_123"}, {ID: 2, AppID: "steam"}},
+				SteamGameIDs: map[uint64]struct{}{1: {}},
 			}},
 		},
 		{
@@ -110,6 +111,14 @@ func TestGroupRunningApps(t *testing.T) {
 				}
 				if len(got[i].Members) != len(tc.want[i].Members) {
 					t.Fatalf("slot %d members = %d, want %d", i, len(got[i].Members), len(tc.want[i].Members))
+				}
+				if len(got[i].SteamGameIDs) != len(tc.want[i].SteamGameIDs) {
+					t.Fatalf("slot %d folded Steam game IDs = %v, want %v", i, got[i].SteamGameIDs, tc.want[i].SteamGameIDs)
+				}
+				for id := range tc.want[i].SteamGameIDs {
+					if _, ok := got[i].SteamGameIDs[id]; !ok {
+						t.Fatalf("slot %d folded Steam game IDs = %v, want %v", i, got[i].SteamGameIDs, tc.want[i].SteamGameIDs)
+					}
 				}
 				for j, m := range tc.want[i].Members {
 					if got[i].Members[j].ID != m.ID {

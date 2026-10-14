@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/go-freedesktop/desktopentry"
@@ -33,14 +32,15 @@ type runningAppEntry struct {
 }
 
 type runningAppSlot struct {
-	Key     string
-	Name    string
-	Icon    string
-	Focused bool
-	Members []niri.Window
-	MRU     niri.Window
-	Actions []runningAppAction
-	Image   *ui.Image
+	Key          string
+	Name         string
+	Icon         string
+	Focused      bool
+	Members      []niri.Window
+	SteamGameIDs map[uint64]struct{}
+	MRU          niri.Window
+	Actions      []runningAppAction
+	Image        *ui.Image
 }
 
 type runningAppMenuRow struct {
@@ -58,9 +58,11 @@ func groupRunningApps(windows []niri.Window, entries []runningAppEntry) []runnin
 	order := make([]string, 0)
 	byKey := map[string]*runningAppSlot{}
 	for _, w := range windows {
+		foldedSteamGame := false
 		entry, ok := lookupRunningApp(w.AppID, entries)
 		if !ok && strings.HasPrefix(strings.ToLower(w.AppID), "steam_app") {
 			entry, ok = lookupRunningApp("steam", entries)
+			foldedSteamGame = ok
 		}
 		key := strings.ToLower(w.AppID)
 		if ok {
@@ -80,6 +82,12 @@ func groupRunningApps(windows []niri.Window, entries []runningAppEntry) []runnin
 			order = append(order, key)
 		}
 		slot.Members = append(slot.Members, w)
+		if foldedSteamGame {
+			if slot.SteamGameIDs == nil {
+				slot.SteamGameIDs = make(map[uint64]struct{})
+			}
+			slot.SteamGameIDs[w.ID] = struct{}{}
+		}
 		if w.Focused {
 			slot.Focused = true
 		}
@@ -375,13 +383,13 @@ func runningAppKey(action string) (string, bool) {
 	return strings.CutPrefix(action, runningAppPrefix)
 }
 
-func runningSlotPresent(slots []runningAppSlot, key string) bool {
+func runningSlotForKey(slots []runningAppSlot, key string) (runningAppSlot, bool) {
 	for _, s := range slots {
 		if s.Key == key {
-			return true
+			return s, true
 		}
 	}
-	return false
+	return runningAppSlot{}, false
 }
 
 func (r *Registry) handleRunningAppClick(output uint32, key string, button uint32) bool {
@@ -416,26 +424,6 @@ func (r *Registry) handleRunningAppClick(output uint32, key string, button uint3
 		return true
 	}
 	return false
-}
-
-func (r *Registry) signalPIDLocked(pid int) {
-	if pid <= 0 {
-		return
-	}
-	if r.killPID != nil {
-		if err := r.killPID(pid); err != nil {
-			log.Print("running-apps kill: ", err)
-		}
-		return
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		log.Print("running-apps kill: ", err)
-		return
-	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		log.Print("running-apps kill: ", err)
-	}
 }
 
 func (r *Registry) sendNiriLocked(body any) {
