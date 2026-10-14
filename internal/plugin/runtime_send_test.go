@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,5 +83,47 @@ func TestRuntimeSendStalledPlugin(t *testing.T) {
 			t.Fatalf("frame %d out of order: %s after v%04d", i, vr.ViewID, prev)
 		}
 		prev = n
+	}
+}
+
+// A session that ends on its own must retire its queue with it: Send has to
+// report "not running" rather than quietly filling a channel no pump drains
+// (gh #208).
+func TestSendAfterSessionEndsReportsNotRunning(t *testing.T) {
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "ok")}, helperOptions())
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Send(&v1.HostShutdown{})
+	waitRuntimeState(t, r, StateDisabled)
+
+	err := r.Send(&v1.ViewResync{ViewID: "x"})
+	if err == nil {
+		t.Fatal("Send to an ended session returned nil")
+	}
+	if !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("Send after session end = %v, want \"plugin: not running\"", err)
+	}
+}
+
+// Stop used to flush into that dead queue and wait out stopFlushTimeout for
+// a barrier no pump would ever close. Retry and disable call Stop, so the
+// cost landed on every teardown after a plugin had exited by itself (#208).
+func TestStopAfterSessionEndsDoesNotWaitForFlush(t *testing.T) {
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "ok")}, helperOptions())
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Send(&v1.HostShutdown{})
+	waitRuntimeState(t, r, StateDisabled)
+
+	start := time.Now()
+	r.Stop()
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+		t.Fatalf("Stop after session end took %v; want well under the %v flush timeout", elapsed, stopFlushTimeout)
 	}
 }

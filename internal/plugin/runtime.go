@@ -163,7 +163,18 @@ func (r *Runtime) pumpOut(ctx context.Context, sess *Session, q <-chan outItem) 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			// Close any barrier still queued: a Stop racing this exit must
+			// not wait out stopFlushTimeout for a pump that is gone.
+			for {
+				select {
+				case it := <-q:
+					if it.flushed != nil {
+						close(it.flushed)
+					}
+				default:
+					return
+				}
+			}
 		case it := <-q:
 			if it.flushed != nil {
 				close(it.flushed)
@@ -178,8 +189,11 @@ func (r *Runtime) pumpOut(ctx context.Context, sess *Session, q <-chan outItem) 
 func (r *Runtime) flushOut() {
 	r.mu.Lock()
 	q := r.out
+	sess := r.session
 	r.mu.Unlock()
-	if q == nil {
+	if q == nil || sess == nil {
+		// A queue without its pump means the session is gone or going;
+		// there is nothing to flush into.
 		return
 	}
 	barrier := outItem{flushed: make(chan struct{})}
@@ -439,6 +453,10 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 	if !stale {
 		r.session = nil
 		r.sessionCancel = nil
+		// The pump exited with the session. Leaving the queue wired would
+		// let Send accept messages no pump reads and make Stop wait out
+		// stopFlushTimeout for a barrier no pump closes.
+		r.out = nil
 		r.stderr = stderr
 		r.budget.ranSteadily(sess.Started(), ended)
 	}
