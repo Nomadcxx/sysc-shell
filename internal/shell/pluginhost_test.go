@@ -1715,16 +1715,26 @@ func TestPluginPanelDecodesImagePaths(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if node := findImageNode(reg.plugins.panelTree(nil)); node != nil && node.Image != nil {
+		// The retained tree is stamped asynchronously under r.mu, so take the
+		// registry lock across the walk.
+		reg.mu.Lock()
+		node := findImageNode(reg.plugins.panelTree(nil))
+		decoded := node != nil && node.Image != nil
+		reg.mu.Unlock()
+		if decoded {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	reg.mu.Lock()
 	node := findImageNode(reg.plugins.panelTree(nil))
 	if node == nil {
+		reg.mu.Unlock()
 		t.Fatal("panel tree never carried an image node")
 	}
-	t.Fatalf("image node never decoded: path=%q image=%v", node.ImagePath, node.Image)
+	imagePath, img := node.ImagePath, node.Image
+	reg.mu.Unlock()
+	t.Fatalf("image node never decoded: path=%q image=%v", imagePath, img)
 }
 
 func TestPluginPanelKeepsTheBoxForAMissingImage(t *testing.T) {
