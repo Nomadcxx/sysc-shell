@@ -26,6 +26,7 @@ const (
 	unitName            = "sysc-walls.service"
 	configGate          = "fc7172d31b8fbfc952df817e5b677f84a4f8e3b9"
 	previewGate         = "e97eeb631d46e3147cbc79acdaf4644522ce414d"
+	releaseGate         = "522fc4cb07d8b02e93fe4bf9578b4a3361cdbbad" // qualified sysc-walls v1.1.1
 	clientMain          = "github.com/Nomadcxx/sysc-walls/cmd/client"
 	daemonMain          = "github.com/Nomadcxx/sysc-walls/cmd/daemon"
 	displayMain         = "github.com/Nomadcxx/sysc-walls/cmd/display"
@@ -1396,13 +1397,13 @@ func (s *Service) resolveExecutable(path string) (string, error) {
 
 func (s *Service) checkIdentities(snapshot *Snapshot) {
 	if snapshot.ClientPath != "" && snapshot.ClientIdentityError == "" {
-		snapshot.ClientIdentityError = s.checkIdentity(snapshot.ClientPath, clientMain, []string{configGate, previewGate})
+		snapshot.ClientIdentityError = s.checkIdentity(snapshot.ClientPath, clientMain, []string{configGate, previewGate, releaseGate})
 	}
 	if snapshot.DaemonPath != "" && snapshot.DaemonIdentityError == "" {
-		snapshot.DaemonIdentityError = s.checkIdentity(snapshot.DaemonPath, daemonMain, []string{previewGate})
+		snapshot.DaemonIdentityError = s.checkIdentity(snapshot.DaemonPath, daemonMain, []string{previewGate, releaseGate})
 	}
 	if snapshot.DisplayPath != "" && snapshot.DisplayIdentityError == "" {
-		snapshot.DisplayIdentityError = s.checkIdentity(snapshot.DisplayPath, displayMain, []string{previewGate})
+		snapshot.DisplayIdentityError = s.checkIdentity(snapshot.DisplayPath, displayMain, []string{previewGate, releaseGate})
 	}
 }
 

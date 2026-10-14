@@ -511,6 +511,24 @@ func TestMissingDisplayDisablesPreviewOnly(t *testing.T) {
 	}
 }
 
+func TestReleasedToolchainEnablesApplyAndPreview(t *testing.T) {
+	home := t.TempDir()
+	paths := makeInstall(t, filepath.Join(t.TempDir(), "bin"), "sysc-walls-daemon", "sysc-walls-client", "sysc-walls-display")
+	identities := fakeIdentities(paths)
+	for path, info := range identities {
+		identities[path] = buildInfo(info.Path, "522fc4cb07d8b02e93fe4bf9578b4a3361cdbbad", false)
+	}
+	command := &fakeCommand{
+		show: []commandResult{{out: loadedUnitOutput(paths["sysc-walls-daemon"], "disabled", "inactive", "dead", "", "[]")}},
+		env:  []commandResult{{out: "HOME=" + home + "\n"}},
+	}
+	service := newTestService(t, home, command, map[string]string{}, os.ReadFile, identities)
+	snap := waitSnapshot(t, service, func(s Snapshot) bool { return s.UnitKnown && s.ConfigKnown })
+	if !snap.CanApply || !snap.CanPreview {
+		t.Fatalf("qualified release toolchain rejected: %+v", snap)
+	}
+}
+
 func TestDirtyClientBuildDisablesApplyButKeepsPreview(t *testing.T) {
 	home := t.TempDir()
 	paths := makeInstall(t, filepath.Join(t.TempDir(), "bin"), "sysc-walls-daemon", "sysc-walls-client", "sysc-walls-display")
