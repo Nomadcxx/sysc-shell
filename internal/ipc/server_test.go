@@ -170,6 +170,69 @@ func TestLiveSocketFailsAsSingleInstance(t *testing.T) {
 	}
 }
 
+func TestListenRejectsALiveSocket(t *testing.T) {
+	t.Parallel()
+	sock, cancel := startServer(t, Handlers{Status: func() map[string]any { return map[string]any{} }})
+	defer cancel()
+	if err := NewServer(sock, Handlers{}).Listen(); err != ErrSingleInstance {
+		t.Fatalf("Listen over a live socket = %v, want ErrSingleInstance", err)
+	}
+}
+
+func TestListenReplacesAStaleSocket(t *testing.T) {
+	t.Parallel()
+	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	if err := os.WriteFile(sock, []byte("dead"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(sock, Handlers{})
+	t.Cleanup(func() { _ = srv.Close() })
+	if err := srv.Listen(); err != nil {
+		t.Fatalf("Listen over a stale socket: %v", err)
+	}
+	// The replacement socket is live even without an accept loop, so a second
+	// listener must be refused.
+	if err := NewServer(sock, Handlers{}).Listen(); err != ErrSingleInstance {
+		t.Fatalf("second Listen = %v, want ErrSingleInstance", err)
+	}
+}
+
+func TestListenHoldsEarlyConnectionsUntilServe(t *testing.T) {
+	t.Parallel()
+	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := NewServer(sock, Handlers{})
+	if err := srv.Listen(); err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	srv.SetHandlers(Handlers{Status: func() map[string]any { return map[string]any{"version": "early"} }})
+
+	answered := make(chan struct{})
+	go func() {
+		defer close(answered)
+		out, err := Call(ctx, sock, "status", nil)
+		if err != nil || !strings.Contains(out, "early") {
+			t.Errorf("early call: %v %s", err, out)
+		}
+	}()
+	// The socket is bound, so the call connects now; nothing answers until
+	// the accept loop starts.
+	select {
+	case <-answered:
+		t.Fatal("early call finished before Serve started")
+	case <-time.After(100 * time.Millisecond):
+	}
+	go func() { _ = srv.Serve(ctx) }()
+	t.Cleanup(func() { cancel(); _ = srv.Close() })
+
+	select {
+	case <-answered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("early call was never answered after Serve started")
+	}
+}
+
 func TestOsdStepDispatches(t *testing.T) {
 	t.Parallel()
 	var kind, action string
