@@ -86,6 +86,25 @@ func run(ctx context.Context) (err error) {
 		return cfgErr
 	}
 
+	// Bind the IPC socket before any service starts: a duplicate launch must
+	// fail here, not after it has run every plugin host and let the second
+	// ScreenSaver claim clobber the first. Connections that arrive before
+	// Serve starts wait in the listen backlog.
+	srv := ipc.NewServer(ipc.DefaultSocket(), ipc.Handlers{})
+	if err := srv.Listen(); err != nil {
+		if errors.Is(err, ipc.ErrSingleInstance) {
+			return fmt.Errorf("another sysc-shell is already running")
+		}
+		return err
+	}
+	// A start that fails between here and Serve must not leave the bound
+	// socket behind for the next launch to mistake for a live one.
+	defer func() {
+		if err != nil {
+			_ = srv.Close()
+		}
+	}()
+
 	registry := shell.NewRegistry(cfg)
 	registry.SetWallsService(walls.NewService())
 	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
@@ -364,16 +383,17 @@ func run(ctx context.Context) (err error) {
 	// The IPC server gets its own cancel so it stops on any exit from run, not
 	// only a signal, and run waits for it before the deferred registry.Close:
 	// no request may still be inside a handler when the registry is torn down.
+	// The socket was bound above; the handlers arrive now that the registry
+	// exists, before the accept loop starts.
 	ipcCtx, stopIPC := context.WithCancel(ctx)
 	ipcDone := make(chan struct{})
-	ipcErr := make(chan error, 1)
 	defer func() {
 		stopIPC()
 		<-ipcDone
 	}()
 	go func() {
 		defer close(ipcDone)
-		srv := ipc.NewServer(ipc.DefaultSocket(), ipc.Handlers{
+		srv.SetHandlers(ipc.Handlers{
 			Panel:      registry.HandlePanelByName,
 			Status:     registry.Status,
 			OSDStep:    registry.OSDStep,
@@ -384,18 +404,14 @@ func run(ctx context.Context) (err error) {
 			NightLight: registry.NightLightCall,
 			LockState:  registry.LockStateMap,
 		})
-		ipcErr <- srv.Serve(ipcCtx)
+		if err := srv.Serve(ipcCtx); err != nil && ipcCtx.Err() == nil {
+			select {
+			case streamFailed <- err:
+			default:
+			}
+			cancel()
+		}
 	}()
-	select {
-	case err := <-ipcErr:
-		if errors.Is(err, ipc.ErrSingleInstance) {
-			return fmt.Errorf("another sysc-shell is already running")
-		}
-		if err != nil {
-			return err
-		}
-	case <-time.After(50 * time.Millisecond):
-	}
 
 	runErr := wayland.Run(ctx, cfg, wayland.Callbacks{
 		NewHost:       registry.NewHost,

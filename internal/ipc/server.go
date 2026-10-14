@@ -98,7 +98,12 @@ func NewServer(path string, h Handlers) *Server {
 	return &Server{path: path, h: h}
 }
 
-func (s *Server) Serve(ctx context.Context) error {
+// Listen binds the socket and enforces single-instance. The production order
+// is Listen before any service starts, so a duplicate launch fails before it
+// has spawned a plugin or claimed a bus name. Connections that arrive before
+// Serve starts wait in the listen backlog. Serve calls Listen itself when it
+// has not run.
+func (s *Server) Listen() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
@@ -123,6 +128,23 @@ func (s *Server) Serve(ctx context.Context) error {
 		return err
 	}
 	s.ln = ln
+	return nil
+}
+
+// SetHandlers installs the request handlers. It must run before Serve: the
+// accept loop is what serves the backlog, so every connection is handled by
+// the handlers installed here.
+func (s *Server) SetHandlers(h Handlers) {
+	s.h = h
+}
+
+func (s *Server) Serve(ctx context.Context) error {
+	if s.ln == nil {
+		if err := s.Listen(); err != nil {
+			return err
+		}
+	}
+	ln := s.ln
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
