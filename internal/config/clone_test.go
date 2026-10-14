@@ -23,10 +23,18 @@ func populatedConfig() Config {
 	cfg.Media.Blacklist = []string{"org.mpris.MediaPlayer2.blacklisted"}
 	cfg.Templates = map[string]bool{"foot": true}
 	cfg.Plugins = Plugins{
-		Enabled:   []string{"timer"},
-		Settings:  map[string]map[string]any{"timer": {"sound": true}},
-		Instances: map[string]map[string]any{"timer.1": {"sound": false}},
-		Sources:   []PluginSource{{Name: "extra", URL: "https://example.invalid/plugins"}},
+		Enabled: []string{"timer"},
+		Settings: map[string]map[string]any{"timer": {
+			"sound":       true,
+			"preferences": map[string]any{"items": []any{map[string]any{"name": "quiet"}}},
+			"empty_map":   map[string]any(nil),
+			"empty_list":  []any(nil),
+		}, "empty": nil},
+		Instances: map[string]map[string]any{"timer.1": {
+			"sound":       false,
+			"preferences": map[string]any{"items": []any{map[string]any{"name": "compact"}}},
+		}},
+		Sources: []PluginSource{{Name: "extra", URL: "https://example.invalid/plugins"}},
 	}
 	return cfg
 }
@@ -51,6 +59,8 @@ func TestCloneIsDeep(t *testing.T) {
 	clone.Plugins.Enabled[0] = "changed"
 	clone.Plugins.Settings["timer"]["sound"] = false
 	clone.Plugins.Instances["timer.1"]["sound"] = true
+	clone.Plugins.Settings["timer"]["preferences"].(map[string]any)["items"].([]any)[0].(map[string]any)["name"] = "changed"
+	clone.Plugins.Instances["timer.1"]["preferences"].(map[string]any)["items"].([]any)[0].(map[string]any)["name"] = "changed"
 	clone.Plugins.Sources[0].Name = "changed"
 
 	if fresh := populatedConfig(); !reflect.DeepEqual(cfg, fresh) {
@@ -108,9 +118,17 @@ func collectMutable(v reflect.Value, path string, out map[string]uintptr) {
 		for i := 0; i < v.Len(); i++ {
 			collectMutable(v.Index(i), fmt.Sprintf("%s[%d]", path, i), out)
 		}
+	case reflect.Interface:
+		if !v.IsNil() {
+			collectMutable(v.Elem(), path, out)
+		}
 	case reflect.Map:
 		if !v.IsNil() {
 			out[path] = v.Pointer()
+			iter := v.MapRange()
+			for iter.Next() {
+				collectMutable(iter.Value(), fmt.Sprintf("%s[%v]", path, iter.Key()), out)
+			}
 		}
 	case reflect.Ptr:
 		if !v.IsNil() {

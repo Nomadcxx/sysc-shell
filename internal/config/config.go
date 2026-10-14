@@ -127,13 +127,43 @@ func cloneValues(in map[string]map[string]any) map[string]map[string]any {
 	}
 	out := make(map[string]map[string]any, len(in))
 	for k, v := range in {
-		inner := make(map[string]any, len(v))
-		for ik, iv := range v {
-			inner[ik] = iv
+		var inner map[string]any
+		if v != nil {
+			inner = make(map[string]any, len(v))
+			for ik, iv := range v {
+				inner[ik] = clonePluginSettingValue(iv)
+			}
 		}
 		out[k] = inner
 	}
 	return out
+}
+
+// clonePluginSettingValue copies JSON objects and arrays nested inside opaque
+// plugin settings. Their leaf values are immutable JSON scalars.
+func clonePluginSettingValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		if v == nil {
+			return v
+		}
+		out := make(map[string]any, len(v))
+		for key, value := range v {
+			out[key] = clonePluginSettingValue(value)
+		}
+		return out
+	case []any:
+		if v == nil {
+			return v
+		}
+		out := make([]any, len(v))
+		for i, value := range v {
+			out[i] = clonePluginSettingValue(value)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 // Clone copies the bar's lanes, each group's members, and the reserve pointer,
