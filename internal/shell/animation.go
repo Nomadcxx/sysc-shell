@@ -222,6 +222,73 @@ func (a *animator) nudge() {
 	}
 }
 
+// Configure replaces the resolved motion table and reduced-motion flag without
+// discarding what is in flight. Springs are advanced to the current clock
+// first, and a speed or style change keeps each spring's position, velocity and
+// target while replacing only its coefficients. Enabling reduced motion settles
+// spring channels at once; panel visibility keeps the existing capped opacity
+// fade from wherever it renders; decorative loops park on their reduced resting
+// values; and an eased transition snaps to its target. Disabling reduced motion
+// changes nothing already settled, so motion resumes only on the next genuine
+// target change. Caller holds the surface's lock.
+func (a *animator) Configure(motion render.MotionSet, reduced bool) {
+	if a == nil {
+		return
+	}
+	now := a.now()
+	a.reduced = reduced || motion.Reduced
+	a.spatial = motion.Spatial
+	if m := motion.Durations; m != (theme.MotionTokens{}) {
+		a.motion = m
+	} else {
+		a.motion = theme.BaseMotion
+	}
+	unfinished := false
+	for key, v := range a.values {
+		switch {
+		case v.spring != nil:
+			a.advanceSpring(key, now)
+			v = a.values[key]
+			if !a.reduced {
+				if spring := a.springFor(key.channel, v.to > v.position); spring != nil {
+					v.spring = spring
+				}
+				a.values[key] = v
+				unfinished = unfinished || v.position != v.to || v.velocity != 0
+				continue
+			}
+			if key.channel == animVisible && v.position != v.to {
+				a.values[key] = animValue{from: v.position, to: v.to, start: now,
+					dur: min(a.motion.Short, reducedPanelCap), ease: a.easeFor(animVisible)}
+				unfinished = true
+				continue
+			}
+			a.values[key] = animValue{from: v.to, to: v.to, start: now}
+		case v.loop != ui.GradientNone:
+			if !a.reduced {
+				continue
+			}
+			// A decorative loop parks where reduced motion rests it: a
+			// gradient holds its midpoint, every other loop rests at zero.
+			rest := 0.0
+			if key.channel == animGradient {
+				rest = (v.from + v.to) / 2
+			}
+			a.values[key] = animValue{from: rest, to: rest, start: now}
+		case a.reduced && key.channel != animVisible && !v.settled(now):
+			// Hover, press, selection, theme and ripple stop where they are:
+			// reduced motion has no reason to finish a transition nobody asked
+			// to see the end of.
+			a.values[key] = animValue{from: v.to, to: v.to, start: now}
+		default:
+			unfinished = unfinished || !v.settled(now)
+		}
+	}
+	if unfinished {
+		a.nudge()
+	}
+}
+
 // easeFor is a method because the curve is a theme axis now: an expressive
 // motion style settles every spatial recipe harder, not just selection.
 func (a *animator) easeFor(channel animChannel) func(float64) float64 {

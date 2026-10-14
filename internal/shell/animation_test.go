@@ -1231,3 +1231,93 @@ func TestSpringAndSpriteRestCoexist(t *testing.T) {
 		t.Fatal("a new target did not wake the loop")
 	}
 }
+
+func TestSpringConfigureReducedMotionSettlesSpatialState(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	a.Target("m", animProgress, 0.8)
+	a.Target("p", animVisible, 1)
+	clock.add(40 * time.Millisecond)
+	oldOpacity := a.PanelOpacity("p")
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion}, true)
+	if a.Value("h", animHover) != 1 || a.Value("m", animProgress) != 0.8 {
+		t.Fatal("reduced motion did not snap target-seeking content")
+	}
+	if a.PanelSlide("p") != 0 || a.PanelOpacity("p") != oldOpacity {
+		t.Fatal("reduced motion moved the panel or jumped its opacity")
+	}
+	clock.add(reducedPanelCap)
+	if a.PanelOpacity("p") != 1 || !a.Settled() {
+		t.Fatal("capped reduced fade did not finish")
+	}
+}
+
+func TestSpringConfigureSpeedPreservesState(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	clock.add(40 * time.Millisecond)
+	_ = a.Value("h", animHover)
+	key := animKey{node: "h", channel: animHover}
+	before := a.values[key]
+	fast := render.MotionSet{Durations: theme.BaseMotion.AtSpeed(400), Spatial: theme.CurveOutQuart}
+	a.Configure(fast, false)
+	after := a.values[key]
+	if after.position != before.position || after.velocity != before.velocity || after.to != before.to {
+		t.Fatalf("configure restarted the spring: %+v -> %+v", before, after)
+	}
+	token := theme.BaseMotion.AtSpeed(400).Short.Seconds()
+	omega := 12 * 1.1 / token
+	if math.Abs(after.spring.Stiffness-omega*omega) > 1e-9 || math.Abs(after.spring.Damping-2*omega) > 1e-9 {
+		t.Fatalf("coefficients not replaced: %+v", after.spring)
+	}
+	// The same settings again change nothing.
+	again := a.values[key]
+	a.Configure(fast, false)
+	if got := a.values[key]; got.position != again.position || got.velocity != again.velocity || got.to != again.to {
+		t.Fatal("re-configuring moved a value")
+	}
+}
+
+func TestSpringConfigureReducedMotionParksLoops(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.TargetLoop("g", animGradient, -1, 1, 2*time.Second, ui.GradientLoop)
+	a.TargetSweep("s", animSweep, 2*time.Second)
+	a.TargetSweep("e", animEffect, 2*time.Second)
+	a.TargetCycle("c", 2*time.Second, 4, 7)
+	a.Target("r", animRipple, 1)
+	a.Target("p", animVisible, 1)
+	clock.add(50 * time.Millisecond)
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion}, true)
+	if got := a.Value("g", animGradient); got != 0 {
+		t.Fatalf("gradient parked at %g, want its midpoint 0", got)
+	}
+	if got := a.Value("s", animSweep); got != 0 {
+		t.Fatalf("sweep parked at %g, want 0", got)
+	}
+	if got := a.Value("e", animEffect); got != 0 {
+		t.Fatalf("effect parked at %g, want 0", got)
+	}
+	if got := a.Value("c", animSprite); got != 0 {
+		t.Fatalf("sprite parked at %g, want 0", got)
+	}
+	if got := a.Value("r", animRipple); got != 1 {
+		t.Fatalf("ripple parked at %g, want its target", got)
+	}
+	clock.add(reducedPanelCap)
+	if !a.Settled() {
+		t.Fatal("parked surfaces still requested frames")
+	}
+	// Disabling reduced motion changes nothing settled, and motion resumes on
+	// the next genuine target change.
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion}, false)
+	if !a.Settled() {
+		t.Fatal("disabling reduced motion resurrected settled work")
+	}
+	a.Target("h", animHover, 1)
+	if a.Settled() {
+		t.Fatal("motion did not resume on a genuine target change")
+	}
+}

@@ -13,7 +13,9 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -1930,5 +1932,36 @@ func TestSettingsDraftEditsStayOffTheLiveConfig(t *testing.T) {
 	}
 	if liveHeight != 36 {
 		t.Fatalf("live height = %d, want 36: the draft edit reached the live config", liveHeight)
+	}
+}
+
+// A palette reload carries the resolved motion settings onto a running panel
+// animation: the animator is kept, reduced motion settles what was in flight,
+// and the crossfade still restarts from what is rendering.
+func TestPanelRethemeAppliesMotion(t *testing.T) {
+	t.Parallel()
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	h.anim = newAnimator(nil, false, h.theme.Motion)
+	anim := h.anim
+	h.anim.Target(panelSurfaceID(h.id), animVisible, 1)
+
+	next := DefaultTheme()
+	next.Motion = render.MotionSet{
+		Durations: theme.BaseMotion.AtSpeed(400),
+		Reduced:   true,
+	}
+	h.retheme(next)
+
+	if h.anim != anim {
+		t.Fatal("retheme replaced the panel animator")
+	}
+	if !h.anim.reduced {
+		t.Fatal("reduced motion did not reach the panel animator")
+	}
+	if h.themeFrom == (Theme{}) {
+		t.Fatal("retheme lost the crossfade origin")
+	}
+	if !h.anim.has(panelSurfaceID(h.id), animTheme) {
+		t.Fatal("retheme did not restart the palette blend")
 	}
 }

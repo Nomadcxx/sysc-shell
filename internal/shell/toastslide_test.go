@@ -429,3 +429,28 @@ func TestToastStackRetiresAllGeometry(t *testing.T) {
 		t.Fatal("reduced motion created geometry state")
 	}
 }
+
+// The retheme pass reaches the toast animator: the table and flag move and the
+// animator itself survives.
+func TestToastRethemeAppliesMotion(t *testing.T) {
+	r, h, _ := wiredToast(t)
+	now := time.Unix(100, 0)
+	h.anim = newAnimator(func() time.Time { return now }, false, DefaultTheme().Motion)
+	anim := h.anim
+	h.anim.Target(toastSlideKey("eDP-1", 1), animStackY, 100)
+
+	r.mu.Lock()
+	r.cfg.Accessibility.ReducedMotion = true
+	h.restyleLocked()
+	r.mu.Unlock()
+
+	if h.anim != anim {
+		t.Fatal("restyle replaced the toast animator")
+	}
+	if !h.anim.reduced {
+		t.Fatal("reduced motion did not reach the toast animator")
+	}
+	if got := h.anim.Value(toastSlideKey("eDP-1", 1), animStackY); got != 100 {
+		t.Fatalf("geometry did not settle under reduced motion: %g", got)
+	}
+}

@@ -156,7 +156,15 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 
 // restyleLocked rebinds the cached layout style to the published palette and
 // relayouts every output. Called with Registry.mu held, from the retheme pass.
-func (h *toastHost) restyleLocked() { h.recompute() }
+func (h *toastHost) restyleLocked() {
+	if h.anim != nil {
+		// The animator's table follows the published theme, so a speed or
+		// reduced-motion change reaches open toasts instead of waiting for the
+		// next surface.
+		h.anim.Configure(h.r.panelTheme().Motion, h.r.cfg.Accessibility.ReducedMotion)
+	}
+	h.recompute()
+}
 
 func (h *toastHost) harness() *hostHarness { return h.harnessRef }
 

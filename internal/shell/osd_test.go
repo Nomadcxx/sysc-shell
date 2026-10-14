@@ -9,7 +9,9 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -343,5 +345,36 @@ func TestOsdSizesAgainstTheLogicalOutput(t *testing.T) {
 	}
 	if spec.InputRects == nil || len(spec.InputRects) != 0 {
 		t.Fatalf("input rects = %v, want none so bar widgets keep their clicks", spec.InputRects)
+	}
+}
+
+// A theme change reaches the OSD animator even while the OSD is hidden, and a
+// running reveal keeps the capped fade under reduced motion.
+func TestOSDRethemeAppliesMotion(t *testing.T) {
+	t.Parallel()
+	m := &OSDManager{theme: DefaultTheme()}
+	m.anim = newAnimator(nil, false, m.theme.Motion)
+	anim := m.anim
+	m.anim.Target("osd:1", animVisible, 1)
+
+	next := DefaultTheme()
+	next.Motion = render.MotionSet{
+		Durations: theme.BaseMotion.AtSpeed(25),
+		Reduced:   true,
+	}
+	m.retheme(next)
+
+	if m.anim != anim {
+		t.Fatal("retheme replaced the OSD animator")
+	}
+	if !m.anim.reduced {
+		t.Fatal("reduced motion did not reach the OSD animator")
+	}
+	v := m.anim.values[animKey{node: "osd:1", channel: animVisible}]
+	if v.spring != nil {
+		t.Fatal("reduced motion kept a spring on OSD visibility")
+	}
+	if v.dur > reducedPanelCap {
+		t.Fatalf("OSD fade = %v, want the reduced cap", v.dur)
 	}
 }
