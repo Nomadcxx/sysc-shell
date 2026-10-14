@@ -3,8 +3,8 @@ module github.com/Nomadcxx/sysc-shell
 go 1.26.4
 
 require (
-	github.com/Nomadcxx/sysc-clipboard v0.1.2-0.20261001114242-d1798d6838d7
-	github.com/Nomadcxx/sysc-wayland v0.3.2-0.20261005032310-d48237c38013
+	github.com/Nomadcxx/sysc-clipboard v0.1.3
+	github.com/Nomadcxx/sysc-wayland v0.3.2
 	github.com/go-freedesktop/desktopentry v0.1.0
 	github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d
 	golang.org/x/image v0.44.0
@@ -12,11 +12,11 @@ require (
 )
 
 require (
-	github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf
-	github.com/Nomadcxx/sysc-metrics v0.7.1
-	github.com/Nomadcxx/sysc-notify v0.1.0-rc.4.0.20260928141411-254ec5732728
-	github.com/Nomadcxx/sysc-terminal v0.1.1-0.20261008172631-0157cbfe0ea0
-	github.com/Nomadcxx/sysc-tray v0.1.1
+	github.com/Nomadcxx/sysc-launch v0.2.1
+	github.com/Nomadcxx/sysc-metrics v0.7.2
+	github.com/Nomadcxx/sysc-notify v0.1.1
+	github.com/Nomadcxx/sysc-terminal v0.2.0
+	github.com/Nomadcxx/sysc-tray v0.1.2
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
 	github.com/rivo/uniseg v0.4.7
@@ -26,7 +26,7 @@ require (
 )
 
 require (
-	github.com/Nomadcxx/sysc-Go v1.0.6-0.20261008172414-1ff1f6c3c8d0 // indirect
+	github.com/Nomadcxx/sysc-Go v1.0.7 // indirect
 	github.com/charmbracelet/colorprofile v0.3.2 // indirect
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.3.0.20250917201909-41ff0bf215ea // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20250915111650-81d4262876ef // indirect

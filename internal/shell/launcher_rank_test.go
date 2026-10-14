@@ -97,16 +97,20 @@ func TestLauncherRankTieBreaksDeterministically(t *testing.T) {
 	}
 }
 
-// launcherRank is a copy of sysc-launch's own ranker with the browse cap
-// removed. This pins the copy against the original: any drift in field
-// weighting, boost cap, or tie-break shows up here, including drift the
-// library introduces under a version bump.
+// Application rows must match the library's scores and ordering up to the
+// shell's search cap. Category and terminal entries guard version bump drift.
 func TestLauncherRankMatchesLibraryForSearches(t *testing.T) {
 	// The library and shell guard fzf's package-global Init with separate
 	// sync.Once values. Keep their parity check ahead of parallel rank tests.
 	entries := append(launcherTestEntries(), alphabetEntries(120)...)
-	for _, query := range []string{"fi", "fox", "term", "e", "entry", "zzz", "Files"} {
+	entries = append(entries,
+		launcher.Entry{ID: "gimp.desktop", Name: "Gimp", Categories: []string{"Graphics"}},
+		launcher.Entry{ID: "editor.desktop", Name: "Graphics Editor"},
+		launcher.Entry{ID: "htop.desktop", Name: "Htop", Argv: []string{"/usr/bin/kitty", "-e", "htop"}, ExecArgv: []string{"htop"}, Terminal: true},
+	)
+	for _, query := range []string{"Graphics", "kitty", "usr", "htop", "fi", "fox", "term", "e", "entry", "zzz", "Files"} {
 		want := rankViaService(t, entries, query, nil)
+		want = want[:min(len(want), launcherSearchLimit)]
 		// The library's rank produces no desktop-action rows; compare
 		// application rows only.
 		var got []launcher.Result

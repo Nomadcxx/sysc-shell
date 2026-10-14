@@ -10,18 +10,9 @@ import (
 	"github.com/junegunn/fzf/src/util"
 )
 
-// The launcher has two modes wearing one code path. A non-empty query is a
-// *search*: the fuzzy scores are meaningful, they separate the entries, and
-// past the first screenful the tail is noise -- capping it is right. An empty
-// query is a *browse*: every entry scores 0, the sort collapses to
-// alphabetical, and a cap silently amputates the list at a letter. sysc-launch
-// caps both, so browsing 482 desktop entries showed 50 and stopped in the E's.
-//
-// launcherRank is injected as launcher.ServiceConfig.Rank to cap the search
-// and leave the browse whole. Everything else -- the field weighting, the
-// boost cap, the tie-break chain -- is copied from sysc-launch's own rank so
-// search order does not drift between the two. TestLauncherRankMatchesLibrary
-// pins that parity against the library itself.
+// launcherRank keeps the library's application scoring and ordering, adds
+// desktop actions for searches, and caps search results at 50. Browse keeps
+// every application. TestLauncherRankMatchesLibraryForSearches guards parity.
 const (
 	launcherSearchLimit   = 50
 	launcherUsageBoostCap = 25
@@ -96,12 +87,17 @@ func launcherEntryScore(entry launcher.Entry, query string, slab *util.Slab) (in
 	if query == "" {
 		return 0, true
 	}
+	exec := entry.ExecArgv
+	if len(exec) == 0 {
+		exec = entry.Argv
+	}
 	fields := [...]string{
 		entry.Name,
 		entry.GenericName,
 		strings.Join(entry.Keywords, " "),
-		strings.Join(entry.Argv, " "),
+		strings.Join(exec, " "),
 		entry.Comment,
+		strings.Join(entry.Categories, " "),
 	}
 	best, matched := 0, false
 	for i, field := range fields {
