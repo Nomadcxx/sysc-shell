@@ -1851,3 +1851,108 @@ func TestAConfigureAtANewScaleRebuildsTheWallpaperPicker(t *testing.T) {
 		t.Fatalf("picker tree built at %d after a configure at 150", h.wallpaperTreeScale)
 	}
 }
+
+// A scheme pinned from the picker has to outlive the process, or the choice
+// looks like it was never made: config.json, the in-memory config and the
+// reload from disk all have to name the same palette.
+func TestPickerPaletteChoicePersistsAcrossAReload(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "wallpaper"
+	path := t.TempDir() + "/config.json"
+	if err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reloads := make(chan struct{}, 1)
+	reg.BindPersist(path, reloads)
+
+	if err := reg.setPalette("gruvbox"); err != nil {
+		t.Fatalf("setPalette: %v", err)
+	}
+	select {
+	case <-reloads:
+	default:
+		t.Fatal("pinning a scheme did not request a config reload")
+	}
+
+	saved, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ThemeGen.Source != "palette" || saved.ThemeGen.Seed != "gruvbox" {
+		t.Fatalf("config on disk = %s/%s, want palette/gruvbox",
+			saved.ThemeGen.Source, saved.ThemeGen.Seed)
+	}
+
+	// The reload the write asked for is what a restart does too.
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	reg.cfg = reloaded
+	live := reg.cfg.ThemeGen
+	reg.mu.Unlock()
+	if live.Source != "palette" || live.Seed != "gruvbox" {
+		t.Fatalf("after reload = %s/%s, want palette/gruvbox", live.Source, live.Seed)
+	}
+}
+
+// Auto is the other end of the same dropdown. It has to persist too, and it
+// has to leave the source on wallpaper with the image the running service
+// already applied rather than the scheme that was pinned a moment ago.
+func TestPickerAutoPersistsTheWallpaperSource(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.ThemeGen.Source, cfg.ThemeGen.Seed = "palette", "gruvbox"
+	path := t.TempDir() + "/config.json"
+	if err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.BindPersist(path, nil)
+
+	// What the last wallpaper apply put in memory, which setWallpaperSeed does
+	// without writing.
+	reg.mu.Lock()
+	reg.cfg.ThemeGen.Seed = "/tmp/applied.png"
+	reg.mu.Unlock()
+
+	if err := reg.setPalette("auto"); err != nil {
+		t.Fatalf("setPalette: %v", err)
+	}
+	saved, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ThemeGen.Source != "wallpaper" || saved.ThemeGen.Seed != "/tmp/applied.png" {
+		t.Fatalf("config on disk = %s/%s, want wallpaper//tmp/applied.png",
+			saved.ThemeGen.Source, saved.ThemeGen.Seed)
+	}
+}
+
+// A config that cannot be written must not repaint an unsaved palette.
+func TestPickerPaletteKeepsTheOldPaletteWhenTheWriteFails(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.BindPersist(t.TempDir(), nil) // A directory cannot be replaced by the config file.
+
+	if err := reg.setPalette("gruvbox"); err == nil {
+		t.Fatal("setPalette to an unwritable config reported success")
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.cfg.ThemeGen.Source != cfg.ThemeGen.Source || reg.cfg.ThemeGen.Seed != cfg.ThemeGen.Seed {
+		t.Fatalf("palette = %s/%s, want the unchanged %s/%s",
+			reg.cfg.ThemeGen.Source, reg.cfg.ThemeGen.Seed,
+			cfg.ThemeGen.Source, cfg.ThemeGen.Seed)
+	}
+}

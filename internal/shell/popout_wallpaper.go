@@ -16,6 +16,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -1704,7 +1705,7 @@ func (r *Registry) connectorsLocked() []string {
 // It writes the two fields the appearance.palette setting writes, so the
 // picker and the settings panel are two ways to the same state rather than
 // two competing ones.
-func (r *Registry) setPalette(name string) {
+func (r *Registry) setPalette(name string) error {
 	r.mu.Lock()
 	source, seed := "palette", name
 	if name == "auto" {
@@ -1714,14 +1715,33 @@ func (r *Registry) setPalette(name string) {
 	}
 	if r.cfg.ThemeGen.Source == source && r.cfg.ThemeGen.Seed == seed {
 		r.mu.Unlock()
-		return
+		return nil
 	}
-	r.cfg.ThemeGen.Source = source
-	r.cfg.ThemeGen.Seed = seed
-	cfg := r.cfg
 	r.mu.Unlock()
 
+	// A pin that is not written down is lost to the next reload, which is the
+	// next settings save or restart. The write goes through the same entries
+	// the Appearance page writes, so the picker cannot write a state Settings
+	// would reject. Auto writes the source and the seed the running wallpaper
+	// already supplied, which is what Settings writes from a live draft; a
+	// later apply replaces the seed and rewrites nothing.
+	cfg, err := r.updateConfig(func(next *config.Config, registryFor func(config.Config) *settings.Registry) error {
+		return themeApplyOverrides(registryFor, next, "", source, seed)
+	})
+	if err != nil {
+		// The palette of record no longer matches what is asked for, which is
+		// the failure r.themeErr already reports.
+		r.mu.Lock()
+		r.themeErr = err.Error()
+		r.mu.Unlock()
+		return err
+	}
+
+	r.mu.Lock()
+	r.cfg = cfg
+	r.mu.Unlock()
 	r.republishTheme(cfg)
+	return nil
 }
 
 // wallpaperSeedLocked is the seed the running service last derived, so Auto
@@ -1909,7 +1929,8 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	case strings.HasPrefix(n.Action, "wallpaper-palette:"):
 		h.wallpaperMenu = ""
-		r.setPalette(strings.TrimPrefix(n.Action, "wallpaper-palette:"))
+		// A failed write records r.themeErr, which the picker's banners show.
+		_ = r.setPalette(strings.TrimPrefix(n.Action, "wallpaper-palette:"))
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "wallpaper-up":
