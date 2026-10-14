@@ -1310,7 +1310,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		}
 		h.set = r.settingsForLocked(r.cfg)
 		r.refreshPalettesAsync(h)
-		h.draft = r.cfg
+		h.draft = r.cfg.Clone()
 		h.section = "Bar"
 		h.search = ui.NewField("")
 		h.menus = map[string]*Menu{}
@@ -1318,10 +1318,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	if id == PanelOnboarding {
 		h.set = r.settingsForLocked(r.cfg)
-		h.draft = r.cfg
+		h.draft = r.cfg.Clone()
 		if r.onboardingResume {
 			h.onbPage = r.onboardingPage
-			h.draft = r.onboardingDraft
+			h.draft = r.onboardingDraft.Clone()
 			h.set = r.settingsForLocked(h.draft)
 			h.errLabel = r.onboardingError
 		}
@@ -1348,7 +1348,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	if id == PanelTerminalArt {
 		h.set = r.settingsForLocked(r.cfg)
-		h.draft = r.cfg
+		h.draft = r.cfg.Clone()
 		h.wallpaperOutput = wallpaper.AllOutputs
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()

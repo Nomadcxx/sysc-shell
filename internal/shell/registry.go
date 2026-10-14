@@ -2096,7 +2096,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// depend on another setting.
 				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
 					if h := r.panelHosts[id]; h != nil {
-						h.draft = cfg
+						h.draft = cfg.Clone()
 						h.set = r.settingsForLocked(cfg)
 					}
 				}

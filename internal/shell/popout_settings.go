@@ -1676,7 +1676,7 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 		if current := r.panelHosts[PanelSettings]; current != nil {
 			h = current
 		} else {
-			h.draft = r.cfg
+			h.draft = r.cfg.Clone()
 		}
 		r.idleApplying = false
 		if service != nil {
@@ -1705,7 +1705,7 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 					if current := r.panelHosts[PanelSettings]; current != nil {
 						h = current
 					} else {
-						h.draft = r.cfg
+						h.draft = r.cfg.Clone()
 					}
 					r.idleApplying = false
 					r.wallsSnapshot = service.Snapshot()
