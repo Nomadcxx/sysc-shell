@@ -1895,3 +1895,39 @@ func TestFloatingSettingsUsesStableOutputAnchor(t *testing.T) {
 		})
 	}
 }
+
+// A per-output edit lands on the panel's draft, which is a copy of the live
+// configuration; before gh #205 it aliased r.cfg, so a discarded edit stayed
+// behind and the reload commit never saw the geometry change.
+func TestSettingsDraftEditsStayOffTheLiveConfig(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: config.Bar{Height: 36}}}
+	if err := r.OpenPanel(PanelSettings, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelSettings]
+	if h == nil {
+		r.mu.Unlock()
+		t.Fatal("no settings panel")
+	}
+	e := h.set.ByPath("outputs.DP-1.height")
+	if e == nil {
+		r.mu.Unlock()
+		t.Fatal("no outputs.DP-1.height entry")
+	}
+	if err := e.Set(&h.draft, "64"); err != nil {
+		r.mu.Unlock()
+		t.Fatal(err)
+	}
+	draftHeight := h.draft.Outputs[0].Bar.Height
+	liveHeight := r.cfg.Outputs[0].Bar.Height
+	r.mu.Unlock()
+
+	if draftHeight != 64 {
+		t.Fatalf("draft height = %d, want 64", draftHeight)
+	}
+	if liveHeight != 36 {
+		t.Fatalf("live height = %d, want 36: the draft edit reached the live config", liveHeight)
+	}
+}

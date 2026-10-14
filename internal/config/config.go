@@ -7,6 +7,8 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -125,12 +127,83 @@ func cloneValues(in map[string]map[string]any) map[string]map[string]any {
 	}
 	out := make(map[string]map[string]any, len(in))
 	for k, v := range in {
-		inner := make(map[string]any, len(v))
-		for ik, iv := range v {
-			inner[ik] = iv
+		var inner map[string]any
+		if v != nil {
+			inner = make(map[string]any, len(v))
+			for ik, iv := range v {
+				inner[ik] = clonePluginSettingValue(iv)
+			}
 		}
 		out[k] = inner
 	}
+	return out
+}
+
+// clonePluginSettingValue copies JSON objects and arrays nested inside opaque
+// plugin settings. Their leaf values are immutable JSON scalars.
+func clonePluginSettingValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		if v == nil {
+			return v
+		}
+		out := make(map[string]any, len(v))
+		for key, value := range v {
+			out[key] = clonePluginSettingValue(value)
+		}
+		return out
+	case []any:
+		if v == nil {
+			return v
+		}
+		out := make([]any, len(v))
+		for i, value := range v {
+			out[i] = clonePluginSettingValue(value)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// Clone copies the bar's lanes, each group's members, and the reserve pointer,
+// so a draft edit cannot reach the live bar through a shared backing array.
+func (b Bar) Clone() Bar {
+	out := b
+	if b.Left != nil {
+		out.Left = cloneLane(b.Left)
+	}
+	if b.Center != nil {
+		out.Center = cloneLane(b.Center)
+	}
+	if b.Right != nil {
+		out.Right = cloneLane(b.Right)
+	}
+	if b.Reserve != nil {
+		reserve := *b.Reserve
+		out.Reserve = &reserve
+	}
+	return out
+}
+
+// Clone is a deep copy of every mutable field. Settings panels hold a draft
+// they may discard, so an alias into the live value would let a discarded
+// draft leave changes behind. TestCloneCopiesEveryMutableField walks the
+// struct and fails when a new slice, map, or pointer field is added here
+// uncloned (gh #205).
+func (c Config) Clone() Config {
+	out := c
+	out.Bar = c.Bar.Clone()
+	out.Outputs = slices.Clone(c.Outputs)
+	for i := range out.Outputs {
+		out.Outputs[i].Bar = out.Outputs[i].Bar.Clone()
+	}
+	out.Tray.Hidden = slices.Clone(c.Tray.Hidden)
+	out.Tray.Pinned = slices.Clone(c.Tray.Pinned)
+	out.Tray.Order = slices.Clone(c.Tray.Order)
+	out.Media.Blacklist = slices.Clone(c.Media.Blacklist)
+	out.Templates = maps.Clone(c.Templates)
+	out.Plugins = c.Plugins.Clone()
 	return out
 }
 
