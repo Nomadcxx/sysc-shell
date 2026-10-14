@@ -124,7 +124,9 @@ func (h *pluginHost) openFloatingSurface(ctx context.Context, pluginID string, p
 		// placed against it.
 		rect:  ui.Rect{X: state.X, Y: state.Y, W: state.Width, H: state.Height},
 		place: Placement{Panel: ui.Rect{W: state.Width, H: state.Height}, Output: ui.Rect{W: outputW, H: outputH}, CenterY: true},
-		theme: theme, fontFamily: font,
+		// Share the registry catalog; a nil here makes the surface rescan
+		// the whole system font index for a private map.
+		theme: theme, fontFamily: font, fontCatalog: &h.r.fontCatalog,
 	}
 	surface.panel.root = surface.loadingTree()
 	surface.panel.focus = ui.Focusables(surface.panel.root)
