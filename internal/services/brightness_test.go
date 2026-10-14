@@ -660,6 +660,20 @@ func fixtureSysfsIn(t *testing.T, root, name string, cur, max int) {
 	}
 }
 
+// fixtureSysfsAtomicIn reveals a fully populated device with one rename. The
+// watcher then observes a single IN_MOVED_TO, so the poll it wakes cannot
+// catch the device half-created. The mkdir-then-write form can: the root watch
+// fires on the directory alone, a poll that beats the writes drops the device,
+// and no further event ever re-presents it.
+func fixtureSysfsAtomicIn(t *testing.T, root, name string, cur, max int) {
+	t.Helper()
+	staging := t.TempDir()
+	fixtureSysfsIn(t, staging, name, cur, max)
+	if err := os.Rename(filepath.Join(staging, name), filepath.Join(root, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func fakeBrightnessctl(t *testing.T) *fakeCmd {
 	t.Helper()
 	dir := t.TempDir()
@@ -706,7 +720,7 @@ func TestBrightnessInotifyPoke(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	fixtureSysfsIn(t, root, "second", 500, 1000)
+	fixtureSysfsAtomicIn(t, root, "second", 500, 1000)
 	// The ticker is an hour away; only an inotify poke can make the poll
 	// loop notice the new backlight.
 	deadline = time.Now().Add(20 * time.Second) // slack for a loaded -race runner; the poke itself is immediate
