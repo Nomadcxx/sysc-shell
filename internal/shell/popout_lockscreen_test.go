@@ -228,6 +228,7 @@ func TestLockSettingsExplainsHeldBackground(t *testing.T) {
 	r, h := openLockSettings(t)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.backgroundHeld = true
 	r.backgroundError = "the last lock session did not finish"
 	r.rebuildPanel(h)
 	node := findNode(h.root, func(n *ui.Node) bool {
@@ -235,6 +236,25 @@ func TestLockSettingsExplainsHeldBackground(t *testing.T) {
 	})
 	if node == nil {
 		t.Fatal("held background was not explained in the Lock Screen section")
+	}
+}
+
+// Once the hold lifts the notice must go, even though the reason string is only
+// cleared on the lease-restore path. The Lock Screen page shares the Wallpaper
+// page's gate (heldBackgroundNotice) rather than reading backgroundError on its
+// own, so a released background can never keep claiming to be held (#209).
+func TestLockSettingsSilencesHeldBackgroundAfterRelease(t *testing.T) {
+	r, h := openLockSettings(t)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.backgroundHeld = false
+	r.backgroundError = "the lock session service is not reporting; background is held until it does"
+	r.rebuildPanel(h)
+	node := findNode(h.root, func(n *ui.Node) bool {
+		return n.Tone == ui.ToneError && strings.HasPrefix(n.Text, "Wallpaper and screensaver are held:")
+	})
+	if node != nil {
+		t.Fatalf("released background still reported held: %q", node.Text)
 	}
 }
 

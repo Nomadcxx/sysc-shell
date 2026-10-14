@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -94,13 +93,7 @@ func fakeKitty(t *testing.T) chan os.Signal {
 	signal.Notify(got, syscall.SIGUSR1)
 	t.Cleanup(func() { signal.Stop(got) })
 	root := t.TempDir()
-	dir := filepath.Join(root, strconv.Itoa(os.Getpid()))
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "comm"), []byte("kitty\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeProc(t, root, os.Getpid(), "kitty", os.Getuid())
 	prev := procRoot
 	procRoot = root
 	t.Cleanup(func() { procRoot = prev })

@@ -147,7 +147,7 @@ func (r *Registry) coordinateBackground() {
 		r.mu.Lock()
 		current := r.currentLockStateLocked()
 		if lockStateAllowsBackground(current) && r.backgroundHeld {
-			r.backgroundHeld = false
+			r.backgroundHeld, r.backgroundError = false, ""
 			r.wallpaperStartLocked()
 		}
 		r.mu.Unlock()

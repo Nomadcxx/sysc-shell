@@ -5,7 +5,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -144,13 +143,7 @@ func TestApplyEnabledSignalsGhosttyWithUSR2(t *testing.T) {
 	signal.Notify(got, syscall.SIGUSR2)
 	t.Cleanup(func() { signal.Stop(got) })
 	root := t.TempDir()
-	dir := filepath.Join(root, strconv.Itoa(os.Getpid()))
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "comm"), []byte("ghostty\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeProc(t, root, os.Getpid(), "ghostty", os.Getuid())
 	prev := procRoot
 	procRoot = root
 	t.Cleanup(func() { procRoot = prev })
