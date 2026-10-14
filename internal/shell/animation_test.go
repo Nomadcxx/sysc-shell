@@ -1321,3 +1321,60 @@ func TestSpringConfigureReducedMotionParksLoops(t *testing.T) {
 		t.Fatal("motion did not resume on a genuine target change")
 	}
 }
+
+// The spring predicate drives the real frame loop: it publishes the settling
+// frame at the exact endpoint and then retires, and a stop before the first
+// wake publishes nothing. No scheduler change was needed for springs.
+func TestSpringSchedulerPublishesFinalFrameAndStops(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	published, exact := 0, false
+	go func() {
+		defer close(done)
+		animateSurface(stop, func() bool { return a.Settled() }, func() {
+			published++
+			if a.Value("h", animHover) == 1 {
+				exact = true
+			}
+			// Advance the animator clock from the loop itself, so the spring
+			// settles in bounded time under the real ticker.
+			clock.add(50 * time.Millisecond)
+		}, func() time.Duration { return time.Millisecond })
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("spring frame loop did not retire")
+	}
+	if !exact {
+		t.Fatal("the settling frame did not publish the exact endpoint")
+	}
+	if published < 2 {
+		t.Fatalf("published %d frames, want at least the settling frame after the first", published)
+	}
+	count := published
+
+	// The loop is done: nothing publishes after it.
+	time.Sleep(30 * time.Millisecond)
+	if published != count {
+		t.Fatal("a settled spring kept requesting frames")
+	}
+
+	// A stop before the first wake publishes nothing.
+	stopped := make(chan struct{})
+	early := make(chan struct{})
+	close(stopped)
+	go func() {
+		animateSurface(stopped, func() bool { return false }, func() { t.Error("published after stop") },
+			func() time.Duration { return time.Millisecond })
+		close(early)
+	}()
+	select {
+	case <-early:
+	case <-time.After(2 * time.Second):
+		t.Fatal("animateSurface ignored an immediate stop")
+	}
+}
