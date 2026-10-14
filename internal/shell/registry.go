@@ -253,8 +253,6 @@ type Registry struct {
 	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
 	// sends niri.Action on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
-	// killPID SIGTERMs one client pid. Tests replace it; nil uses os.FindProcess.
-	killPID func(int) error
 	// signalProcess validates PID identity and delivers TERM/KILL off Registry.mu.
 	signalProcess func(services.ProcessIdentity, syscall.Signal) error
 
@@ -2594,8 +2592,12 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.tryOpenOnboardingLocked(0)
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
-	if h := r.runningMenu; h != nil && h.open_ && !runningSlotPresent(r.running, h.slot.Key) {
-		h.closeLocked()
+	if h := r.runningMenu; h != nil && h.open_ {
+		if slot, ok := runningSlotForKey(r.running, h.slot.Key); ok {
+			h.slot = slot
+		} else {
+			h.closeLocked()
+		}
 	}
 	changed := r.applyRunningIconsLocked()
 	layoutView, showLayout := layoutOSD(r.layouts, s.Layouts, r.layoutsSeen)

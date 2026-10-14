@@ -28,7 +28,7 @@ func TestRunningAppsClick(t *testing.T) {
 		return nil
 	}
 	reg.runningIndex = []runningAppEntry{{
-		ID: "steam",
+		ID: "com.valvesoftware.Steam", StartupWMClass: "steam",
 		Actions: []runningAppAction{
 			{ID: "Store", Name: "Store", Exec: "steam steam://store"},
 			{ID: "Library", Name: "Library", Exec: "steam steam://open/games"},
@@ -41,10 +41,11 @@ func TestRunningAppsClick(t *testing.T) {
 	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
 		{ID: 80, AppID: "steam", Focused: true, Pid: 4242},
 		{ID: 81, AppID: "steam", Pid: 4242},
+		{ID: 82, AppID: "steam_app_123", Pid: 4343},
 	}})
 
 	bar := reg.bars[1]
-	if !bar.onAction("running-app:steam", buttonLeft) {
+	if !bar.onAction("running-app:com.valvesoftware.steam", buttonLeft) {
 		t.Fatal("left click ignored")
 	}
 	if len(sent) != 1 {
@@ -54,7 +55,7 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatalf("left click sent %+v, want FocusWindow 81 (cycle)", sent[0])
 	}
 
-	if !bar.onAction("running-app:steam", buttonRight) {
+	if !bar.onAction("running-app:com.valvesoftware.steam", buttonRight) {
 		t.Fatal("right click ignored")
 	}
 	host := reg.runningMenu
@@ -83,24 +84,40 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatalf("spawn argv = %v, want niri msg action spawn -- …", spawned[0])
 	}
 
-	var killed []int
-	reg.killPID = func(pid int) error {
-		killed = append(killed, pid)
-		return nil
-	}
-
-	bar.onAction("running-app:steam", buttonRight)
+	bar.onAction("running-app:com.valvesoftware.steam", buttonRight)
 	reg.runningMenu.choose(len(reg.runningMenu.rows) - 1)
-	if len(killed) != 1 || killed[0] != 4242 {
-		t.Fatalf("Close all killed %v, want SIGTERM of pid 4242 once", killed)
-	}
+	var closed []uint64
 	for _, body := range sent[1:] {
-		if _, ok := body.(niri.CloseWindow); ok {
-			t.Fatalf("Close all still sent CloseWindow %+v; hide-to-tray is not quit", body)
+		if close, ok := body.(niri.CloseWindow); ok {
+			closed = append(closed, close.ID)
 		}
 	}
+	if len(closed) != 2 || closed[0] != 80 || closed[1] != 81 {
+		t.Fatalf("Close all window IDs = %v, want [80 81] and no Steam game window", closed)
+	}
 
-	bar.onAction("running-app:steam", buttonRight)
+	bar.onAction("running-app:com.valvesoftware.steam", buttonRight)
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
+		{ID: 80, AppID: "steam", Focused: true},
+		{ID: 81, AppID: "steam"},
+		{ID: 82, AppID: "steam_app_123"},
+		{ID: 83, AppID: "steam"},
+	}})
+	if reg.runningMenu == nil || !reg.runningMenu.open_ {
+		t.Fatal("menu closed when another Steam window opened")
+	}
+	reg.runningMenu.choose(len(reg.runningMenu.rows) - 1)
+	var updatedClosed []uint64
+	for _, body := range sent[3:] {
+		if close, ok := body.(niri.CloseWindow); ok {
+			updatedClosed = append(updatedClosed, close.ID)
+		}
+	}
+	if len(updatedClosed) != 3 || updatedClosed[0] != 80 || updatedClosed[1] != 81 || updatedClosed[2] != 83 {
+		t.Fatalf("Close all after snapshot update = %v, want [80 81 83]", updatedClosed)
+	}
+
+	bar.onAction("running-app:com.valvesoftware.steam", buttonRight)
 	reg.UpdateNiri(niri.Snapshot{})
 	if reg.runningMenu != nil && reg.runningMenu.open_ {
 		t.Fatal("menu stayed open after the slot disappeared")
