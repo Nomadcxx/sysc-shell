@@ -1,6 +1,11 @@
 package buildinfo
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestLineRendersEveryBuildShape(t *testing.T) {
 	origVersion, origCommit := Version, Commit
@@ -22,5 +27,21 @@ func TestLineRendersEveryBuildShape(t *testing.T) {
 				t.Fatalf("Line() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReleaseWorkflowStampsTheStampOwner(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	for _, want := range []string{
+		"-X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Version=",
+		"-X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Commit=",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("release.yml does not stamp %q", want)
+		}
 	}
 }
