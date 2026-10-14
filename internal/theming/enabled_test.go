@@ -292,8 +292,33 @@ func TestProcOwnedByUs(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "1236"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if !procOwnedByUs(filepath.Join(root, "1236")) {
-		t.Fatal("a vanished process (no status) was dropped as foreign")
+	if procOwnedByUs(filepath.Join(root, "1236")) {
+		t.Fatal("a process with no status was treated as owned")
+	}
+}
+
+func TestProcOwnedByUsSkipsUnreadableStatus(t *testing.T) {
+	t.Parallel()
+	pidDir := filepath.Join(t.TempDir(), "1237")
+	if err := os.MkdirAll(filepath.Join(pidDir, "status"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if procOwnedByUs(pidDir) {
+		t.Fatal("process with unreadable status was treated as owned")
+	}
+}
+
+func TestProcOwnedByUsSkipsStatusWithoutUID(t *testing.T) {
+	t.Parallel()
+	pidDir := filepath.Join(t.TempDir(), "1238")
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pidDir, "status"), []byte("Name:\tkitty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if procOwnedByUs(pidDir) {
+		t.Fatal("process with no UID field was treated as owned")
 	}
 }
 
@@ -344,13 +369,7 @@ func TestApplyEnabledSignalsKitty(t *testing.T) {
 	signal.Notify(got, syscall.SIGUSR1)
 	t.Cleanup(func() { signal.Stop(got) })
 	root := t.TempDir()
-	dir := filepath.Join(root, strconv.Itoa(os.Getpid()))
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "comm"), []byte("kitty\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeProc(t, root, os.Getpid(), "kitty", os.Getuid())
 	prev := procRoot
 	procRoot = root
 	t.Cleanup(func() { procRoot = prev })

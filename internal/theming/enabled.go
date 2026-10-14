@@ -273,14 +273,12 @@ func signalComm(root, name string, sig syscall.Signal) error {
 }
 
 // procOwnedByUs reports whether the process whose directory is pidDir runs as
-// this user, by the real UID on its status "Uid:" line. A directory with no
-// readable status is treated as ours: /proc exposes status for every live
-// process, so an unreadable one is a race with a process that just vanished,
-// which signalComm tolerates as ESRCH.
+// this user, by the real UID on its status "Uid:" line. A missing or unreadable
+// status is not enough to establish ownership, so signalComm skips that PID.
 func procOwnedByUs(pidDir string) bool {
 	b, err := os.ReadFile(filepath.Join(pidDir, "status"))
 	if err != nil {
-		return true
+		return false
 	}
 	for _, line := range strings.Split(string(b), "\n") {
 		rest, found := strings.CutPrefix(line, "Uid:")
@@ -289,11 +287,11 @@ func procOwnedByUs(pidDir string) bool {
 		}
 		fields := strings.Fields(rest)
 		if len(fields) == 0 {
-			return true
+			return false
 		}
 		return fields[0] == strconv.Itoa(os.Getuid())
 	}
-	return true
+	return false
 }
 
 func signalKitty(root string) error { return signalComm(root, "kitty", syscall.SIGUSR1) }
