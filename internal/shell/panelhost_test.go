@@ -368,8 +368,9 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	}
 	// Advance the clock past the transition. The loop publishes its settling
 	// frame on the next tick and retires; drain the backlog until the surface
-	// goes quiet with no loop left standing.
-	clock.add(enter)
+	// goes quiet with no loop left standing. A spring reaches its endpoint
+	// after the token it is derived from, so the bound is twice the reveal.
+	clock.add(2 * enter)
 	settled := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !settled {

@@ -780,7 +780,11 @@ func TestOnlyClickableCapsulesAnimate(t *testing.T) {
 	// chrome the pointer can light up; only actionable pills animate.
 	p := newTestBar(t)
 	withSyntheticAction(t, p, 1920)
+	// Settlement and value resolution write back spring state, so the caller
+	// holds the bar lock here just as Render does.
+	p.mu.Lock()
 	root, _ := p.renderViewLocked()
+	p.mu.Unlock()
 
 	clickable, display := 0, 0
 	var walk func(*ui.Node)

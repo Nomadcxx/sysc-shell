@@ -21,6 +21,23 @@ func newTestAnimator(reduced bool) (*animator, *fakeClock) {
 	return newAnimator(clock.now, reduced, render.MotionSet{}), clock
 }
 
+// newMotionAnimator builds an animator with an explicit motion table for tests
+// that need a token other than the base one.
+func newMotionAnimator(motion render.MotionSet) (*animator, *fakeClock) {
+	clock := &fakeClock{t: time.Unix(0, 0)}
+	return newAnimator(clock.now, motion.Reduced, motion), clock
+}
+
+// settleSprings advances the fake clock in whole physics steps until the
+// animator reports settled, so a completion assertion does not read the token
+// as a deadline: a spring is within a thousandth of its target at about the
+// token, and reaches its exact endpoint later.
+func settleSprings(a *animator, clock *fakeClock) {
+	for i := 0; i < 4000 && !a.Settled(); i++ {
+		clock.add(springStep)
+	}
+}
+
 func TestDecorativeLoopsDoNotKeepInteractionCadence(t *testing.T) {
 	a, clock := newTestAnimator(false)
 	a.TargetLoop("wordmark", animGradient, 0, 1, time.Second, ui.GradientLoop)
@@ -190,7 +207,7 @@ func TestInteractionKeepsHoverStateThroughFadeOut(t *testing.T) {
 	if !n.State.Has(ui.StateHovered) || n.HoverProgress <= 0 {
 		t.Fatalf("hover state vanished before fading: state=%v progress=%v", n.State, n.HoverProgress)
 	}
-	clock.add(110 * time.Millisecond)
+	settleSprings(a, clock)
 	pointer.apply(root, a)
 	if n.State.Has(ui.StateHovered) || n.HoverProgress != 0 {
 		t.Fatalf("hover remained after settling: state=%v progress=%v", n.State, n.HoverProgress)
@@ -280,7 +297,7 @@ func TestAnimatorReversesFromTheRenderedValue(t *testing.T) {
 	if got := a.Value("lock", animHover); got != mid {
 		t.Errorf("reversal starts at %v, want the rendered %v", got, mid)
 	}
-	clock.add(theme.BaseMotion.Short)
+	settleSprings(a, clock)
 	if got := a.Value("lock", animHover); got != 0 {
 		t.Errorf("reversal end = %v, want 0", got)
 	}
@@ -296,9 +313,9 @@ func TestAnimatorStopsRequestingFramesWhenSettled(t *testing.T) {
 	if a.Settled() {
 		t.Error("Settled during a transition")
 	}
-	clock.add(theme.BaseMotion.Short)
+	settleSprings(a, clock)
 	if !a.Settled() {
-		t.Error("still unsettled after the transition elapsed")
+		t.Error("still unsettled after the transition settled")
 	}
 	// Re-aiming at the value it already holds must not restart the clock; an
 	// unchanged target is what keeps pointer motion from scheduling frames.
@@ -451,7 +468,7 @@ func TestPanelEntersFromItsAnchoredEdge(t *testing.T) {
 	if got := a.PanelOpacity("power"); got != 0 {
 		t.Errorf("panel starts at opacity %v, want 0", got)
 	}
-	clock.add(theme.BaseMotion.Medium)
+	settleSprings(a, clock)
 	if got := a.PanelSlide("power"); got != 0 {
 		t.Errorf("settled panel is %d px out, want 0", got)
 	}
@@ -645,7 +662,7 @@ func TestProgressGlideRetargetsFromMidFlight(t *testing.T) {
 	if got := a.Value("b", animProgress); math.Abs(got-mid) > 0.01 {
 		t.Fatalf("value after retarget = %v, want near %v", got, mid)
 	}
-	clock.add(300 * time.Millisecond)
+	settleSprings(a, clock)
 	if got := a.Value("b", animProgress); got != 0.8 {
 		t.Fatalf("settled value = %v, want exactly 0.8", got)
 	}
@@ -716,5 +733,501 @@ func TestResolveProgressMotionGlidesRetargetsAndRetires(t *testing.T) {
 		if key.channel == animProgress {
 			t.Fatalf("stale progress key %q survived the retire", key.node)
 		}
+	}
+}
+
+func TestSpringTargetPreservesVelocity(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("hover", animHover, 1)
+	// Sampled early in the flight: at this spring's stiffness the carried
+	// speed outlasts one physics step here, while a late reversal is already
+	// being decelerated by the same spring force.
+	clock.add(10 * time.Millisecond)
+	before := a.Value("hover", animHover)
+	key := animKey{node: "hover", channel: animHover}
+	oldVelocity := a.values[key].velocity
+	if oldVelocity <= 0 {
+		t.Fatalf("no forward velocity: %g", oldVelocity)
+	}
+	a.Target("hover", animHover, 0)
+	if got := a.Value("hover", animHover); got != before {
+		t.Fatalf("retarget jumped from %g to %g", before, got)
+	}
+	if got := a.values[key].velocity; got != oldVelocity {
+		t.Fatalf("retarget speed = %g, want %g", got, oldVelocity)
+	}
+	clock.add(2 * time.Millisecond)
+	_ = a.Value("hover", animHover)
+	if a.values[key].position <= before {
+		t.Fatal("reversal erased the old forward momentum")
+	}
+}
+
+func TestSpringSamplingPartitionsAgree(t *testing.T) {
+	t.Parallel()
+	// The stored value depends on how much time passed, never on how the
+	// caller chopped it: 17 ms + 31 ms must equal one 48 ms advance.
+	one, c1 := newTestAnimator(false)
+	split, c2 := newTestAnimator(false)
+	one.Target("m", animProgress, 0.8)
+	split.Target("m", animProgress, 0.8)
+	c1.add(48 * time.Millisecond)
+	_ = one.Value("m", animProgress)
+	c2.add(17 * time.Millisecond)
+	_ = split.Value("m", animProgress)
+	c2.add(31 * time.Millisecond)
+	_ = split.Value("m", animProgress)
+	key := animKey{node: "m", channel: animProgress}
+	x, y := one.values[key], split.values[key]
+	if x.position != y.position || x.velocity != y.velocity || x.remainder != y.remainder {
+		t.Fatalf("partition changed physics: %+v / %+v", x, y)
+	}
+	// Settling and reading at the same timestamp integrate nothing twice.
+	before := split.values[key]
+	_ = split.Value("m", animProgress)
+	_ = split.Settled()
+	if after := split.values[key]; after.position != before.position || after.velocity != before.velocity {
+		t.Fatalf("same-time reads integrated twice: %+v -> %+v", before, after)
+	}
+}
+
+func TestSpringClockDoesNotRewind(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	clock.add(16 * time.Millisecond)
+	first := a.Value("h", animHover)
+	key := animKey{node: "h", channel: animHover}
+	position := a.values[key].position
+	// A backwards clock neither rewinds accepted time nor moves the value.
+	clock.add(-8 * time.Millisecond)
+	if got := a.Value("h", animHover); got != first {
+		t.Fatalf("backwards clock moved the value %g -> %g", first, got)
+	}
+	// Returning to the highest accepted timestamp still integrates nothing.
+	clock.add(8 * time.Millisecond)
+	if got := a.Value("h", animHover); got != first {
+		t.Fatalf("replayed timestamp moved the value %g -> %g", first, got)
+	}
+	clock.add(springStep)
+	_ = a.Value("h", animHover)
+	if got := a.values[key].position; got == position {
+		t.Fatal("no physics step after the clock advanced")
+	}
+}
+
+func TestSpringLongGapSnaps(t *testing.T) {
+	t.Parallel()
+	// A slow token keeps the value visibly moving across the whole test, so
+	// the two gap behaviours are distinguishable.
+	slow := render.MotionSet{Durations: theme.MotionTokens{
+		Shorter: 60 * time.Second, Short: 60 * time.Second, Medium: 60 * time.Second,
+	}}
+	bounded, clock := newMotionAnimator(slow)
+	bounded.Target("h", animHover, 1)
+	clock.add(40 * time.Millisecond)
+	if got := bounded.Value("h", animHover); got <= 0 || got >= 1 {
+		t.Fatalf("value not in flight: %g", got)
+	}
+	// Under the ceiling the value integrates through bounded fixed steps.
+	clock.add(1900 * time.Millisecond)
+	if got := bounded.Value("h", animHover); got <= 0 || got >= 1 {
+		t.Fatalf("a sub-ceiling gap snapped instead of integrating: %g", got)
+	}
+	// At the ceiling it snaps to the target and clears the physics state.
+	snapped, clock2 := newMotionAnimator(slow)
+	snapped.Target("h", animHover, 1)
+	clock2.add(2 * time.Second)
+	if got := snapped.Value("h", animHover); got != 1 {
+		t.Fatalf("gap value = %g, want the target", got)
+	}
+	key := animKey{node: "h", channel: animHover}
+	if v := snapped.values[key]; v.velocity != 0 || v.remainder != 0 {
+		t.Fatalf("gap left physics state: %+v", v)
+	}
+	if !snapped.Settled() {
+		t.Fatal("gap left the animator unsettled")
+	}
+}
+
+func TestSpringNonfiniteTargetKeepsState(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	clock.add(30 * time.Millisecond)
+	_ = a.Value("h", animHover)
+	key := animKey{node: "h", channel: animHover}
+	before := a.values[key]
+	// Drain the pending wake so these assertions measure only the calls here.
+	select {
+	case <-a.wake:
+	default:
+	}
+	for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		a.Target("h", animHover, bad)
+		if len(a.wake) != 0 {
+			t.Fatalf("non-finite target %v nudged the loop", bad)
+		}
+	}
+	if got := a.values[key]; got.position != before.position || got.velocity != before.velocity || got.to != before.to {
+		t.Fatalf("non-finite target changed state: %+v -> %+v", before, got)
+	}
+	// Re-aiming at the stored target is a no-op as well.
+	a.Target("h", animHover, before.to)
+	if len(a.wake) != 0 {
+		t.Fatal("unchanged target nudged the loop")
+	}
+}
+
+func TestSpringRetargetKeepsFractionalClock(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("m", animProgress, 0.8)
+	clock.add(17 * time.Millisecond)
+	_ = a.Value("m", animProgress)
+	key := animKey{node: "m", channel: animProgress}
+	if got := a.values[key].remainder; got != time.Millisecond {
+		t.Fatalf("remainder after 17 ms = %v, want 1ms", got)
+	}
+	position, velocity := a.values[key].position, a.values[key].velocity
+	// A retarget consumes whole old-target steps, keeps the fraction, and
+	// leaves position and velocity alone.
+	a.Target("m", animProgress, 0.5)
+	if got := a.values[key]; got.remainder != time.Millisecond || got.position != position || got.velocity != velocity {
+		t.Fatalf("retarget disturbed the lattice: %+v", got)
+	}
+	clock.add(time.Millisecond)
+	_ = a.Value("m", animProgress)
+	// The finishing millisecond completes one lattice interval, and the new
+	// target is what pulls it.
+	if got := a.values[key].remainder; got != 0 {
+		t.Fatalf("remainder after the finishing millisecond = %v", got)
+	}
+	if got := a.values[key].velocity; !(got < velocity) {
+		t.Fatalf("velocity %g did not turn toward the lowered target", got)
+	}
+	settledAt := a.values[key].position
+	_ = a.Value("m", animProgress)
+	if got := a.values[key].position; got != settledAt {
+		t.Fatal("same-time read integrated again")
+	}
+}
+
+func TestSpringRestHasExactEndpoint(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	key := animKey{node: "h", channel: animHover}
+	steps := 0
+	for steps = 0; steps < 4000 && !a.Settled(); steps++ {
+		clock.add(springStep)
+	}
+	if steps >= 4000 {
+		t.Fatal("spring never settled")
+	}
+	if v := a.values[key]; v.position != 1 || v.velocity != 0 {
+		t.Fatalf("rest state = %+v, want the exact endpoint", v)
+	}
+}
+
+func TestSpringSettlesWithoutValueReads(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	key := animKey{node: "h", channel: animHover}
+	for i := 0; i < 4000 && !a.SettledExceptEffects(); i++ {
+		clock.add(springStep)
+	}
+	if !a.SettledExceptEffects() || !a.Settled() {
+		t.Fatal("settlement did not advance through the queries alone")
+	}
+	if v := a.values[key]; v.position != 1 || v.velocity != 0 {
+		t.Fatalf("query-only settlement left %+v", v)
+	}
+}
+
+func TestSpringResetAndForgetDropVelocity(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	clock.add(40 * time.Millisecond)
+	_ = a.Value("h", animHover)
+	key := animKey{node: "h", channel: animHover}
+	if a.values[key].velocity == 0 {
+		t.Fatal("no velocity to drop")
+	}
+	a.Reset("h", animHover)
+	a.Target("h", animHover, 1)
+	if got := a.values[key].position; got != 0 {
+		t.Fatalf("Reset did not start from zero: %g", got)
+	}
+	// Forget removes every channel of one key and leaves another key alone.
+	a.Target("other", animHover, 1)
+	a.Forget("h")
+	if a.has("h", animHover) || a.has("h", animProgress) {
+		t.Fatal("Forget kept a channel")
+	}
+	if !a.has("other", animHover) {
+		t.Fatal("Forget removed an unrelated key")
+	}
+}
+
+func TestSpringRetargetPaletteKeepsVelocity(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	clock.add(40 * time.Millisecond)
+	_ = a.Value("h", animHover)
+	key := animKey{node: "h", channel: animHover}
+	position, velocity := a.values[key].position, a.values[key].velocity
+	a.Retarget()
+	if got := a.values[key]; got.position != position || got.velocity != velocity {
+		t.Fatalf("palette retarget moved the spring: %+v", got)
+	}
+}
+
+func TestSpringCatalogueUsesResolvedMotion(t *testing.T) {
+	t.Parallel()
+	for _, speed := range []int{25, 100, 400} {
+		tokens := theme.BaseMotion.AtSpeed(speed)
+		for _, tc := range []struct {
+			name    string
+			channel animChannel
+			to      float64
+			token   time.Duration
+		}{
+			{"hover", animHover, 1, tokens.Short},
+			{"select", animSelect, 1, tokens.Medium},
+			{"visible rising", animVisible, 1, tokens.Medium},
+			{"visible falling", animVisible, 0, tokens.Short},
+			{"progress", animProgress, 0.8, tokens.Medium},
+		} {
+			for _, curve := range []theme.Curve{theme.CurveOutCubic, theme.CurveOutQuart} {
+				motion := render.MotionSet{Durations: tokens, Spatial: curve}
+				a, _ := newMotionAnimator(motion)
+				if got := a.duration(tc.channel, tc.to > 0); got != tc.token {
+					t.Fatalf("%s speed %d: duration = %v, want %v", tc.name, speed, got, tc.token)
+				}
+				a.Target("meter", tc.channel, tc.to)
+				spring := a.values[animKey{node: "meter", channel: tc.channel}].spring
+				if spring == nil {
+					t.Fatalf("%s speed %d curve %v is not a spring", tc.name, speed, curve)
+				}
+				factor := 1.0
+				if curve == theme.CurveOutQuart {
+					factor = 1.1
+				}
+				omega := 12 * factor / tc.token.Seconds()
+				if math.Abs(spring.Stiffness-omega*omega) > 1e-9 || math.Abs(spring.Damping-2*omega) > 1e-9 {
+					t.Fatalf("%s speed %d curve %v: k=%g c=%g, want %g/%g",
+						tc.name, speed, curve, spring.Stiffness, spring.Damping, omega*omega, 2*omega)
+				}
+				if spring.PositionEpsilon != 0.001 || math.Abs(spring.VelocityEpsilon-0.001/tc.token.Seconds()) > 1e-12 {
+					t.Fatalf("%s speed %d curve %v: epsilons %g/%g",
+						tc.name, speed, curve, spring.PositionEpsilon, spring.VelocityEpsilon)
+				}
+			}
+		}
+	}
+}
+
+func TestSpringPresetsStableAtEverySpeed(t *testing.T) {
+	t.Parallel()
+	for _, speed := range []int{25, 100, 400} {
+		for _, curve := range []theme.Curve{theme.CurveOutCubic, theme.CurveOutQuart} {
+			for _, tc := range []struct {
+				name    string
+				channel animChannel
+				to      float64
+			}{
+				{"hover", animHover, 1},
+				{"select", animSelect, 1},
+				{"visible", animVisible, 1},
+				{"progress", animProgress, 0.8},
+			} {
+				motion := render.MotionSet{Durations: theme.BaseMotion.AtSpeed(speed), Spatial: curve}
+				a, clock := newMotionAnimator(motion)
+				a.Target("t", tc.channel, tc.to)
+				token := a.duration(tc.channel, true)
+				key := animKey{node: "t", channel: tc.channel}
+				settled := false
+				steps := 0
+				for steps = 0; steps < 4000 && !settled; steps++ {
+					clock.add(springStep)
+					settled = a.Settled()
+					v := a.values[key]
+					if math.IsNaN(v.position) || math.IsInf(v.position, 0) ||
+						math.IsNaN(v.velocity) || math.IsInf(v.velocity, 0) {
+						t.Fatalf("%s speed %d curve %v: non-finite state %+v", tc.name, speed, curve, v)
+					}
+					if v.position < 0 || v.position > 1 {
+						t.Fatalf("%s speed %d curve %v: step from rest left [0,1]: %g",
+							tc.name, speed, curve, v.position)
+					}
+					if time.Duration(steps)*springStep > 10*token {
+						break
+					}
+				}
+				if !settled {
+					t.Fatalf("%s speed %d curve %v did not settle within ten tokens", tc.name, speed, curve)
+				}
+			}
+		}
+	}
+}
+
+func TestSpringPaintBoundsKeepMomentum(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	spring := a.springFor(animHover, true)
+	if spring == nil {
+		t.Fatal("hover is not a spring")
+	}
+	key := animKey{node: "h", channel: animHover}
+	// A hard shove near the target carries the stored position past 1; the
+	// painted value clamps while the stored state keeps its speed.
+	a.values[key] = animValue{from: 0.9, to: 1, spring: spring,
+		position: 0.9, velocity: 200, advanced: clock.now()}
+	clock.add(springStep)
+	if got := a.Value("h", animHover); got != 1 {
+		t.Fatalf("painted value = %g, want the clamped 1", got)
+	}
+	if got := a.values[key]; got.position <= 1 || got.velocity == 0 {
+		t.Fatalf("clamping erased the stored momentum: %+v", got)
+	}
+	// A reverse crossing below zero clamps the same way.
+	a.values[key] = animValue{from: 0.1, to: 0, spring: spring,
+		position: 0.1, velocity: -200, advanced: clock.now()}
+	clock.add(springStep)
+	if got := a.Value("h", animHover); got != 0 {
+		t.Fatalf("painted value = %g, want the clamped 0", got)
+	}
+	if got := a.values[key].position; got >= 0 {
+		t.Fatalf("clamping erased the reverse momentum: %g", got)
+	}
+}
+
+func TestPanelPaintStaysInsideTheSlideAndOpacityFrames(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	spring := a.springFor(animVisible, true)
+	if spring == nil {
+		t.Fatal("visibility is not a spring")
+	}
+	key := animKey{node: "v", channel: animVisible}
+	for _, pos := range []float64{-0.5, 0, 0.125, 0.25, 0.5, 0.75, 1, 1.5} {
+		a.values[key] = animValue{to: 1, spring: spring, position: pos, velocity: 0, advanced: clock.now()}
+		if slide := a.PanelSlide("v"); slide < 0 || slide > panelSlidePx {
+			t.Fatalf("position %g slid %d px", pos, slide)
+		}
+		if opacity := a.PanelOpacity("v"); opacity < 0 || opacity > 1 {
+			t.Fatalf("position %g painted opacity %g", pos, opacity)
+		}
+	}
+	// Every integer in the eight-pixel range is produced, rounded rather than
+	// truncated as the slide is retraced in either direction.
+	seen := map[int]bool{}
+	for i := 0; i <= panelSlidePx; i++ {
+		pos := 1 - float64(i)/float64(panelSlidePx)
+		a.values[key] = animValue{to: 1, spring: spring, position: pos, velocity: 0, advanced: clock.now()}
+		seen[a.PanelSlide("v")] = true
+	}
+	for i := 0; i <= panelSlidePx; i++ {
+		if !seen[i] {
+			t.Fatalf("slide value %d was never produced", i)
+		}
+	}
+}
+
+func TestSpringExcludedChannelsKeepTheirCurves(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	for _, tc := range []struct {
+		name    string
+		channel animChannel
+	}{
+		{"press", animPress},
+		{"theme", animTheme},
+		{"ripple", animRipple},
+	} {
+		a.Target("k", tc.channel, 1)
+		key := animKey{node: "k", channel: tc.channel}
+		if got := a.values[key].spring; got != nil {
+			t.Fatalf("%s became a spring", tc.name)
+		}
+		if got := a.values[key].dur; got != a.duration(tc.channel, true) {
+			t.Fatalf("%s lost its duration curve: %v", tc.name, got)
+		}
+		a.Forget("k")
+	}
+	// Loops and cycles keep their phase and never become springs.
+	a.TargetLoop("g", animGradient, 0, 1, 2*time.Second, ui.GradientLoop)
+	a.TargetSweep("s", animSweep, 2*time.Second)
+	a.TargetCycle("c", 2*time.Second, 4, 7)
+	start := a.values[animKey{node: "c", channel: animSprite}].start
+	clock.add(500 * time.Millisecond)
+	a.TargetCycle("c", 2*time.Second, 4, 7)
+	for _, key := range []animKey{
+		{node: "g", channel: animGradient},
+		{node: "s", channel: animSweep},
+		{node: "c", channel: animSprite},
+	} {
+		if got := a.values[key]; got.spring != nil || got.loop == ui.GradientNone {
+			t.Fatalf("%v lost its loop: %+v", key, got)
+		}
+	}
+	if got := a.values[animKey{node: "c", channel: animSprite}].start; got != start {
+		t.Fatalf("unchanged cycle restarted its phase: %v, want %v", got, start)
+	}
+}
+
+func TestSpringBadgePopRemainsEased(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	badge := badgeKeyPrefix + "app"
+	a.Target(badge, animProgress, 1)
+	key := animKey{node: badge, channel: animProgress}
+	if a.values[key].spring != nil {
+		t.Fatal("badge pop became a spring")
+	}
+	// The one-shot phase still peaks on the eased midpoint.
+	clock.add(a.duration(animProgress, true) / 2)
+	if got, want := a.Value(badge, animProgress), ui.EaseOutCubic(0.5); got != want {
+		t.Fatalf("badge midpoint = %g, want eased %g", got, want)
+	}
+	// A normal meter keeps the spring.
+	a.Target("meter", animProgress, 0.5)
+	if a.values[animKey{node: "meter", channel: animProgress}].spring == nil {
+		t.Fatal("meter progress lost its spring")
+	}
+}
+
+func TestSpringAndSpriteRestCoexist(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.TargetCycle("s", 200*time.Millisecond, 4, 9)
+	a.Target("h", animHover, 1)
+	// A moving spring keeps the ordinary tick: the loop cannot sleep to a
+	// sprite pose while interaction work is in flight.
+	if rest, ok := a.SpriteRest(); ok || rest != 0 {
+		t.Fatalf("sprite rest = %v/%v while a spring moves", rest, ok)
+	}
+	key := animKey{node: "h", channel: animHover}
+	for i := 0; i < 4000; i++ {
+		clock.add(springStep)
+		if a.Value("h", animHover) == 1 && a.values[key].velocity == 0 {
+			break
+		}
+	}
+	// Once the spring rests, the next pose boundary is the sleep.
+	rest, ok := a.SpriteRest()
+	if !ok || rest <= 0 || rest > 200*time.Millisecond/4+time.Millisecond {
+		t.Fatalf("sprite rest after settle = %v/%v", rest, ok)
+	}
+	// Input wakes the loop immediately.
+	a.Target("h", animHover, 0)
+	if len(a.wake) == 0 {
+		t.Fatal("a new target did not wake the loop")
 	}
 }

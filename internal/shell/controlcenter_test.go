@@ -152,11 +152,21 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 			if opacity != 0 || offsetY != tc.wantY || fillet != 0 {
 				t.Fatalf("initial reveal = opacity %v offset %d joint %d, want 0, %d, 0", opacity, offsetY, fillet, tc.wantY)
 			}
-			settle := h.theme.Motion.Durations.Medium
 			if tc.reduced {
-				settle = reducedPanelCap
+				// Reduced motion keeps the capped eased fade, which lands
+				// exactly on its endpoint at the cap.
+				now = now.Add(reducedPanelCap)
+			} else {
+				// A spring arrives at its exact endpoint on the physics
+				// lattice, later than the token it is derived from.
+				for i := 0; i < 4000; i++ {
+					opacity, _, _ = h.panelReveal()
+					if opacity == 1 {
+						break
+					}
+					now = now.Add(springStep)
+				}
 			}
-			now = now.Add(settle)
 			opacity, _, offsetY = h.panelReveal()
 			fillet, _, _ = h.revealJoints(opacity)
 			if opacity != 1 || offsetY != 0 || fillet != 12 {

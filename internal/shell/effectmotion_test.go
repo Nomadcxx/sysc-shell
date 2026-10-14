@@ -152,10 +152,13 @@ func TestWeatherSurfaceRendersAndPublishesAnimatedFrames(t *testing.T) {
 	}
 	value.start = base.Add(-100 * time.Millisecond)
 	h.anim.values[key] = value
-	for animKey, value := range h.anim.values {
-		if animKey.channel != animEffect {
-			value.start = time.Time{}
-			h.anim.values[animKey] = value
+	// Settle every non-effect channel so the reveal does not paint a
+	// transparent frame: springs keep their physics state, so zeroing the
+	// eased start no longer snaps them forward.
+	for key, value := range h.anim.values {
+		if key.channel != animEffect {
+			value.position, value.velocity, value.remainder = value.to, 0, 0
+			h.anim.values[key] = value
 		}
 	}
 	region := effect.Bounds

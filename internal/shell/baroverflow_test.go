@@ -106,6 +106,8 @@ func TestFadeNeverReachesPastTheItemItCovers(t *testing.T) {
 func TestSideBarOverflowFade(t *testing.T) {
 	bar := newTestBar(t)
 	t.Cleanup(bar.stopAnimation)
+	bar.mu.Lock()
+	defer bar.mu.Unlock()
 	bar.theme.BarEdge = "left"
 	bar.theme.Metrics.StandardControl = 16
 	bar.left = []textWidget{{node: &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 8, Y: 30, W: 24, H: 12}}}, {node: &ui.Node{Kind: ui.KindCapsule}}}
