@@ -88,12 +88,14 @@ func Evaluate(in AutoInputs, deb *Debouncer) map[string]Reasons {
 			if in.LockBackground {
 				reasons = reasons.With(ReasonLockBackground)
 			}
-		}
-		if in.ScreensOff {
-			reasons = reasons.With(ReasonScreensOff)
+			// The kiosk switch gates screens-off too: a demo machine must
+			// keep playing through a blank.
+			if in.ScreensOff {
+				reasons = reasons.With(ReasonScreensOff)
+			}
 		}
 		if in.Battery.Present && in.Battery.OnBattery {
-			if in.Settings.LowBatteryPause > 0 && in.Battery.ChargeValid && in.Battery.Charge <= in.Settings.LowBatteryPause {
+			if in.Settings.LowBatteryPause > 0 && in.Battery.ChargeValid && in.Battery.Charge < in.Settings.LowBatteryPause {
 				reasons = reasons.With(ReasonLowBattery)
 			}
 			if in.Settings.OnBattery == OnBatteryPause {

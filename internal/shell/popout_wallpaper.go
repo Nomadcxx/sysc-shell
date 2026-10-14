@@ -107,6 +107,10 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 				}
 				h.wallpaperSnap = snap
 				h.wallpaperOutput = wallpaperOutputSelection(snap, h.wallpaperOutput)
+				h.wallpaperCharge = -1
+				if r.autoPauseBattery.ChargeValid {
+					h.wallpaperCharge = r.autoPauseBattery.Charge
+				}
 				if id == PanelWallpaper && h.wallpaperDir == "" {
 					h.wallpaperOpenDir(r, firstRoot(snap))
 				}
@@ -130,6 +134,9 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 			for _, p := range surfacePubs {
 				r.publishSurface(p.Global, p.SurfaceID)
 			}
+			// The unsupported-rate answer arrives as a snapshot, and the
+			// engine keeps playing until the driver turns it into a pause.
+			r.syncAutoPause()
 		}
 	}
 }
@@ -600,7 +607,7 @@ func wallpaperControls(h *PanelHost, inner int) *ui.Node {
 		Kind: ui.KindRow, Gap: theme.MarginXS, Height: c.control,
 		Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "\u25b8", TextRole: theme.RoleMono, Tone: ui.ToneAccent},
-			{Kind: ui.KindText, Text: "now: " + wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput),
+			{Kind: ui.KindText, Text: "now: " + wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput, h.wallpaperCharge),
 				Name: "Now showing", TextRole: theme.RoleMono, Tone: ui.ToneSubtle,
 				MaxWidth: max(nowW-wallpaperIconSize, 0)},
 		},
@@ -1274,15 +1281,16 @@ func wallpaperAssignmentLabel(a wallpaper.Assignment) string {
 }
 
 // wallpaperSummary is the active strip's line for one output, or the mixed
-// summary for All.
-func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
+// summary for All. charge rides along for the low-battery chip; -1 means the
+// reading is unknown.
+func wallpaperSummary(snap wallpaper.Snapshot, output string, charge int) string {
 	if output != wallpaper.AllOutputs {
 		a, ok := snap.Assignments[output]
 		if !ok {
 			return output + " \u00b7 nothing assigned"
 		}
 		return withPauseChip(fmt.Sprintf("%s \u00b7 %s \u00b7 %s", output, wallpaperAssignmentLabel(a),
-			wallpaperStateName(snap.Runtime[output].State)), snap, output)
+			wallpaperStateName(snap.Runtime[output].State)), snap, output, charge)
 	}
 	outputs, videos, images, effects := 0, 0, 0, 0
 	for _, connector := range snap.Connectors {
@@ -2038,17 +2046,19 @@ func wallpaperOurNamespace(namespace string) bool {
 }
 
 // withPauseChip appends the automatic pause or rate chip when one applies.
-func withPauseChip(label string, snap wallpaper.Snapshot, output string) string {
-	if chip := wallpaperPauseChip(snap, output); chip != "" {
+// charge is the battery percentage, or -1 when the reading is unknown.
+func withPauseChip(label string, snap wallpaper.Snapshot, output string, charge int) string {
+	if chip := wallpaperPauseChip(snap, output, charge); chip != "" {
 		return label + " · " + chip
 	}
 	return label
 }
 
 // wallpaperPauseChip names the automatic pause or rate state for an output.
-func wallpaperPauseChip(snap wallpaper.Snapshot, output string) string {
-	if snap.FPSUnsupported[output] {
-		return "paused on battery (update sysc-terminal for 10 FPS)"
+func wallpaperPauseChip(snap wallpaper.Snapshot, output string, charge int) string {
+	if snap.FPSUnsupported[output] && snap.FPS[output] == 10 &&
+		snap.PausedBy[output].Has(wallpaper.ReasonBattery) {
+		return "Paused: on battery (update sysc-terminal for 10 FPS)"
 	}
 	if snap.FPS[output] == 10 {
 		return "10 FPS: on battery"
@@ -2063,15 +2073,18 @@ func wallpaperPauseChip(snap wallpaper.Snapshot, output string) string {
 	}
 	switch primary {
 	case wallpaper.ReasonLock, wallpaper.ReasonLockBackground:
-		return "paused: locked"
+		return "Paused: locked"
 	case wallpaper.ReasonScreensOff:
-		return "paused: screens off"
+		return "Paused: screens off"
 	case wallpaper.ReasonOccluded:
-		return "paused: covered"
+		return "Paused: covered"
 	case wallpaper.ReasonBattery:
-		return "paused: on battery"
+		return "Paused: on battery"
 	case wallpaper.ReasonLowBattery:
-		return "paused: low battery"
+		if charge >= 0 {
+			return fmt.Sprintf("Paused: battery %d%%", charge)
+		}
+		return "Paused: low battery"
 	}
 	return ""
 }

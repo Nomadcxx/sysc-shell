@@ -749,6 +749,11 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			}),
 		})
 	}
+	if o.hideBattery {
+		r.entries = slices.DeleteFunc(r.entries, func(e Entry) bool {
+			return e.Path == "wallpaper.on-battery" || e.Path == "wallpaper.low-battery-pause"
+		})
+	}
 	r.resolveDefaults()
 	return r
 }

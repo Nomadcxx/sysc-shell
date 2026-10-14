@@ -53,10 +53,20 @@ func TestEvaluateReasonSources(t *testing.T) {
 			name: "screens off",
 			in: func() AutoInputs {
 				in := base
+				in.Settings.PauseLocked = true
 				in.ScreensOff = true
 				return in
 			}(),
 			want: map[string]Reasons{"DP-1": ReasonScreensOff.bit()},
+		},
+		{
+			name: "screens off ignored when the setting is off",
+			in: func() AutoInputs {
+				in := base
+				in.ScreensOff = true
+				return in
+			}(),
+			want: map[string]Reasons{},
 		},
 		{
 			name: "on battery pause policy",
@@ -95,6 +105,16 @@ func TestEvaluateReasonSources(t *testing.T) {
 				in := base
 				in.Settings.LowBatteryPause = 0
 				in.Battery = AutoBattery{Present: true, OnBattery: true, Charge: 5, ChargeValid: true}
+				return in
+			}(),
+			want: map[string]Reasons{},
+		},
+		{
+			name: "charge at the threshold does not pause",
+			in: func() AutoInputs {
+				in := base
+				in.Settings.LowBatteryPause = 20
+				in.Battery = AutoBattery{Present: true, OnBattery: true, Charge: 20, ChargeValid: true}
 				return in
 			}(),
 			want: map[string]Reasons{},

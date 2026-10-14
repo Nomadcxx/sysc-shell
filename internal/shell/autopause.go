@@ -26,6 +26,19 @@ func (r *Registry) SetScreensOff(off bool) {
 	}
 }
 
+// SetLockActive records whether the session lock is up. The locker reports
+// through here instead of enqueueing wallpaper commands itself so the
+// kiosk switch and the remaining reasons are judged in one place.
+func (r *Registry) SetLockActive(active bool) {
+	r.mu.Lock()
+	changed := r.locked != active
+	r.locked = active
+	r.mu.Unlock()
+	if changed {
+		r.syncAutoPause()
+	}
+}
+
 // syncAutoPause evaluates the wallpaper autopause policy against the current
 // registry state and enqueues only the differences. Automatic reasons never
 // touch the persisted playback request. It must run without r.mu held.
@@ -110,6 +123,12 @@ func (r *Registry) syncAutoPause() {
 			// Leaving the limit policy restores the engine default.
 			want = 20
 		}
+		if last == 0 && want == 20 {
+			// 20 is the engine's own default; sending it to an engine
+			// that cannot take a rate would latch the unsupported hint
+			// on an idle AC desktop.
+			continue
+		}
 		if last == want {
 			continue
 		}
@@ -146,6 +165,7 @@ func (r *Registry) autoPauseInputs() (wallpaper.AutoInputs, *wallpaper.Service, 
 			LowBatteryPause: r.cfg.Wallpaper.LowBatteryPause,
 		},
 		OverviewOpen:   r.niriSnapshot.OverviewOpen,
+		Locked:         r.locked,
 		LockBackground: r.backgroundHeld,
 		ScreensOff:     r.screensOff,
 		Battery:        r.autoPauseBattery,

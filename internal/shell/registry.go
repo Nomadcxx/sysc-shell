@@ -294,6 +294,7 @@ type Registry struct {
 	// sent, battery caches the polled power source, and the sync mutex keeps
 	// the wayland owner, the battery poll and the idle callbacks apart.
 	screensOff        bool
+	locked            bool
 	autoPauseApplied  map[string]wallpaper.Reasons
 	autoPauseFPS      map[string]int
 	autoPauseBattery  wallpaper.AutoBattery
@@ -399,7 +400,10 @@ func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
 // Display text follows the session language; paths, actions, and option
 // values stay English tokens.
 func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
-	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes))).Localized(i18n.Resolve(cfg.Session.Language))
+	return settings.DefaultFor(cfg,
+		settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)),
+		settings.WithBattery(r.autoPauseBattery.Present),
+	).Localized(i18n.Resolve(cfg.Session.Language))
 }
 
 // paletteDir is where saved palettes live: beside the config file main
@@ -2150,6 +2154,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				// A settings edit can change the autopause policy; nothing
+				// else re-evaluates it on a static desktop.
+				r.syncAutoPause()
 				r.signalPolkitOutputChange()
 				if !runningAsTest() && genErr == nil {
 					go r.publishCommittedThemeSelection(cfg, tok)

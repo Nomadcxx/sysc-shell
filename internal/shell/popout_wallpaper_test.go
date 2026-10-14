@@ -375,12 +375,12 @@ func TestWallpaperSummaryIsReadBackFromTheSnapshot(t *testing.T) {
 		},
 		Runtime: map[string]wallpaper.Runtime{},
 	}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs · 1 video · 1 image" {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); got != "2 outputs · 1 video · 1 image" {
 		t.Fatalf("summary = %q", got)
 	}
 
 	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/a.png"}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs · 0 video · 2 image" {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); got != "2 outputs · 0 video · 2 image" {
 		t.Fatalf("summary after reassign = %q", got)
 	}
 
@@ -1300,13 +1300,13 @@ func TestWallpaperSummaryCountsOneOutput(t *testing.T) {
 		Connectors:  []string{"eDP-1"},
 		Assignments: map[string]wallpaper.Assignment{"eDP-1": {Kind: wallpaper.KindVideo, Path: "/w/a.mp4"}},
 	}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); !strings.HasPrefix(got, "1 output ") {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); !strings.HasPrefix(got, "1 output ") {
 		t.Errorf("summary = %q, want it to start with \"1 output \"", got)
 	}
 	snap.Connectors = []string{"DP-1", "DP-3"}
 	snap.Assignments["DP-1"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/b.png"}
 	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/c.png"}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); !strings.HasPrefix(got, "2 outputs ") {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); !strings.HasPrefix(got, "2 outputs ") {
 		t.Errorf("summary = %q, want it to start with \"2 outputs \"", got)
 	}
 }

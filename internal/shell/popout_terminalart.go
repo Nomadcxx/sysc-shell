@@ -132,7 +132,7 @@ func artPlayingRow(h *PanelHost, connector, widest string) *ui.Node {
 		&ui.Node{Kind: ui.KindText, Text: a.Effect + " \u00b7 " + a.Theme},
 		&ui.Node{Kind: ui.KindText, Text: wallpaperStateName(state), TextRole: theme.RoleCaption, Tone: stateTone},
 	)
-	if chip := wallpaperPauseChip(h.wallpaperSnap, connector); chip != "" {
+	if chip := wallpaperPauseChip(h.wallpaperSnap, connector, h.wallpaperCharge); chip != "" {
 		info.Children = append(info.Children, &ui.Node{Kind: ui.KindText, Text: chip, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
 	controls := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS}

@@ -2,6 +2,7 @@ package wallpaper
 
 import (
 	"testing"
+	"time"
 )
 
 func fakePausedState(t *testing.T, eng *fakeEngine, connector string) bool {
@@ -195,5 +196,66 @@ func TestServiceFPSUnsupportedReasonClearsOnNewProcess(t *testing.T) {
 	})
 	if snap.FPS["DP-1"] != 20 {
 		t.Fatalf("fps after recovery = %d, want 20", snap.FPS["DP-1"])
+	}
+}
+
+// TestServiceOpsKeepTheirNumbers pins every Op value. The panel and the
+// registry speak these numbers over the command channel, so a new operation
+// must be appended, never wedged in beside an existing one.
+func TestServiceOpsKeepTheirNumbers(t *testing.T) {
+	cases := []struct {
+		name string
+		op   Op
+		want int
+	}{
+		{"apply", OpApply, 0},
+		{"pause", OpPause, 1},
+		{"resume", OpResume, 2},
+		{"restore", OpRestore, 3},
+		{"connect", OpConnect, 4},
+		{"disconnect", OpDisconnect, 5},
+		{"refresh", OpRefresh, 6},
+		{"refresh terminal catalog", OpRefreshTerminalCatalog, 7},
+		{"focus folder", OpFocusFolder, 8},
+		{"auto pause", OpAutoPause, 9},
+		{"auto resume", OpAutoResume, 10},
+		{"set fps", OpSetFPS, 11},
+	}
+	for _, tc := range cases {
+		if got := int(tc.op); got != tc.want {
+			t.Errorf("%s: op number = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestServiceFinishResendsPauseAndRate proves that a fresh apply for an
+// output whose engine just restarted carries the automatic pause and the
+// rate bound back to the engine in the same finish pass.
+func TestServiceFinishResendsPauseAndRate(t *testing.T) {
+	eng := newFakeEngine()
+	svc := newTestService(t, eng)
+	applyVideo(t, svc)
+
+	svc.Enqueue(Command{Op: OpAutoPause, Token: "DP-1", Reason: ReasonLock})
+	awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.PausedBy["DP-1"].Has(ReasonLock)
+	})
+	svc.Enqueue(Command{Op: OpSetFPS, Token: "DP-1", FPS: 10})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.FPS["DP-1"] == 10 })
+
+	if log := fakePauseLog(t, eng); len(log) != 1 || !log[0] {
+		t.Fatalf("pause log after auto pause = %v, want one true", log)
+	}
+
+	applyVideo(t, svc)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(fakePauseLog(t, eng)) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if log := fakePauseLog(t, eng); len(log) != 2 || !log[1] {
+		t.Fatalf("pause log after re-apply = %v, want two trues", log)
+	}
+	if got := fakeFPSState(t, eng, "DP-1"); got != 10 {
+		t.Fatalf("rate after re-apply = %d, want 10", got)
 	}
 }
