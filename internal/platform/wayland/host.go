@@ -44,8 +44,9 @@ type HostCallbacks struct {
 	// and the scale as a numerator over 120; 120 means scale 1.0.
 	Configure func(logicalWidth, logicalHeight, scale120 int) error
 	// OutputSize reports the output's logical size, from wl_output.mode scaled
-	// down by the surface scale. Configure answers for the bar surface, not the
-	// screen, so a panel placed inside the output cannot be sized from it.
+	// down by the surface scale. It is called after output metadata changes and
+	// before a surface reconfigure. Configure answers for the bar surface, not
+	// the screen, so a panel placed inside the output cannot be sized from it.
 	OutputSize func(logicalWidth, logicalHeight int)
 	// Render fills the physical buffer. Width and height are buffer pixels.
 	Render func(pixels []byte, width, height, stride int) error

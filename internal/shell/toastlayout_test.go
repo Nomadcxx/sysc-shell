@@ -260,6 +260,23 @@ func TestToastLayoutNarrowOutputClearsARightBar(t *testing.T) {
 	}
 }
 
+func TestToastStripKeepsCardsAtTheirOutputPosition(t *testing.T) {
+	for _, g := range []toastGeometry{
+		{OutputW: 1920, OutputH: 1080, Corner: toastTopRight, BarEdge: "right", BarZone: 52},
+		{OutputW: 300, OutputH: 800, Corner: toastTopRight, BarEdge: "right", BarZone: 52},
+	} {
+		rects, _ := toastLayout(g, []int{96})
+		stripWidth := toastSurfaceWidth(g)
+		local := toastSurfaceRect(g, stripWidth, rects[0])
+		if local.X != toastMargin {
+			t.Fatalf("surface width %d on output width %d puts card at x=%d, want %d", stripWidth, g.OutputW, local.X, toastMargin)
+		}
+		if got := local.X + g.OutputW - stripWidth; got != rects[0].X {
+			t.Fatalf("surface-local x maps to output x=%d, want %d", got, rects[0].X)
+		}
+	}
+}
+
 func overlapsBarStrip(r ui.Rect, edge string, outW, outH, zone int) bool {
 	switch edge {
 	case "top":

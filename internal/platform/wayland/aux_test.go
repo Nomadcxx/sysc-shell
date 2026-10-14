@@ -477,6 +477,28 @@ func TestAuxUpdateResizesTheSurfaceInPlace(t *testing.T) {
 	}
 }
 
+func TestAuxUpdatePreservesAnchoredStretchHeight(t *testing.T) {
+	t.Parallel()
+	u := newSurfaceUnit("toast:DP-1")
+	u.ss.logicalWidth, u.ss.logicalHeight = 404, 1080
+	u.policy.width, u.policy.height = 404, 0
+	u.policy.anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop |
+		layershell.ZwlrLayerSurfaceV1AnchorBottom |
+		layershell.ZwlrLayerSurfaceV1AnchorRight)
+	width := uint32(456)
+	input := []ui.Rect{{X: 12, Y: 24, W: 380, H: 96}}
+	next, err := planAuxUpdate(u, &AuxUpdate{Width: &width, SetInputRegion: true, InputRects: input})
+	if err != nil {
+		t.Fatalf("resize with stretched height: %v", err)
+	}
+	if next.width != width || next.height != 0 {
+		t.Fatalf("size = %dx%d, want %dx0 with the output-stretched height", next.width, next.height, width)
+	}
+	if len(next.inputRects) != 1 || next.inputRects[0] != input[0] {
+		t.Fatalf("input region = %+v, want %+v", next.inputRects, input)
+	}
+}
+
 // removeDuringCapture stands in for a global_remove dispatched by one of the
 // capture's round trips: the host leaves the set and is torn down before the
 // capture returns.
