@@ -664,7 +664,9 @@ func TestOnboardingLocalizedNarrowPagesFit(t *testing.T) {
 	h := reg.panelHosts[PanelOnboarding]
 	for _, locale := range []string{"es", "pt", "ja", "ko", "ru"} {
 		h.draft.Session.Language = locale
+		reg.mu.Lock()
 		h.set = reg.settingsForLocked(h.draft)
+		reg.mu.Unlock()
 		for page := onboardingPage(0); page < onbPages; page++ {
 			h.onbPage = page
 			h.onbFontLocale, h.onbFontState = "", onboardingFontOff
