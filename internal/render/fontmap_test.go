@@ -31,6 +31,22 @@ func TestSplitRunsDoesNotAllocatePerRune(t *testing.T) {
 
 func newFixtureFontMap(t *testing.T) *FontMap {
 	t.Helper()
+	inner := newFixtureFontScanner(t)
+	inner.SetQuery(fontscan.Query{Families: []string{"Fixture Latin", "Fixture Arabic"}})
+	primary := inner.ResolveFace('A')
+	if primary == nil {
+		t.Fatal("fixture font map resolved no primary face")
+	}
+	return &FontMap{inner: inner, primary: primary, cache: make(map[faceKey]*font.Face)}
+}
+
+func newFixtureFontCatalog(t *testing.T) *SystemFontCatalog {
+	t.Helper()
+	return &SystemFontCatalog{inner: newFixtureFontScanner(t)}
+}
+
+func newFixtureFontScanner(t *testing.T) *fontscan.FontMap {
+	t.Helper()
 	inner := fontscan.NewFontMap(nil)
 	if err := inner.AddFont(bytes.NewReader(goregular.TTF), "fixture:latin", "Fixture Latin"); err != nil {
 		t.Fatal(err)
@@ -43,12 +59,7 @@ func newFixtureFontMap(t *testing.T) *FontMap {
 	if err := inner.AddFont(arabic, "fixture:arabic", "Fixture Arabic"); err != nil {
 		t.Fatal(err)
 	}
-	inner.SetQuery(fontscan.Query{Families: []string{"Fixture Latin", "Fixture Arabic"}})
-	primary := inner.ResolveFace('A')
-	if primary == nil {
-		t.Fatal("fixture font map resolved no primary face")
-	}
-	return &FontMap{inner: inner, primary: primary, cache: make(map[faceKey]*font.Face)}
+	return inner
 }
 
 // These exercise the real system font set. A machine with no fonts installed
@@ -132,6 +143,41 @@ func TestSystemFontMapKeepsBitmapEmojiFallback(t *testing.T) {
 	}
 	if m.Face(glyph, FaceRequest{}) == m.primary {
 		t.Fatal("Face resolved the emoji rune to the primary notdef face")
+	}
+}
+
+func TestSystemFontCatalogKeepsBitmapEmojiFallback(t *testing.T) {
+	t.Parallel()
+	probe := newSystemMap(t)
+	const glyph = '👋'
+	probe.inner.SetScript(language.LookupScript(glyph))
+	resolved := probe.inner.ResolveFace(glyph)
+	if resolved == nil {
+		t.Skip("system font set has no emoji fallback")
+	}
+	gid, ok := resolved.NominalGlyph(glyph)
+	if !ok {
+		t.Skip("resolved emoji face has no nominal glyph")
+	}
+	if _, ok := resolved.GlyphDataBitmap(gid); !ok {
+		t.Skip("resolved emoji face has no bitmap glyph")
+	}
+
+	catalog := NewSystemFontCatalog(t.TempDir())
+	m, err := catalog.NewFontMap(probe.Family())
+	if err != nil {
+		t.Skipf("no system fonts available: %v", err)
+	}
+	selected := m.Face(glyph, FaceRequest{})
+	if selected == m.Primary() {
+		t.Fatal("catalog-backed map resolved the emoji rune to the primary notdef face")
+	}
+	gid, ok = selected.NominalGlyph(glyph)
+	if !ok {
+		t.Fatal("catalog-backed emoji face has no nominal glyph")
+	}
+	if _, ok := selected.GlyphDataBitmap(gid); !ok {
+		t.Fatal("catalog-backed emoji fallback lost its bitmap glyph")
 	}
 }
 
@@ -301,6 +347,22 @@ func TestEveryCatalogIconUsesProjectFont(t *testing.T) {
 // clock's digits and colon.
 func newVariableFontMap(t *testing.T) *FontMap {
 	t.Helper()
+	inner := newVariableFontScanner(t)
+	inner.SetQuery(fontscan.Query{Families: []string{"Inter Variable"}})
+	primary := inner.ResolveFace('1')
+	if primary == nil {
+		t.Fatal("fixture font map resolved no primary face")
+	}
+	return &FontMap{inner: inner, primary: primary, family: "Inter Variable", cache: make(map[faceKey]*font.Face)}
+}
+
+func newVariableFontCatalog(t *testing.T) *SystemFontCatalog {
+	t.Helper()
+	return &SystemFontCatalog{inner: newVariableFontScanner(t)}
+}
+
+func newVariableFontScanner(t *testing.T) *fontscan.FontMap {
+	t.Helper()
 	file, err := os.Open("testdata/InterVariable-digits.ttf")
 	if err != nil {
 		t.Fatal(err)
@@ -310,12 +372,7 @@ func newVariableFontMap(t *testing.T) *FontMap {
 	if err := inner.AddFont(file, "fixture:inter", "Inter Variable"); err != nil {
 		t.Fatal(err)
 	}
-	inner.SetQuery(fontscan.Query{Families: []string{"Inter Variable"}})
-	primary := inner.ResolveFace('1')
-	if primary == nil {
-		t.Fatal("fixture font map resolved no primary face")
-	}
-	return &FontMap{inner: inner, primary: primary, family: "Inter Variable", cache: make(map[faceKey]*font.Face)}
+	return inner
 }
 
 func TestVariableFontResolvesTheRequestedWeight(t *testing.T) {
@@ -348,5 +405,142 @@ func TestVariableFontResolvesTheRequestedWeight(t *testing.T) {
 	}
 	if w4, w6 := width(400), width(600); w6 <= w4 {
 		t.Errorf("15:04 measures %d px at 600 and %d px at 400; the 600 instance should be wider", w6, w4)
+	}
+}
+
+func TestSystemFontCatalogPreservesScriptFallback(t *testing.T) {
+	t.Parallel()
+	catalog := newFixtureFontCatalog(t)
+	first, err := catalog.NewFontMap("Fixture Latin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := catalog.NewFontMap("Fixture Latin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := first.Face('م', FaceRequest{})
+	two := second.Face('م', FaceRequest{})
+	if _, ok := one.NominalGlyph('م'); !ok {
+		t.Fatal("shared catalog did not resolve the Arabic fallback face")
+	}
+	if one == two {
+		t.Fatal("shared catalog returned one mutable fallback face to two maps")
+	}
+	if one.Font != two.Font {
+		t.Fatal("shared catalog reparsed the same fallback font for each map")
+	}
+}
+
+func TestSystemFontCatalogReusesOneFacePerFontWithinAMap(t *testing.T) {
+	catalog := newFixtureFontCatalog(t)
+	fonts, err := catalog.NewFontMap("Fixture Latin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := fonts.Face('A', FaceRequest{})
+	two := fonts.Face('B', FaceRequest{})
+	if one.Font != two.Font {
+		t.Fatal("fixture runes resolved to different immutable fonts")
+	}
+	if one != two {
+		t.Fatal("one surface created multiple mutable faces for the same font")
+	}
+}
+
+func TestSystemFontCatalogPreservesVariableWeightInstances(t *testing.T) {
+	t.Parallel()
+	catalog := newVariableFontCatalog(t)
+	first, err := catalog.NewFontMap("Inter Variable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := catalog.NewFontMap("Inter Variable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular := first.Face('1', FaceRequest{Family: "Inter Variable", Weight: 400})
+	semibold := first.Face('1', FaceRequest{Family: "Inter Variable", Weight: 600})
+	otherRuneSemibold := first.Face(':', FaceRequest{Family: "Inter Variable", Weight: 600})
+	otherSemibold := second.Face('1', FaceRequest{Family: "Inter Variable", Weight: 600})
+	if semibold == regular || len(semibold.Coords()) == 0 {
+		t.Fatal("catalog-backed map did not apply the variable font weight")
+	}
+	if semibold != otherRuneSemibold {
+		t.Fatal("catalog-backed map resolved different mutable faces at one variable weight")
+	}
+	runs := first.SplitRuns("1:", FaceRequest{Family: "Inter Variable", Weight: 600})
+	if len(runs) != 1 {
+		t.Fatalf("catalog-backed variable run split into %d faces, want 1", len(runs))
+	}
+	if semibold == otherSemibold {
+		t.Fatal("catalog shared a mutable variable-weight face across maps")
+	}
+	renderer := NewTextRendererWithFontMap(first)
+	width := func(weight int) int {
+		t.Helper()
+		w, _, err := renderer.Measure("15:04", TextSpec{Family: "Inter Variable", Size: 60, Weight: weight}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if w4, w6 := width(400), width(600); w6 <= w4 {
+		t.Fatalf("catalog-backed 15:04 measures %d px at 600 and %d px at 400", w6, w4)
+	}
+}
+
+func TestSystemFontCatalogReturnsPrivateFacesWithSharedFonts(t *testing.T) {
+	t.Parallel()
+	catalog := NewSystemFontCatalog(t.TempDir())
+	first, err := catalog.NewFontMap("sans-serif")
+	if err != nil {
+		t.Skipf("no system fonts available: %v", err)
+	}
+	second, err := catalog.NewFontMap("sans-serif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Primary() == second.Primary() {
+		t.Fatal("catalog shared a mutable primary face")
+	}
+	if first.Primary().Font != second.Primary().Font {
+		t.Fatal("maps did not reuse the immutable parsed font")
+	}
+}
+
+func TestSystemFontCatalogSerializesConcurrentSurfaceResolution(t *testing.T) {
+	t.Parallel()
+	catalog := NewSystemFontCatalog(t.TempDir())
+	const workers = 8
+	const shapesPerWorker = 20
+	texts := make([]*TextRenderer, workers)
+	for i := range workers {
+		fonts, err := catalog.NewFontMap("sans-serif")
+		if err != nil {
+			t.Skipf("no system fonts available: %v", err)
+		}
+		texts[i] = NewTextRendererWithFontMap(fonts)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for worker, text := range texts {
+		weight := 400 + worker%4*100
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range shapesPerWorker {
+				if _, err := text.Shape("Independent renderer", TextSpec{Size: 16, Weight: weight}, false); err != nil {
+					errs <- err
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
 	}
 }

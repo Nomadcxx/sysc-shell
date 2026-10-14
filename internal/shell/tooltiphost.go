@@ -285,11 +285,11 @@ func (h *tooltipHost) ensureText(family string) error {
 	if h.text != nil && h.family == family {
 		return nil
 	}
-	fonts, err := render.NewSystemFontMap(family, render.DefaultFontCacheDir())
+	text, err := h.r.textRenderer(family)
 	if err != nil {
 		return err
 	}
-	h.text, h.family = render.NewTextRendererWithFontMap(fonts), family
+	h.text, h.family = text, family
 	return nil
 }
 

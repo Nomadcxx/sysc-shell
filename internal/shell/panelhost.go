@@ -124,9 +124,10 @@ type PanelHost struct {
 	// themeFrom is the palette this surface is fading out of. It is the theme
 	// as it was rendering when the change arrived, not the last published one,
 	// so a reload during a fade continues from what is on screen.
-	themeFrom  Theme
-	text       *render.TextRenderer
-	fontFamily string
+	themeFrom   Theme
+	text        *render.TextRenderer
+	fontFamily  string
+	fontCatalog *registryFontCatalog
 	// backdrop is the blurred capture of whatever sat behind this panel,
 	// taken before either of its surfaces existed. Nil means no blur, and the
 	// panel then paints over whatever the compositor shows, as it always has.
@@ -1292,6 +1293,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		shieldQuiet: time.Now().Add(shieldQuietFor),
 		theme:       r.panelThemeFor(output),
 		fontFamily:  r.panelFontFamily(output),
+		fontCatalog: &r.fontCatalog,
 	}
 	if id == PanelFiles {
 		h.filesOwner = r.files
@@ -2047,11 +2049,21 @@ func (h *PanelHost) ensureText() error {
 	if h.text != nil {
 		return nil
 	}
-	fonts, err := render.NewSystemFontMap(h.fontFamily, render.DefaultFontCacheDir())
+	var text *render.TextRenderer
+	var err error
+	if h.fontCatalog != nil {
+		text, err = h.fontCatalog.textRenderer(h.fontFamily)
+	} else {
+		fonts, mapErr := render.NewSystemFontMap(h.fontFamily, render.DefaultFontCacheDir())
+		if mapErr != nil {
+			return mapErr
+		}
+		text = render.NewTextRendererWithFontMap(fonts)
+	}
 	if err != nil {
 		return err
 	}
-	h.text = render.NewTextRendererWithFontMap(fonts)
+	h.text = text
 	return nil
 }
 

@@ -134,12 +134,22 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 	if err != nil {
 		return nil, err
 	}
+	return newBarWithText(theme, policy, connector, render.NewTextRendererWithFontMap(fonts)), nil
+}
 
+func newWithTextRenderer(theme Theme, policy config.Bar, connector string, text *render.TextRenderer) (*Bar, error) {
+	if err := theme.Valid(); err != nil {
+		return nil, err
+	}
+	return newBarWithText(theme, policy, connector, text), nil
+}
+
+func newBarWithText(theme Theme, policy config.Bar, connector string, text *render.TextRenderer) *Bar {
 	b := &Bar{
 		conn:          connector,
 		theme:         theme,
 		mediaWidget:   hasMediaItem(policy.Left) || hasMediaItem(policy.Center) || hasMediaItem(policy.Right),
-		text:          render.NewTextRendererWithFontMap(fonts),
+		text:          text,
 		invalidations: make(chan struct{}, 1),
 		style:         barStyle(theme),
 		anim:          newAnimator(nil, false, theme.Motion),
@@ -151,7 +161,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 	b.left = buildWidgetsAxis(policy.Left, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
 	b.center = buildWidgetsAxis(policy.Center, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
 	b.right = buildWidgetsAxis(policy.Right, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
-	return b, nil
+	return b
 }
 
 // connector reports the output this bar renders for.

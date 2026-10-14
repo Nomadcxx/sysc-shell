@@ -24,6 +24,7 @@ func openLockSettings(t *testing.T) (*Registry, *PanelHost) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	r, _ := artRegistry(t, artWallpaperEngine{})
+	keepInvalidationsDrained(t, r)
 	h := openArtSettings(t, r)
 	r.mu.Lock()
 	h.section = "Lock Screen"

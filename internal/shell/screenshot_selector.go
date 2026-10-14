@@ -486,11 +486,11 @@ func (r *Registry) ensureSelectorTextLocked(sel *regionSelector) error {
 	if sel.text != nil {
 		return nil
 	}
-	fonts, err := render.NewSystemFontMap(r.cfg.ForConnector("").FontFamily, render.DefaultFontCacheDir())
+	text, err := r.textRenderer(r.cfg.ForConnector("").FontFamily)
 	if err != nil {
 		return err
 	}
-	sel.text = render.NewTextRendererWithFontMap(fonts)
+	sel.text = text
 	return nil
 }
 

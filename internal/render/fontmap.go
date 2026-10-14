@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/go-text/typesetting/font"
 	ot "github.com/go-text/typesetting/font/opentype"
@@ -49,12 +50,12 @@ type faceKey struct {
 }
 
 // FontMap resolves faces from the system font set with per-rune fallback.
-//
-// A bar owns its map and the Wayland owner goroutine is the only goroutine that
-// shapes or paints through it. *font.Face and fontscan.FontMap are not safe for
-// concurrent use.
+// Each renderer owns its map and mutable faces. A SystemFontCatalog may be
+// shared; it serializes scanner access and maps create their own faces from its
+// immutable font data.
 type FontMap struct {
 	inner   *fontscan.FontMap
+	catalog *SystemFontCatalog
 	primary *font.Face
 	// family is the configured family the map was built for. A request that
 	// names no family resolves against it.
@@ -77,6 +78,24 @@ type FontMap struct {
 	weighted map[weightedKey]*font.Face
 }
 
+// SystemFontCatalog holds the read-mostly system font index and the scanner's
+// internal face cache. Its mutex serializes query changes and resolution;
+// callers receive immutable font data and keep mutable faces in their maps.
+type SystemFontCatalog struct {
+	mu        sync.Mutex
+	inner     *fontscan.FontMap
+	query     systemFontQuery
+	querySet  bool
+	script    language.Script
+	scriptSet bool
+}
+
+type systemFontQuery struct {
+	family    string
+	aspect    font.Aspect
+	hasAspect bool
+}
+
 // weightedKey names one weight instance of one parsed font.
 type weightedKey struct {
 	font   *font.Font
@@ -92,12 +111,49 @@ func DefaultFontCacheDir() string {
 	return filepath.Join(base, "sysc-shell", "fontscan")
 }
 
-// NewSystemFontMap scans system fonts and resolves the requested family, with a
-// generic sans-serif fallback.
-//
-// A cache directory that cannot be created degrades to an uncached scan rather
-// than failing: a missing font cache costs startup time, never correctness.
-func NewSystemFontMap(family, cacheDir string) (*FontMap, error) {
+// NewSystemFontCatalog scans the system fonts once for a group of surface-owned
+// FontMaps. A failed disk cache degrades to an uncached scan.
+func NewSystemFontCatalog(cacheDir string) *SystemFontCatalog {
+	return &SystemFontCatalog{inner: newSystemFontScanner(cacheDir)}
+}
+
+// NewFontMap resolves a new family-specific map with private face caches.
+func (c *SystemFontCatalog) NewFontMap(family string) (*FontMap, error) {
+	if c == nil || c.inner == nil {
+		return nil, fmt.Errorf("render: nil system font catalog")
+	}
+	families := systemFontFamilies(family)
+	c.mu.Lock()
+	c.inner.SetQuery(fontscan.Query{Families: families})
+	c.inner.SetScript(0)
+	primary := c.inner.ResolveFace('A')
+	if primary != nil {
+		primary = font.NewFace(primary.Font)
+	}
+	c.query = systemFontQuery{family: family}
+	c.querySet = true
+	c.scriptSet = false
+	c.mu.Unlock()
+	if primary == nil {
+		return nil, fmt.Errorf("render: no system font resolved for %v", families)
+	}
+	return &FontMap{
+		catalog: c,
+		primary: primary,
+		family:  family,
+		cache:   make(map[faceKey]*font.Face),
+	}, nil
+}
+
+func systemFontFamilies(family string) []string {
+	families := []string{"sans-serif"}
+	if family != "" && family != "sans-serif" {
+		families = append([]string{family}, families...)
+	}
+	return families
+}
+
+func newSystemFontScanner(cacheDir string) *fontscan.FontMap {
 	inner := fontscan.NewFontMap(nil)
 	if cacheDir != "" {
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -105,11 +161,42 @@ func NewSystemFontMap(family, cacheDir string) (*FontMap, error) {
 		}
 	}
 	_ = inner.UseSystemFonts(cacheDir)
+	return inner
+}
 
-	families := []string{"sans-serif"}
-	if family != "" && family != "sans-serif" {
-		families = append([]string{family}, families...)
+func (c *SystemFontCatalog) resolveFont(family string, req FaceRequest, r rune) *font.Font {
+	if req.Family != "" {
+		family = req.Family
 	}
+	query := systemFontQuery{family: family, aspect: req.aspect(), hasAspect: true}
+	c.mu.Lock()
+	if !c.querySet || c.query != query {
+		c.inner.SetQuery(fontscan.Query{Families: systemFontFamilies(family), Aspect: req.aspect()})
+		c.query, c.querySet = query, true
+		c.scriptSet = false
+	}
+	script := language.LookupScript(r)
+	if !c.scriptSet || c.script != script {
+		c.inner.SetScript(script)
+		c.script, c.scriptSet = script, true
+	}
+	face := c.inner.ResolveFace(r)
+	c.mu.Unlock()
+	if face == nil {
+		return nil
+	}
+	return face.Font
+}
+
+// NewSystemFontMap scans system fonts and resolves the requested family, with a
+// generic sans-serif fallback.
+//
+// A cache directory that cannot be created degrades to an uncached scan rather
+// than failing: a missing font cache costs startup time, never correctness.
+func NewSystemFontMap(family, cacheDir string) (*FontMap, error) {
+	inner := newSystemFontScanner(cacheDir)
+
+	families := systemFontFamilies(family)
 	inner.SetQuery(fontscan.Query{Families: families})
 
 	primary := inner.ResolveFace('A')
@@ -166,12 +253,27 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 	// style do not apply: the icon inventory has one cut.
 	face := m.iconFaceFor(r)
 	if face == nil {
-		m.setQuery(req)
-		// Emoji is Common, which is not a strong script. Without this, fontscan
-		// never searches script fallbacks and Noto Color Emoji is never tried.
-		m.inner.SetScript(language.LookupScript(r))
-		face = outlineFaceForRune(m.inner.ResolveFace(r), m.primary, r)
-		face = m.atWeight(face, req.Weight)
+		var weightedFace *font.Face
+		if m.catalog != nil {
+			fontData := m.catalog.resolveFont(m.family, req, r)
+			if req.Weight > 0 && m.weighted != nil {
+				weightedFace = m.weighted[weightedKey{font: fontData, weight: req.Weight}]
+				face = weightedFace
+			}
+			if face == nil {
+				face = m.faceForFont(fontData)
+			}
+		} else {
+			m.setQuery(req)
+			// Emoji is Common, which is not a strong script. Without this, fontscan
+			// never searches script fallbacks and Noto Color Emoji is never tried.
+			m.inner.SetScript(language.LookupScript(r))
+			face = m.inner.ResolveFace(r)
+		}
+		face = outlineFaceForRune(face, m.primary, r)
+		if face != weightedFace {
+			face = m.atWeight(face, req.Weight)
+		}
 	}
 	if len(m.order) >= faceCacheLimit {
 		delete(m.cache, m.order[0])
@@ -180,6 +282,25 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 	m.cache[key] = face
 	m.order = append(m.order, key)
 	return face
+}
+
+// faceForFont creates a mutable face owned by this map. Existing cached faces
+// are reused so one surface does not allocate a font.Face for every rune.
+func (m *FontMap) faceForFont(fontData *font.Font) *font.Face {
+	if fontData == nil {
+		return nil
+	}
+	if m.primary != nil && m.primary.Font == fontData {
+		return m.primary
+	}
+	// ponytail: Scan the bounded 64-rune cache instead of retaining a second
+	// index; if fallback-heavy text makes this hot, add an index with eviction.
+	for _, face := range m.cache {
+		if face != nil && face.Font == fontData {
+			return face
+		}
+	}
+	return font.NewFace(fontData)
 }
 
 // HasGlyph reports whether this map can paint r with an installed font.

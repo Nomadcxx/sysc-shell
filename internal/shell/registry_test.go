@@ -159,6 +159,36 @@ func TestAttachedPanelKeepsItsOwnAlphaOnceItHasABackdrop(t *testing.T) {
 	}
 }
 
+func TestRegistryBuildBarUsesSharedFontCatalog(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.tokens = theme.Fallback
+	bar, leases, _, err := reg.buildBar(cfg, "DP-2", reg.tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	t.Cleanup(func() { releaseAll(leases) })
+	if reg.fontCatalog.catalog == nil {
+		t.Fatal("Registry bar construction bypassed the shared font catalog")
+	}
+}
+
+func TestSettingsBarPreviewUsesRegistryFontCatalog(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if image := reg.paintSettingsBar(&PanelHost{}, cfg, 800, cfg.Bar.SurfaceExtent(), 120); image == nil {
+		t.Fatal("settings bar preview did not render")
+	}
+	if reg.fontCatalog.catalog == nil {
+		t.Fatal("settings bar preview bypassed the shared font catalog")
+	}
+}
+
 func TestAttachedPanelAndOutputBarShareRootBeforeAndAfterThemeReload(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()

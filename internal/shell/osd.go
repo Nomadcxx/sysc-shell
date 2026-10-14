@@ -201,11 +201,11 @@ func (m *OSDManager) ensureText() error {
 	if m.text != nil {
 		return nil
 	}
-	fonts, err := render.NewSystemFontMap(m.r.cfg.ForConnector("").FontFamily, render.DefaultFontCacheDir())
+	text, err := m.r.textRenderer(m.r.cfg.ForConnector("").FontFamily)
 	if err != nil {
 		return err
 	}
-	m.text = render.NewTextRendererWithFontMap(fonts)
+	m.text = text
 	return nil
 }
 

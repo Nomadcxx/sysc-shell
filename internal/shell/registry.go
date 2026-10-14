@@ -50,10 +50,11 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu      sync.Mutex
-	cfg     config.Config
-	outputs map[string]outputState
-	bars    map[uint32]*Bar
+	mu          sync.Mutex
+	cfg         config.Config
+	outputs     map[string]outputState
+	bars        map[uint32]*Bar
+	fontCatalog registryFontCatalog
 	// onboardingPending keeps the first-start offer until an interactive,
 	// focused output can host it. Output loss restores the offer and its small
 	// view state for the next usable output.
@@ -2679,7 +2680,11 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
-	bar, err := NewWithTheme(th, policy, connector)
+	text, err := r.textRenderer(policy.FontFamily)
+	if err != nil {
+		return nil, nil, wayland.HostCallbacks{}, err
+	}
+	bar, err := newWithTextRenderer(th, policy, connector, text)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
