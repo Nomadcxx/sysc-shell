@@ -163,6 +163,13 @@ func (r *Runtime) pumpOut(ctx context.Context, sess *Session, q <-chan outItem) 
 	for {
 		select {
 		case <-ctx.Done():
+			// Retire this queue under the same lock Send and flushOut use to
+			// enqueue. That orders their last write with the final drain below.
+			r.mu.Lock()
+			if r.out == q {
+				r.out = nil
+			}
+			r.mu.Unlock()
 			// Close any barrier still queued: a Stop racing this exit must
 			// not wait out stopFlushTimeout for a pump that is gone.
 			for {
@@ -190,8 +197,8 @@ func (r *Runtime) flushOut() {
 	r.mu.Lock()
 	q := r.out
 	sess := r.session
-	r.mu.Unlock()
 	if q == nil || sess == nil {
+		r.mu.Unlock()
 		// A queue without its pump means the session is gone or going;
 		// there is nothing to flush into.
 		return
@@ -199,7 +206,9 @@ func (r *Runtime) flushOut() {
 	barrier := outItem{flushed: make(chan struct{})}
 	select {
 	case q <- barrier:
+		r.mu.Unlock()
 	default:
+		r.mu.Unlock()
 		return
 	}
 	select {
@@ -245,8 +254,8 @@ func (r *Runtime) SetCalls(d *Dispatcher) {
 // plugin must not be able to stall the desktop with it.
 func (r *Runtime) Send(m v1.Message) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	q := r.out
-	r.mu.Unlock()
 	if q == nil {
 		return errors.New("plugin: not running")
 	}

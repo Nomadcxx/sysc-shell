@@ -127,3 +127,37 @@ func TestStopAfterSessionEndsDoesNotWaitForFlush(t *testing.T) {
 		t.Fatalf("Stop after session end took %v; want well under the %v flush timeout", elapsed, stopFlushTimeout)
 	}
 }
+
+// pumpOut can exit before supervise retires the session fields. A flush in
+// that window must not enqueue a barrier after the pump's final drain.
+func TestFlushAfterPumpExitDoesNotWait(t *testing.T) {
+	r := NewRuntime(Candidate{}, RuntimeOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	q := make(chan outItem, sendQueueDepth)
+	sess := &Session{}
+	r.mu.Lock()
+	r.session = sess
+	r.out = q
+	r.mu.Unlock()
+
+	pumpDone := make(chan struct{})
+	go func() {
+		r.pumpOut(ctx, sess, q)
+		close(pumpDone)
+	}()
+	cancel()
+	select {
+	case <-pumpDone:
+	case <-time.After(time.Second):
+		t.Fatal("pumpOut did not stop after its session was canceled")
+	}
+
+	start := time.Now()
+	r.flushOut()
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+		t.Fatalf("flush after pump exit took %v; want no wait for a dead pump", elapsed)
+	}
+	if err := r.Send(&v1.ViewResync{ViewID: "x"}); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("Send after pump exit = %v, want plugin: not running", err)
+	}
+}
