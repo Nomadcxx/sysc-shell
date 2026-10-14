@@ -74,7 +74,11 @@ func (r *Registry) paintSettingsBar(h *PanelHost, cfg config.Config, width, heig
 		return nil
 	}
 	t := resolved.WithCompositor(true)
-	bar, err := NewWithTheme(t, policy, connector)
+	text, err := r.textRenderer(policy.FontFamily)
+	if err != nil {
+		return nil
+	}
+	bar, err := newWithTextRenderer(t, policy, connector, text)
 	if err != nil {
 		return nil
 	}

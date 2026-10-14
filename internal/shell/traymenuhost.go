@@ -396,11 +396,11 @@ func (h *trayMenuHost) configure(width, height, scale120 int) error {
 func (h *trayMenuHost) render(pixels []byte, width, height, stride int) error {
 	createdText := false
 	if h.text == nil {
-		fonts, err := render.NewSystemFontMap(h.r.cfg.Bar.FontFamily, render.DefaultFontCacheDir())
+		text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
 		if err != nil {
 			return err
 		}
-		h.text = render.NewTextRendererWithFontMap(fonts)
+		h.text = text
 		createdText = true
 		theme := h.r.surfaceTheme()
 		scale, body := h.style.Scale120, h.style.Body

@@ -307,11 +307,11 @@ func (h *depthClockHost) render(connector string, global uint32, pixels []byte, 
 		return nil
 	}
 	if h.text == nil {
-		fonts, err := render.NewSystemFontMap(h.r.cfg.Bar.FontFamily, render.DefaultFontCacheDir())
+		text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
 		if err != nil {
 			return err
 		}
-		h.text = render.NewTextRendererWithFontMap(fonts)
+		h.text = text
 	}
 	style := h.r.surfaceTheme().OverlayStyle()
 	style.Scale120 = ui.Scale120(max(surface.scale120, int(ui.ScaleUnit)))

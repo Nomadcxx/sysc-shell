@@ -194,11 +194,11 @@ func (h *polkitHost) renderLocking(pixels []byte, width, height, stride int) err
 	defer h.r.mu.Unlock()
 	fontFamily := h.r.cfg.ForConnector(h.connector).FontFamily
 	if h.text == nil || h.fontFamily != fontFamily {
-		fonts, err := render.NewSystemFontMap(fontFamily, render.DefaultFontCacheDir())
+		text, err := h.r.textRenderer(fontFamily)
 		if err != nil {
 			return err
 		}
-		h.text = render.NewTextRendererWithFontMap(fonts)
+		h.text = text
 		h.fontFamily = fontFamily
 	}
 	if err := h.relayout(); err != nil {

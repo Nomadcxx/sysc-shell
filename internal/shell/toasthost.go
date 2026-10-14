@@ -302,11 +302,11 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 	h.r.mu.Lock()
 	defer h.r.mu.Unlock()
 	if h.text == nil {
-		fonts, err := render.NewSystemFontMap(h.r.cfg.Bar.FontFamily, render.DefaultFontCacheDir())
+		text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
 		if err != nil {
 			return err
 		}
-		h.text = render.NewTextRendererWithFontMap(fonts)
+		h.text = text
 	}
 	if !h.measured[connector] {
 		// Pre-render layout uses fallback text widths. Start from these real
