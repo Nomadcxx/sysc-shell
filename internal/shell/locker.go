@@ -268,11 +268,13 @@ func (r *Registry) lockerLocked() *lockerManager {
 				if svc == nil {
 					return
 				}
-				op := wallpaper.OpResume
+				// The lock is one automatic reason among several: resuming
+				// only removes it, so a hand-paused output stays paused.
+				op := wallpaper.OpAutoResume
 				if p {
-					op = wallpaper.OpPause
+					op = wallpaper.OpAutoPause
 				}
-				svc.Enqueue(wallpaper.Command{Op: op, Token: wallpaper.AllOutputs})
+				svc.Enqueue(wallpaper.Command{Op: op, Token: wallpaper.AllOutputs, Reason: wallpaper.ReasonLock})
 			},
 		}
 	}

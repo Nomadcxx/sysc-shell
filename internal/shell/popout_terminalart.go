@@ -132,12 +132,15 @@ func artPlayingRow(h *PanelHost, connector, widest string) *ui.Node {
 		&ui.Node{Kind: ui.KindText, Text: a.Effect + " \u00b7 " + a.Theme},
 		&ui.Node{Kind: ui.KindText, Text: wallpaperStateName(state), TextRole: theme.RoleCaption, Tone: stateTone},
 	)
+	if chip := wallpaperPauseChip(h.wallpaperSnap, connector); chip != "" {
+		info.Children = append(info.Children, &ui.Node{Kind: ui.KindText, Text: chip, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+	}
 	controls := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS}
-	switch state {
-	case wallpaper.StatePlaying:
-		controls.Children = append(controls.Children, artIconButton(h, "art-pause:"+connector, "pause", "Pause "+connector))
-	case wallpaper.StatePaused:
+	switch {
+	case h.wallpaperSnap.PausedBy[connector].Has(wallpaper.ReasonManual):
 		controls.Children = append(controls.Children, artIconButton(h, "art-resume:"+connector, "play_arrow", "Resume "+connector))
+	case state == wallpaper.StatePlaying:
+		controls.Children = append(controls.Children, artIconButton(h, "art-pause:"+connector, "pause", "Pause "+connector))
 	}
 	restore := artIconButton(h, "art-restore:"+connector, "wallpaper", "Restore still on "+connector)
 	if a.PreviewPath == "" {
@@ -538,13 +541,13 @@ func (h *PanelHost) artEnqueue(r *Registry, op wallpaper.Op, connector string) {
 		return
 	}
 	h.wallpaperSnap = svc.Snapshot()
-	state := h.wallpaperSnap.Runtime[connector].State
+	manual := h.wallpaperSnap.PausedBy[connector].Has(wallpaper.ReasonManual)
 	eligible := artLive(h, connector)
 	switch op {
 	case wallpaper.OpPause:
-		eligible = eligible && state == wallpaper.StatePlaying
+		eligible = eligible && !manual
 	case wallpaper.OpResume:
-		eligible = eligible && state == wallpaper.StatePaused
+		eligible = eligible && manual
 	case wallpaper.OpRestore:
 		eligible = eligible && h.wallpaperSnap.Assignments[connector].PreviewPath != ""
 	}

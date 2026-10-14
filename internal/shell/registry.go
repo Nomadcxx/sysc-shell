@@ -17,6 +17,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	metrics "github.com/Nomadcxx/sysc-metrics"
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
@@ -289,6 +290,17 @@ type Registry struct {
 	mediaArt             *mediaArtWorker
 	trayIconCancel       context.CancelFunc
 	pendingTrayMenu      pendingTrayMenu
+	// Autopause policy state (gh-144): applied/FPS track what the driver last
+	// sent, battery caches the polled power source, and the sync mutex keeps
+	// the wayland owner, the battery poll and the idle callbacks apart.
+	screensOff        bool
+	autoPauseApplied  map[string]wallpaper.Reasons
+	autoPauseFPS      map[string]int
+	autoPauseBattery  wallpaper.AutoBattery
+	autoPauseDebounce wallpaper.Debouncer
+	autoPauseNow      func() time.Time
+	autoPauseSync     sync.Mutex
+	readBattery       func() (metrics.BatterySnapshot, error)
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost
@@ -441,6 +453,9 @@ func NewRegistry(cfg config.Config) *Registry {
 		settingsReadDir:    os.ReadDir,
 		runArgvOutput:      runArgvOutputDefault,
 		startInhibit:       startInhibitDefault,
+		autoPauseApplied:   make(map[string]wallpaper.Reasons),
+		autoPauseFPS:       make(map[string]int),
+		readBattery:        metrics.ReadBattery,
 		signalProcess:      signalProcessDefault,
 		notify:             newNotifyState(),
 		batteryWarning:     newBatteryWarning(),
@@ -491,6 +506,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.mediaIntent = newMediaStripIntent(nil)
 	r.mediaStrip = newMediaStripHost(r, nil)
 	go r.relayMediaStrip()
+	go r.autoPauseBatteryPoll()
 	// DND toggles often run under Registry.mu; Show takes it, so publish from
 	// a separate goroutine after the setter returns.
 	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
@@ -2595,6 +2611,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	if showLayout {
 		r.OSD().Show(layoutView)
 	}
+	r.syncAutoPause()
 	return changed
 }
 

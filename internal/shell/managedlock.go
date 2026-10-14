@@ -118,7 +118,7 @@ func (r *Registry) coordinateBackground() {
 		wall := r.wallpaperSvc
 		r.mu.Unlock()
 		if wall != nil {
-			wall.Enqueue(wallpaper.Command{Op: wallpaper.OpPause, Token: wallpaper.AllOutputs})
+			wall.Enqueue(wallpaper.Command{Op: wallpaper.OpAutoPause, Token: wallpaper.AllOutputs, Reason: wallpaper.ReasonLockBackground})
 		}
 		if svc != nil {
 			svc.StopPreview()
@@ -218,7 +218,7 @@ func (r *Registry) coordinateBackground() {
 	wall := r.wallpaperStartLocked()
 	r.mu.Unlock()
 	if wall != nil {
-		wall.Enqueue(wallpaper.Command{Op: wallpaper.OpResume, Token: wallpaper.AllOutputs})
+		wall.Enqueue(wallpaper.Command{Op: wallpaper.OpAutoResume, Token: wallpaper.AllOutputs, Reason: wallpaper.ReasonLockBackground})
 	}
 }
 func (r *Registry) backgroundFailure(err error) {

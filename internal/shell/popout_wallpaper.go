@@ -1254,10 +1254,12 @@ func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
 		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
 			continue
 		}
-		switch h.wallpaperSnap.Runtime[connector].State {
-		case wallpaper.StatePlaying:
+		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StatePlaying {
 			playing = true
-		case wallpaper.StatePaused:
+		}
+		// The toggle follows the manual request; an automatic pause
+		// must not turn the button into Resume.
+		if h.wallpaperSnap.PausedBy[connector].Has(wallpaper.ReasonManual) {
 			paused = true
 		}
 	}
@@ -1279,8 +1281,8 @@ func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
 		if !ok {
 			return output + " \u00b7 nothing assigned"
 		}
-		return fmt.Sprintf("%s \u00b7 %s \u00b7 %s", output, wallpaperAssignmentLabel(a),
-			wallpaperStateName(snap.Runtime[output].State))
+		return withPauseChip(fmt.Sprintf("%s \u00b7 %s \u00b7 %s", output, wallpaperAssignmentLabel(a),
+			wallpaperStateName(snap.Runtime[output].State)), snap, output)
 	}
 	outputs, videos, images, effects := 0, 0, 0, 0
 	for _, connector := range snap.Connectors {
@@ -1462,12 +1464,8 @@ func (h *PanelHost) wallpaperSetPaused(r *Registry, paused bool) {
 		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
 			continue
 		}
-		state := h.wallpaperSnap.Runtime[connector].State
-		if paused {
-			if state != wallpaper.StatePlaying {
-				continue
-			}
-		} else if state != wallpaper.StatePaused {
+		manual := h.wallpaperSnap.PausedBy[connector].Has(wallpaper.ReasonManual)
+		if paused == manual {
 			continue
 		}
 		svc.Enqueue(wallpaper.Command{Op: op, Token: connector})
@@ -2037,4 +2035,43 @@ func wallpaperOurNamespace(namespace string) bool {
 		return true
 	}
 	return strings.HasPrefix(namespace, "sysc-shell")
+}
+
+// withPauseChip appends the automatic pause or rate chip when one applies.
+func withPauseChip(label string, snap wallpaper.Snapshot, output string) string {
+	if chip := wallpaperPauseChip(snap, output); chip != "" {
+		return label + " · " + chip
+	}
+	return label
+}
+
+// wallpaperPauseChip names the automatic pause or rate state for an output.
+func wallpaperPauseChip(snap wallpaper.Snapshot, output string) string {
+	if snap.FPSUnsupported[output] {
+		return "paused on battery (update sysc-terminal for 10 FPS)"
+	}
+	if snap.FPS[output] == 10 {
+		return "10 FPS: on battery"
+	}
+	auto := snap.PausedBy[output].Auto()
+	if auto.Empty() {
+		return ""
+	}
+	primary, ok := auto.Primary()
+	if !ok {
+		return ""
+	}
+	switch primary {
+	case wallpaper.ReasonLock, wallpaper.ReasonLockBackground:
+		return "paused: locked"
+	case wallpaper.ReasonScreensOff:
+		return "paused: screens off"
+	case wallpaper.ReasonOccluded:
+		return "paused: covered"
+	case wallpaper.ReasonBattery:
+		return "paused: on battery"
+	case wallpaper.ReasonLowBattery:
+		return "paused: low battery"
+	}
+	return ""
 }

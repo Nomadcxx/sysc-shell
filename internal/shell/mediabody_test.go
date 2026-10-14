@@ -195,6 +195,7 @@ func (mediaWallpaperEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, er
 }
 func (mediaWallpaperEngine) Restore(string, string) error { return nil }
 func (mediaWallpaperEngine) SetPaused(string, bool) error { return nil }
+func (mediaWallpaperEngine) SetFPS(string, int) error     { return nil }
 func (mediaWallpaperEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{Statics: []string{"stub"}}
 }

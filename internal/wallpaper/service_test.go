@@ -19,6 +19,9 @@ type fakeEngine struct {
 	restored   []string
 	stills     []string
 	paused     map[string]bool
+	fps        map[string]int
+	fpsErr     error
+	pauseLog   []bool
 	closeCalls int
 
 	gate         map[string]chan struct{}
@@ -34,6 +37,7 @@ type fakeEngine struct {
 func newFakeEngine() *fakeEngine {
 	return &fakeEngine{
 		paused:      map[string]bool{},
+		fps:         map[string]int{},
 		gate:        map[string]chan struct{}{},
 		restoreGate: map[string]chan struct{}{},
 		preview:     map[string]string{},
@@ -92,6 +96,17 @@ func (f *fakeEngine) SetPaused(connector string, paused bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.paused[connector] = paused
+	f.pauseLog = append(f.pauseLog, paused)
+	return nil
+}
+
+func (f *fakeEngine) SetFPS(connector string, fps int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fpsErr != nil {
+		return f.fpsErr
+	}
+	f.fps[connector] = fps
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -135,40 +136,42 @@ type gslapperEngine struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 
-	mu          sync.Mutex
-	owned       map[string]Process
-	socketFiles map[string]os.FileInfo
-	sockets     map[string]string
-	active      map[string]activeWallpaper
-	generations map[string]uint64
-	fallbacks   map[string]Process
-	locks       map[string]*sync.Mutex
-	closed      bool
-	awww        Process
-	awwwMu      sync.Mutex
+	mu             sync.Mutex
+	owned          map[string]Process
+	socketFiles    map[string]os.FileInfo
+	sockets        map[string]string
+	active         map[string]activeWallpaper
+	generations    map[string]uint64
+	fallbacks      map[string]Process
+	locks          map[string]*sync.Mutex
+	fpsUnsupported map[string]int
+	closed         bool
+	awww           Process
+	awwwMu         sync.Mutex
 }
 
 // NewEngine builds the real engine: exec for spawn, unix sockets for IPC.
 func NewEngine(dir string, lookup func(string) bool) *gslapperEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &gslapperEngine{
-		dir:          dir,
-		lookup:       lookup,
-		caps:         probeCapabilities(lookup),
-		readyWait:    defaultReadyWait,
-		poll:         defaultPoll,
-		spawn:        spawnDetached,
-		request:      Request,
-		requestOwned: requestWithPeer,
-		ctx:          ctx,
-		cancel:       cancel,
-		owned:        map[string]Process{},
-		socketFiles:  map[string]os.FileInfo{},
-		sockets:      map[string]string{},
-		active:       map[string]activeWallpaper{},
-		generations:  map[string]uint64{},
-		fallbacks:    map[string]Process{},
-		locks:        map[string]*sync.Mutex{},
+		dir:            dir,
+		lookup:         lookup,
+		caps:           probeCapabilities(lookup),
+		readyWait:      defaultReadyWait,
+		poll:           defaultPoll,
+		spawn:          spawnDetached,
+		request:        Request,
+		requestOwned:   requestWithPeer,
+		ctx:            ctx,
+		cancel:         cancel,
+		owned:          map[string]Process{},
+		socketFiles:    map[string]os.FileInfo{},
+		sockets:        map[string]string{},
+		active:         map[string]activeWallpaper{},
+		generations:    map[string]uint64{},
+		fallbacks:      map[string]Process{},
+		locks:          map[string]*sync.Mutex{},
+		fpsUnsupported: map[string]int{},
 	}
 }
 
@@ -773,6 +776,7 @@ func (e *gslapperEngine) clearOwned(connector string, proc Process) {
 		delete(e.owned, connector)
 		delete(e.socketFiles, connector)
 		delete(e.sockets, connector)
+		delete(e.fpsUnsupported, connector)
 	}
 }
 
@@ -816,6 +820,56 @@ func (e *gslapperEngine) setPausedLocked(connector string, paused bool) error {
 		e.active[connector] = active
 	}
 	e.mu.Unlock()
+	return nil
+}
+
+// ErrFPSUnsupported reports an engine or engine build that cannot change its
+// playback rate. The service falls back to pausing on battery.
+var ErrFPSUnsupported = errors.New("wallpaper: this engine cannot change playback rate")
+
+// SetFPS bounds playback rate on an owned sysc-terminal. It only applies to an
+// active terminal effect: gSlapper has no live rate control. A build that does
+// not know the fps command answers ERR unknown, which is remembered for the
+// life of that owned process.
+func (e *gslapperEngine) SetFPS(connector string, fps int) error {
+	unlock := e.lockConnector(connector)
+	defer unlock()
+	if e.isClosed() {
+		return errEngineClosed
+	}
+	e.mu.Lock()
+	active, ok := e.active[connector]
+	e.mu.Unlock()
+	if !ok || active.engine != EngineTerminal {
+		return ErrFPSUnsupported
+	}
+	proc := e.ownedProcess(connector)
+	if proc == nil {
+		return fmt.Errorf("wallpaper: %s socket is not owned by this shell", connector)
+	}
+	pid := processPID(proc)
+	e.mu.Lock()
+	cached, cachedKnown := e.fpsUnsupported[connector]
+	e.mu.Unlock()
+	if cachedKnown && cached == pid {
+		return ErrFPSUnsupported
+	}
+	reply, err := e.requestSocket(proc, e.currentSocket(connector), fmt.Sprintf("fps %d", fps), ipcPlaybackTimeout)
+	if err != nil {
+		return err
+	}
+	if err := checkOK(reply); err != nil {
+		if strings.Contains(reply, "unknown") {
+			e.mu.Lock()
+			if e.fpsUnsupported == nil {
+				e.fpsUnsupported = map[string]int{}
+			}
+			e.fpsUnsupported[connector] = pid
+			e.mu.Unlock()
+			return ErrFPSUnsupported
+		}
+		return err
+	}
 	return nil
 }
 
