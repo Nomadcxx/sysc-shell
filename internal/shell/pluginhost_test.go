@@ -1113,17 +1113,24 @@ func TestPluginPanelEntrySwitchKeepsReplacementOpen(t *testing.T) {
 		_, open := reg.panels.Output(PanelPlugin)
 		host := reg.panelHosts[PanelPlugin]
 		reg.mu.Unlock()
-		if ready && open && host != nil && strings.Contains(treeText(reg.plugins.panelTree(host)), "Enabled") {
-			oldPanelDrop()
-			oldShieldDrop()
+		if ready && open && host != nil {
+			// Tree building writes the host's menu and field maps, and the
+			// plugin host rebuilds this panel asynchronously under r.mu.
 			reg.mu.Lock()
-			stillCurrent := reg.panelHosts[PanelPlugin] == host && host != oldPanelHost &&
-				reg.panelShields[7] != nil && reg.panelShields[7] != oldPanelHost
+			tree := reg.plugins.panelTree(host)
 			reg.mu.Unlock()
-			if !stillCurrent {
-				t.Fatal("delayed close from the old aux surface retired its replacement")
+			if strings.Contains(treeText(tree), "Enabled") {
+				oldPanelDrop()
+				oldShieldDrop()
+				reg.mu.Lock()
+				stillCurrent := reg.panelHosts[PanelPlugin] == host && host != oldPanelHost &&
+					reg.panelShields[7] != nil && reg.panelShields[7] != oldPanelHost
+				reg.mu.Unlock()
+				if !stillCurrent {
+					t.Fatal("delayed close from the old aux surface retired its replacement")
+				}
+				return
 			}
-			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -1251,7 +1258,12 @@ func TestPluginPanelHostUsesManifestSize(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		if !strings.Contains(treeText(reg.plugins.panelTree(host)), "Output directory") {
+		// Tree building writes the host's menu and field maps, and the
+		// plugin host rebuilds this panel asynchronously under r.mu.
+		reg.mu.Lock()
+		tree := reg.plugins.panelTree(host)
+		reg.mu.Unlock()
+		if !strings.Contains(treeText(tree), "Output directory") {
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
