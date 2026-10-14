@@ -48,18 +48,22 @@ type Window struct {
 	Focused        bool
 	FocusTimestamp int64 // monotonic ns; 0 when null or omitted
 	Pid            int   // 0 when Niri sends null
-	// Floating reports is_floating. A floating window never counts as
-	// covering its output, however it is positioned.
+	// Floating reports is_floating. A floating window carries a view
+	// position on every Niri release, so the evaluator judges it by
+	// geometry like any other tile.
 	Floating bool
 	// HasLayout and the tile rectangle are set from the compositor layout.
 	// A window without a layout cannot cover anything.
 	HasLayout bool
 	// TileX, TileY, TileW and TileH are the tile rectangle in workspace
 	// view coordinates, from tile_pos_in_workspace_view and tile_size.
+	// The size is always set when HasLayout is; the position is not.
 	TileX, TileY float64
 	TileW, TileH float64
-	// TileInView reports that the tile position was present, meaning the
-	// window sits inside the workspace view rather than outside it.
+	// TileInView reports that the tile position was present. Niri 26.04
+	// sends none for tiled windows, fullscreen included, so its absence
+	// does not mean the window is outside the workspace view: the
+	// wallpaper evaluator falls back to the tile size there.
 	TileInView bool
 }
 

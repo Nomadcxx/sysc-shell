@@ -21,6 +21,8 @@ type fakeEngine struct {
 	paused     map[string]bool
 	fps        map[string]int
 	fpsErr     error
+	pauseErr   error
+	pauseCalls int
 	pauseLog   []bool
 	closeCalls int
 
@@ -95,6 +97,10 @@ func (f *fakeEngine) Restore(connector, still string) error {
 func (f *fakeEngine) SetPaused(connector string, paused bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.pauseCalls++
+	if f.pauseErr != nil {
+		return f.pauseErr
+	}
 	f.paused[connector] = paused
 	f.pauseLog = append(f.pauseLog, paused)
 	return nil

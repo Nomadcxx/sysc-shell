@@ -1,6 +1,7 @@
 package wallpaper
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -196,6 +197,114 @@ func TestServiceFPSUnsupportedReasonClearsOnNewProcess(t *testing.T) {
 	})
 	if snap.FPS["DP-1"] != 20 {
 		t.Fatalf("fps after recovery = %d, want 20", snap.FPS["DP-1"])
+	}
+}
+
+// TestServiceDisconnectDropsAutomaticReasons keeps an automatic reason from
+// outliving the session that set it: a connector that returns later must not
+// come back paused for a lock that is long gone.
+func TestServiceDisconnectDropsAutomaticReasons(t *testing.T) {
+	eng := newFakeEngine()
+	svc := newTestService(t, eng)
+	applyVideo(t, svc)
+
+	svc.Enqueue(Command{Op: OpAutoPause, Token: "DP-1", Reason: ReasonLock})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.PausedBy["DP-1"].Has(ReasonLock) })
+	if log := fakePauseLog(t, eng); len(log) != 1 {
+		t.Fatalf("pause log = %v, want one entry", log)
+	}
+
+	svc.Enqueue(Command{Op: OpDisconnect, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return len(s.PausedBy) == 0 })
+	svc.Enqueue(Command{Op: OpConnect, Token: "DP-1"})
+	applyVideo(t, svc)
+
+	if snap := svc.Snapshot(); snap.PausedBy["DP-1"].Has(ReasonLock) {
+		t.Fatalf("the reconnected output kept the lock reason: %v", snap.PausedBy)
+	}
+	if log := fakePauseLog(t, eng); len(log) != 1 {
+		t.Fatalf("pause log = %v, want no pause after the reconnect", log)
+	}
+}
+
+// TestServiceUnsupportedVideoKeepsTheRequestedRate pins the remembered bound:
+// a video engine cannot hold a rate, but the same connector must inherit the
+// request when its assignment later becomes a Terminal Art effect.
+func TestServiceUnsupportedVideoKeepsTheRequestedRate(t *testing.T) {
+	eng := newFakeEngine()
+	svc := newTestService(t, eng)
+	applyVideo(t, svc)
+
+	eng.mu.Lock()
+	eng.fpsErr = ErrFPSUnsupported
+	eng.mu.Unlock()
+	svc.Enqueue(Command{Op: OpSetFPS, Token: "DP-1", FPS: 10})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool { return s.FPS["DP-1"] == 10 })
+	if snap.FPSUnsupported["DP-1"] {
+		t.Fatal("a video reported the effect-only unsupported flag")
+	}
+
+	eng.mu.Lock()
+	eng.fpsErr = nil
+	eng.mu.Unlock()
+	applyEffect(t, svc)
+	deadline := time.Now().Add(2 * time.Second)
+	for fakeFPSState(t, eng, "DP-1") != 10 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := fakeFPSState(t, eng, "DP-1"); got != 10 {
+		t.Fatalf("rate after switching to an effect = %d, want 10", got)
+	}
+}
+
+// TestServiceFinishKeepsAFailedPauseUnrecorded proves the retry: when a
+// replaced process refuses the re-pause, the service must not record it as
+// delivered, or the next transition would skip the engine as a no-op.
+func TestServiceFinishKeepsAFailedPauseUnrecorded(t *testing.T) {
+	eng := newFakeEngine()
+	svc := newTestService(t, eng)
+	applyEffect(t, svc)
+
+	svc.Enqueue(Command{Op: OpAutoPause, Token: "DP-1", Reason: ReasonLock})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.PausedBy["DP-1"].Has(ReasonLock) })
+
+	// The next apply replaces the process, and this time the re-pause fails.
+	eng.mu.Lock()
+	eng.pauseErr = errors.New("engine busy")
+	eng.mu.Unlock()
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		eng.mu.Lock()
+		attempts := eng.pauseCalls
+		eng.mu.Unlock()
+		if attempts >= 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	eng.mu.Lock()
+	attempts := eng.pauseCalls
+	refused := eng.pauseErr != nil
+	eng.mu.Unlock()
+	if attempts < 2 {
+		t.Fatalf("the re-apply never tried to restore the pause (%d attempts)", attempts)
+	}
+	if !refused || fakePausedState(t, eng, "DP-1") {
+		t.Fatal("the engine was recorded as paused although the call failed")
+	}
+
+	// With the error gone, a second reason must still reach the engine.
+	eng.mu.Lock()
+	eng.pauseErr = nil
+	eng.mu.Unlock()
+	svc.Enqueue(Command{Op: OpAutoPause, Token: "DP-1", Reason: ReasonScreensOff})
+	deadline = time.Now().Add(2 * time.Second)
+	for !fakePausedState(t, eng, "DP-1") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !fakePausedState(t, eng, "DP-1") {
+		t.Fatal("the retried pause never reached the engine")
 	}
 }
 

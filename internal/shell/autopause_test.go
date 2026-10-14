@@ -93,6 +93,34 @@ func TestAutoPauseLockReasonFollowsTheConfig(t *testing.T) {
 	}
 }
 
+// TestAutoPauseCoversAFullscreenTileWithoutAPosition is the Niri 26.04
+// shape: a tiled window has a tile size and no view position, so only a tile
+// the size of the whole output (a fullscreen window) counts as covering.
+func TestAutoPauseCoversAFullscreenTileWithoutAPosition(t *testing.T) {
+	reg, svc := newAutoPauseFixture(t, stubWallpaperEngine{})
+
+	reg.mu.Lock()
+	reg.niriSnapshot.Windows = []niri.Window{{
+		WorkspaceID: 1, HasWorkspace: true,
+		HasLayout: true, TileW: 1920, TileH: 1080,
+	}}
+	reg.mu.Unlock()
+	reg.syncAutoPause()
+	awaitAutoPause(t, svc, func(s wallpaper.Snapshot) bool {
+		return s.PausedBy["DP-1"].Has(wallpaper.ReasonOccluded)
+	})
+
+	// A tile that only spans the working area cannot be proven to be in
+	// view without a position, so the cover clears again.
+	reg.mu.Lock()
+	reg.niriSnapshot.Windows[0].TileW = 900
+	reg.mu.Unlock()
+	reg.syncAutoPause()
+	awaitAutoPause(t, svc, func(s wallpaper.Snapshot) bool {
+		return !s.PausedBy["DP-1"].Has(wallpaper.ReasonOccluded)
+	})
+}
+
 func TestLockerPausedCallbackDrivesTheDriver(t *testing.T) {
 	reg, svc := newAutoPauseFixture(t, stubWallpaperEngine{})
 

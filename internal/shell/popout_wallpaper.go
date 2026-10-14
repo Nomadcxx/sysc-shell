@@ -2056,12 +2056,16 @@ func withPauseChip(label string, snap wallpaper.Snapshot, output string, charge 
 
 // wallpaperPauseChip names the automatic pause or rate state for an output.
 func wallpaperPauseChip(snap wallpaper.Snapshot, output string, charge int) string {
-	if snap.FPSUnsupported[output] && snap.FPS[output] == 10 &&
-		snap.PausedBy[output].Has(wallpaper.ReasonBattery) {
-		return "Paused: on battery (update sysc-terminal for 10 FPS)"
-	}
-	if snap.FPS[output] == 10 {
-		return "10 FPS: on battery"
+	// A rate chip only means something for Terminal Art: a gSlapper video
+	// keeps its own rate even when the battery policy asks for a bound.
+	if snap.Assignments[output].Kind == wallpaper.KindEffect {
+		if snap.FPSUnsupported[output] && snap.FPS[output] == 10 &&
+			snap.PausedBy[output].Has(wallpaper.ReasonBattery) {
+			return "Paused: on battery (update sysc-terminal for 10 FPS)"
+		}
+		if snap.FPS[output] == 10 {
+			return "10 FPS: on battery"
+		}
 	}
 	auto := snap.PausedBy[output].Auto()
 	if auto.Empty() {

@@ -34,21 +34,28 @@ type AutoArea struct {
 	X, Y, W, H float64
 }
 
-// AutoOutput ties a connector to its working area and the workspace that
-// workspace-based rules treat as active.
+// AutoOutput ties a connector to its working area, its full output size and
+// the workspace that workspace-based rules treat as active. OutputW and
+// OutputH drive the fullscreen signature used when a window has no tile
+// position; see outputCovered.
 type AutoOutput struct {
 	Connector   string
 	Area        AutoArea
+	OutputW     float64
+	OutputH     float64
 	WorkspaceID uint64
 }
 
-// AutoWindow is one Niri window projected for the evaluator. Floating
-// windows never cover, and neither do windows without a known layout.
+// AutoWindow is one Niri window projected for the evaluator. X and Y are the
+// tile position in workspace-view coordinates and TileInView reports whether
+// Niri sent one: Niri 26.04 sends none for tiled windows, including
+// fullscreen ones. A window without a layout never covers.
 type AutoWindow struct {
 	WorkspaceID uint64
 	X, Y, W, H  float64
 	Floating    bool
 	HasLayout   bool
+	TileInView  bool
 }
 
 // AutoBattery is a battery reading. ChargeValid reports whether Charge is a
@@ -79,6 +86,9 @@ type AutoInputs struct {
 // applies immediately, uncover only after UncoverDelay.
 func Evaluate(in AutoInputs, deb *Debouncer) map[string]Reasons {
 	out := make(map[string]Reasons)
+	if deb != nil {
+		deb.retain(in.Outputs)
+	}
 	for _, output := range in.Outputs {
 		var reasons Reasons
 		if in.Settings.PauseLocked {
@@ -118,16 +128,32 @@ func Evaluate(in AutoInputs, deb *Debouncer) map[string]Reasons {
 	return out
 }
 
-// outputCovered reports whether one window on the output's active workspace
-// covers at least coverFraction of the working area in each dimension.
+// outputCovered reports whether a window on the output's active workspace
+// covers it. A tile with a known position (a floating window on every Niri
+// release, and any tiled window on releases that report one) has to
+// intersect the working area by coverFraction in each dimension.
+//
+// A tile without a position is judged by size alone: Niri fullscreens a
+// tiled window to the whole output, including the strip this shell's bar
+// reserved, so a tile that large is a fullscreen window. Niri 26.04 sends
+// no position for tiled windows, which also means a tiled window scrolled
+// partway out of the workspace view cannot be told apart from one fully in
+// view; such a tile that fills the output counts as covering.
 func outputCovered(in AutoInputs, output AutoOutput) bool {
 	area := output.Area
 	if area.W <= 0 || area.H <= 0 {
 		return false
 	}
 	needW, needH := area.W*coverFraction, area.H*coverFraction
+	fullW, fullH := output.OutputW*coverFraction, output.OutputH*coverFraction
 	for _, w := range in.Windows {
-		if w.WorkspaceID != output.WorkspaceID || w.Floating || !w.HasLayout {
+		if w.WorkspaceID != output.WorkspaceID || !w.HasLayout {
+			continue
+		}
+		if !w.TileInView {
+			if output.OutputW > 0 && output.OutputH > 0 && w.W >= fullW && w.H >= fullH {
+				return true
+			}
 			continue
 		}
 		if overlap(w.X, w.W, area.X, area.W) >= needW && overlap(w.Y, w.H, area.Y, area.H) >= needH {
@@ -198,4 +224,23 @@ func (d *Debouncer) Confirm(connector string, covered bool, now time.Time) bool 
 // Pending reports whether any output is inside the uncover grace window.
 func (d *Debouncer) Pending() bool {
 	return len(d.uncoveredSince) > 0
+}
+
+// retain drops connectors that are no longer in the input. Without it a
+// connector that leaves while its uncover grace is pending keeps Pending
+// true forever, and the driver re-arms its wake-up every UncoverDelay.
+func (d *Debouncer) retain(outputs []AutoOutput) {
+	if len(d.covered) == 0 {
+		return
+	}
+	keep := make(map[string]bool, len(outputs))
+	for _, output := range outputs {
+		keep[output.Connector] = true
+	}
+	for connector := range d.covered {
+		if !keep[connector] {
+			delete(d.covered, connector)
+			delete(d.uncoveredSince, connector)
+		}
+	}
 }

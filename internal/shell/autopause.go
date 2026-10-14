@@ -192,15 +192,18 @@ func (r *Registry) autoPauseInputs() (wallpaper.AutoInputs, *wallpaper.Service, 
 		in.Outputs = append(in.Outputs, wallpaper.AutoOutput{
 			Connector:   connector,
 			Area:        autoPauseArea(policy.Edge, policy.Height, width, height),
+			OutputW:     float64(width),
+			OutputH:     float64(height),
 			WorkspaceID: wsID,
 		})
 	}
 	for _, w := range r.niriSnapshot.Windows {
-		// A window scrolled out of view keeps its tile size but has no
-		// view position, so its rectangle would sit wrongly at the origin.
-		if !w.HasWorkspace || !w.TileInView {
+		if !w.HasWorkspace {
 			continue
 		}
+		// A window without a view position keeps its tile size, and on Niri
+		// 26.04 no tiled window has one. The evaluator reads that as the
+		// fullscreen signature rather than dropping the window here.
 		in.Windows = append(in.Windows, wallpaper.AutoWindow{
 			WorkspaceID: w.WorkspaceID,
 			X:           w.TileX,
@@ -209,6 +212,7 @@ func (r *Registry) autoPauseInputs() (wallpaper.AutoInputs, *wallpaper.Service, 
 			H:           w.TileH,
 			Floating:    w.Floating,
 			HasLayout:   w.HasLayout,
+			TileInView:  w.TileInView,
 		})
 	}
 	if len(in.Outputs) == 0 {

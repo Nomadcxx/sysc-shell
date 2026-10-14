@@ -453,6 +453,10 @@ func (s *Service) handle(c Command) {
 		delete(s.paused, c.Token)
 		delete(s.fps, c.Token)
 		delete(s.fpsUnsupported, c.Token)
+		// Automatic reasons belong to the session that set them. Keeping
+		// them would re-pause a connector that comes back much later, and
+		// the map would grow with every connector name ever seen.
+		delete(s.auto, c.Token)
 		generation := s.store.Disconnect(c.Token)
 		if s.engine != nil {
 			s.engine.AdvanceGeneration(c.Token, generation)
@@ -542,13 +546,23 @@ func (s *Service) finish(r engineResult) {
 		manual = a.DesiredPlayback == StatePaused
 	}
 	if s.playable(r.job.Connector) {
+		// The process may be new, which starts playing; whatever was
+		// recorded for the old one says nothing about this one.
+		delete(s.paused, r.job.Connector)
 		effective := manual || !s.auto[r.job.Connector].Auto().Empty()
 		if effective {
+			// Record that the engine was told only when it was: a failed
+			// call must not make the next transition skip its retry.
 			if err := s.engine.SetPaused(r.job.Connector, true); err != nil {
 				s.store.noteRuntimeErr(r.job.Connector, err)
+			} else {
+				s.paused[r.job.Connector] = true
 			}
+		} else {
+			// Nothing to send: a fresh process is already playing, and the
+			// recorded state is that.
+			s.paused[r.job.Connector] = false
 		}
-		s.paused[r.job.Connector] = effective
 		if fps := s.fps[r.job.Connector]; fps > 0 {
 			s.applyFPS(r.job.Connector, fps)
 		}
@@ -644,15 +658,13 @@ func (s *Service) applyFPS(connector string, fps int) {
 	}
 	if errors.Is(err, ErrFPSUnsupported) {
 		// Only effects report the gap: gSlapper has no live rate command,
-		// and a video keeps its own rate rather than pausing for a bound
-		// the engine cannot hold. The driver turns this flag into the
-		// battery fallback its policy asks for.
-		a, ok := s.store.Assignment(connector)
-		switch {
-		case ok && a.Kind == KindVideo:
-			// Do not advertise a bound the video engine never received.
-			delete(s.fps, connector)
-		case ok && a.Kind == KindEffect:
+		// and a video keeps its own rate rather than pausing for a bound the
+		// engine cannot hold. Either way the requested bound stays in s.fps,
+		// so the same connector inherits it when its assignment turns into
+		// an effect, which finish re-sends. The driver turns this flag into
+		// the battery fallback its policy asks for, and the panel shows a
+		// rate only for effects.
+		if a, ok := s.store.Assignment(connector); ok && a.Kind == KindEffect {
 			s.fpsUnsupported[connector] = true
 		}
 		return
