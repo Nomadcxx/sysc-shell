@@ -263,10 +263,12 @@ type PanelHost struct {
 	launcherAwaiting bool
 	launcherQueryGen uint64
 
-	wallpaperSnap    wallpaper.Snapshot
-	wallpaperDir     string
-	wallpaperFilter  wallpaper.Filter
-	wallpaperOutput  string
+	wallpaperSnap   wallpaper.Snapshot
+	wallpaperDir    string
+	wallpaperFilter wallpaper.Filter
+	wallpaperOutput string
+	// wallpaperCharge feeds the low-battery chip; -1 until a reading exists.
+	wallpaperCharge  int
 	wallpaperSel     int
 	wallpaperFocused bool
 	// wallpaperEffectTheme is the last sysc-Go palette picked on Terminal Art.
@@ -1284,16 +1286,17 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	openShield := !r.hasPanelOnOutputLocked(output)
 	r.panelOrder++
 	h := &PanelHost{
-		id:          id,
-		output:      output,
-		openOrder:   r.panelOrder,
-		place:       place,
-		pointer:     interaction{stateLayer: true},
-		stopAnim:    make(chan struct{}),
-		shieldQuiet: time.Now().Add(shieldQuietFor),
-		theme:       r.panelThemeFor(output),
-		fontFamily:  r.panelFontFamily(output),
-		fontCatalog: &r.fontCatalog,
+		id:              id,
+		output:          output,
+		openOrder:       r.panelOrder,
+		place:           place,
+		pointer:         interaction{stateLayer: true},
+		stopAnim:        make(chan struct{}),
+		shieldQuiet:     time.Now().Add(shieldQuietFor),
+		theme:           r.panelThemeFor(output),
+		fontFamily:      r.panelFontFamily(output),
+		fontCatalog:     &r.fontCatalog,
+		wallpaperCharge: -1,
 	}
 	if id == PanelFiles {
 		h.filesOwner = r.files

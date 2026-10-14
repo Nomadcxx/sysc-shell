@@ -998,14 +998,18 @@ func TestWallpaperDefaults(t *testing.T) {
 	// The tilde is kept literal: Default() must not depend on the environment,
 	// so expansion belongs to whoever opens the directory.
 	want := Wallpaper{
-		ImageDirectory: "~/Pictures/wallpapers",
-		VideoDirectory: "~/Pictures/wallpapers",
-		Scale:          "fill",
-		Loop:           true,
-		FPS:            30,
-		Fade:           false,
-		FadeDuration:   0.5,
-		Hidden:         "none",
+		ImageDirectory:  "~/Pictures/wallpapers",
+		VideoDirectory:  "~/Pictures/wallpapers",
+		Scale:           "fill",
+		Loop:            true,
+		FPS:             30,
+		Fade:            false,
+		FadeDuration:    0.5,
+		Hidden:          "none",
+		PauseCovered:    true,
+		PauseLocked:     true,
+		OnBattery:       "limit-10",
+		LowBatteryPause: 20,
 	}
 	if got := Default().Wallpaper; got != want {
 		t.Fatalf("Default().Wallpaper = %+v, want %+v", got, want)

@@ -202,6 +202,11 @@ type wireWallpaper struct {
 	Fade           *bool    `json:"fade,omitempty"`
 	FadeDuration   *float64 `json:"fade_duration,omitempty"`
 	Hidden         *string  `json:"hidden,omitempty"`
+
+	PauseCovered    *bool   `json:"pause_covered,omitempty"`
+	PauseLocked     *bool   `json:"pause_locked,omitempty"`
+	OnBattery       *string `json:"on_battery,omitempty"`
+	LowBatteryPause *int    `json:"low_battery_pause,omitempty"`
 }
 
 type wireTerminalArt struct {
@@ -1685,6 +1690,18 @@ func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, er
 	if w.Hidden != nil {
 		out.Hidden = *w.Hidden
 	}
+	if w.PauseCovered != nil {
+		out.PauseCovered = *w.PauseCovered
+	}
+	if w.PauseLocked != nil {
+		out.PauseLocked = *w.PauseLocked
+	}
+	if w.OnBattery != nil {
+		out.OnBattery = *w.OnBattery
+	}
+	if w.LowBatteryPause != nil {
+		out.LowBatteryPause = *w.LowBatteryPause
+	}
 
 	if !wallpaperScales[out.Scale] {
 		return Wallpaper{}, pathErr(path+".scale", "%q is not a known scaling mode", out.Scale)
@@ -1694,6 +1711,12 @@ func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, er
 	}
 	if !wallpaperHidden[out.Hidden] {
 		return Wallpaper{}, pathErr(path+".hidden", "%q is not a known hidden policy", out.Hidden)
+	}
+	if !wallpaperOnBattery[out.OnBattery] {
+		return Wallpaper{}, pathErr(path+".on_battery", "%q is not a known battery policy", out.OnBattery)
+	}
+	if !wallpaperLowBattery[out.LowBatteryPause] {
+		return Wallpaper{}, pathErr(path+".low_battery_pause", "%d is not off or 10, 15, 20, 25, or 30", out.LowBatteryPause)
 	}
 	if out.FadeDuration < 0 {
 		return Wallpaper{}, pathErr(path+".fade_duration", "%v is negative", out.FadeDuration)

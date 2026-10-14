@@ -416,6 +416,16 @@ type Wallpaper struct {
 	// wallpaper is occluded. It also decides whether a video-to-video apply can
 	// use IPC `change`, because gSlapper requires --auto-stop for that.
 	Hidden string
+	// PauseCovered pauses the wallpaper while a window covers the output, and
+	// PauseLocked while the session is locked.
+	PauseCovered bool
+	PauseLocked  bool
+	// OnBattery is keep, pause, or limit-10: the policy for video wallpapers
+	// while on battery power.
+	OnBattery string
+	// LowBatteryPause pauses video wallpapers at this charge percentage
+	// (0 disables the threshold).
+	LowBatteryPause int
 }
 
 // TerminalArt is what Terminal Art starts on. Palette is a sysc-Go theme
@@ -444,9 +454,11 @@ func ValidPaletteName(name string) bool {
 // an unknown value fails the load rather than silently falling back, so a typo
 // is visible instead of quietly changing what the engine does.
 var (
-	wallpaperScales = map[string]bool{"fill": true, "stretch": true, "original": true, "panscan": true}
-	wallpaperFPS    = map[int]bool{30: true, 60: true, 100: true}
-	wallpaperHidden = map[string]bool{"none": true, "auto-pause": true, "auto-stop": true}
+	wallpaperScales     = map[string]bool{"fill": true, "stretch": true, "original": true, "panscan": true}
+	wallpaperFPS        = map[int]bool{30: true, 60: true, 100: true}
+	wallpaperHidden     = map[string]bool{"none": true, "auto-pause": true, "auto-stop": true}
+	wallpaperOnBattery  = map[string]bool{"keep": true, "pause": true, "limit-10": true}
+	wallpaperLowBattery = map[int]bool{0: true, 10: true, 15: true, 20: true, 25: true, 30: true}
 )
 
 type Weather struct {
@@ -691,13 +703,17 @@ func Default() Config {
 			// Stills and video share one directory by default, which D9
 			// allows: that is how the library on this machine is laid out, and
 			// a split default would hide every video behind a second root.
-			ImageDirectory: "~/Pictures/wallpapers",
-			VideoDirectory: "~/Pictures/wallpapers",
-			Scale:          "fill",
-			Loop:           true,
-			FPS:            30,
-			FadeDuration:   0.5,
-			Hidden:         "none",
+			ImageDirectory:  "~/Pictures/wallpapers",
+			VideoDirectory:  "~/Pictures/wallpapers",
+			Scale:           "fill",
+			Loop:            true,
+			FPS:             30,
+			FadeDuration:    0.5,
+			Hidden:          "none",
+			PauseCovered:    true,
+			PauseLocked:     true,
+			OnBattery:       "limit-10",
+			LowBatteryPause: 20,
 		},
 		TerminalOpacity: TerminalOpacityMax,
 	}

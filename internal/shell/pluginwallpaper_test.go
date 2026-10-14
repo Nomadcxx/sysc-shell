@@ -270,6 +270,7 @@ func (e wallpaperMaskTestEngine) Apply(wallpaper.Job, wallpaper.Settings) (strin
 }
 func (wallpaperMaskTestEngine) Restore(string, string) error { return nil }
 func (wallpaperMaskTestEngine) SetPaused(string, bool) error { return nil }
+func (wallpaperMaskTestEngine) SetFPS(string, int) error     { return nil }
 func (wallpaperMaskTestEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
-	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 	"log"
 	"os"
 	"path/filepath"
@@ -115,11 +114,8 @@ func (r *Registry) coordinateBackground() {
 		}
 		r.mu.Lock()
 		r.backgroundHeld = true
-		wall := r.wallpaperSvc
 		r.mu.Unlock()
-		if wall != nil {
-			wall.Enqueue(wallpaper.Command{Op: wallpaper.OpPause, Token: wallpaper.AllOutputs})
-		}
+		r.syncAutoPause()
 		if svc != nil {
 			svc.StopPreview()
 			if !lease.WallsKnown {
@@ -146,11 +142,16 @@ func (r *Registry) coordinateBackground() {
 		// No resource snapshot exists to restore. A fresh known owner can admit ordinary startup.
 		r.mu.Lock()
 		current := r.currentLockStateLocked()
+		cleared := false
 		if lockStateAllowsBackground(current) && r.backgroundHeld {
 			r.backgroundHeld, r.backgroundError = false, ""
 			r.wallpaperStartLocked()
+			cleared = true
 		}
 		r.mu.Unlock()
+		if cleared {
+			r.syncAutoPause()
+		}
 		return
 	}
 	if !lease.CanRestore(state) {
@@ -215,11 +216,9 @@ func (r *Registry) coordinateBackground() {
 	}
 	r.backgroundHeld = false
 	r.backgroundError = ""
-	wall := r.wallpaperStartLocked()
+	r.wallpaperStartLocked()
 	r.mu.Unlock()
-	if wall != nil {
-		wall.Enqueue(wallpaper.Command{Op: wallpaper.OpResume, Token: wallpaper.AllOutputs})
-	}
+	r.syncAutoPause()
 }
 func (r *Registry) backgroundFailure(err error) {
 	log.Printf("shell: lock background coordination: %v", err)

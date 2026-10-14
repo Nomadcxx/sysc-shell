@@ -69,6 +69,7 @@ func (stubWallpaperEngine) AdvanceGeneration(string, uint64)                    
 func (stubWallpaperEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, error) { return "", nil }
 func (stubWallpaperEngine) Restore(string, string) error                            { return nil }
 func (stubWallpaperEngine) SetPaused(string, bool) error                            { return nil }
+func (stubWallpaperEngine) SetFPS(string, int) error                                { return nil }
 func (stubWallpaperEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww"}}
 }
@@ -374,12 +375,12 @@ func TestWallpaperSummaryIsReadBackFromTheSnapshot(t *testing.T) {
 		},
 		Runtime: map[string]wallpaper.Runtime{},
 	}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs · 1 video · 1 image" {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); got != "2 outputs · 1 video · 1 image" {
 		t.Fatalf("summary = %q", got)
 	}
 
 	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/a.png"}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs · 0 video · 2 image" {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); got != "2 outputs · 0 video · 2 image" {
 		t.Fatalf("summary after reassign = %q", got)
 	}
 
@@ -475,12 +476,16 @@ func TestWallpaperPlaybackStateRequiresPlayableVideo(t *testing.T) {
 			snap := wallpaper.Snapshot{
 				Assignments: make(map[string]wallpaper.Assignment, len(tc.states)),
 				Runtime:     make(map[string]wallpaper.Runtime, len(tc.states)),
+				PausedBy:    make(map[string]wallpaper.Reasons, len(tc.states)),
 			}
 			for i, state := range tc.states {
 				connector := fmt.Sprintf("DP-%d", i+1)
 				connectors[i] = connector
 				snap.Assignments[connector] = wallpaper.Assignment{Kind: wallpaper.KindVideo, Path: "/w/video.mp4"}
 				snap.Runtime[connector] = wallpaper.Runtime{State: state}
+				if state == wallpaper.StatePaused {
+					snap.PausedBy[connector] = wallpaper.Reasons(0).With(wallpaper.ReasonManual)
+				}
 			}
 			snap.Connectors = connectors
 			h := &PanelHost{wallpaperSnap: snap, wallpaperOutput: wallpaper.AllOutputs}
@@ -1295,13 +1300,13 @@ func TestWallpaperSummaryCountsOneOutput(t *testing.T) {
 		Connectors:  []string{"eDP-1"},
 		Assignments: map[string]wallpaper.Assignment{"eDP-1": {Kind: wallpaper.KindVideo, Path: "/w/a.mp4"}},
 	}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); !strings.HasPrefix(got, "1 output ") {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); !strings.HasPrefix(got, "1 output ") {
 		t.Errorf("summary = %q, want it to start with \"1 output \"", got)
 	}
 	snap.Connectors = []string{"DP-1", "DP-3"}
 	snap.Assignments["DP-1"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/b.png"}
 	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/c.png"}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); !strings.HasPrefix(got, "2 outputs ") {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); !strings.HasPrefix(got, "2 outputs ") {
 		t.Errorf("summary = %q, want it to start with \"2 outputs \"", got)
 	}
 }
@@ -2002,5 +2007,19 @@ func TestPickerPaletteKeepsTheOldPaletteWhenTheWriteFails(t *testing.T) {
 		t.Fatalf("palette = %s/%s, want the unchanged %s/%s",
 			reg.cfg.ThemeGen.Source, reg.cfg.ThemeGen.Seed,
 			cfg.ThemeGen.Source, cfg.ThemeGen.Seed)
+	}
+}
+
+func TestWallpaperPlaybackStateIgnoresAutomaticPauses(t *testing.T) {
+	snap := wallpaper.Snapshot{
+		Assignments: map[string]wallpaper.Assignment{"DP-1": {Kind: wallpaper.KindVideo, Path: "/w/video.mp4"}},
+		Runtime:     map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StatePlaying}},
+		PausedBy:    map[string]wallpaper.Reasons{"DP-1": wallpaper.Reasons(0).With(wallpaper.ReasonOccluded)},
+		Connectors:  []string{"DP-1"},
+	}
+	h := &PanelHost{wallpaperSnap: snap, wallpaperOutput: wallpaper.AllOutputs}
+	paused, ok := wallpaperPlaybackState(h)
+	if paused || !ok {
+		t.Fatalf("wallpaperPlaybackState = (%v, %v), want (false, true)", paused, ok)
 	}
 }

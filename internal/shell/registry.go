@@ -17,6 +17,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	metrics "github.com/Nomadcxx/sysc-metrics"
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
@@ -289,6 +290,18 @@ type Registry struct {
 	mediaArt             *mediaArtWorker
 	trayIconCancel       context.CancelFunc
 	pendingTrayMenu      pendingTrayMenu
+	// Autopause policy state (gh-144): applied/FPS track what the driver last
+	// sent, battery caches the polled power source, and the sync mutex keeps
+	// the wayland owner, the battery poll and the idle callbacks apart.
+	screensOff        bool
+	locked            bool
+	autoPauseApplied  map[string]wallpaper.Reasons
+	autoPauseFPS      map[string]int
+	autoPauseBattery  wallpaper.AutoBattery
+	autoPauseDebounce wallpaper.Debouncer
+	autoPauseNow      func() time.Time
+	autoPauseSync     sync.Mutex
+	readBattery       func() (metrics.BatterySnapshot, error)
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost
@@ -387,7 +400,10 @@ func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
 // Display text follows the session language; paths, actions, and option
 // values stay English tokens.
 func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
-	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes))).Localized(i18n.Resolve(cfg.Session.Language))
+	return settings.DefaultFor(cfg,
+		settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)),
+		settings.WithBattery(r.autoPauseBattery.Present),
+	).Localized(i18n.Resolve(cfg.Session.Language))
 }
 
 // paletteDir is where saved palettes live: beside the config file main
@@ -441,6 +457,9 @@ func NewRegistry(cfg config.Config) *Registry {
 		settingsReadDir:    os.ReadDir,
 		runArgvOutput:      runArgvOutputDefault,
 		startInhibit:       startInhibitDefault,
+		autoPauseApplied:   make(map[string]wallpaper.Reasons),
+		autoPauseFPS:       make(map[string]int),
+		readBattery:        metrics.ReadBattery,
 		signalProcess:      signalProcessDefault,
 		notify:             newNotifyState(),
 		batteryWarning:     newBatteryWarning(),
@@ -491,6 +510,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.mediaIntent = newMediaStripIntent(nil)
 	r.mediaStrip = newMediaStripHost(r, nil)
 	go r.relayMediaStrip()
+	go r.autoPauseBatteryPoll()
 	// DND toggles often run under Registry.mu; Show takes it, so publish from
 	// a separate goroutine after the setter returns.
 	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
@@ -2134,6 +2154,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				// A settings edit can change the autopause policy; nothing
+				// else re-evaluates it on a static desktop.
+				r.syncAutoPause()
 				r.signalPolkitOutputChange()
 				if !runningAsTest() && genErr == nil {
 					go r.publishCommittedThemeSelection(cfg, tok)
@@ -2595,6 +2618,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	if showLayout {
 		r.OSD().Show(layoutView)
 	}
+	r.syncAutoPause()
 	return changed
 }
 

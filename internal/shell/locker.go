@@ -14,8 +14,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
 // lockHandshakeLine is emitted by sysc-lock on stdout the moment the
@@ -262,17 +260,10 @@ func (r *Registry) lockerLocked() *lockerManager {
 				r.mu.Unlock()
 			},
 			paused: func(p bool) {
-				r.mu.Lock()
-				svc := r.wallpaperSvc
-				r.mu.Unlock()
-				if svc == nil {
-					return
-				}
-				op := wallpaper.OpResume
-				if p {
-					op = wallpaper.OpPause
-				}
-				svc.Enqueue(wallpaper.Command{Op: op, Token: wallpaper.AllOutputs})
+				// The lock is one automatic reason among several: the
+				// driver merges it, so a hand-paused output stays paused
+				// and the kiosk switch can turn the reason off.
+				r.SetLockActive(p)
 			},
 		}
 	}

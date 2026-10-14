@@ -113,8 +113,14 @@ func run(ctx context.Context) (err error) {
 		}
 	}
 	idleSvc := services.NewIdleService(services.IdleOptions{Execs: services.IdleExecutors{
-		Blank:   func() { monitorPower(niri.PowerOffMonitors{}, "blank") },
-		Unblank: func() { monitorPower(niri.PowerOnMonitors{}, "unblank") },
+		Blank: func() {
+			registry.SetScreensOff(true)
+			monitorPower(niri.PowerOffMonitors{}, "blank")
+		},
+		Unblank: func() {
+			registry.SetScreensOff(false)
+			monitorPower(niri.PowerOnMonitors{}, "unblank")
+		},
 		Lock: func() {
 			if err := registry.LockTracked(); err != nil {
 				log.Printf("shell: idle lock: %v", err)

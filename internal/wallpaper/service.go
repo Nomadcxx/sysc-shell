@@ -30,6 +30,13 @@ const (
 	// OpFocusFolder names the folder the picker has open (Path), so its
 	// previews are generated first.
 	OpFocusFolder
+	// OpAutoPause and OpAutoResume add or remove one automatic reason (lock,
+	// screens off, battery, occlusion) for Token. Effective playback only
+	// changes when the reason set crosses empty.
+	OpAutoPause
+	OpAutoResume
+	// OpSetFPS bounds the playback rate of Token to FPS.
+	OpSetFPS
 )
 
 // Command is one queued request. It is a value, so nothing the panel holds is
@@ -42,6 +49,9 @@ type Command struct {
 	Effect string
 	Theme  string
 	Blur   int
+	// Reason is set by OpAutoPause and OpAutoResume; FPS by OpSetFPS.
+	Reason Reason
+	FPS    int
 }
 
 // Capabilities is what is installed, probed once at start and projected into
@@ -110,6 +120,9 @@ type Engine interface {
 	// fallback. An empty still leaves the output blank.
 	Restore(connector, still string) error
 	SetPaused(connector string, paused bool) error
+	// SetFPS bounds playback rate on connector. ErrFPSUnsupported reports an
+	// engine or build that has no live rate control.
+	SetFPS(connector string, fps int) error
 	Capabilities() Capabilities
 	RefreshTerminalCatalog() Capabilities
 }
@@ -139,6 +152,13 @@ type Snapshot struct {
 	// surface is visible, so without this an apply that nobody can see looks
 	// exactly like one that worked (D18).
 	Covered map[string]string
+	// PausedBy maps an output to every reason holding it paused, manual
+	// included. An empty set means the output should be playing.
+	PausedBy map[string]Reasons
+	// FPS is the last rate bound sent per output. FPSUnsupported names outputs
+	// whose engine build answered that it does not know the command.
+	FPS            map[string]int
+	FPSUnsupported map[string]bool
 }
 
 // ServiceConfig is what the registry hands the service at construction.
@@ -198,6 +218,14 @@ type Service struct {
 	caps        Capabilities
 	covered     map[string]string
 	restarted   map[string]bool
+	// auto, paused, fps, and fpsUnsupported are per-connector playback state,
+	// touched only by the loop goroutine. paused is what the engine was last
+	// told, so a reason change only crosses the process boundary when the
+	// effective state flips.
+	auto           map[string]Reasons
+	paused         map[string]bool
+	fps            map[string]int
+	fpsUnsupported map[string]bool
 
 	mu   sync.Mutex
 	snap Snapshot
@@ -214,15 +242,19 @@ type Service struct {
 // NewService starts the service loop.
 func NewService(cfg ServiceConfig) *Service {
 	s := &Service{
-		engine:      cfg.Engine,
-		restarted:   make(map[string]bool),
-		set:         cfg.Settings,
-		roots:       slices.Clone(cfg.Roots),
-		persistPath: cfg.PersistPath,
-		coverage:    cfg.Coverage,
-		cfgHook:     cfg.ConfigHook,
-		cmds:        make(chan Command, 32),
-		results:     make(chan engineResult, 32),
+		engine:         cfg.Engine,
+		restarted:      make(map[string]bool),
+		auto:           make(map[string]Reasons),
+		paused:         make(map[string]bool),
+		fps:            make(map[string]int),
+		fpsUnsupported: make(map[string]bool),
+		set:            cfg.Settings,
+		roots:          slices.Clone(cfg.Roots),
+		persistPath:    cfg.PersistPath,
+		coverage:       cfg.Coverage,
+		cfgHook:        cfg.ConfigHook,
+		cmds:           make(chan Command, 32),
+		results:        make(chan engineResult, 32),
 		// One slot, coalescing: a picker that is closed or slow must never
 		// block an apply.
 		updates: make(chan Snapshot, 1),
@@ -418,6 +450,13 @@ func (s *Service) handle(c Command) {
 		return
 	case OpDisconnect:
 		delete(s.restarted, c.Token)
+		delete(s.paused, c.Token)
+		delete(s.fps, c.Token)
+		delete(s.fpsUnsupported, c.Token)
+		// Automatic reasons belong to the session that set them. Keeping
+		// them would re-pause a connector that comes back much later, and
+		// the map would grow with every connector name ever seen.
+		delete(s.auto, c.Token)
 		generation := s.store.Disconnect(c.Token)
 		if s.engine != nil {
 			s.engine.AdvanceGeneration(c.Token, generation)
@@ -437,6 +476,12 @@ func (s *Service) handle(c Command) {
 		}
 		s.thumbFolder = c.Path
 		s.enqueueThumbs()
+	case OpAutoPause:
+		s.setAutoReason(c.Token, c.Reason, true)
+	case OpAutoResume:
+		s.setAutoReason(c.Token, c.Reason, false)
+	case OpSetFPS:
+		s.setFPS(c.Token, c.FPS)
 	case OpRefreshTerminalCatalog:
 		if s.engine != nil {
 			s.caps = s.engine.RefreshTerminalCatalog()
@@ -492,11 +537,34 @@ func (s *Service) finish(r engineResult) {
 		// work is discarded rather than committed over it.
 		return
 	}
-	if a, ok := s.store.Assignment(r.job.Connector); ok && a.DesiredPlayback == StatePaused {
-		// Some engines replace their process when an assignment changes. Restore
-		// the persisted playback request before publishing the successful apply.
-		if err := s.engine.SetPaused(r.job.Connector, true); err != nil {
-			s.store.noteRuntimeErr(r.job.Connector, err)
+	// Some engines replace their process when an assignment changes. Restore
+	// the effective playback request -- the manual flag plus every automatic
+	// reason -- before publishing the successful apply, and re-send any rate
+	// bound the new process has not heard.
+	manual := false
+	if a, ok := s.store.Assignment(r.job.Connector); ok {
+		manual = a.DesiredPlayback == StatePaused
+	}
+	if s.playable(r.job.Connector) {
+		// The process may be new, which starts playing; whatever was
+		// recorded for the old one says nothing about this one.
+		delete(s.paused, r.job.Connector)
+		effective := manual || !s.auto[r.job.Connector].Auto().Empty()
+		if effective {
+			// Record that the engine was told only when it was: a failed
+			// call must not make the next transition skip its retry.
+			if err := s.engine.SetPaused(r.job.Connector, true); err != nil {
+				s.store.noteRuntimeErr(r.job.Connector, err)
+			} else {
+				s.paused[r.job.Connector] = true
+			}
+		} else {
+			// Nothing to send: a fresh process is already playing, and the
+			// recorded state is that.
+			s.paused[r.job.Connector] = false
+		}
+		if fps := s.fps[r.job.Connector]; fps > 0 {
+			s.applyFPS(r.job.Connector, fps)
 		}
 	}
 	s.persist()
@@ -535,25 +603,112 @@ func (s *Service) notifySeed(seed string) {
 }
 
 func (s *Service) setPaused(token string, paused bool) {
-	targets := []string{token}
-	if token == AllOutputs {
-		targets = s.store.Connectors()
-	}
-	for _, connector := range targets {
-		a, ok := s.store.Assignment(connector)
-		if !ok || (a.Kind != KindVideo && a.Kind != KindEffect) ||
-			s.store.Runtime(connector).State == StateStatic {
+	for _, connector := range s.targets(token) {
+		if !s.playable(connector) {
 			// Pause is for pipelines that play; an image, or a player restored
 			// to its still, has nothing to hold.
 			continue
 		}
-		if err := s.engine.SetPaused(connector, paused); err != nil {
-			s.store.noteRuntimeErr(connector, err)
-			continue
-		}
 		s.store.SetPlayback(connector, paused)
+		s.applyEffectivePaused(connector)
 	}
 	s.persist()
+}
+
+// setAutoReason adds or removes one automatic reason and applies the result.
+// The reason is recorded even while the output cannot play, so a later apply
+// inherits it. Automatic reasons never reach the store: only a manual request
+// is persisted.
+func (s *Service) setAutoReason(token string, reason Reason, on bool) {
+	if reason == ReasonManual {
+		return
+	}
+	for _, connector := range s.targets(token) {
+		rs := s.auto[connector]
+		if on {
+			rs = rs.With(reason)
+		} else {
+			rs = rs.Without(reason)
+		}
+		s.auto[connector] = rs
+		s.applyEffectivePaused(connector)
+	}
+}
+
+// setFPS bounds the playback rate of token. The bound is remembered even
+// for an output that cannot play yet, so the next apply inherits it.
+func (s *Service) setFPS(token string, fps int) {
+	for _, connector := range s.targets(token) {
+		s.fps[connector] = fps
+		if !s.playable(connector) {
+			continue
+		}
+		s.applyFPS(connector, fps)
+	}
+}
+
+// applyFPS sends one rate bound to the engine. A build that answers
+// ErrFPSUnsupported is remembered in the snapshot, and the pause falls back
+// to the battery reason so the output is not left running at full rate.
+func (s *Service) applyFPS(connector string, fps int) {
+	err := s.engine.SetFPS(connector, fps)
+	if err == nil {
+		delete(s.fpsUnsupported, connector)
+		return
+	}
+	if errors.Is(err, ErrFPSUnsupported) {
+		// Only effects report the gap: gSlapper has no live rate command,
+		// and a video keeps its own rate rather than pausing for a bound the
+		// engine cannot hold. Either way the requested bound stays in s.fps,
+		// so the same connector inherits it when its assignment turns into
+		// an effect, which finish re-sends. The driver turns this flag into
+		// the battery fallback its policy asks for, and the panel shows a
+		// rate only for effects.
+		if a, ok := s.store.Assignment(connector); ok && a.Kind == KindEffect {
+			s.fpsUnsupported[connector] = true
+		}
+		return
+	}
+	s.store.noteRuntimeErr(connector, err)
+}
+
+// applyEffectivePaused tells the engine the effective pause state, but only
+// when it differs from what the engine was last told.
+func (s *Service) applyEffectivePaused(connector string) {
+	if !s.playable(connector) {
+		return
+	}
+	manual := false
+	if a, ok := s.store.Assignment(connector); ok {
+		manual = a.DesiredPlayback == StatePaused
+	}
+	effective := manual || !s.auto[connector].Auto().Empty()
+	if was, known := s.paused[connector]; known && was == effective {
+		return
+	}
+	if err := s.engine.SetPaused(connector, effective); err != nil {
+		s.store.noteRuntimeErr(connector, err)
+		return
+	}
+	s.paused[connector] = effective
+}
+
+// targets expands AllOutputs to every known connector.
+func (s *Service) targets(token string) []string {
+	if token == AllOutputs {
+		return s.store.Connectors()
+	}
+	return []string{token}
+}
+
+// playable reports whether connector runs a pipeline that can pause: a video
+// or effect, not an image or a player restored to its still.
+func (s *Service) playable(connector string) bool {
+	a, ok := s.store.Assignment(connector)
+	if !ok || (a.Kind != KindVideo && a.Kind != KindEffect) {
+		return false
+	}
+	return s.store.Runtime(connector).State != StateStatic
 }
 
 func (s *Service) restore(token string) {
@@ -597,14 +752,17 @@ func (s *Service) persist() {
 // replacing an unread one rather than blocking on a closed picker.
 func (s *Service) publish() {
 	snap := Snapshot{
-		Library:     s.lib,
-		Connectors:  s.store.Connectors(),
-		Assignments: s.store.All(),
-		Runtime:     s.store.AllRuntime(),
-		Caps:        s.caps,
-		Seed:        s.store.SeedPath(),
-		Err:         s.store.Err(),
-		Covered:     maps.Clone(s.covered),
+		Library:        s.lib,
+		Connectors:     s.store.Connectors(),
+		Assignments:    s.store.All(),
+		Runtime:        s.store.AllRuntime(),
+		Caps:           s.caps,
+		Seed:           s.store.SeedPath(),
+		Err:            s.store.Err(),
+		Covered:        maps.Clone(s.covered),
+		PausedBy:       s.pausedBy(),
+		FPS:            maps.Clone(s.fps),
+		FPSUnsupported: maps.Clone(s.fpsUnsupported),
 	}
 	if s.thumbs != nil {
 		c := s.thumbs.Counts()
@@ -629,12 +787,31 @@ func (s *Service) publish() {
 	}
 }
 
+// pausedBy is the snapshot view of pause reasons: automatic reasons plus the
+// manual one, read back from the store's desired playback.
+func (s *Service) pausedBy() map[string]Reasons {
+	out := make(map[string]Reasons, len(s.auto))
+	for _, connector := range s.store.Connectors() {
+		rs := s.auto[connector]
+		if a, ok := s.store.Assignment(connector); ok && a.DesiredPlayback == StatePaused {
+			rs = rs.With(ReasonManual)
+		}
+		if !rs.Empty() {
+			out[connector] = rs
+		}
+	}
+	return out
+}
+
 func cloneSnapshot(s Snapshot) Snapshot {
 	out := s
 	out.Connectors = slices.Clone(s.Connectors)
 	out.Assignments = maps.Clone(s.Assignments)
 	out.Runtime = maps.Clone(s.Runtime)
 	out.Covered = maps.Clone(s.Covered)
+	out.PausedBy = maps.Clone(s.PausedBy)
+	out.FPS = maps.Clone(s.FPS)
+	out.FPSUnsupported = maps.Clone(s.FPSUnsupported)
 	if out.Assignments == nil {
 		out.Assignments = map[string]Assignment{}
 	}

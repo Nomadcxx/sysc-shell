@@ -532,6 +532,22 @@ func wallpaperDiff(got, base Wallpaper) *wireWallpaper {
 		v := got.Hidden
 		w.Hidden = &v
 	}
+	if got.PauseCovered != base.PauseCovered {
+		v := got.PauseCovered
+		w.PauseCovered = &v
+	}
+	if got.PauseLocked != base.PauseLocked {
+		v := got.PauseLocked
+		w.PauseLocked = &v
+	}
+	if got.OnBattery != base.OnBattery {
+		v := got.OnBattery
+		w.OnBattery = &v
+	}
+	if got.LowBatteryPause != base.LowBatteryPause {
+		v := got.LowBatteryPause
+		w.LowBatteryPause = &v
+	}
 	return &w
 }
 

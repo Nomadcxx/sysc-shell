@@ -34,8 +34,8 @@ type Workspace struct {
 }
 
 // Window is one Niri window. Only the fields the shell projects are decoded.
-// Layout, urgency and floating state have no consumer, so an event carrying
-// them decodes and ignores them.
+// Tile geometry comes from the compositor layout, so a window that fills its
+// output can hold the wallpaper paused behind it.
 type Window struct {
 	ID    uint64
 	Title string
@@ -48,6 +48,23 @@ type Window struct {
 	Focused        bool
 	FocusTimestamp int64 // monotonic ns; 0 when null or omitted
 	Pid            int   // 0 when Niri sends null
+	// Floating reports is_floating. A floating window carries a view
+	// position on every Niri release, so the evaluator judges it by
+	// geometry like any other tile.
+	Floating bool
+	// HasLayout and the tile rectangle are set from the compositor layout.
+	// A window without a layout cannot cover anything.
+	HasLayout bool
+	// TileX, TileY, TileW and TileH are the tile rectangle in workspace
+	// view coordinates, from tile_pos_in_workspace_view and tile_size.
+	// The size is always set when HasLayout is; the position is not.
+	TileX, TileY float64
+	TileW, TileH float64
+	// TileInView reports that the tile position was present. Niri 26.04
+	// sends none for tiled windows, fullscreen included, so its absence
+	// does not mean the window is outside the workspace view: the
+	// wallpaper evaluator falls back to the tile size there.
+	TileInView bool
 }
 
 // KeyboardLayouts is niri's configured keyboard layout list and active index.
@@ -138,6 +155,31 @@ type wireWindow struct {
 		Secs  uint64 `json:"secs"`
 		Nanos uint64 `json:"nanos"`
 	} `json:"focus_timestamp"`
+	IsFloating *bool             `json:"is_floating"`
+	Layout     *wireWindowLayout `json:"layout"`
+}
+
+// wireWindowLayout decodes the slice of the compositor layout the shell
+// consumes: where the window sits and how large its tile is.
+type wireWindowLayout struct {
+	TileSize *[2]float64 `json:"tile_size"`
+	TilePos  *[2]float64 `json:"tile_pos_in_workspace_view"`
+}
+
+// applyWindowLayout copies a decoded layout onto a projected window. A null
+// layout, or one without a tile size, clears the rectangle.
+func applyWindowLayout(out *Window, layout *wireWindowLayout) {
+	out.HasLayout, out.TileInView = false, false
+	out.TileX, out.TileY, out.TileW, out.TileH = 0, 0, 0, 0
+	if layout == nil || layout.TileSize == nil {
+		return
+	}
+	out.HasLayout = true
+	out.TileW, out.TileH = layout.TileSize[0], layout.TileSize[1]
+	if layout.TilePos != nil {
+		out.TileX, out.TileY = layout.TilePos[0], layout.TilePos[1]
+		out.TileInView = true
+	}
 }
 
 func (w wireWindow) project() (Window, error) {
@@ -163,6 +205,10 @@ func (w wireWindow) project() (Window, error) {
 	if w.FocusTimestamp != nil {
 		out.FocusTimestamp = int64(w.FocusTimestamp.Secs)*1e9 + int64(w.FocusTimestamp.Nanos)
 	}
+	if w.IsFloating != nil {
+		out.Floating = *w.IsFloating
+	}
+	applyWindowLayout(&out, w.Layout)
 	return out, nil
 }
 
@@ -176,6 +222,40 @@ type wireWindowOpenedOrChanged struct {
 
 type wireWindowClosed struct {
 	ID *uint64 `json:"id"`
+}
+
+// wireWindowLayoutChange is one [id, layout] pair from WindowLayoutsChanged.
+// The layout entry is null when the compositor takes the window out of its
+// layout.
+type wireWindowLayoutChange struct {
+	ID     uint64
+	Layout *wireWindowLayout
+}
+
+func (c *wireWindowLayoutChange) UnmarshalJSON(data []byte) error {
+	var pair []json.RawMessage
+	if err := json.Unmarshal(data, &pair); err != nil {
+		return err
+	}
+	if len(pair) != 2 {
+		return fmt.Errorf("niri: WindowLayoutsChanged change has %d entries, want 2", len(pair))
+	}
+	if err := json.Unmarshal(pair[0], &c.ID); err != nil {
+		return err
+	}
+	if string(pair[1]) == "null" {
+		return nil
+	}
+	var layout wireWindowLayout
+	if err := json.Unmarshal(pair[1], &layout); err != nil {
+		return err
+	}
+	c.Layout = &layout
+	return nil
+}
+
+type wireWindowLayoutsChanged struct {
+	Changes []wireWindowLayoutChange `json:"changes"`
 }
 
 type wireKeyboardLayoutsChanged struct {
@@ -324,6 +404,22 @@ func (s *state) apply(line []byte) (bool, error) {
 			return false, nil
 		}
 		s.windows = slices.Delete(s.windows, i, i+1)
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["WindowLayoutsChanged"]; ok {
+		var changed wireWindowLayoutsChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode WindowLayoutsChanged: %w", err)
+		}
+		for _, change := range changed.Changes {
+			i := slices.IndexFunc(s.windows, func(w Window) bool { return w.ID == change.ID })
+			if i < 0 {
+				// A window the snapshot never saw has nothing to update.
+				continue
+			}
+			applyWindowLayout(&s.windows[i], change.Layout)
+		}
 		return s.publishIfChanged(), nil
 	}
 

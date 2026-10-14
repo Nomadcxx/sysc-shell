@@ -1549,3 +1549,62 @@ func TestTerminalBlurLaunchAndCompatibility(t *testing.T) {
 		t.Fatal("invalid blur restarted wallpaper")
 	}
 }
+
+func TestEngineSetFPSUnsupportedIsCachedPerProcess(t *testing.T) {
+	h := newEngineHarness(t)
+	h.withTerminal()
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire", Theme: "nord"}, defaultSettings()); err != nil {
+		t.Fatalf("apply effect: %v", err)
+	}
+	h.replies["fps"] = "ERR unknown command"
+	calls := 0
+	base := h.eng.request
+	h.eng.request = func(socket, command string, d time.Duration) (string, error) {
+		if strings.HasPrefix(command, "fps ") {
+			calls++
+		}
+		return base(socket, command, d)
+	}
+
+	if err := h.eng.SetFPS("DP-1", 10); !errors.Is(err, ErrFPSUnsupported) {
+		t.Fatalf("SetFPS on an old sysc-terminal = %v, want ErrFPSUnsupported", err)
+	}
+	if err := h.eng.SetFPS("DP-1", 20); !errors.Is(err, ErrFPSUnsupported) {
+		t.Fatalf("cached SetFPS = %v, want ErrFPSUnsupported", err)
+	}
+	if calls != 1 {
+		t.Fatalf("fps requests reached the process %d times, want 1 (cached per process)", calls)
+	}
+	proc := h.eng.ownedProcess("DP-1")
+	if proc == nil {
+		t.Fatal("effect process is not owned")
+	}
+	h.eng.mu.Lock()
+	pid := h.eng.fpsUnsupported["DP-1"]
+	h.eng.mu.Unlock()
+	if pid != processPID(proc) {
+		t.Fatalf("cached unsupported pid = %d, want %d", pid, processPID(proc))
+	}
+}
+
+func TestEngineSetFPSRefusesNonTerminalEngines(t *testing.T) {
+	h := newEngineHarness(t)
+	path := h.media("clip.mp4")
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: path, Kind: KindVideo}, defaultSettings()); err != nil {
+		t.Fatalf("apply video: %v", err)
+	}
+	requests := 0
+	base := h.eng.request
+	h.eng.request = func(socket, command string, d time.Duration) (string, error) {
+		if strings.HasPrefix(command, "fps ") {
+			requests++
+		}
+		return base(socket, command, d)
+	}
+	if err := h.eng.SetFPS("DP-1", 10); !errors.Is(err, ErrFPSUnsupported) {
+		t.Fatalf("SetFPS on gslapper = %v, want ErrFPSUnsupported", err)
+	}
+	if requests != 0 {
+		t.Fatalf("gslapper received %d fps requests, want none", requests)
+	}
+}

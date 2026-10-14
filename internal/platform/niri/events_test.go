@@ -26,6 +26,18 @@ const (
 	windowClosedFixture = `{"WindowClosed":{"id":80}}`
 	windowClosedUnknown = `{"WindowClosed":{"id":9999}}`
 	windowMissingIDFixt = `{"WindowOpenedOrChanged":{"window":{"title":"No Identity"}}}`
+
+	windowOpenedFloatingFixture = `{"WindowOpenedOrChanged":{"window":` +
+		`{"id":82,"title":"Fixture Two","app_id":"fixture.two","pid":1001,"workspace_id":5,` +
+		`"is_focused":false,"is_floating":true,"is_urgent":false,` +
+		`"layout":{"tile_size":[1200.5,800.25],"tile_pos_in_workspace_view":[40.5,60.25]},` +
+		`"focus_timestamp":null}}}`
+
+	windowLayoutsFixture = `{"WindowLayoutsChanged":{"changes":[` +
+		`[80,{"tile_size":[1200.5,800.25],"tile_pos_in_workspace_view":[40.5,60.25]}],` +
+		`[9999,{"tile_size":[1,1]}]]}}`
+	windowLayoutCleared   = `{"WindowLayoutsChanged":{"changes":[[80,null]]}}`
+	windowLayoutMalformed = `{"WindowLayoutsChanged":{"changes":[[80]]}}`
 )
 
 // applyAll feeds lines to a fresh state and fails on the first decode error.
@@ -283,7 +295,7 @@ func TestAWindowChangeOutsideTheProjectionPublishesNothing(t *testing.T) {
 	t.Parallel()
 	const sameWindowNowUrgent = `{"WindowOpenedOrChanged":{"window":` +
 		`{"id":80,"title":"Fixture One","app_id":"fixture.one","pid":1000,"workspace_id":5,` +
-		`"is_focused":true,"is_floating":true,"is_urgent":true,"layout":{},` +
+		`"is_focused":true,"is_floating":false,"is_urgent":true,"layout":{},` +
 		`"focus_timestamp":{"secs":166673,"nanos":194678785}}}}`
 
 	var s state
@@ -367,5 +379,92 @@ func TestMalformedOverviewEventDoesNotChangeState(t *testing.T) {
 	}
 	if !s.snapshot().OverviewOpen {
 		t.Fatal("malformed overview event changed the open state")
+	}
+}
+
+func TestWindowOpenedOrChangedProjectsFloatingAndLayout(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, windowsChangedFixture, windowOpenedFloatingFixture)
+
+	var got *Window
+	for i := range s.windows {
+		if s.windows[i].ID == 82 {
+			got = &s.windows[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("window 82 missing after open")
+	}
+	if !got.Floating {
+		t.Fatal("is_floating true did not project")
+	}
+	if !got.HasLayout || !got.TileInView {
+		t.Fatalf("layout missing: %+v", *got)
+	}
+	if got.TileW != 1200.5 || got.TileH != 800.25 || got.TileX != 40.5 || got.TileY != 60.25 {
+		t.Fatalf("tile rect = (%v,%v %vx%v), want (40.5,60.25 1200.5x800.25)", got.TileX, got.TileY, got.TileW, got.TileH)
+	}
+}
+
+func TestWindowLayoutsChangedUpdatesKnownWindowsOnly(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, windowsChangedFixture)
+	publish, err := s.apply([]byte(windowLayoutsFixture))
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !publish {
+		t.Fatal("a tile layout change published nothing")
+	}
+	if len(s.windows) != 2 {
+		t.Fatalf("windows = %d, want 2; an unknown id must not insert", len(s.windows))
+	}
+	for _, w := range s.windows {
+		if w.ID != 80 {
+			continue
+		}
+		if !w.HasLayout || !w.TileInView {
+			t.Fatalf("window 80 layout missing: %+v", w)
+		}
+		if w.TileW != 1200.5 || w.TileH != 800.25 || w.TileX != 40.5 || w.TileY != 60.25 {
+			t.Fatalf("window 80 tile rect = (%v,%v %vx%v)", w.TileX, w.TileY, w.TileW, w.TileH)
+		}
+	}
+}
+
+func TestWindowLayoutsChangedForUnknownIDsPublishesNothing(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, windowsChangedFixture)
+	publish, err := s.apply([]byte(`{"WindowLayoutsChanged":{"changes":[[9999,{"tile_size":[1,1]}]]}}`))
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if publish {
+		t.Fatal("a layout change for an unknown window published")
+	}
+}
+
+func TestWindowLayoutsChangedNullClearsTheTileRectangle(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, windowsChangedFixture, windowLayoutsFixture, windowLayoutCleared)
+	for _, w := range s.windows {
+		if w.ID != 80 {
+			continue
+		}
+		if w.HasLayout || w.TileInView || w.TileX != 0 || w.TileY != 0 || w.TileW != 0 || w.TileH != 0 {
+			t.Fatalf("null layout left the rectangle behind: %+v", w)
+		}
+	}
+}
+
+func TestMalformedWindowLayoutChangeIsAStreamError(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, windowsChangedFixture)
+	before := len(s.snapshot().Windows)
+	if _, err := s.apply([]byte(windowLayoutMalformed)); err == nil {
+		t.Fatal("a one-entry change decoded without error")
+	}
+	if after := len(s.snapshot().Windows); after != before {
+		t.Fatalf("windows changed after a decode error: %d -> %d", before, after)
 	}
 }

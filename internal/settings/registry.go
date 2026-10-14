@@ -674,6 +674,37 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Get:      func(c config.Config) string { return c.Wallpaper.Hidden },
 			Set:      setEnum("wallpaper.hidden", wallpaperHidden, func(c *config.Config, v string) { c.Wallpaper.Hidden = v }),
 		},
+		{
+			Path: "wallpaper.pause-covered", Label: "When covered", Section: "Wallpaper", Group: "When covered or idle", Kind: KindBool,
+			Describe: "Pause the wallpaper while a window covers this output.",
+			Get:      getBool(func(c config.Config) bool { return c.Wallpaper.PauseCovered }),
+			Set:      setBool("wallpaper.pause-covered", func(c *config.Config, b bool) { c.Wallpaper.PauseCovered = b }),
+		},
+		{
+			Path: "wallpaper.pause-locked", Label: "While locked", Section: "Wallpaper", Group: "When covered or idle", Kind: KindBool,
+			Describe: "Pause the wallpaper while the session is locked.",
+			Get:      getBool(func(c config.Config) bool { return c.Wallpaper.PauseLocked }),
+			Set:      setBool("wallpaper.pause-locked", func(c *config.Config, b bool) { c.Wallpaper.PauseLocked = b }),
+		},
+		{
+			Path: "wallpaper.on-battery", Label: "On battery", Section: "Wallpaper", Group: "When covered or idle", Kind: KindEnum,
+			Describe: "What to do with video wallpapers when running on battery.",
+			Options:  wallpaperOnBattery,
+			Get:      func(c config.Config) string { return c.Wallpaper.OnBattery },
+			Set:      setEnum("wallpaper.on-battery", wallpaperOnBattery, func(c *config.Config, v string) { c.Wallpaper.OnBattery = v }),
+		},
+		{
+			Path: "wallpaper.low-battery-pause", Label: "Low battery pause", Section: "Wallpaper", Group: "When covered or idle", Kind: KindEnum,
+			Describe: "Pause video wallpapers below this battery charge.",
+			Options:  wallpaperLowBattery,
+			Get: func(c config.Config) string {
+				if c.Wallpaper.LowBatteryPause == 0 {
+					return "off"
+				}
+				return strconv.Itoa(c.Wallpaper.LowBatteryPause)
+			},
+			Set: setEnum("wallpaper.low-battery-pause", wallpaperLowBattery, func(c *config.Config, v string) { n, _ := strconv.Atoi(v); c.Wallpaper.LowBatteryPause = n }),
+		},
 
 		{
 			Path: "terminal-art.blur", Label: "Blur strength", Section: "Terminal Art", Group: "Effects",
@@ -716,6 +747,11 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				c.ThemeGen.Source = "custom"
 				c.ThemeGen.Seed = v
 			}),
+		})
+	}
+	if o.hideBattery {
+		r.entries = slices.DeleteFunc(r.entries, func(e Entry) bool {
+			return e.Path == "wallpaper.on-battery" || e.Path == "wallpaper.low-battery-pause"
 		})
 	}
 	r.resolveDefaults()
@@ -849,11 +885,13 @@ var (
 	elevationNames = []string{
 		string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
 	}
-	weatherUnits    = []string{"celsius", "fahrenheit"}
-	wallpaperScales = []string{"fill", "stretch", "original", "panscan"}
-	wallpaperFPS    = []string{"30", "60", "100"}
-	wallpaperHidden = []string{"none", "auto-pause", "auto-stop"}
-	osdPositions    = []string{
+	weatherUnits        = []string{"celsius", "fahrenheit"}
+	wallpaperScales     = []string{"fill", "stretch", "original", "panscan"}
+	wallpaperFPS        = []string{"30", "60", "100"}
+	wallpaperHidden     = []string{"none", "auto-pause", "auto-stop"}
+	wallpaperOnBattery  = []string{"keep", "pause", "limit-10"}
+	wallpaperLowBattery = []string{"off", "10", "15", "20", "25", "30"}
+	osdPositions        = []string{
 		"top-left", "top-center", "top-right",
 		"center-left", "center", "center-right",
 		"bottom-left", "bottom-center", "bottom-right",

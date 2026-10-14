@@ -13,7 +13,10 @@ type CustomPalette struct {
 	Name string
 }
 
-type options struct{ custom []CustomPalette }
+type options struct {
+	custom      []CustomPalette
+	hideBattery bool
+}
 
 // Option adjusts a registry at construction.
 type Option func(*options)
@@ -22,6 +25,13 @@ type Option func(*options)
 // and the appearance.custom entry available.
 func WithCustomPalettes(p []CustomPalette) Option {
 	return func(o *options) { o.custom = slices.Clone(p) }
+}
+
+// WithBattery drops the wallpaper battery rows when the machine has no
+// battery. Rows are kept by default so callers that never look at power keep
+// the full list.
+func WithBattery(present bool) Option {
+	return func(o *options) { o.hideBattery = !present }
 }
 
 // names is each saved palette's display name, in slugs order.

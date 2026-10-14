@@ -765,7 +765,7 @@ func TestWallpaperAllSummaryCountsEffects(t *testing.T) {
 			"DP-3": {Kind: wallpaper.KindEffect, Effect: "fire"},
 		},
 	}
-	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs \u00b7 0 video \u00b7 1 image \u00b7 1 effect" {
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs, 0); got != "2 outputs \u00b7 0 video \u00b7 1 image \u00b7 1 effect" {
 		t.Fatalf("summary = %q; an effect is not an image", got)
 	}
 }
