@@ -226,6 +226,41 @@ func floatingLifecycleHost(t *testing.T) (*Registry, *pluginHost) {
 	return r, host
 }
 
+func TestFloatingSurfaceSharesTheRegistryFontCatalog(t *testing.T) {
+	const pluginID = floatingLifecyclePluginID
+	r, host := floatingLifecycleHost(t)
+	done := make(chan error, 1)
+	go func() {
+		_, err := host.openFloatingSurface(context.Background(), pluginID, v1.SurfaceOpenParams{
+			Key: "note", Title: "Note", Output: "DP-1", Generation: 7,
+			X: 20, Y: 30, Width: 360, Height: 480,
+		})
+		done <- err
+	}()
+	select {
+	case req := <-r.aux:
+		if req.Open == nil {
+			t.Fatalf("first request was not an open: %+v", req)
+		}
+		req.Reply <- nil
+	case <-time.After(time.Second):
+		t.Fatal("floating open did not reach the Wayland queue")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("floating open failed: %v", err)
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.surfaces) != 1 {
+		t.Fatalf("surfaces = %d, want 1", len(host.surfaces))
+	}
+	for _, surface := range host.surfaces {
+		if surface.panel.fontCatalog != &r.fontCatalog {
+			t.Fatal("floating surface built a private font map instead of sharing the registry catalog")
+		}
+	}
+}
+
 func TestStopPluginWaitsForFloatingSurfaceOpen(t *testing.T) {
 	const pluginID = floatingLifecyclePluginID
 	r, host := floatingLifecycleHost(t)
