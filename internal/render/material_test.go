@@ -24,6 +24,29 @@ func meanLuma(img *ui.Image) int {
 	return sum / n
 }
 
+// meanCanvasLuma averages a painted canvas's brightness, so a test can say
+// "darker" without asserting a specific curve.
+func meanCanvasLuma(c *Canvas) int {
+	if c == nil || c.Width <= 0 || c.Height <= 0 || c.Stride <= 0 {
+		return 0
+	}
+	sum, n := 0, 0
+	for y := 0; y < c.Height; y++ {
+		for x := 0; x < c.Width; x++ {
+			o := y*c.Stride + x*4
+			if o+3 >= len(c.Pix) {
+				continue
+			}
+			sum += luma(c.Pix[o : o+4])
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / n
+}
+
 // chequer builds a high-detail image: the content auto-frost must recognise as
 // busy.
 func chequer(w, h, cell int) *ui.Image {
@@ -112,6 +135,72 @@ func TestMaterializeChoosesTheGroundPerTone(t *testing.T) {
 	sharpBusy, blurredBusy := BlurPair(busy, 4, 12)
 	if got := Materialize(sharpBusy, blurredBusy, Material{Tone: ToneAuto}); !sharedBacking(got, blurredBusy) {
 		t.Error("auto-frost should frost busy content")
+	}
+}
+
+// TestMaterialGroundIsWhatThePainterComposites is the offscreen half of the
+// phase gate: the ground the shell resolves is the ground that reaches the
+// framebuffer, through the real painter.
+//
+// The live half cannot run here — a second shell refuses to start while another
+// owns the session socket (ipc.ErrSingleInstance), and taking over the owner's
+// session is not something a test may do — so the live check is recorded unrun
+// rather than asserted.
+func TestMaterialGroundIsWhatThePainterComposites(t *testing.T) {
+	t.Parallel()
+	// A blur preserves a constant, so a plain capture's two halves are equal;
+	// detail is what separates them.
+	plain := solid(32, 32, 0x40, 0x40, 0x40, 0xff)
+	busySharp := chequer(32, 32, 8)
+	busyBlurred := solid(32, 32, 0x80, 0x80, 0x80, 0xff)
+
+	base := testStyle
+	base.SurfaceOpacity = 0x80
+	base.Radius = 12
+
+	blurredOnly := base
+	blurredOnly.Backdrop = plain
+
+	smoke := base
+	smoke.Backdrop = Materialize(plain, plain, Material{Tone: ToneSmoke, Intensity: 100})
+
+	frosted := base
+	frosted.Backdrop = Materialize(busySharp, busyBlurred, Material{Tone: ToneAuto, Intensity: 100})
+
+	frostedReference := base
+	frostedReference.Backdrop = busyBlurred
+
+	plainCanvas := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, plainCanvas, base)
+	blurCanvas := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, blurCanvas, blurredOnly)
+	smokeCanvas := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, smokeCanvas, smoke)
+	frostedCanvas := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, frostedCanvas, frosted)
+	referenceCanvas := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, referenceCanvas, frostedReference)
+
+	if bytes.Equal(plainCanvas.Pix, blurCanvas.Pix) {
+		t.Fatal("the backdrop chain changed nothing; the fixture is inert")
+	}
+	if bytes.Equal(blurCanvas.Pix, smokeCanvas.Pix) {
+		t.Error("the smoke ground reached the framebuffer unchanged")
+	}
+	// The ground replaces the capture rather than being added beside it: the
+	// interior is darker under smoke than under the plain capture.
+	if meanCanvasLuma(smokeCanvas) >= meanCanvasLuma(blurCanvas) {
+		t.Errorf("smoke interior luma %d is not below the plain capture's %d",
+			meanCanvasLuma(smokeCanvas), meanCanvasLuma(blurCanvas))
+	}
+	// Auto-frost over busy content is the blurred capture, so its painted
+	// result matches a canvas given that ground directly.
+	if !bytes.Equal(frostedCanvas.Pix, referenceCanvas.Pix) {
+		t.Error("auto-frost over busy content did not paint the blurred capture")
+	}
+	// The rounded silhouette still holds: the corner never fills.
+	if a := smokeCanvas.Pix[3]; a != 0 {
+		t.Errorf("corner alpha = %d, want the mask to leave it clear", a)
 	}
 }
 
