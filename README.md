@@ -112,7 +112,7 @@ you just don't get that feature.
 - **Notifications** — [sysc-notify](https://github.com/Nomadcxx/sysc-notify#installation). Stop mako,
   dunst or swaync first.
 - **Clipboard history** — [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard#installation).
-- **System tray** — [sysc-tray](https://github.com/Nomadcxx/sysc-tray) `v0.1.1`.
+- **System tray** — [sysc-tray](https://github.com/Nomadcxx/sysc-tray) `v0.1.2`.
 - **Session lock** — [sysc-lock](https://github.com/Nomadcxx/sysc-lock), then point the shell at it:
 
   ```json
@@ -149,7 +149,7 @@ binds {
 
 The panels you can name are `launcher`, `control-center`, `notifications`, `clipboard`, `clock`,
 `weather`, `system-monitor`, `session`, `power`, `settings`, `wallpaper`, `audio`, `network`,
-`bluetooth`, `terminal-art` and `plugin-store`. `wallpaper` and `terminal-art` are opt-in. The full set of bindings,
+`bluetooth`, `files`, `onboarding`, `terminal-art` and `plugin-store`. `wallpaper` and `terminal-art` are opt-in. The full set of bindings,
 including brightness and mute, is in [docs/niri-hotkeys.md](docs/niri-hotkeys.md).
 
 From a terminal:
@@ -173,21 +173,29 @@ The shell draws through `wl_shm` and talks to Niri over its IPC socket.
 - **Control centre**: network, Bluetooth, audio, media players, weather and a calendar (via the calendar plugin) in one panel
 - **Notifications**: popups and a history centre, fed by [sysc-notify](https://github.com/Nomadcxx/sysc-notify)
 - **Clipboard**: browse, restore and pin history kept by [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard)
+- **Files**: a file browser panel with breadcrumb navigation, symlink-safe listing and moves across
+  devices
 - **System monitor**: live gauges, and a process view grouped by application
 - **Session panel**: log out, suspend, reboot and power off, with battery status and power profiles
 - **Session lock**: hands the screen to [sysc-lock](https://github.com/Nomadcxx/sysc-lock) and tracks
   it through the lock, including one respawn if it dies while locked. Run that lock screen as a user
   service (`sysc-lock --session`) so one owner holds the lock; the shell's Lock button then commands
-  it, and sleep waits until it reports sealed
+  it, and sleep waits until it reports sealed. Lock Screen settings cover the clock style, static-art
+  header choices with a live preview, and the effect backend and presentation keys
 - **OSD**: volume and brightness
+- **First-run setup**: a five-step onboarding panel for the desktop defaults, offered when no config
+  exists and reopenable from the panel list
+- **Languages**: the shell and Settings ship in English, Spanish, Portuguese, Japanese, Korean and
+  Russian; pick one in Settings → Session → Language
 - **Theming**: Material 3 colours from your wallpaper through matugen, applied to the shell and, with
   templates, to your other apps
 - **Wallpaper**: set it from the shell with awww, swaybg or gSlapper, or paint live terminal effects
-  with [sysc-terminal](https://github.com/Nomadcxx/sysc-terminal)
+  with [sysc-terminal](https://github.com/Nomadcxx/sysc-terminal). Playback pauses by reason when an
+  output is covered or a fullscreen window takes it
 - **Idle screensaver**: [sysc-walls](https://github.com/Nomadcxx/sysc-walls), controlled from Settings
 - **Frosted glass**: blurred bars and panels on Niri 26.04 and later
-- **Plugins**: a plugin manager and store. The official plugins live in
-  [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins)
+- **Plugins**: a plugin manager and store, with panel previews rendered through the shell's own
+  pipeline. The official plugins live in [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins)
 
 ## Ecosystem
 
