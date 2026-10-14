@@ -1389,6 +1389,54 @@ func TestPinnedPaletteSurvivesAWallpaperApply(t *testing.T) {
 	}
 }
 
+// Input events run with Registry.mu held, so a palette pick that locks the
+// registry again freezes the whole shell (#231). The pick must return under
+// the lock and still land in the config from the control goroutine.
+func TestWallpaperPalettePickDoesNotDeadlock(t *testing.T) {
+	reg, _, _ := openWallpaperPanel(t, nil)
+	h := wallpaperHost(t, reg)
+
+	// awaitPalette waits for the pick to leave the control goroutine's hands.
+	awaitPalette := func(source, seed string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		gotSource, gotSeed := "", ""
+		for time.Now().Before(deadline) {
+			reg.mu.Lock()
+			gotSource, gotSeed = reg.cfg.ThemeGen.Source, reg.cfg.ThemeGen.Seed
+			reg.mu.Unlock()
+			if gotSource == source && (seed == "" || gotSeed == seed) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("palette stayed %s/%s, want %s/%s", gotSource, gotSeed, source, seed)
+	}
+
+	pick := func(action string) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			held := reg.lockPanelOwner()
+			defer reg.unlockPanelOwner(held)
+			if !h.wallpaperAction(reg, &ui.Node{Kind: ui.KindButton, Action: action}) {
+				t.Errorf("%s was not handled", action)
+			}
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s deadlocked on Registry.mu", action)
+		}
+	}
+
+	pick("wallpaper-palette:gruvbox")
+	awaitPalette("palette", "gruvbox")
+	pick("wallpaper-palette:auto")
+	awaitPalette("wallpaper", "")
+}
+
 // Every named scheme has to be reachable, or the palettes added in f73f25f
 // stay unreachable without hand-editing the config.
 func TestWallpaperPaletteDropdownOffersEveryScheme(t *testing.T) {
