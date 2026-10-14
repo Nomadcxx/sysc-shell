@@ -6,26 +6,17 @@ on:
       - '**/*.md'
       - 'docs/**'
       - 'LICENSE'
-      - '**/*.png'
-      - '**/*.jpg'
-      - '**/*.jpeg'
-      - '**/*.gif'
-      - '**/*.svg'
-      - '**/*.webp'
-      # Tests read image fixtures from testdata directories.
-      - '!**/testdata/**'
+      # README screenshots and wordmark art. Skip wider image globs: two PNGs
+      # under internal/render are go:embed inputs, and testdata/ carries binary
+      # fixtures, so an image-only change there still needs a run. paths-ignore
+      # cannot re-include a path with '!', so those dirs stay out of the list.
+      - 'assets/**'
   pull_request:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
       - 'LICENSE'
-      - '**/*.png'
-      - '**/*.jpg'
-      - '**/*.jpeg'
-      - '**/*.gif'
-      - '**/*.svg'
-      - '**/*.webp'
-      - '!**/testdata/**'
+      - 'assets/**'
 
 # Supersede in-flight runs for the same branch or PR so a burst of pushes does
 # not queue a full build each. Default-branch pushes are exempt: every merge to
