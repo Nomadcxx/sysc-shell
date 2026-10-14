@@ -1700,7 +1700,8 @@ func (r *Registry) connectorsLocked() []string {
 }
 
 // setPalette pins a named scheme, or returns the palette to the applied
-// wallpaper when name is "auto".
+// wallpaper when name is "auto". Registry.mu must not be held by the caller:
+// the write and the repaint take it themselves.
 //
 // It writes the two fields the appearance.palette setting writes, so the
 // picker and the settings panel are two ways to the same state rather than
@@ -1929,8 +1930,12 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	case strings.HasPrefix(n.Action, "wallpaper-palette:"):
 		h.wallpaperMenu = ""
-		// A failed write records r.themeErr, which the picker's banners show.
-		_ = r.setPalette(strings.TrimPrefix(n.Action, "wallpaper-palette:"))
+		// Input arrives with Registry.mu held, and setPalette takes it again,
+		// so the write runs on the control goroutine (#231). scheduleControl
+		// reports failures through h.errLabel and rebuilds; the rebuild here
+		// only closes the menu now.
+		name := strings.TrimPrefix(n.Action, "wallpaper-palette:")
+		r.scheduleControl(h, func() error { return r.setPalette(name) })
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "wallpaper-up":
