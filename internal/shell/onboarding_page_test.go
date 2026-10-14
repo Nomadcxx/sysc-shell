@@ -791,10 +791,16 @@ func TestOnboardingPagesRender(t *testing.T) {
 				reg.mu.Unlock()
 				t.Fatalf("onboarding root has %d children, want header, body, actions", len(root.Children))
 			}
-			scroll, actions := root.Children[1], root.Children[2]
-			if scroll.Bounds.H < 300 {
+			header, scroll, actions := root.Children[0], root.Children[1], root.Children[2]
+			// The body fills the frame between header and footer. The header
+			// carries the ASCII wordmark, so its height follows the mono face
+			// the runner has; a hardcoded floor flips red on a machine that
+			// lacks Fira Code without any layout having changed.
+			wantBody := root.Bounds.H - 2*root.Padding - 2*root.Gap - header.Bounds.H - actions.Bounds.H
+			if scroll.Bounds.H != wantBody {
 				reg.mu.Unlock()
-				t.Fatalf("page body height = %d, want it to use the available frame space", scroll.Bounds.H)
+				t.Fatalf("page body height = %d, want the remaining frame space %d (header %d, footer %d)",
+					scroll.Bounds.H, wantBody, header.Bounds.H, actions.Bounds.H)
 			}
 			footerBottom := root.Bounds.Y + root.Bounds.H - root.Padding
 			if actions.Bounds.Y+actions.Bounds.H != footerBottom {
