@@ -192,3 +192,8 @@ func (d *Debouncer) Confirm(connector string, covered bool, now time.Time) bool 
 	}
 	return true
 }
+
+// Pending reports whether any output is inside the uncover grace window.
+func (d *Debouncer) Pending() bool {
+	return len(d.uncoveredSince) > 0
+}

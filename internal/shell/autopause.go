@@ -50,6 +50,12 @@ func (r *Registry) syncAutoPause() {
 		}
 	}
 
+	if r.autoPauseDebounce.Pending() {
+		// The grace window only ends with time passing, and an idle
+		// desktop sends no events; wake up when it elapses.
+		time.AfterFunc(wallpaper.UncoverDelay, r.syncAutoPause)
+	}
+
 	var cmds []wallpaper.Command
 	r.mu.Lock()
 	prev := r.autoPauseApplied
@@ -82,6 +88,17 @@ func (r *Registry) syncAutoPause() {
 	r.autoPauseApplied = next
 
 	fps := wallpaper.BatteryFPS(in.Settings, in.Battery.Present && in.Battery.OnBattery)
+	present := make(map[string]bool, len(in.Outputs))
+	for _, out := range in.Outputs {
+		present[out.Connector] = true
+	}
+	for connector := range r.autoPauseFPS {
+		if !present[connector] {
+			// A connector that left carries no rate state into its next
+			// session, matching the service clearing it on disconnect.
+			delete(r.autoPauseFPS, connector)
+		}
+	}
 	for _, out := range in.Outputs {
 		connector := out.Connector
 		last := r.autoPauseFPS[connector]
@@ -159,7 +176,9 @@ func (r *Registry) autoPauseInputs() (wallpaper.AutoInputs, *wallpaper.Service, 
 		})
 	}
 	for _, w := range r.niriSnapshot.Windows {
-		if !w.HasWorkspace {
+		// A window scrolled out of view keeps its tile size but has no
+		// view position, so its rectangle would sit wrongly at the origin.
+		if !w.HasWorkspace || !w.TileInView {
 			continue
 		}
 		in.Windows = append(in.Windows, wallpaper.AutoWindow{

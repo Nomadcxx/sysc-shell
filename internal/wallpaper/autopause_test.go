@@ -317,3 +317,22 @@ func TestBatteryFPS(t *testing.T) {
 		}
 	}
 }
+
+func TestDebouncerPendingTracksTheGraceWindow(t *testing.T) {
+	var d Debouncer
+	now := time.Unix(1700000000, 0)
+	d.Confirm("DP-1", true, now)
+	if d.Pending() {
+		t.Fatal("a covered output reported a pending uncover")
+	}
+	d.Confirm("DP-1", false, now)
+	if !d.Pending() {
+		t.Fatal("the uncover grace window was not reported pending")
+	}
+	if d.Confirm("DP-1", false, now.Add(UncoverDelay)) {
+		t.Fatal("the grace window elapsed but the output still read covered")
+	}
+	if d.Pending() {
+		t.Fatal("the grace window stayed pending after it elapsed")
+	}
+}

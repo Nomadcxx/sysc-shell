@@ -621,13 +621,14 @@ func (s *Service) setAutoReason(token string, reason Reason, on bool) {
 	}
 }
 
-// setFPS bounds the playback rate of token.
+// setFPS bounds the playback rate of token. The bound is remembered even
+// for an output that cannot play yet, so the next apply inherits it.
 func (s *Service) setFPS(token string, fps int) {
 	for _, connector := range s.targets(token) {
+		s.fps[connector] = fps
 		if !s.playable(connector) {
 			continue
 		}
-		s.fps[connector] = fps
 		s.applyFPS(connector, fps)
 	}
 }
@@ -646,7 +647,12 @@ func (s *Service) applyFPS(connector string, fps int) {
 		// and a video keeps its own rate rather than pausing for a bound
 		// the engine cannot hold. The driver turns this flag into the
 		// battery fallback its policy asks for.
-		if a, ok := s.store.Assignment(connector); ok && a.Kind == KindEffect {
+		a, ok := s.store.Assignment(connector)
+		switch {
+		case ok && a.Kind == KindVideo:
+			// Do not advertise a bound the video engine never received.
+			delete(s.fps, connector)
+		case ok && a.Kind == KindEffect:
 			s.fpsUnsupported[connector] = true
 		}
 		return

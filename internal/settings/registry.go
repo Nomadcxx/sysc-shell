@@ -697,8 +697,13 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Path: "wallpaper.low-battery-pause", Label: "Low battery pause", Section: "Wallpaper", Group: "When covered or idle", Kind: KindEnum,
 			Describe: "Pause video wallpapers below this battery charge.",
 			Options:  wallpaperLowBattery,
-			Get:      getInt(func(c config.Config) int { return c.Wallpaper.LowBatteryPause }),
-			Set:      setEnum("wallpaper.low-battery-pause", wallpaperLowBattery, func(c *config.Config, v string) { n, _ := strconv.Atoi(v); c.Wallpaper.LowBatteryPause = n }),
+			Get: func(c config.Config) string {
+				if c.Wallpaper.LowBatteryPause == 0 {
+					return "off"
+				}
+				return strconv.Itoa(c.Wallpaper.LowBatteryPause)
+			},
+			Set: setEnum("wallpaper.low-battery-pause", wallpaperLowBattery, func(c *config.Config, v string) { n, _ := strconv.Atoi(v); c.Wallpaper.LowBatteryPause = n }),
 		},
 
 		{
