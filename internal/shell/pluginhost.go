@@ -25,6 +25,9 @@ type PluginHostOptions struct {
 	Roots    []plugin.Root
 	StateDir string
 	Notify   func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	// Launcher is the shell binary, which applies each plugin's boundary
+	// before executing it (plugin.LaunchFlag). Empty starts plugins directly.
+	Launcher string
 }
 
 type pluginSlot struct {
@@ -285,15 +288,13 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
 		Supported:      hostPluginCaps,
 		Consent:        h.consentLookup(),
+		Launcher:       h.opts.Launcher,
+		StateDir:       h.stateDir(),
 		Limits:         v1.DefaultLimits,
 		SessionEnded:   func() { h.clearWallpaperMasks(id) },
 		SessionStarted: func() { h.reopenViews(id) },
 	})
-	stateDir := h.opts.StateDir
-	if stateDir == "" {
-		stateDir = plugin.StateRoot()
-	}
-	store, err := plugin.OpenStore(stateDir, id)
+	store, err := plugin.OpenStore(h.stateDir(), id)
 	if err != nil {
 		return err
 	}
@@ -325,6 +326,13 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		h.pushSettings(id, rt)
 	}
 	return nil
+}
+
+func (h *pluginHost) stateDir() string {
+	if h.opts.StateDir != "" {
+		return h.opts.StateDir
+	}
+	return plugin.StateRoot()
 }
 
 // consentLookup reads the approval ledger the store keeps in the managed root.

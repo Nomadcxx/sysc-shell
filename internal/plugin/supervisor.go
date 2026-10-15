@@ -94,6 +94,9 @@ func (e ExitReason) String() string {
 // question "did this start work" stays separate from "should we try again".
 type Supervisor struct {
 	Manifest Manifest
+	// Launcher applies the plugin's boundary before executing it; empty
+	// starts the plugin directly.
+	Launcher string
 	// Supported is what this host offers. The grant is the intersection with
 	// what the manifest requested.
 	Supported []Capability
@@ -159,6 +162,13 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	// through a command shell.
 	cmd := exec.CommandContext(ctx, s.Manifest.ExecPath)
 	cmd.Args = []string{s.Manifest.ExecPath}
+	if s.Launcher != "" {
+		args, err := launchArgs(s.Manifest)
+		if err != nil {
+			return nil, fmt.Errorf("plugin: %s: %w", s.Manifest.ID, err)
+		}
+		cmd = exec.CommandContext(ctx, s.Launcher, args...)
+	}
 	cmd.Dir = s.Manifest.Dir
 	// GH #11: a third-party process gets the handful of variables it needs to
 	// find the compositor and its own config, not the whole session

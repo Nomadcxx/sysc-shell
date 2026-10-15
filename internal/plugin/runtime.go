@@ -62,6 +62,8 @@ type Status struct {
 	// Consent is the most recent start's answer against the recorded
 	// approval. Its zero value means no start has checked one.
 	Consent ConsentVerdict
+	// Boundary is what the most recent start runs inside.
+	Boundary Boundary
 }
 
 // RuntimeOptions configures one runtime.
@@ -79,6 +81,12 @@ type RuntimeOptions struct {
 	// re-announce them; on a first start there are none and the host does
 	// nothing.
 	SessionStarted func()
+	// Launcher is the binary that applies a plugin's boundary and executes
+	// it (see LaunchFlag). Empty starts the plugin directly, unbounded.
+	Launcher string
+	// StateDir is the root holding every plugin's state directory, the one
+	// place outside its own directory a confined plugin may always write.
+	StateDir string
 	// Consent looks up the approval recorded for a copy. Every start
 	// compares the copy's bytes with it, and a copy that changed starts with
 	// no capabilities. Nil skips the check.
@@ -120,6 +128,7 @@ type Runtime struct {
 	starts        int
 	stderr        []byte
 	consent       ConsentVerdict
+	boundary      Boundary
 	session       *Session
 	sessionCancel context.CancelFunc
 	disp          *Dispatcher
@@ -294,12 +303,13 @@ func (r *Runtime) Status() Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st := Status{
-		State:   r.state,
-		Failure: r.failure,
-		Starts:  r.starts,
-		Stderr:  r.stderr,
-		Since:   r.since,
-		Consent: r.consent,
+		State:    r.state,
+		Failure:  r.failure,
+		Starts:   r.starts,
+		Stderr:   r.stderr,
+		Since:    r.since,
+		Consent:  r.consent,
+		Boundary: r.boundary,
 	}
 	if r.session != nil {
 		st.PID = r.session.PID()
@@ -375,8 +385,16 @@ func (r *Runtime) launch(ctx context.Context) error {
 			supported = nil
 		}
 	}
+	boundary := BoundaryNone
+	if r.opts.Launcher != "" {
+		boundary = BoundaryLimited
+	}
+	r.mu.Lock()
+	r.boundary = boundary
+	r.mu.Unlock()
 	sup := &Supervisor{
 		Manifest:         r.candidate.Manifest,
+		Launcher:         r.opts.Launcher,
 		Supported:        supported,
 		Limits:           r.opts.Limits,
 		HandshakeTimeout: r.opts.HandshakeTimeout,
