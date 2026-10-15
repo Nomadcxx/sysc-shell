@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"syscall"
 )
 
@@ -23,9 +26,97 @@ const (
 	// the operating system's own rules applies.
 	BoundaryNone Boundary = "none"
 	// BoundaryLimited is a plugin under the resource ceilings and nothing
-	// more: it can read and write anything the user can.
+	// more: it declared no filesystem reach, so it can read and write
+	// anything the user can.
 	BoundaryLimited Boundary = "limited"
+	// BoundaryNoLandlock is a plugin that declared its filesystem reach on a
+	// kernel that cannot enforce it: the ceilings hold, the files do not.
+	BoundaryNoLandlock Boundary = "no-landlock"
+	// BoundaryConfined is a plugin held to its own directories, its declared
+	// paths and the system directories, under the ceilings. Its network is
+	// not restricted.
+	BoundaryConfined Boundary = "confined"
 )
+
+// boundaryOf is the boundary a start of m will run inside, and whether the
+// launcher must apply a filesystem ruleset for it.
+func boundaryOf(m Manifest, launcher string, abi int) (Boundary, bool) {
+	switch {
+	case launcher == "":
+		return BoundaryNone, false
+	case m.Filesystem == nil:
+		return BoundaryLimited, false
+	case abi < 1:
+		return BoundaryNoLandlock, false
+	}
+	return BoundaryConfined, true
+}
+
+// Access is what a path rule lets a confined plugin do beneath a path.
+type Access uint8
+
+const (
+	AccessRead Access = iota + 1
+	AccessReadExec
+	AccessReadWrite
+	AccessReadWriteExec
+	// AccessDevice is read, write and device control, for /dev.
+	AccessDevice
+)
+
+// PathRule grants one access beneath one path. Create makes the directory
+// first when it is missing, for a directory the plugin is meant to fill.
+type PathRule struct {
+	Path   string `json:"path"`
+	Access Access `json:"access"`
+	Create bool   `json:"create,omitempty"`
+}
+
+// systemPaths are what any process needs from the system: its programs and
+// libraries, configuration, the kernel's views of itself, devices, scratch
+// space and the session's runtime directory. None of them is the user's.
+func systemPaths() []PathRule {
+	rules := []PathRule{
+		{Path: "/usr", Access: AccessReadExec}, {Path: "/bin", Access: AccessReadExec},
+		{Path: "/sbin", Access: AccessReadExec}, {Path: "/lib", Access: AccessReadExec},
+		{Path: "/lib64", Access: AccessReadExec}, {Path: "/opt", Access: AccessReadExec},
+		{Path: "/nix", Access: AccessReadExec},
+		{Path: "/etc", Access: AccessRead}, {Path: "/run", Access: AccessRead},
+		{Path: "/proc", Access: AccessRead}, {Path: "/sys", Access: AccessRead},
+		{Path: "/dev", Access: AccessDevice},
+		{Path: "/tmp", Access: AccessReadWrite}, {Path: "/var/tmp", Access: AccessReadWrite},
+	}
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); filepath.IsAbs(dir) {
+		rules = append(rules, PathRule{Path: dir, Access: AccessReadWrite})
+	}
+	return rules
+}
+
+// pathRules is everything a confined plugin may reach: the system, its own
+// directory to read and run, its state directory to change, and what it
+// declared. Nothing else in the user's home is granted.
+func pathRules(m Manifest, stateDir, home string, system []PathRule) []PathRule {
+	rules := slices.Clone(system)
+	rules = append(rules,
+		PathRule{Path: m.Dir, Access: AccessReadExec},
+		PathRule{Path: filepath.Join(stateDir, m.ID), Access: AccessReadWriteExec, Create: true},
+	)
+	expand := func(path string) string {
+		if rest, ok := strings.CutPrefix(path, "~/"); ok {
+			return filepath.Join(home, rest)
+		}
+		return path
+	}
+	if m.Filesystem != nil {
+		for _, path := range m.Filesystem.Read {
+			rules = append(rules, PathRule{Path: expand(path), Access: AccessRead})
+		}
+		for _, path := range m.Filesystem.ReadWrite {
+			rules = append(rules, PathRule{Path: expand(path), Access: AccessReadWrite, Create: true})
+		}
+	}
+	return rules
+}
 
 // The resource ceilings. They were measured, not chosen: on 2026-10-15 the
 // fourteen plugins running on the owner's desktop peaked at 2.44 GB of
@@ -45,6 +136,8 @@ const (
 type launchSpec struct {
 	Exec   string        `json:"exec"`
 	Limits []launchLimit `json:"limits"`
+	// Paths confines the plugin when present.
+	Paths []PathRule `json:"paths,omitempty"`
 }
 
 type launchLimit struct {
@@ -61,8 +154,8 @@ func ceilings() []launchLimit {
 }
 
 // launchArgs is the launcher's argument list for one plugin.
-func launchArgs(m Manifest) ([]string, error) {
-	spec, err := json.Marshal(launchSpec{Exec: m.ExecPath, Limits: ceilings()})
+func launchArgs(m Manifest, paths []PathRule) ([]string, error) {
+	spec, err := json.Marshal(launchSpec{Exec: m.ExecPath, Limits: ceilings(), Paths: paths})
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +183,12 @@ func LaunchMain(args []string) int {
 		// its own descriptor limit across the exec below.
 		if err := syscall.Setrlimit(l.Resource, &syscall.Rlimit{Cur: l.Max, Max: l.Max}); err != nil {
 			fmt.Fprintf(os.Stderr, "plugin launcher: set resource %d to %d: %v\n", l.Resource, l.Max, err)
+			return 126
+		}
+	}
+	if spec.Paths != nil {
+		if err := restrictPaths(spec.Paths); err != nil {
+			fmt.Fprintf(os.Stderr, "plugin launcher: confine: %v\n", err)
 			return 126
 		}
 	}

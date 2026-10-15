@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -87,6 +88,10 @@ type RuntimeOptions struct {
 	// StateDir is the root holding every plugin's state directory, the one
 	// place outside its own directory a confined plugin may always write.
 	StateDir string
+	// SystemPaths replaces the system directories a confined plugin may
+	// reach. Nil uses the real ones; a test narrows them so its own
+	// temporary files are outside the boundary it checks.
+	SystemPaths []PathRule
 	// Consent looks up the approval recorded for a copy. Every start
 	// compares the copy's bytes with it, and a copy that changed starts with
 	// no capabilities. Nil skips the check.
@@ -385,9 +390,15 @@ func (r *Runtime) launch(ctx context.Context) error {
 			supported = nil
 		}
 	}
-	boundary := BoundaryNone
-	if r.opts.Launcher != "" {
-		boundary = BoundaryLimited
+	boundary, confine := boundaryOf(r.candidate.Manifest, r.opts.Launcher, LandlockABI())
+	var paths []PathRule
+	if confine {
+		system := r.opts.SystemPaths
+		if system == nil {
+			system = systemPaths()
+		}
+		home, _ := os.UserHomeDir()
+		paths = pathRules(r.candidate.Manifest, r.opts.StateDir, home, system)
 	}
 	r.mu.Lock()
 	r.boundary = boundary
@@ -395,6 +406,7 @@ func (r *Runtime) launch(ctx context.Context) error {
 	sup := &Supervisor{
 		Manifest:         r.candidate.Manifest,
 		Launcher:         r.opts.Launcher,
+		Paths:            paths,
 		Supported:        supported,
 		Limits:           r.opts.Limits,
 		HandshakeTimeout: r.opts.HandshakeTimeout,

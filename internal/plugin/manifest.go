@@ -221,7 +221,27 @@ type Manifest struct {
 	Widgets      []Widget
 	Panels       []Panel
 	Settings     []Setting
+	// Filesystem is what the plugin may touch beyond its own directory and
+	// its state directory. Nil means it declared nothing and is not
+	// confined; a declaration, even an empty one, confines it where the
+	// kernel can.
+	Filesystem *Filesystem
 }
+
+// Filesystem is a plugin's declared reach into the user's files, as written
+// in the manifest: paths beginning "~/" (the user's home) or "/".
+type Filesystem struct {
+	// Read names files and directories the plugin may read.
+	Read []string
+	// ReadWrite names directories the plugin may read and change.
+	ReadWrite []string
+}
+
+// FilesystemMinor is the protocol minor that introduced the declaration.
+const FilesystemMinor = 18
+
+// maxFilesystemPaths bounds a declaration so a consent can be read whole.
+const maxFilesystemPaths = 32
 
 // Service is one background behaviour the plugin owns. It is metadata for the
 // manager: the process supplies the behaviour itself.
@@ -339,12 +359,18 @@ type wireManifest struct {
 	Protocol    wireProtocol `json:"protocol"`
 	Exec        string       `json:"exec"`
 
-	Capabilities []string      `json:"capabilities,omitempty"`
-	Requires     *wireRequires `json:"requires,omitempty"`
-	Services     []wireEntry   `json:"services,omitempty"`
-	Widgets      []wireWidget  `json:"widgets,omitempty"`
-	Panels       []wirePanel   `json:"panels,omitempty"`
-	Settings     []wireSetting `json:"settings,omitempty"`
+	Capabilities []string        `json:"capabilities,omitempty"`
+	Requires     *wireRequires   `json:"requires,omitempty"`
+	Services     []wireEntry     `json:"services,omitempty"`
+	Widgets      []wireWidget    `json:"widgets,omitempty"`
+	Panels       []wirePanel     `json:"panels,omitempty"`
+	Settings     []wireSetting   `json:"settings,omitempty"`
+	Filesystem   *wireFilesystem `json:"filesystem,omitempty"`
+}
+
+type wireFilesystem struct {
+	Read      []string `json:"read,omitempty"`
+	ReadWrite []string `json:"read_write,omitempty"`
 }
 
 type wireProtocol struct {
@@ -544,7 +570,54 @@ func validateManifest(w wireManifest) (Manifest, error) {
 	if m.Settings, err = settings(w.Settings, "settings"); err != nil {
 		return Manifest{}, err
 	}
+	if w.Filesystem != nil {
+		if m.Protocol.Minor < FilesystemMinor {
+			return Manifest{}, fmt.Errorf("filesystem requires protocol minor %d", FilesystemMinor)
+		}
+		if m.Filesystem, err = filesystem(*w.Filesystem); err != nil {
+			return Manifest{}, err
+		}
+	}
 	return m, nil
+}
+
+func filesystem(w wireFilesystem) (*Filesystem, error) {
+	if n := len(w.Read) + len(w.ReadWrite); n > maxFilesystemPaths {
+		return nil, fmt.Errorf("filesystem declares %d paths, more than the %d allowed", n, maxFilesystemPaths)
+	}
+	for _, list := range []struct {
+		field string
+		paths []string
+	}{{"read", w.Read}, {"read_write", w.ReadWrite}} {
+		for i, path := range list.paths {
+			if err := declaredPath(path); err != nil {
+				return nil, fmt.Errorf("filesystem.%s[%d]: %w", list.field, i, err)
+			}
+		}
+	}
+	return &Filesystem{Read: slices.Clone(w.Read), ReadWrite: slices.Clone(w.ReadWrite)}, nil
+}
+
+// declaredPath accepts "~/..." or an absolute path, written in its clean form
+// so the consent shows exactly what is granted, and never the whole root.
+func declaredPath(path string) error {
+	if len(path) > maxLabelBytes {
+		return fmt.Errorf("%q is longer than %d bytes", path, maxLabelBytes)
+	}
+	rest, home := strings.CutPrefix(path, "~/")
+	if !home && !filepath.IsAbs(path) {
+		return fmt.Errorf("%q must begin with ~/ or /", path)
+	}
+	if !home {
+		rest = path
+	}
+	if rest == "/" || rest == "" {
+		return fmt.Errorf("%q grants everything", path)
+	}
+	if filepath.Clean(rest) != rest || rest == ".." || strings.HasPrefix(rest, "../") || strings.Contains(rest, "/../") {
+		return fmt.Errorf("%q is not a clean path inside its root", path)
+	}
+	return nil
 }
 
 // text checks a free-form label or paragraph.

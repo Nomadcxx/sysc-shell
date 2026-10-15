@@ -2,7 +2,9 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -113,5 +115,133 @@ func waitStderr(t *testing.T, r *Runtime, want string) {
 			t.Fatalf("stderr %q never contained %q", r.Status().Stderr, want)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// installContainedHelper is installHelperWith for a confined plugin: the
+// test binary is linked into the plugin's own directory, because a confined
+// plugin may execute only what lies beneath it and the system directories.
+func installContainedHelper(t *testing.T, mode, manifest string) Manifest {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(self, filepath.Join(bin, "helper")); err != nil {
+		data, rerr := os.ReadFile(self)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if err := os.WriteFile(filepath.Join(bin, "helper"), data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := fmt.Sprintf("#!/bin/sh\nexec %q %s %s\n", filepath.Join(bin, "helper"), HelperFlag, mode)
+	if err := os.WriteFile(filepath.Join(bin, "sysc-plugin-timer"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ManifestName), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestAConfinedPluginReachesOnlyWhatItDeclared(t *testing.T) {
+	if LandlockABI() < 1 {
+		t.Skip("this kernel provides no landlock; recorded unrun rather than asserted")
+	}
+	// The secret, the declared directory and the plugin all live under the
+	// test's temporary root, so the system rules here leave /tmp out: what
+	// the plugin may reach there is exactly what the boundary grants.
+	secret := filepath.Join(t.TempDir(), ".ssh")
+	allowed := t.TempDir()
+	for path, body := range map[string]string{
+		filepath.Join(secret, "id_ed25519"): "private",
+		filepath.Join(allowed, "auth.json"): "{}",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest := string(manifestWith(t, FilesystemMinor, map[string]any{"read": []string{allowed}}))
+	m := installContainedHelper(t, "probe", manifest)
+	opts := launcherOptions(t)
+	opts.SystemPaths = []PathRule{
+		{Path: "/usr", Access: AccessReadExec}, {Path: "/bin", Access: AccessReadExec},
+		{Path: "/lib", Access: AccessReadExec}, {Path: "/lib64", Access: AccessReadExec},
+		{Path: "/etc", Access: AccessRead}, {Path: "/proc", Access: AccessRead},
+		{Path: "/sys", Access: AccessRead}, {Path: "/dev", Access: AccessDevice},
+	}
+	other := filepath.Join(opts.StateDir, "org.example.other")
+	if err := os.MkdirAll(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "state.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(opts.StateDir, m.ID, "note")
+	probes := []string{
+		"read:" + filepath.Join(secret, "id_ed25519"),
+		"read:" + filepath.Join(allowed, "auth.json"),
+		"write:" + filepath.Join(allowed, "planted"),
+		"write:" + own,
+		"read:" + filepath.Join(other, "state.json"),
+		"write:" + filepath.Join(m.Dir, "planted"),
+	}
+	t.Setenv("SYSC_PROBE", strings.Join(probes, ";"))
+	r := NewRuntime(Candidate{Dir: m.Dir, Source: SourceUser, Manifest: m}, opts)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v (stderr %q)", err, r.Status().Stderr)
+	}
+	defer r.Stop()
+	waitStderr(t, r, "probe write "+filepath.Join(m.Dir, "planted"))
+	out := string(r.Status().Stderr)
+	for _, want := range []string{
+		"probe read " + filepath.Join(secret, "id_ed25519") + " denied",
+		"probe read " + filepath.Join(allowed, "auth.json") + " ok",
+		"probe write " + filepath.Join(allowed, "planted") + " denied",
+		"probe write " + own + " ok",
+		"probe read " + filepath.Join(other, "state.json") + " denied",
+		"probe write " + filepath.Join(m.Dir, "planted") + " denied",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("probe output lacks %q:\n%s", want, out)
+		}
+	}
+	if st := r.Status(); st.Boundary != BoundaryConfined || st.State != StateRunning {
+		t.Errorf("status = %q %q, want a running confined plugin", st.State, st.Boundary)
+	}
+}
+
+func TestAnUndeclaredPluginIsBoundedButNotConfined(t *testing.T) {
+	secret := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := installContainedHelper(t, "probe", timerManifest)
+	t.Setenv("SYSC_PROBE", "read:"+secret)
+	r := NewRuntime(Candidate{Dir: m.Dir, Source: SourceUser, Manifest: m}, launcherOptions(t))
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	waitStderr(t, r, "probe read "+secret)
+	if out := string(r.Status().Stderr); !strings.Contains(out, "probe read "+secret+" ok") {
+		t.Fatalf("an undeclared plugin was confined: %s", out)
+	}
+	if st := r.Status(); st.Boundary != BoundaryLimited {
+		t.Fatalf("boundary = %q, want %q: the manager must say it is unconfined", st.Boundary, BoundaryLimited)
 	}
 }

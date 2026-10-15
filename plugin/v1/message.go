@@ -19,7 +19,10 @@ const (
 	// files:browser. A manifest may declare those names only at minor 17 or
 	// later, so a shell older than this one refuses it at load; the broad
 	// names keep their meaning at every minor.
-	ProtocolMinor = 17
+	// Minor 18 adds the manifest's filesystem declaration: the paths a
+	// plugin reads and changes beyond its own directories. A plugin that
+	// declares it is confined to them where the kernel offers Landlock.
+	ProtocolMinor = 18
 )
 
 // The version-one message names. Every line on the wire carries one of these

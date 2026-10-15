@@ -97,6 +97,8 @@ type Supervisor struct {
 	// Launcher applies the plugin's boundary before executing it; empty
 	// starts the plugin directly.
 	Launcher string
+	// Paths confines the plugin to these rules, through the launcher.
+	Paths []PathRule
 	// Supported is what this host offers. The grant is the intersection with
 	// what the manifest requested.
 	Supported []Capability
@@ -163,7 +165,7 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	cmd := exec.CommandContext(ctx, s.Manifest.ExecPath)
 	cmd.Args = []string{s.Manifest.ExecPath}
 	if s.Launcher != "" {
-		args, err := launchArgs(s.Manifest)
+		args, err := launchArgs(s.Manifest, s.Paths)
 		if err != nil {
 			return nil, fmt.Errorf("plugin: %s: %w", s.Manifest.ID, err)
 		}
