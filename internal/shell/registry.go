@@ -19,6 +19,7 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	metrics "github.com/Nomadcxx/sysc-metrics"
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/buildinfo"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
@@ -1119,7 +1120,7 @@ func (r *Registry) BrightnessAvailable() bool {
 
 func (r *Registry) Status() map[string]any {
 	if r == nil {
-		return map[string]any{"version": "sysc-shell"}
+		return map[string]any{"version": buildinfo.Line()}
 	}
 	r.mu.Lock()
 	audio := r.audio != nil && r.audio.Available()
@@ -1141,7 +1142,7 @@ func (r *Registry) Status() map[string]any {
 	}
 	_, err := exec.LookPath("matugen")
 	return map[string]any{
-		"version":         "sysc-shell",
+		"version":         buildinfo.Line(),
 		"audio":           audio,
 		"brightness":      bright,
 		"panels":          panels,
