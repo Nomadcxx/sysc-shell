@@ -111,6 +111,23 @@ func matchManifest(m plugin.Manifest, p Plan) error {
 	case !catalog.SameSet(m.Requires, p.Release.Requires.Commands):
 		return fail(KindManifest, nil, "required commands are %v; the catalog says %v", m.Requires, p.Release.Requires.Commands)
 	}
+	return matchFilesystem(m, p.Release.Filesystem)
+}
+
+// matchFilesystem refuses a release whose catalog promises less filesystem
+// reach than its manifest takes. A catalog silent about it promised nothing,
+// and a plugin confined beyond what the consent said is no harm.
+func matchFilesystem(m plugin.Manifest, listed *catalog.Filesystem) error {
+	if listed == nil {
+		return nil
+	}
+	if m.Filesystem == nil {
+		return fail(KindManifest, nil, "the catalog says the plugin is confined; its manifest declares no filesystem reach")
+	}
+	if !catalog.SameSet(m.Filesystem.Read, listed.Read) || !catalog.SameSet(m.Filesystem.ReadWrite, listed.ReadWrite) {
+		return fail(KindManifest, nil, "filesystem reach is read %v, change %v; the catalog says read %v, change %v",
+			m.Filesystem.Read, m.Filesystem.ReadWrite, listed.Read, listed.ReadWrite)
+	}
 	return nil
 }
 

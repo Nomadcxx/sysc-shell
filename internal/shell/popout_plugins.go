@@ -655,6 +655,9 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	if consent.text != "" {
 		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: consent.text, TextRole: theme.RoleCaption, Tone: consent.tone, MaxWidth: labelW, Multiline: true})
 	}
+	if boundary := pluginBoundaryLine(h, status.Boundary); boundary != "" {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: boundary, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: labelW, Multiline: true})
+	}
 	if failing {
 		detail := status.Failure
 		if row.candidate.Err != nil {
@@ -720,6 +723,22 @@ func pluginConsentLine(h *PanelHost, v plugin.ConsentVerdict) pluginConsentRow {
 			"This plugin was enabled before approvals were recorded. Approve its current contents to keep it enabled."), tone: ui.ToneSubtle, ask: true}
 	}
 	return pluginConsentRow{}
+}
+
+// pluginBoundaryLine states what a running plugin is held inside, in the
+// words the consent card uses; a plugin started without the launcher says
+// nothing, because nothing was applied to it.
+func pluginBoundaryLine(h *PanelHost, b plugin.Boundary) string {
+	tr := hostT(h)
+	switch b {
+	case plugin.BoundaryConfined:
+		return cardT(tr, "plugins.boundary_confined", "Confined to its own files and the paths it declared. Network access is not restricted.")
+	case plugin.BoundaryLimited:
+		return cardT(tr, "plugins.boundary_limited", "Unconfined: it runs as your user with full file and network access.")
+	case plugin.BoundaryNoLandlock:
+		return cardT(tr, "plugins.boundary_no_landlock", "This kernel provides no filesystem confinement, so it runs with full file and network access.")
+	}
+	return ""
 }
 
 // digestPrefix is the short form of a content digest a person can compare.

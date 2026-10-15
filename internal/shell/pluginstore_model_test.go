@@ -250,3 +250,25 @@ func TestConsentCardReadsAnOldGrantWithItsMeaning(t *testing.T) {
 		}
 	}
 }
+
+func TestTheConsentCardStatesTheBoundaryInForce(t *testing.T) {
+	declared := &catalog.Filesystem{Read: []string{"~/.local/share/opencode"}, ReadWrite: []string{"~/.cache/Proton"}}
+	for _, tc := range []struct {
+		name string
+		fs   *catalog.Filesystem
+		abi  int
+		want string
+	}{
+		{"undeclared", nil, 5, "It runs as your user with full file and network access."},
+		{"declared, confinable", declared, 5,
+			"It can read ~/.local/share/opencode and change ~/.cache/Proton, and no other files of yours. Network access is not restricted."},
+		{"declared, nothing extra", &catalog.Filesystem{}, 5,
+			"It can reach only its own files. Network access is not restricted."},
+		{"declared, no landlock", declared, 0,
+			"This kernel provides no filesystem confinement. It runs as your user with full file and network access."},
+	} {
+		if got := boundaryLine(tc.fs, tc.abi); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

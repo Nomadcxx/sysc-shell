@@ -104,6 +104,16 @@ type Release struct {
 	Requires     Requires         `json:"requires"`
 	Assets       map[string]Asset `json:"assets"`
 	ReleaseNotes string           `json:"release_notes,omitempty"`
+	// Filesystem repeats the manifest's filesystem declaration (protocol
+	// minor 18) so the consent shows what a confined plugin may reach
+	// before it is downloaded. Nil means the release declares none.
+	Filesystem *Filesystem `json:"filesystem,omitempty"`
+}
+
+// Filesystem is a release's declared reach into the user's files.
+type Filesystem struct {
+	Read      []string `json:"read,omitempty"`
+	ReadWrite []string `json:"read_write,omitempty"`
 }
 
 // Entry is one catalog row. Its embedded Release is the newest version; older

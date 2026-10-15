@@ -355,7 +355,7 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 			}
 			detail.ConsentLines = append(detail.ConsentLines, changeLines("Required commands", listing.Installed.Requires, detail.RequiredCommands)...)
 		}
-		detail.ConsentLines = append(detail.ConsentLines, "It runs as your user with full file and network access.")
+		detail.ConsentLines = append(detail.ConsentLines, boundaryLine(release.Filesystem, plugin.LandlockABI()))
 		if enabled {
 			detail.ConsentLines = append(detail.ConsentLines, "It is still enabled, so it will start immediately.")
 		}
@@ -386,6 +386,32 @@ func changeLines(what string, from, to []string) []string {
 		lines = append(lines, what+" removed: "+strings.Join(removed, ", "))
 	}
 	return lines
+}
+
+// unconfinedLine is what a consent says when nothing holds a plugin's files.
+const unconfinedLine = "It runs as your user with full file and network access."
+
+// boundaryLine states the boundary a release will run inside on this
+// kernel. It never claims more than the launcher enforces: a declaration a
+// kernel without Landlock cannot hold reads as unconfined, and the network,
+// which no boundary restricts, is always said to be open.
+func boundaryLine(fs *catalog.Filesystem, abi int) string {
+	switch {
+	case fs == nil:
+		return unconfinedLine
+	case abi < 1:
+		return "This kernel provides no filesystem confinement. " + unconfinedLine
+	case len(fs.Read) == 0 && len(fs.ReadWrite) == 0:
+		return "It can reach only its own files. Network access is not restricted."
+	}
+	var reach []string
+	if len(fs.Read) > 0 {
+		reach = append(reach, "read "+strings.Join(fs.Read, ", "))
+	}
+	if len(fs.ReadWrite) > 0 {
+		reach = append(reach, "change "+strings.Join(fs.ReadWrite, ", "))
+	}
+	return "It can " + strings.Join(reach, " and ") + ", and no other files of yours. Network access is not restricted."
 }
 
 func describeCapabilities(names []string) []string {

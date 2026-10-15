@@ -244,6 +244,10 @@ func cloneRelease(release catalog.Release) catalog.Release {
 	release.Capabilities = slices.Clone(release.Capabilities)
 	release.Requires.Commands = slices.Clone(release.Requires.Commands)
 	release.Assets = maps.Clone(release.Assets)
+	if release.Filesystem != nil {
+		fs := catalog.Filesystem{Read: slices.Clone(release.Filesystem.Read), ReadWrite: slices.Clone(release.Filesystem.ReadWrite)}
+		release.Filesystem = &fs
+	}
 	return release
 }
 

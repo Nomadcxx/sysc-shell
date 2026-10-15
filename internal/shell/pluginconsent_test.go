@@ -147,3 +147,17 @@ func TestAnUnrecordedPluginKeepsItsGrantAndIsAskedOnce(t *testing.T) {
 		t.Fatal("an unrecorded copy is not offered approval")
 	}
 }
+
+func TestTheManagerStatesTheBoundaryAPluginRunsInside(t *testing.T) {
+	for b, want := range map[plugin.Boundary]string{
+		plugin.BoundaryConfined:   "Confined to its own files and the paths it declared. Network access is not restricted.",
+		plugin.BoundaryLimited:    "Unconfined: it runs as your user with full file and network access.",
+		plugin.BoundaryNoLandlock: "This kernel provides no filesystem confinement, so it runs with full file and network access.",
+		plugin.BoundaryNone:       "",
+		"":                        "",
+	} {
+		if got := pluginBoundaryLine(nil, b); got != want {
+			t.Errorf("%q: %q, want %q", b, got, want)
+		}
+	}
+}
