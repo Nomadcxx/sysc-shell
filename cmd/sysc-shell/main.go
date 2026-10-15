@@ -454,6 +454,12 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == plugin.LaunchFlag {
 		os.Exit(plugin.LaunchMain(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Exit(runVersion(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "config" {
+		os.Exit(runConfigCheck(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "ipc" {
 		if err := runIPC(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

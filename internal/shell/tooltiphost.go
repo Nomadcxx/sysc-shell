@@ -226,10 +226,10 @@ func (h *tooltipHost) spec(st *tooltipCardState) *wayland.AuxSpec {
 				return h.render(st, pixels, width, height, stride)
 			},
 			Handle: func(wayland.Event) bool { return false },
-			Backdrop: func(img *ui.Image) {
+			Backdrop: func(_, ground *ui.Image) {
 				h.r.mu.Lock()
 				defer h.r.mu.Unlock()
-				st.backdrop = img
+				st.backdrop = ground
 			},
 			BlurShape: func() []ui.Rect {
 				h.r.mu.Lock()

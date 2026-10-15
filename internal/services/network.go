@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Connectivity names what the active connection runs over.
@@ -31,7 +32,26 @@ type NetworkState struct {
 	IPv4            string
 	Interface       string
 	Strength        uint8 // 0..100, Wi-Fi only
+	// Tier names which backend answered. ConnNone with TierKernel means "no
+	// route and no manager", not "the radio is off".
+	Tier Tier
+	// ReadOnly is true when the answering tier cannot change anything.
+	ReadOnly bool
 }
+
+// Tier is the backend that answered for the network.
+type Tier uint8
+
+const (
+	// TierNone is no backend at all: nothing is known.
+	TierNone Tier = iota
+	// TierNM is NetworkManager.
+	TierNM
+	// TierIWD is iwd, with wired links read from the kernel.
+	TierIWD
+	// TierKernel is the kernel's read-only view, used when no manager runs.
+	TierKernel
+)
 
 // AccessPoint is one scanned network.
 //
@@ -69,13 +89,11 @@ func SignalBand(signal uint8) int {
 	}
 }
 
-// backend is the seam tests replace. Its only production implementation wraps
-// the pinned NetworkManager binding.
-//
-// It exists so a test uses a fake instead of a live system bus, not to support
-// swappable wpa_supplicant or iwd backends the way the reference shells do:
-// we are building neither. If that justification ever stops being true, delete
-// this interface rather than populate it.
+// backend is the seam between the service and whatever answers for the
+// network: the pinned NetworkManager binding, iwd (networkiwd.go), or the
+// kernel's read-only view when no manager runs (networkkernel.go). Tests
+// replace it with a fake rather than a live system bus. A further writable
+// backend is an owner decision, not a slot this interface keeps open.
 type backend interface {
 	State() (NetworkState, error)
 	AccessPoints() ([]AccessPoint, error)
@@ -89,13 +107,19 @@ type backend interface {
 	Close() error
 }
 
+// poller is a backend with nothing to push. The service reads it on its
+// interval while leased instead of waiting for a wake.
+type poller interface {
+	PollInterval() time.Duration
+}
+
 // Network is a peer of Audio: the same public shape, a different delivery.
 //
-// Audio polls on a lease interval. This service is pushed by D-Bus signals, so
+// Audio polls on a lease interval. NetworkManager pushes D-Bus signals, so
 // leaseSet's interval is meaningless here and deliberately ignored: a lease
 // means only "somebody is watching", and it governs when the subscription
-// starts and stops. Reusing an interval-shaped helper for a non-interval
-// purpose would mislead the next reader if it were not said plainly.
+// starts and stops. A backend with nothing to push names its own cadence
+// through poller; that is a property of the tier, not of any lease.
 type Network struct {
 	mu      sync.Mutex
 	leases  leaseSet
@@ -208,18 +232,40 @@ func (n *Network) Acquire() (*Lease, error) {
 			return nil, err
 		}
 		n.stop = stop
-		go n.run(stop)
+		var every time.Duration
+		if p, ok := n.be.(poller); ok {
+			every = p.PollInterval()
+		}
+		go n.run(stop, every)
 	}
 	return lease, nil
 }
 
 // run coalesces a burst of signals into a cap-one channel, so a noisy scan
 // cannot outrun one paint.
-func (n *Network) run(stop <-chan struct{}) {
+//
+// A tier with nothing to push is read on its interval as well: its ticks
+// land on the same wake path, so there is one reader and one publish path.
+func (n *Network) run(stop <-chan struct{}, every time.Duration) {
+	var tick <-chan time.Time
+	if every > 0 {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		tick = t.C
+		select {
+		case n.wake <- struct{}{}:
+		default:
+		}
+	}
 	for {
 		select {
 		case <-stop:
 			return
+		case <-tick:
+			select {
+			case n.wake <- struct{}{}:
+			default:
+			}
 		case <-n.wake:
 			st, err := n.be.State()
 			if err != nil {
@@ -278,22 +324,35 @@ func (n *Network) Close() {
 // Writes. Each performs I/O and must run off Registry.mu and off the Wayland
 // owner, through the shell's scheduleControl seam.
 
-// NewSystemNetwork builds the service over the real NetworkManager backend.
+// NewSystemNetwork builds the service over NetworkManager, or, on a machine
+// where no manager answers, over the kernel's read-only view.
 //
-// A machine with no reachable NetworkManager yields a service that reports
-// Available false and does nothing, rather than an error the caller must
-// handle: the bar still paints and the glyph stays off. The backend is never
-// nil, because every method here dereferences it and a nil one would panic
-// inside a widget refresh, which presents as a shell that paints nothing.
+// A machine where neither answers yields a service that reports Available
+// false and does nothing, rather than an error the caller must handle: the
+// bar still paints and the glyph stays off. The backend is never nil, because
+// every method here dereferences it and a nil one would panic inside a widget
+// refresh, which presents as a shell that paints nothing.
 func NewSystemNetwork() *Network {
-	be, err := newNMBackend()
-	if err != nil {
-		n := NewNetwork(unavailableBackend{})
+	be, tier := selectNetworkBackend(
+		func() (backend, error) { return newNMBackend() },
+		func() (backend, error) { return newIWDBackend() },
+		rootFS(), interfaceIPv4)
+	switch tier {
+	case TierNone:
+		n := NewNetwork(be)
 		n.ok = false
 		return n
+	case TierKernel:
+		// Nothing to authenticate against: the kernel tier changes nothing,
+		// so it needs no secret export.
+		return NewNetwork(be)
 	}
 	n := NewNetwork(be)
-	if err := n.startSecrets(startSystemSecretExport); err != nil {
+	start := startSystemSecretExport
+	if iwd, ok := be.(*iwdBackend); ok {
+		start = func(e *secretExport) (func(), error) { return iwd.bus.ExportAgent(&iwdAgent{export: e, bus: iwd.bus}) }
+	}
+	if err := n.startSecrets(start); err != nil {
 		// A partial service would let secured activation wait for a prompt that
 		// can never arrive. Fail closed until the export can be registered.
 		n.ok = false
@@ -306,7 +365,7 @@ func NewSystemNetwork() *Network {
 type unavailableBackend struct{}
 
 func (unavailableBackend) State() (NetworkState, error) {
-	return NetworkState{Kind: ConnUnknown}, nil
+	return NetworkState{Kind: ConnUnknown, Tier: TierNone, ReadOnly: true}, nil
 }
 func (unavailableBackend) AccessPoints() ([]AccessPoint, error)         { return nil, nil }
 func (unavailableBackend) Scan() error                                  { return errNoNetworkManager }

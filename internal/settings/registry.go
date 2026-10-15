@@ -315,6 +315,24 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				func(c *config.Config, n int) { c.Theme.BlurRadius = n }),
 		},
 		{
+			Path: "appearance.glass", Label: "Glass material", Section: "Appearance", Group: "Blur & elevation",
+			Describe: "Smoke or milk tone, or automatic frost, over the panel backdrop.",
+			Kind:     KindEnum,
+			Options:  glassNames,
+			Get:      func(c config.Config) string { return string(c.Theme.Glass) },
+			Set: setEnum("appearance.glass", glassNames,
+				func(c *config.Config, v string) { c.Theme.Glass = theme.GlassMaterial(v) }),
+		},
+		{
+			Path: "appearance.glass-intensity", Present: PresentSlider, Unit: "%", Label: "Glass intensity", Section: "Appearance", Group: "Blur & elevation",
+			Describe: "How strong the material is. No effect while the material is off.",
+			Kind:     KindInt,
+			Min:      theme.GlassIntensityMin, Max: theme.GlassIntensityMax,
+			Get: getInt(func(c config.Config) int { return c.Theme.GlassIntensity }),
+			Set: setInt("appearance.glass-intensity", theme.GlassIntensityMin, theme.GlassIntensityMax,
+				func(c *config.Config, n int) { c.Theme.GlassIntensity = n }),
+		},
+		{
 			Path: "appearance.elevation", Label: "Shadow depth", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "How much shadow separates a surface from what is under it.",
 			Kind:     KindEnum,
@@ -373,6 +391,20 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Kind:     KindBool,
 			Get:      getBool(func(c config.Config) bool { return c.Monitor.ShowProcesses }),
 			Set:      setBool("monitor.show-processes", func(c *config.Config, v bool) { c.Monitor.ShowProcesses = v }),
+		},
+		{
+			Path: "sounds.notification", Label: "Notification sound", Section: "Sounds", Group: "Cues",
+			Describe: "Play a short tone when a notification arrives, unless do not disturb is on.",
+			Kind:     KindBool,
+			Get:      getBool(func(c config.Config) bool { return c.Sounds.Notification }),
+			Set:      setBool("sounds.notification", func(c *config.Config, v bool) { c.Sounds.Notification = v }),
+		},
+		{
+			Path: "sounds.volume", Present: PresentSlider, Unit: "%", Label: "Cue volume", Section: "Sounds", Group: "Cues",
+			Describe: "The cues' own level, under the system volume.",
+			Kind:     KindInt, Min: config.SoundsVolumeMin, Max: config.SoundsVolumeMax,
+			Get: getInt(func(c config.Config) int { return c.Sounds.Volume }),
+			Set: setInt("sounds.volume", config.SoundsVolumeMin, config.SoundsVolumeMax, func(c *config.Config, n int) { c.Sounds.Volume = n }),
 		},
 		{
 			Path: "session.locker", Label: "Locker", Section: "Session", Group: "Lock",
@@ -782,7 +814,8 @@ func presetAxisPaths() []string {
 		"appearance.font-scale", "appearance.font-weight", "appearance.radius",
 		"appearance.motion", "appearance.motion-speed", "appearance.bar-opacity",
 		"appearance.panel-opacity", "appearance.overlay-opacity", "appearance.blur-behind",
-		"appearance.blur-radius", "appearance.elevation",
+		"appearance.blur-radius", "appearance.glass", "appearance.glass-intensity",
+		"appearance.elevation",
 	}
 }
 
@@ -840,7 +873,7 @@ func SectionClusters() []Cluster {
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
-		{"System", []string{"Session", "Lock Screen", "Accessibility"}},
+		{"System", []string{"Session", "Lock Screen", "Accessibility", "Sounds"}},
 	}
 }
 
@@ -882,6 +915,7 @@ var (
 		string(theme.DensityComfortable), string(theme.DensitySpacious),
 	}
 	motionNames    = []string{string(theme.MotionStandard), string(theme.MotionExpressive)}
+	glassNames     = theme.GlassMaterialNames()
 	elevationNames = []string{
 		string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
 	}

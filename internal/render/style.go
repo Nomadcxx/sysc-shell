@@ -88,6 +88,10 @@ type Style struct {
 	// from Outline: every surface carries the outline token for its controls,
 	// but only a panel draws a rim, so a bar or a toast leaves this zero.
 	Rim Color
+	// RimWidth is that stroke's width in logical pixels. Zero is the hairline
+	// the shell has always drawn; a refracting material widens it, because a
+	// slab of glass reads by its edge rather than by a hairline.
+	RimWidth int
 	// CardRadius is the corner a panel card keeps. Zero falls back to Radius,
 	// which is what a bar pill uses.
 	CardRadius int

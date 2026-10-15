@@ -222,6 +222,7 @@ func (s *notifyState) historyCount() int {
 // Registry-facing wrappers. The registry owns one notifyState; tests reach
 // through these rather than the lock directly.
 func (r *Registry) applyNotify(m notifyclient.Message) {
+	arrived := r.notify.arrival(m)
 	r.notify.applyNotify(m)
 	// A snapshot is the service answering: anything held back while it was
 	// unreachable, such as the startup theme apply's report, can go now.
@@ -245,6 +246,9 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 		return
 	}
 	r.mu.Lock()
+	if arrived {
+		r.cueNotificationLocked()
+	}
 	if notificationMessageRetiresImages(m) {
 		r.pruneNotificationRastersLocked()
 	}
@@ -285,6 +289,17 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 	}
 	r.dispatchBatteryWarning(batteryAction)
 }
+
+// arrival reports whether m brings a new notification into the projection:
+// an add in the current generation. A replacement, a close, a history change,
+// a snapshot and a stale delta are not arrivals, so none of them can cue.
+func (s *notifyState) arrival(m notifyclient.Message) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return m.Kind == notifyclient.KindDelta && m.Generation == s.generation &&
+		m.Delta.Kind == protocol.DeltaAdded && m.Delta.Notification != nil
+}
+
 func (r *Registry) notifyActiveIDs() []uint32 { return r.notify.activeIDs() }
 func (r *Registry) notifyLifetime(id uint32) *protocol.Lifetime {
 	return r.notify.lifetime(id)

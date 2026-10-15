@@ -107,6 +107,14 @@ type Theme struct {
 	// Blur reports that the compositor blurs behind this bar: its style is
 	// translucent and the compositor offers ext-background-effect.
 	Blur bool
+	// Glass is the material a surface with a capture paints over it, and
+	// GlassIntensity is its strength in percent. GlassOff is today's paint.
+	Glass          theme.GlassMaterial
+	GlassIntensity int
+	// materialIntensity is the axis bounded by the text floor for this theme's
+	// surface opacity and text role. It is resolved once, here, because the
+	// bound does not change per frame.
+	materialIntensity int
 	// PillAlpha is the alpha of the bar's capsules. Surfaces.Bar is the
 	// ground's.
 	PillAlpha uint8
@@ -209,12 +217,26 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 		BarGap:   bar.Gap,
 		Fillet:   theme.FilletRadius,
 
-		BarStyle:     effectiveBarStyle(bar.Style, hc),
-		BarEdge:      bar.Edge,
-		BarShape:     layoutShape(bar),
-		frostOpacity: bar.FrostOpacity,
-		pillOpacity:  bar.PillOpacity,
+		BarStyle:       effectiveBarStyle(bar.Style, hc),
+		BarEdge:        bar.Edge,
+		BarShape:       layoutShape(bar),
+		Glass:          comp.Glass,
+		GlassIntensity: comp.GlassIntensity,
+		frostOpacity:   bar.FrostOpacity,
+		pillOpacity:    bar.PillOpacity,
 	}
+	// High contrast forces opaque grounds, so a material that tints what is
+	// seen through would defeat the mode it was set to honour.
+	if hc {
+		t.Glass = theme.GlassOff
+	}
+	// The material's strength is bounded by the text floor, and both the
+	// surface's opacity and its text role are settled by now, so the bound is
+	// resolved once here rather than per frame.
+	t.materialIntensity = clampMaterialIntensity(t, render.Material{
+		Tone:      materialToneFor(t.Glass),
+		Intensity: uint8(clampInt(t.GlassIntensity, theme.GlassIntensityMin, theme.GlassIntensityMax)),
+	}, t.PanelStyle().RootFill())
 	t.barSolid = t.Surfaces.Bar
 	// Resolution stays a pure function of configuration: it assumes no
 	// compositor blur, and the registry applies the capability afterwards.
@@ -372,6 +394,53 @@ func alphaAbove(percent, floor int) uint8 {
 		percent = theme.OpacityMax
 	}
 	return uint8((percent*255 + 50) / 100)
+}
+
+// materialFor resolves the theme's glass axis onto the render-side material a
+// surface paints with. A theme without a backdrop resolves to the zero
+// material: the material has nothing to paint over without a capture, and the
+// surface keeps today's paint rather than showing a ground it cannot fill.
+//
+// The intensity is the resolved bound, not the raw axis (see
+// clampMaterialIntensity): a material the text floor forbids resolves to zero
+// and the surface keeps its capture. Refraction comes with the "glass" value
+// only, and its terms are full width: stage one offers one glass look.
+func materialFor(t Theme, withBackdrop bool) render.Material {
+	if !withBackdrop {
+		return render.Material{}
+	}
+	tone := materialToneFor(t.Glass)
+	if tone == render.ToneNone || t.materialIntensity <= 0 {
+		return render.Material{}
+	}
+	material := render.Material{
+		Tone:      tone,
+		Intensity: uint8(clampInt(t.materialIntensity, 0, theme.GlassIntensityMax)),
+	}
+	// The spelled "glass" value adds refraction to the tone; every other value
+	// is a tone on its own. Reduced motion keeps the static tone and drops the
+	// bend, the dome and the press ring with it.
+	if t.Glass == theme.GlassFull && !t.Motion.Reduced {
+		material.Refract = 1
+	}
+	return material
+}
+
+// toneFor maps the axis's closed vocabulary onto the render-side tone.
+// GlassFull is the spelled "glass" value: automatic frost plus refraction.
+func materialToneFor(g theme.GlassMaterial) render.Tone {
+	switch g {
+	case theme.GlassSmoke:
+		return render.ToneSmoke
+	case theme.GlassMilk:
+		return render.ToneMilk
+	case theme.GlassFrost:
+		return render.ToneFrost
+	case theme.GlassAuto, theme.GlassFull:
+		return render.ToneAuto
+	default:
+		return render.ToneNone
+	}
 }
 
 // applyFlat mirrors the grouped values onto the flat names the existing

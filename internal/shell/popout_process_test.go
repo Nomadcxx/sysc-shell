@@ -61,7 +61,9 @@ func TestHiddenProcessScrollbarKeepsWheelAndKeyboardPaging(t *testing.T) {
 			Name:     fmt.Sprintf("worker%02d", i),
 		}
 	}
+	reg.mu.Lock()
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processes}
+	reg.mu.Unlock()
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +100,9 @@ func TestSelectedProcessRowKeepsAVisibleHighlight(t *testing.T) {
 
 func TestProcessRowPointerActionUsesLaidOutControl(t *testing.T) {
 	reg := newPanelRegistry(t)
+	reg.mu.Lock()
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processFixture()[:1]}
+	reg.mu.Unlock()
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +141,9 @@ func TestScrolledOutProcessButtonCannotActivateAtItsOldPosition(t *testing.T) {
 			Name:     fmt.Sprintf("worker%02d", i),
 		}
 	}
+	reg.mu.Lock()
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processes}
+	reg.mu.Unlock()
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +192,9 @@ func TestKeyboardFocusRevealsAProcessAction(t *testing.T) {
 			Name:     fmt.Sprintf("worker%02d", i),
 		}
 	}
+	reg.mu.Lock()
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processes}
+	reg.mu.Unlock()
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +226,9 @@ func TestKeyboardFocusRevealsAProcessAction(t *testing.T) {
 
 func TestProcessSignalRunsUnlockedAndReportsIdentityFailure(t *testing.T) {
 	reg := newPanelRegistry(t)
+	reg.mu.Lock()
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processFixture()[:1]}
+	reg.mu.Unlock()
 	called := make(chan struct{}, 1)
 	reg.signalProcess = func(id services.ProcessIdentity, sig syscall.Signal) error {
 		// The signal runs on its own goroutine, so an unrelated holder

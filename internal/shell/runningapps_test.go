@@ -3,6 +3,7 @@ package shell
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -58,6 +59,18 @@ func TestGroupRunningApps(t *testing.T) {
 				Members:      []niri.Window{{ID: 1, AppID: "steam_app_123"}, {ID: 2, AppID: "steam"}},
 				SteamGameIDs: map[uint64]struct{}{1: {}},
 			}},
+		},
+		{
+			name: "steam_application does not fold into steam",
+			windows: []niri.Window{
+				{ID: 1, AppID: "steam_application"},
+				{ID: 2, AppID: "steam"},
+			},
+			lookup: []runningAppEntry{steam},
+			want: []runningAppSlot{
+				{Key: "steam_application", Members: []niri.Window{{ID: 1, AppID: "steam_application"}}},
+				{Key: "steam", Icon: "steam", Members: []niri.Window{{ID: 2, AppID: "steam"}}},
+			},
 		},
 		{
 			name: "steam_app with its own desktop file",
@@ -289,6 +302,7 @@ func TestNextFocusID(t *testing.T) {
 func TestRunningAppMenu(t *testing.T) {
 	t.Parallel()
 	steam := runningAppSlot{
+		Name: "Steam",
 		Actions: []runningAppAction{
 			{ID: "Store", Name: "Store"},
 			{ID: "Library", Name: "Library"},
@@ -296,24 +310,91 @@ func TestRunningAppMenu(t *testing.T) {
 		},
 	}
 	got := runningAppMenu(steam, nil)
-	want := []runningAppMenuRow{
-		{Label: "Store", ActionID: "Store"},
-		{Label: "Library", ActionID: "Library"},
-		{Label: "Friends", ActionID: "Friends"},
-		{Label: "Close all", CloseAll: true},
-	}
-	if len(got) != len(want) {
-		t.Fatalf("menu = %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("row %d = %+v, want %+v", i, got[i], want[i])
-		}
+	if gotLabels := runningAppMenuLabels(got); !slices.Equal(gotLabels, []string{
+		"Steam (0 windows)", "Store", "Library", "Friends",
+	}) {
+		t.Fatalf("menu = %v, want header then desktop actions", gotLabels)
 	}
 	only := runningAppMenu(runningAppSlot{}, nil)
-	if len(only) != 1 || !only[0].CloseAll || only[0].Label != "Close all" {
-		t.Fatalf("empty actions = %+v, want Close all only", only)
+	if len(only) != 0 {
+		t.Fatalf("empty slot = %+v, want no menu rows", only)
 	}
+}
+
+func TestRunningAppMenuProjectsWindowRowsAndMRUWorkspaceTarget(t *testing.T) {
+	t.Parallel()
+	slot := runningAppSlot{
+		Key: "mail", Name: "Mail",
+		Members: []niri.Window{
+			{ID: 12, AppID: "mail", Title: "Draft", WorkspaceID: 10, HasWorkspace: true, FocusTimestamp: 20, Focused: true},
+			{ID: 11, AppID: "mail", Title: "Inbox", WorkspaceID: 20, HasWorkspace: true, FocusTimestamp: 10},
+		},
+		MRU:     niri.Window{ID: 12, AppID: "mail", Title: "Draft", WorkspaceID: 10, HasWorkspace: true, FocusTimestamp: 20, Focused: true},
+		Actions: []runningAppAction{{ID: "NewWindow", Name: "New window"}},
+	}
+	workspaces := []niri.Workspace{
+		{ID: 10, Index: 1, Name: "Current"},
+		{ID: 20, Index: 2, Name: "Research"},
+	}
+
+	rows := runningAppMenu(slot, workspaces)
+	want := []string{
+		"Mail (2 windows)", "Close all and force quit", "Draft — Current", "Inbox — Research",
+		"New window", "Move Draft to Research",
+	}
+	if got := runningAppMenuLabels(rows); !slices.Equal(got, want) {
+		t.Fatalf("menu = %v, want %v", got, want)
+	}
+	var move runningAppMenuRow
+	for _, row := range rows {
+		if row.MoveWindowID != 0 {
+			move = row
+		}
+	}
+	if move.MoveWindowID != 12 || move.MoveWorkspaceID != 20 {
+		t.Fatalf("move = %+v, want MRU window 12 to workspace 20", move)
+	}
+}
+
+func TestRunningAppMenuUsesUntitledFallbackAndSingularClose(t *testing.T) {
+	t.Parallel()
+	slot := runningAppSlot{
+		Key: "terminal", Name: "Terminal",
+		Members: []niri.Window{{ID: 50, AppID: "terminal"}},
+		MRU:     niri.Window{ID: 50, AppID: "terminal"},
+	}
+	rows := runningAppMenu(slot, nil)
+	want := []string{"Terminal (1 window)", "Close all and force quit", "Untitled window"}
+	if got := runningAppMenuLabels(rows); !slices.Equal(got, want) {
+		t.Fatalf("menu = %v, want %v", got, want)
+	}
+}
+
+func TestRunningAppMenuGroupsFoldedSteamGamesAndExcludesThemFromClose(t *testing.T) {
+	t.Parallel()
+	slot := runningAppSlot{
+		Key: "steam", Name: "Steam",
+		SteamGameIDs: map[uint64]struct{}{81: {}, 82: {}},
+		Members: []niri.Window{
+			{ID: 80, AppID: "steam", Title: "Store", FocusTimestamp: 30},
+			{ID: 81, AppID: "steam_app_123", Title: "Portal", FocusTimestamp: 20},
+			{ID: 82, AppID: "steam_app456", Title: "Half-Life", FocusTimestamp: 10},
+		},
+		MRU: niri.Window{ID: 80, AppID: "steam", Title: "Store", FocusTimestamp: 30},
+	}
+	rows := runningAppMenu(slot, nil)
+	want := []string{"Steam (3 windows)", "Close all and force quit", "Store", "Games", "Portal", "Half-Life"}
+	if got := runningAppMenuLabels(rows); !slices.Equal(got, want) {
+		t.Fatalf("menu = %v, want %v", got, want)
+	}
+}
+
+func runningAppMenuLabels(rows []runningAppMenuRow) []string {
+	labels := make([]string, len(rows))
+	for i, row := range rows {
+		labels[i] = row.Label
+	}
+	return labels
 }
 
 func TestRunningAppMenuWorkspaceDestinationsPinTheMRUWindow(t *testing.T) {

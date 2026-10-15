@@ -97,6 +97,7 @@ var settingsSectionIcons = map[string]string{
 	"Session":       "power_settings_new",
 	"Lock Screen":   "lock",
 	"Accessibility": "accessibility_new",
+	"Sounds":        "volume_up",
 }
 
 // settingsControlWidth is the room the trailing column takes. Controls used to

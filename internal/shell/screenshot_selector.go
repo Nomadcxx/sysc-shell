@@ -155,10 +155,10 @@ func (r *Registry) selectorSpec(sel *regionSelector, s *selectorSurface) *waylan
 				s.logicalW, s.logicalH = w, h
 				return nil
 			},
-			Backdrop: func(img *ui.Image) {
+			Backdrop: func(_, ground *ui.Image) {
 				r.mu.Lock()
 				defer r.mu.Unlock()
-				s.frame, s.dimmed = img, nil
+				s.frame, s.dimmed = ground, nil
 			},
 			Render: func(pixels []byte, w, h, stride int) error {
 				r.mu.Lock()
