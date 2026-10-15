@@ -245,3 +245,40 @@ func TestAnUndeclaredPluginIsBoundedButNotConfined(t *testing.T) {
 		t.Fatalf("boundary = %q, want %q: the manager must say it is unconfined", st.Boundary, BoundaryLimited)
 	}
 }
+
+// confinedHelper installs a declared plugin to run under the real boundary.
+func confinedHelper(t *testing.T, mode string) (Manifest, RuntimeOptions) {
+	t.Helper()
+	if LandlockABI() < 1 {
+		t.Skip("this kernel provides no landlock; recorded unrun rather than asserted")
+	}
+	m := installContainedHelper(t, mode, string(manifestWith(t, FilesystemMinor, map[string]any{})))
+	return m, launcherOptions(t)
+}
+
+func TestConfinementLeavesTheDegradedPathAlone(t *testing.T) {
+	t.Parallel()
+	m, opts := confinedHelper(t, "flood")
+	opts.Limits.UpdatesPerSecond, opts.Limits.UpdateBurst = 10, 20
+	r := NewRuntime(Candidate{Dir: m.Dir, Source: SourceUser, Manifest: m}, opts)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	waitRuntimeState(t, r, StateDegraded)
+	if st := r.Status(); st.Starts != 1 || st.Boundary != BoundaryConfined || !strings.Contains(st.Failure, "budget") {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestConfinementLeavesTheRestartBudgetAlone(t *testing.T) {
+	t.Parallel()
+	m, opts := confinedHelper(t, "crash-after-hello")
+	r := NewRuntime(Candidate{Dir: m.Dir, Source: SourceUser, Manifest: m}, opts)
+	_ = r.Start(context.Background())
+	defer r.Stop()
+	waitRuntimeState(t, r, StateFailed)
+	if st := r.Status(); st.Starts != MaxAutoStarts || st.Boundary != BoundaryConfined {
+		t.Fatalf("status = %+v, want %d starts inside the confined boundary", st, MaxAutoStarts)
+	}
+}
