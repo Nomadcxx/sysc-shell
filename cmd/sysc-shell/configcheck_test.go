@@ -18,7 +18,7 @@ func TestRunConfigCheckUsageRefusals(t *testing.T) {
 		{"too many paths", []string{"check", "a.json", "b.json"}, 2, "usage: sysc-shell config check [path]"},
 		{"flag is refused", []string{"check", "--json"}, 2, "usage: sysc-shell config check [path]"},
 		{"empty path", []string{"check", ""}, 2, "usage: sysc-shell config check [path]"},
-		{"directory", []string{"check", "."}, 2, "config: read ."},
+		{"directory", []string{"check", "."}, 2, "config: .: configuration file could not be read"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,11 +74,13 @@ func TestRunConfigCheckReportsLoaderErrorsVerbatim(t *testing.T) {
 		wantErr  string
 	}{
 		{"unknown field", `{"nope":1}`, 1, `config: `},
-		{"opacity out of range", `{"terminal-opacity":10}`, 1, "config: terminal-opacity: 10 is outside 50..100"},
-		{"blur out of range", `{"terminal-art":{"blur":900}}`, 1, "config: terminal-art.blur: must be in 0..64"},
-		{"second value", `{"terminal-opacity":90} {}`, 1, "config: more than one JSON value"},
-		{"second value with fields", `{"terminal-opacity":90} {"terminal-opacity":90}`, 1, "config: json: unknown field"},
-		{"empty file", ``, 1, "config: EOF"},
+		// The loader's one formatter names the file and, where it knows it,
+		// the line and column; the check prints it unchanged.
+		{"opacity out of range", `{"terminal-opacity":10}`, 1, ": terminal-opacity: 10 is outside 50..100"},
+		{"blur out of range", `{"terminal-art":{"blur":900}}`, 1, ": terminal-art.blur: must be in 0..64"},
+		{"second value", `{"terminal-opacity":90} {}`, 1, ":1:25: more than one JSON value"},
+		{"second value with fields", `{"terminal-opacity":90} {"terminal-opacity":90}`, 1, ":1:25: more than one JSON value"},
+		{"empty file", ``, 1, ":1:1: unexpected end of JSON"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -134,7 +136,7 @@ func TestRunConfigCheckOutputIsByteStable(t *testing.T) {
 	if code := runConfigCheck([]string{"check", path}, &out, &errOut); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
-	want := "config: terminal-opacity: 10 is outside 50..100\n"
+	want := "config: " + path + ": terminal-opacity: 10 is outside 50..100\n"
 	if errOut.String() != want {
 		t.Fatalf("stderr = %q, want exactly %q", errOut.String(), want)
 	}
