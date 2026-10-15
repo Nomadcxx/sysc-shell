@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"math"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -158,6 +159,42 @@ func TransferLuma(t Tone, intensity uint8, luma uint8) uint8 {
 		v += (255 - v) * lift
 	}
 	return uint8(v + 0.5)
+}
+
+// FrameDiffers reports whether two frames of the same geometry differ, sampling
+// a bounded number of rows.
+//
+// A full comparison would cost more than the capture it exists to skip: the
+// question is whether anything moved, not whether every byte matches. Frames of
+// different geometry always differ, because the ground's geometry follows the
+// surface.
+func FrameDiffers(a, b *ui.Image, rows int) bool {
+	if a == nil || b == nil {
+		return true
+	}
+	if a.Width != b.Width || a.Height != b.Height || a.Stride != b.Stride {
+		return true
+	}
+	if a.Height == 0 || a.Stride <= 0 {
+		return false
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	step := a.Height / rows
+	if step < 1 {
+		step = 1
+	}
+	for y := 0; y < a.Height; y += step {
+		off := y * a.Stride
+		if off+a.Stride > len(a.Pix) || off+a.Stride > len(b.Pix) {
+			return true
+		}
+		if !bytes.Equal(a.Pix[off:off+a.Stride], b.Pix[off:off+a.Stride]) {
+			return true
+		}
+	}
+	return false
 }
 
 // Busyness scores how much detail the blur destroyed, 0..255. Content with

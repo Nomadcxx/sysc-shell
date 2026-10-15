@@ -66,6 +66,11 @@ type HostCallbacks struct {
 	// without a backdrop, which is how every surface painted before this
 	// existed.
 	Backdrop func(sharp, ground *ui.Image)
+	// MaterialFrame delivers a recaptured ground for a surface that asked for
+	// one (AuxSpec.Recapture). It is called on the Wayland goroutine, between
+	// frames, and is nil for every surface that does not recapture. A failed
+	// capture delivers nothing rather than failing the surface.
+	MaterialFrame func(*ui.Image)
 	// BlurShape reports, in surface-local logical pixels, the region the
 	// compositor should blur behind. It is read after every Render, on the
 	// Wayland goroutine, and only when the compositor can blur. Nil or empty
@@ -105,6 +110,9 @@ type surfaceUnit struct {
 	current  *generation
 	retiring []*generation
 	genID    int
+	// recapture is set for a surface that asked to keep its region capturable
+	// (AuxSpec.Recapture); nil for every other surface.
+	recapture *auxRecapture
 	// awaitingConfigure holds a replacement policy behind the compositor's
 	// geometry acknowledgement so its tree cannot paint into the old buffer.
 	awaitingConfigure bool
