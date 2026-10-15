@@ -717,19 +717,28 @@ func TestPluginPanelTextChangeSubmitAndClose(t *testing.T) {
 	if host == nil {
 		t.Fatal("plugin panel never opened")
 	}
-	if err := host.configure(320, 280, 120); err != nil {
+	// The plugin pump rebuilds this panel under reg.mu, so the test reaches
+	// it the way the compositor does, through the locking configure, and
+	// touches the tree only under the same lock (sysc-1238).
+	if err := host.configureLocking(reg)(320, 280, 120); err != nil {
 		t.Fatal(err)
 	}
+	var action string
+	reg.mu.Lock()
 	host.roving.Count = len(ui.Focusables(host.root))
 	// Focus the text field if present and submit.
 	for i, n := range ui.Focusables(host.root) {
 		if n.Kind == ui.KindTextField {
 			host.roving.Set(i)
 			n.Text = "tea"
-			reg.deliverPluginText(n.Action, n.Text, v1.EventChange)
-			reg.deliverPluginText(n.Action, n.Text, v1.EventSubmit)
+			action = n.Action
 			break
 		}
+	}
+	reg.mu.Unlock()
+	if action != "" {
+		reg.deliverPluginText(action, "tea", v1.EventChange)
+		reg.deliverPluginText(action, "tea", v1.EventSubmit)
 	}
 	reg.ClosePanel(PanelPlugin)
 	deadline = time.Now().Add(2 * time.Second)
