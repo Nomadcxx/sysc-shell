@@ -237,8 +237,8 @@ func TestDuplicateGroupIdsAreRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("two groups shared one instance id, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "g1") {
-		t.Errorf("error = %q, want it to name the duplicated id", err)
+	if !strings.Contains(err.Error(), "instance") || strings.Contains(err.Error(), "g1") {
+		t.Errorf("error = %q, want a safe duplicate-instance diagnostic", err)
 	}
 }
 
@@ -253,8 +253,8 @@ func TestOneInstanceIdMayNotNameTwoDifferentWidgets(t *testing.T) {
 	if err == nil {
 		t.Fatal("one instance id named both a clock and a cpu, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "x1") {
-		t.Errorf("error = %q, want it to name the id", err)
+	if !strings.Contains(err.Error(), "instance") || strings.Contains(err.Error(), "x1") {
+		t.Errorf("error = %q, want a safe instance diagnostic", err)
 	}
 }
 

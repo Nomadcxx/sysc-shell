@@ -6,7 +6,6 @@
 package config
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 	"sort"
@@ -798,7 +797,7 @@ func (c Config) TemplateEnabled(name string) bool {
 }
 
 func pathErr(path, format string, args ...any) error {
-	return fmt.Errorf("config: %s: %s", path, fmt.Sprintf(format, args...))
+	return newPathError(path, format, args...)
 }
 
 // KnownItemIDs lists the bar widget vocabulary in a stable order. The config
