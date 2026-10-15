@@ -591,6 +591,10 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	if failing {
 		actions = append(actions, pluginManagerIconButton("plugin-retry:"+id, "Retry "+name, "refresh", metrics))
 	}
+	consent := pluginConsentLine(h, status.Consent)
+	if consent.ask {
+		actions = append(actions, pluginManagerButton("plugins-approve:"+id, cardT(hostT(h), "plugins.approve", "Approve"), metrics))
+	}
 	if row.candidate != nil && len(row.candidate.Manifest.Settings) > 0 {
 		label := cardT(hostT(h), "plugins.plugin_settings", "Plugin settings")
 		if h.pluginManagerExpanded[id] {
@@ -648,6 +652,9 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	if provenance != "" {
 		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: provenance, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
+	if consent.text != "" {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: consent.text, TextRole: theme.RoleCaption, Tone: consent.tone, MaxWidth: labelW, Multiline: true})
+	}
 	if failing {
 		detail := status.Failure
 		if row.candidate.Err != nil {
@@ -689,6 +696,81 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		}
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: children}
+}
+
+// pluginConsentRow is what a manager row says about a copy's approval.
+type pluginConsentRow struct {
+	text string
+	tone ui.Tone
+	ask  bool
+}
+
+// pluginConsentLine states where a copy stands against its approval. An
+// approved copy names the digest it was approved at; a changed or unrecorded
+// one says what that means for it and offers to approve it as it is now.
+func pluginConsentLine(h *PanelHost, v plugin.ConsentVerdict) pluginConsentRow {
+	switch v.State {
+	case plugin.ConsentApproved:
+		return pluginConsentRow{text: fmt.Sprintf(cardT(hostT(h), "plugins.consent_approved", "Approved at %s"), digestPrefix(v.Digest)), tone: ui.ToneSubtle}
+	case plugin.ConsentChanged:
+		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_changed",
+			"Changed since you approved it. It runs without its capabilities until you approve it again."), tone: ui.ToneError, ask: true}
+	case plugin.ConsentUnrecorded:
+		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_unrecorded",
+			"This plugin was enabled before approvals were recorded. Approve its current contents to keep it enabled."), tone: ui.ToneSubtle, ask: true}
+	}
+	return pluginConsentRow{}
+}
+
+// digestPrefix is the short form of a content digest a person can compare.
+func digestPrefix(digest string) string {
+	if len(digest) > 12 {
+		return digest[:12]
+	}
+	return digest
+}
+
+// approvePluginLocked records a copy as it is now, then restarts it so the
+// next start holds the capabilities the approval restores. The store's worker
+// does the file work; nothing here waits on it under Registry.mu.
+func (r *Registry) approvePluginLocked(h *PanelHost, id string) {
+	if r.pluginStore == nil || r.plugins == nil {
+		h.pluginManagerError = "plugin store unavailable"
+		r.rebuildPanel(h)
+		return
+	}
+	c, ok := r.plugins.discovered().Lookup(id)
+	if !ok {
+		h.pluginManagerError = fmt.Sprintf("plugin %s is not installed", id)
+		r.rebuildPanel(h)
+		return
+	}
+	done, err := r.pluginStore.Approve(c.Source, id)
+	if err != nil {
+		h.pluginManagerError = err.Error()
+		r.rebuildPanel(h)
+		return
+	}
+	h.pluginManagerError = ""
+	plugins := r.plugins
+	go func() {
+		err := <-done
+		if err == nil {
+			err = plugins.retry(id)
+		}
+		r.mu.Lock()
+		if r.panelHosts[h.id] != h {
+			r.mu.Unlock()
+			return
+		}
+		if err != nil {
+			h.pluginManagerError = err.Error()
+		}
+		r.rebuildPanel(h)
+		output, surface := h.output, panelSurfaceID(h.id)
+		r.mu.Unlock()
+		r.publishSurface(output, surface)
+	}()
 }
 
 // pluginStderrTail is the last lines a failing plugin wrote, so a noisy
@@ -936,6 +1018,10 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 			h.pluginManagerError = "plugin listing is no longer available"
 			r.rebuildPanel(h)
 		}
+		return true
+	}
+	if id, ok := strings.CutPrefix(action, "plugins-approve:"); ok {
+		r.approvePluginLocked(h, id)
 		return true
 	}
 	if id, ok := strings.CutPrefix(action, "plugins-update:"); ok {

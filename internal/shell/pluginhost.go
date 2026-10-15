@@ -282,6 +282,7 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	}
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
 		Supported:      hostPluginCaps,
+		Consent:        h.consentLookup(),
 		Limits:         v1.DefaultLimits,
 		SessionEnded:   func() { h.clearWallpaperMasks(id) },
 		SessionStarted: func() { h.reopenViews(id) },
@@ -322,6 +323,29 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		h.pushSettings(id, rt)
 	}
 	return nil
+}
+
+// consentLookup reads the approval ledger the store keeps in the managed root.
+// It is read at every start, so an approval the store's worker records takes
+// effect on the next start without the host caching it. With no managed root
+// there is no ledger, and nothing is checked.
+func (h *pluginHost) consentLookup() plugin.ConsentLookup {
+	var path string
+	for _, root := range h.opts.Roots {
+		if root.Source == plugin.SourceManaged {
+			path = plugin.ConsentPath(root.Path)
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	return func(source plugin.Source, id string) (plugin.ConsentRecord, bool) {
+		l, err := plugin.LoadConsent(path)
+		if err != nil {
+			slog.Warn("plugin approvals unreadable; treating every copy as unrecorded", "err", err)
+		}
+		return l.Lookup(source, id)
+	}
 }
 
 func grantedCaps(rt *plugin.Runtime) []plugin.Capability {
