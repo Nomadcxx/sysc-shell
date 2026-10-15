@@ -1478,7 +1478,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelSession || id == PanelControlCenter {
 		r.scheduleLoadProfiles(h)
 	}
-	if id == PanelNetwork && r.network != nil && r.network.Available() {
+	if id == PanelNetwork && r.network != nil && r.network.Available() && !r.network.CachedState().ReadOnly {
 		network := r.network
 		r.scheduleControl(h, network.Scan)
 	}

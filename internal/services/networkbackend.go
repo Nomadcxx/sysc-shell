@@ -18,6 +18,12 @@ func newNMBackend() (backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("services: network manager: %w", err)
 	}
+	// The binding only connects to the bus and names an object, which succeeds
+	// on any machine with a system bus. Reading a property proves the daemon
+	// answers, so a machine without it falls through to the next tier.
+	if _, err := nm.GetPropertyVersion(); err != nil {
+		return nil, fmt.Errorf("services: network manager does not answer: %w", err)
+	}
 	set, err := gnm.NewSettings()
 	if err != nil {
 		return nil, fmt.Errorf("services: network settings: %w", err)
@@ -56,7 +62,7 @@ func (b *nmBackend) devices() (wifi, wired gnm.Device) {
 // State prefers an activated wired link over Wi-Fi, which is what the machine
 // is actually routing over when both are up.
 func (b *nmBackend) State() (NetworkState, error) {
-	st := NetworkState{Kind: ConnUnknown}
+	st := NetworkState{Kind: ConnUnknown, Tier: TierNM}
 	if en, err := b.nm.GetPropertyWirelessEnabled(); err == nil {
 		st.WirelessEnabled = en
 	}
