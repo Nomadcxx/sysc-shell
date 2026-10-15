@@ -30,6 +30,15 @@ type AuxSpec struct {
 	// before it is created. Nil disables the backdrop and all of its cost.
 	BlurRegion *ui.Rect
 	BlurRadius int
+	// BackdropSharp asks for the reduced pre-blur capture beside the blurred
+	// one. Only a material that compares the halves needs it, and it changes
+	// what Backdrop receives rather than what this surface captures.
+	BackdropSharp bool
+	// Recapture keeps this surface's region capturable after it opens: the
+	// requester then sends AuxRequest{Recapture: true} while the surface is
+	// visible and each frame arrives through Callbacks.MaterialFrame. It is a
+	// capture per request, so nothing asks for it unless a material needs it.
+	Recapture bool
 	// Freeze captures the whole output, unblurred and without the cursor,
 	// before the surface exists, and hands it to Callbacks.Backdrop. The
 	// surface can then show and crop the screen as it was without appearing in
@@ -50,14 +59,19 @@ type AuxSpec struct {
 	OnDrop func()
 }
 
-// AuxRequest opens (Open != nil), updates (Update != nil), or closes (both nil,
-// ID set) one aux surface on the output identified by its wl_registry global.
+// AuxRequest opens (Open != nil), updates (Update != nil), recaptures
+// (Recapture), or closes (all zero, ID set) one aux surface on the output
+// identified by its wl_registry global.
 type AuxRequest struct {
 	Output uint32
 	ID     string
 	Open   *AuxSpec
 	Update *AuxUpdate
-	Reply  chan error
+	// Recapture asks for one fresh capture of an open surface's region, for a
+	// surface that opened with AuxSpec.Recapture. It is a no-op for any other
+	// surface, so a request that races a close is safe.
+	Recapture bool
+	Reply     chan error
 }
 
 // AuxUpdate changes policy on an already-open auxiliary surface without
@@ -99,6 +113,40 @@ var errOutputGone = errors.New("output removed during backdrop capture")
 // compositor closed it, or the shell did, while the request was queued.
 var errAuxNotOpen = errors.New("aux surface is not open")
 
+// recaptureAux takes one fresh capture of an open surface's region and hands it
+// to that surface's MaterialFrame. It runs on the Wayland goroutine, which is
+// what makes one capture in flight automatic: the request is consumed by the
+// same loop that paints, so a slow readback cannot stack up behind a faster
+// cadence.
+//
+// A failed or nil capture delivers nothing and reports no error: the ground is
+// decoration, and the surface keeps painting the frame it already has.
+func (o *owner) recaptureAux(h *OutputHost, id string) error {
+	u, ok := h.aux[id]
+	if !ok || u.recapture == nil {
+		return errAuxNotOpen
+	}
+	region := u.recapture.region
+	shot := o.captureBackdrop(h.proxy, &region)
+	if shot == nil || !h.alive {
+		return nil
+	}
+	frame := render.Blur(shot, backdropDownsample, u.recapture.radius)
+	if frame != nil && u.recapture.frame != nil {
+		u.recapture.frame(frame)
+	}
+	return nil
+}
+
+// auxRecapture is what a surface needs to answer a recapture request: the region
+// it was captured from, the radius its ground is blurred at, and where the frame
+// goes.
+type auxRecapture struct {
+	region ui.Rect
+	radius int
+	frame  func(*ui.Image)
+}
+
 func (o *owner) handleAux(req AuxRequest) {
 	h, ok := o.hosts.get(req.Output)
 	if !ok || !h.alive {
@@ -115,6 +163,8 @@ func (o *owner) handleAux(req AuxRequest) {
 		err = o.openAux(h, req.Open)
 	case req.Update != nil:
 		err = o.updateAux(h, req.ID, req.Update)
+	case req.Recapture:
+		err = o.recaptureAux(h, req.ID)
 	default:
 		// The requester already retired this surface. Echoing its queued close
 		// can retire a replacement that now owns the same ID in the registry.
@@ -195,10 +245,15 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 		if shot == nil {
 			return fmt.Errorf("wayland: aux %s could not capture output %d", spec.ID, h.global)
 		}
-		spec.Callbacks.Backdrop(shot)
+		spec.Callbacks.Backdrop(nil, shot)
 	} else if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
 		if shot := o.captureBackdrop(h.proxy, spec.BlurRegion); shot != nil {
-			spec.Callbacks.Backdrop(render.Blur(shot, backdropDownsample, spec.BlurRadius))
+			if spec.BackdropSharp {
+				sharp, blurred := render.BlurPair(shot, backdropDownsample, spec.BlurRadius)
+				spec.Callbacks.Backdrop(sharp, blurred)
+			} else {
+				spec.Callbacks.Backdrop(nil, render.Blur(shot, backdropDownsample, spec.BlurRadius))
+			}
 		}
 		// The capture round trips, and a global_remove dispatched in one of
 		// them tears this host down. Creating the surface now would bind a
@@ -276,6 +331,17 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 		u.policy.inputRects, u.policy.hasInputRegion = append([]ui.Rect(nil), spec.InputRects...), true
 	}
 	u.policy.inhibitShortcuts = spec.InhibitShortcuts
+	// A surface that wants a live ground keeps what a recapture needs: the
+	// region it came from, the radius its blur is measured at, and its sink.
+	// Without a region there is nothing to recapture, so the flag alone is not
+	// enough.
+	if spec.Recapture && spec.BlurRegion != nil && spec.Callbacks.MaterialFrame != nil {
+		u.recapture = &auxRecapture{
+			region: *spec.BlurRegion,
+			radius: spec.BlurRadius,
+			frame:  spec.Callbacks.MaterialFrame,
+		}
+	}
 	return nil
 }
 

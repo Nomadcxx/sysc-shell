@@ -184,6 +184,8 @@ func TestAppearanceAxesRoundTrip(t *testing.T) {
 		{"appearance.panel-opacity", "85", func(c config.Config) string { return strconv.Itoa(c.Theme.PanelOpacity) }},
 		{"appearance.overlay-opacity", "80", func(c config.Config) string { return strconv.Itoa(c.Theme.OverlayOpacity) }},
 		{"appearance.elevation", "standard", func(c config.Config) string { return string(c.Theme.Elevation) }},
+		{"appearance.glass", "auto", func(c config.Config) string { return string(c.Theme.Glass) }},
+		{"appearance.glass-intensity", "80", func(c config.Config) string { return strconv.Itoa(c.Theme.GlassIntensity) }},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			t.Parallel()
@@ -222,6 +224,7 @@ func TestAppearanceIntegerAxesAreBounded(t *testing.T) {
 		{"appearance.radius", theme.RadiusMin, theme.RadiusMax},
 		{"appearance.motion-speed", theme.SpeedMin, theme.SpeedMax},
 		{"appearance.bar-opacity", theme.OpacityMin, theme.OpacityMax},
+		{"appearance.glass-intensity", theme.GlassIntensityMin, theme.GlassIntensityMax},
 	} {
 		e := Default().ByPath(tc.path)
 		if e.Min != tc.min || e.Max != tc.max {

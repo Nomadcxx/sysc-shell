@@ -4,10 +4,42 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
+
+// TestThemeGlassAxesRoundTripThroughWrite keeps the two new axes on the sparse
+// writer's contract: a deviation is recorded, a value still sitting on the
+// preset's is not.
+func TestThemeGlassAxesRoundTripThroughWrite(t *testing.T) {
+	t.Parallel()
+	p := filepath.Join(t.TempDir(), "config.json")
+	c := Default()
+	c.Theme.Glass = theme.GlassAuto
+	c.Theme.GlassIntensity = 70
+	if err := Write(p, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Theme.Glass != theme.GlassAuto || got.Theme.GlassIntensity != 70 {
+		t.Fatalf("round trip = %q/%d, want auto/70", got.Theme.Glass, got.Theme.GlassIntensity)
+	}
+	if err := Write(p, Default()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "glass") {
+		t.Errorf("a default configuration pinned the glass axes:\n%s", data)
+	}
+}
 
 func TestWriteAtomicRoundTrip(t *testing.T) {
 	t.Parallel()

@@ -487,7 +487,7 @@ func TestOnboardingPaintsItsCapturedBackdrop(t *testing.T) {
 	for i := 0; i < len(shot.Pix); i += 4 {
 		shot.Pix[i], shot.Pix[i+1], shot.Pix[i+2], shot.Pix[i+3] = 0, 0xff, 0, 0xff
 	}
-	panel.Callbacks.Backdrop(shot)
+	panel.Callbacks.Backdrop(nil, shot)
 	withBackdrop := paint()
 	root := reg.panelHosts[PanelOnboarding].root
 	card := onboardingNodeByKey(root, "onb-content-card")

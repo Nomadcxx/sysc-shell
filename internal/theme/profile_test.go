@@ -2,6 +2,7 @@ package theme
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,6 +19,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 			BlurBehind: true,
 			BlurRadius: 24,
+			Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 			Elevation:  ElevationSubtle,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
 			FontScale: 100, FontWeight: 400,
@@ -28,6 +30,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 			BlurBehind: true,
 			BlurRadius: 24,
+			Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 			Elevation:  ElevationSubtle,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
 			FontScale: 100, FontWeight: 400,
@@ -38,6 +41,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
 			BlurBehind: true,
 			BlurRadius: 24,
+			Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 			Elevation:  ElevationStandard,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
 			FontScale: 100, FontWeight: 400,
@@ -754,5 +758,63 @@ func TestMetricsCarryTheProfileIcon(t *testing.T) {
 		if m.IconProfile < m.IconSmall {
 			t.Errorf("%s profile icon %d is below the small icon %d", tc.density, m.IconProfile, m.IconSmall)
 		}
+	}
+}
+
+// TestGlassMaterialVocabularyAndBounds fixes the axis's closed set and the
+// bounds the loader borrows. The material ships off in every preset: a shell
+// that changed how panels look after an update would be a defect.
+func TestGlassMaterialVocabularyAndBounds(t *testing.T) {
+	t.Parallel()
+	want := []GlassMaterial{GlassOff, GlassSmoke, GlassMilk, GlassFrost, GlassAuto, GlassFull}
+	if got := GlassMaterials(); !slices.Equal(got, want) {
+		t.Fatalf("GlassMaterials() = %v, want %v", got, want)
+	}
+	base, ok := PresetComposition(PresetStandard)
+	if !ok {
+		t.Fatal("standard preset is missing")
+	}
+	if base.Glass != GlassOff {
+		t.Errorf("preset material = %q, want off", base.Glass)
+	}
+	if base.GlassIntensity != GlassIntensityDefault {
+		t.Errorf("preset intensity = %d, want %d", base.GlassIntensity, GlassIntensityDefault)
+	}
+	unknown := base
+	unknown.Glass = "shiny"
+	if err := unknown.Valid(); err == nil || !strings.Contains(err.Error(), "glass") {
+		t.Errorf("an unknown material validated: %v", err)
+	}
+	high := base
+	high.GlassIntensity = GlassIntensityMax + 1
+	if err := high.Valid(); err == nil || !strings.Contains(err.Error(), "glass-intensity") {
+		t.Errorf("an out-of-range intensity validated: %v", err)
+	}
+}
+
+// TestRebaseCarriesTheGlassAxes keeps the two new axes on the same contract as
+// every other composition axis: an untouched value follows the preset, a
+// deliberate one survives the switch.
+func TestRebaseCarriesTheGlassAxes(t *testing.T) {
+	t.Parallel()
+	from, ok := PresetComposition(PresetStandard)
+	if !ok {
+		t.Fatal("standard preset is missing")
+	}
+	to, ok := PresetComposition(PresetExpressive)
+	if !ok {
+		t.Fatal("expressive preset is missing")
+	}
+	to.Glass, to.GlassIntensity = GlassAuto, 70
+
+	untouched := Rebase(from, from, to)
+	if untouched.Glass != GlassAuto || untouched.GlassIntensity != 70 {
+		t.Errorf("untouched axes did not follow the new preset: %+v", untouched)
+	}
+	chosen := from
+	chosen.Glass, chosen.GlassIntensity = GlassMilk, 25
+	kept := Rebase(chosen, from, to)
+	if kept.Glass != GlassMilk || kept.GlassIntensity != 25 {
+		t.Errorf("a deliberate choice was rebased away: %+v", kept)
 	}
 }

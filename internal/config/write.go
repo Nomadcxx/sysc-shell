@@ -627,6 +627,10 @@ func themeDiff(got Theme) *wireTheme {
 		v := got.BlurBehind
 		w.BlurBehind = &v
 	}
+	if got.Glass != base.Glass {
+		v := string(got.Glass)
+		w.Glass = &v
+	}
 	for _, f := range []struct {
 		got, base string
 		dest      **string
@@ -652,6 +656,7 @@ func themeDiff(got Theme) *wireTheme {
 		{got.PanelOpacity, base.PanelOpacity, &w.PanelOpacity},
 		{got.OverlayOpacity, base.OverlayOpacity, &w.OverlayOpacity},
 		{got.BlurRadius, base.BlurRadius, &w.BlurRadius},
+		{got.GlassIntensity, base.GlassIntensity, &w.GlassIntensity},
 	} {
 		if f.got != f.base {
 			v := f.got
