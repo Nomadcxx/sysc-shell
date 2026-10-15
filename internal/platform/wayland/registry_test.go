@@ -82,3 +82,46 @@ func TestKeyboardShortcutsInhibitIsKnownButNotRequired(t *testing.T) {
 		}
 	}
 }
+
+// A compositor that runs a seat for injected input advertises a second
+// wl_seat. The shell must keep the user's, which is advertised first, and a
+// removal of the other must not forget the bound one.
+func TestSingletonKeepsTheFirstAdvertisedGlobal(t *testing.T) {
+	t.Parallel()
+	type step struct {
+		remove bool
+		global uint32
+	}
+	for _, tc := range []struct {
+		name  string
+		steps []step
+		want  uint32 // 0: no wl_seat recorded
+	}{
+		{"one seat", []step{{global: 3}}, 3},
+		{"a second seat does not replace the first", []step{{global: 3}, {global: 40}}, 3},
+		{"removing the second keeps the first", []step{{global: 3}, {global: 40}, {remove: true, global: 40}}, 3},
+		{"removing the first forgets it", []step{{global: 3}, {remove: true, global: 3}}, 0},
+		{"a seat advertised after the first left is recorded", []step{{global: 3}, {remove: true, global: 3}, {global: 41}}, 41},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rs := newRegistryState()
+			for _, s := range tc.steps {
+				if s.remove {
+					rs.removeGlobal(s.global)
+					continue
+				}
+				if _, ok := rs.addGlobal(s.global, "wl_seat", 7); !ok {
+					t.Fatalf("addGlobal(%d) dropped wl_seat", s.global)
+				}
+			}
+			got := rs.singletons["wl_seat"].global
+			if _, ok := rs.singletons["wl_seat"]; !ok {
+				got = 0
+			}
+			if got != tc.want {
+				t.Fatalf("recorded wl_seat global = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
