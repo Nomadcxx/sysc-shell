@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
@@ -82,6 +83,44 @@ func (r *Registry) attachWallsService(svc wallsController) {
 }
 
 func (r *Registry) relayWalls(svc wallsController) {
+	idleLockChecked := false
+	reconcileIdleLock := func(snapshot walls.Snapshot) {
+		if idleLockChecked {
+			return
+		}
+		r.mu.Lock()
+		if r.wallsService != svc || r.idleApplying {
+			r.mu.Unlock()
+			return
+		}
+		cfg := r.cfg.Clone()
+		if cfg.Idle.Lock <= 0 || strings.TrimSpace(cfg.Session.Locker) == "" ||
+			!snapshot.UnitKnown || snapshot.UnitStale || snapshot.LoadState != "loaded" || !snapshot.ServiceAvailable {
+			r.mu.Unlock()
+			return
+		}
+		idleLockChecked = true
+		stop := snapshot.EnabledAtLogin() || snapshot.Running()
+		if stop {
+			r.idleApplying = true
+		}
+		r.mu.Unlock()
+		if !stop {
+			return
+		}
+
+		// Apply the saved exclusive choice once unit discovery is trustworthy.
+		// The settings service owns --disable --now and preserves daemon.conf.
+		// It publishes command failures as ActionError for the status panel.
+		_ = settings.ApplyWhenIdle("lock", cfg.Idle.Lock, &cfg, idleWallsAdapter{service: svc})
+		r.mu.Lock()
+		if r.wallsService == svc {
+			r.wallsSnapshot = svc.Snapshot()
+		}
+		r.idleApplying = false
+		r.mu.Unlock()
+	}
+	reconcileIdleLock(svc.Snapshot())
 	for {
 		select {
 		case <-r.closed:
@@ -90,7 +129,8 @@ func (r *Registry) relayWalls(svc wallsController) {
 			if !ok {
 				return
 			}
-			r.applyWallsSnapshot(svc, snapshot)
+			reconcileIdleLock(snapshot)
+			r.applyWallsSnapshot(svc, svc.Snapshot())
 		}
 	}
 }
