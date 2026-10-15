@@ -53,17 +53,39 @@ func TestRunningAppsMenuWindowRowsExposeAccessibleNames(t *testing.T) {
 	}
 }
 
+func TestRunningAppsMenuForceQuitVisibleBeforeLongActionLists(t *testing.T) {
+	t.Parallel()
+	reg, bar := steamMenuReg(t)
+	actions := make([]runningAppAction, 9)
+	for i := range actions {
+		actions[i] = runningAppAction{ID: fmt.Sprintf("Action%d", i), Name: fmt.Sprintf("Action %d", i)}
+	}
+	reg.runningIndex = []runningAppEntry{{ID: "steam", Actions: actions}}
+	reg.UpdateNiri(niri.Snapshot{
+		Windows: []niri.Window{{ID: 80, AppID: "steam", Title: "Steam", WorkspaceID: 1, HasWorkspace: true}},
+		Workspaces: []niri.Workspace{
+			{ID: 1, Index: 1}, {ID: 2, Index: 2}, {ID: 3, Index: 3}, {ID: 4, Index: 4}, {ID: 5, Index: 5},
+		},
+	})
+	if !bar.onAction("running-app:steam", buttonRight) {
+		t.Fatal("right click ignored")
+	}
+	if findAction(reg.runningMenu.root, "running-app-force-quit") == nil {
+		t.Fatal("app-level force quit is hidden below the initial six-row viewport")
+	}
+}
+
 func TestRunningAppsMenuStartsOnMRUWindow(t *testing.T) {
 	t.Parallel()
 	_, _, host := openRunningAppsWindowMenu(t, []niri.Window{
 		{ID: 80, AppID: "steam", Title: "Older", FocusTimestamp: 10},
 		{ID: 81, AppID: "steam", Title: "Newest", FocusTimestamp: 20},
 	})
-	if len(host.menu.options) == 0 || host.menu.options[0] != "Newest" {
+	if len(host.menu.options) < 2 || host.menu.options[host.menu.cursor] != "Newest" {
 		t.Fatalf("initial menu options/cursor = %v/%d, want MRU row first", host.menu.options, host.menu.cursor)
 	}
-	if host.menu.cursor != 0 {
-		t.Fatalf("initial cursor = %d, want option zero", host.menu.cursor)
+	if host.menu.cursor != 1 {
+		t.Fatalf("initial cursor = %d, want the MRU window after the app action", host.menu.cursor)
 	}
 }
 
@@ -600,7 +622,7 @@ func TestRunningAppsMenuFitsConfiguredLargeFonts(t *testing.T) {
 		}
 	}
 	if findAction(host.root, "running-app-force-quit") == nil {
-		t.Fatal("Close all is not visible at the end of the menu")
+		t.Fatal("app-level force quit disappeared while paging through the menu")
 	}
 	if visible := assertRunningAppMenuVisibleOptions(t, host); visible >= menuVisibleRows {
 		t.Fatalf("large font retained %d visible rows, want fewer than %d", visible, menuVisibleRows)
@@ -654,16 +676,13 @@ func TestRunningAppsMenuViewportScrollKeepsOriginalWindowMapping(t *testing.T) {
 	}
 
 	reg, _, host = openRunningAppsWindowMenu(t, manySteamWindows(10))
-	for range 11 {
+	for host.menu.cursor < len(host.menu.options)-1 {
 		if !handleRunningAppMenuEvent(reg, host, wayland.Event{Kind: wayland.EventKeyPress, Key: keyDown}) {
 			t.Fatal("Down ignored")
 		}
 	}
 	if host.menu.cursor != len(host.menu.options)-1 {
 		t.Fatalf("keyboard cursor = %d, want final option %d", host.menu.cursor, len(host.menu.options)-1)
-	}
-	if findAction(host.root, "running-app-force-quit") == nil {
-		t.Fatal("final app-close option is not visible after keyboard navigation")
 	}
 }
 
@@ -677,16 +696,13 @@ func TestRunningAppsMenuScrollKeepsDynamicChromeWithinSurface(t *testing.T) {
 	initialHeight := host.logicalH
 	var updates []wayland.AuxRequest
 	host.request = func(request wayland.AuxRequest) { updates = append(updates, request) }
-	for range len(host.menu.options) - 1 {
+	for host.menu.cursor < len(host.menu.options)-1 {
 		if !handleRunningAppMenuEvent(reg, host, wayland.Event{Kind: wayland.EventKeyPress, Key: keyDown}) {
 			t.Fatal("Down ignored")
 		}
 	}
 	if findText(host.root, "Games") == nil {
 		t.Fatal("Games heading is not visible at the end of the list")
-	}
-	if findAction(host.root, "running-app-force-quit") == nil {
-		t.Fatal("app-close row is not visible at the end of the list")
 	}
 	if host.logicalH <= initialHeight {
 		t.Fatalf("surface height stayed at %d despite extra viewport rows", initialHeight)

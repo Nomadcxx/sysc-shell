@@ -254,6 +254,11 @@ func runningAppMenu(slot runningAppSlot, workspaces []niri.Workspace) []runningA
 		Kind:  runningAppMenuHeader,
 		Label: fmt.Sprintf("%s (%s)", name, windowCount(len(slot.Members))),
 	}}
+	if len(slot.Members) > 0 {
+		rows = append(rows, runningAppMenuRow{
+			Kind: runningAppMenuForceQuit, Label: "Close all and force quit",
+		})
+	}
 
 	members := slices.Clone(slot.Members)
 	slices.SortFunc(members, compareWindowMRU)
@@ -289,11 +294,6 @@ func runningAppMenu(slot runningAppSlot, workspaces []niri.Workspace) []runningA
 				MoveWorkspaceID: workspace.ID,
 			})
 		}
-	}
-	if len(slot.Members) > 0 {
-		rows = append(rows, runningAppMenuRow{
-			Kind: runningAppMenuForceQuit, Label: "Close all and force quit",
-		})
 	}
 	return rows
 }

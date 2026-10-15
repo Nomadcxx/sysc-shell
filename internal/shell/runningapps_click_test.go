@@ -65,7 +65,7 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatalf("layer = %d, want Overlay", host.spec().Layer)
 	}
 	got := labels(host.rows)
-	want := []string{"steam (2 windows)", "Steam library", "Steam store", "Store", "Library", "Friends", "Close all and force quit"}
+	want := []string{"steam (2 windows)", "Close all and force quit", "Steam library", "Steam store", "Store", "Library", "Friends"}
 	if len(got) != len(want) {
 		t.Fatalf("menu = %v, want %v", got, want)
 	}
@@ -94,7 +94,17 @@ func TestRunningAppsClick(t *testing.T) {
 	}
 
 	bar.onAction("running-app:steam", buttonRight)
-	reg.runningMenu.choose(len(reg.runningMenu.rows) - 1)
+	forceQuitIndex := -1
+	for i, row := range reg.runningMenu.rows {
+		if row.Kind == runningAppMenuForceQuit {
+			forceQuitIndex = i
+			break
+		}
+	}
+	if forceQuitIndex < 0 {
+		t.Fatal("app-level force-quit row missing")
+	}
+	reg.runningMenu.choose(forceQuitIndex)
 	for _, body := range sent[1:] {
 		if _, ok := body.(niri.CloseWindow); ok {
 			t.Fatalf("app-level action sent Niri CloseWindow: %v", body)
