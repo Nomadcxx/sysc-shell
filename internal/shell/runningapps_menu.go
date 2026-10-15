@@ -1,8 +1,10 @@
 package shell
 
 import (
-	"fmt"
+	"errors"
+	"log"
 	"math"
+	"strconv"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -16,33 +18,36 @@ const (
 	runningAppMenuSurfaceID = "running-app-menu"
 	runningAppMenuNamespace = "sysc-shell-running-app-menu"
 	runningAppMenuShieldID  = "shield:running-app-menu"
-	runningAppMenuPad       = 4
-	runningAppMenuRadius    = 6
-	runningAppMenuSep       = 9
 )
 
 type runningAppMenuHost struct {
-	r              *Registry
-	request        func(wayland.AuxRequest)
-	open_          bool
-	closed         bool
-	output         uint32
-	rootGen        uint64
-	slot           runningAppSlot
-	rows           []runningAppMenuRow
-	visibleRows    []int
-	menu           *Menu
-	root           *ui.Node
-	logicalW       int
-	logicalH       int
-	scale120       int
-	place          trayMenuPlacement
-	pressed        int
-	pointerRow     int
-	keyed          bool
-	wheelRemainder float64
-	text           *render.TextRenderer
-	style          render.Style
+	r                   *Registry
+	request             func(wayland.AuxRequest)
+	open_               bool
+	closed              bool
+	output              uint32
+	fontFamily          string
+	rootGen             uint64
+	slot                runningAppSlot
+	rows                []runningAppMenuRow
+	optionRows          []int
+	menu                *Menu
+	root                *ui.Node
+	logicalW            int
+	logicalH            int
+	scale120            int
+	place               trayMenuPlacement
+	anchor              ui.Rect
+	pressed             string
+	pointer             string
+	keyed               bool
+	hitRows             map[string]int
+	hitCloses           map[string]uint64
+	forceQuitState      runningAppForceQuitState
+	forceQuitMessage    string
+	forceQuitGeneration uint64
+	text                *render.TextRenderer
+	style               render.Style
 }
 
 func newRunningAppMenuHost(r *Registry) *runningAppMenuHost {
@@ -52,34 +57,53 @@ func newRunningAppMenuHost(r *Registry) *runningAppMenuHost {
 	}
 }
 
-func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anchor ui.Rect) {
+func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anchor ui.Rect) error {
 	if h.open_ {
 		h.closeLocked()
 	}
+	if h.text == nil || h.fontFamily != h.r.cfg.Bar.FontFamily {
+		text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
+		if err != nil {
+			return err
+		}
+		h.text = text
+		h.fontFamily = h.r.cfg.Bar.FontFamily
+	}
+	h.style = h.r.surfaceTheme().OverlayStyle()
+	h.style.Background = h.style.Capsule
+	h.scale120 = 120
+	if bar := h.r.bars[output]; bar != nil {
+		if scale := bar.scale120(); scale > 0 {
+			h.scale120 = scale
+		}
+	}
+	h.style.Scale120 = ui.Scale120(h.scale120)
 	h.open_ = true
 	h.closed = false
 	h.output = output
-	h.pressed = -1
-	h.pointerRow = -1
-	h.keyed = false
-	h.wheelRemainder = 0
+	h.anchor = anchor
+	h.pressed = ""
+	h.pointer = ""
+	h.keyed = true
 	h.slot = slot
-	_ = h.prepareRenderStateLocked(output)
+	h.forceQuitGeneration++
+	h.forceQuitState = runningAppForceQuitIdle
+	h.forceQuitMessage = ""
 	h.rows = runningAppMenu(slot, h.r.niriSnapshot.Workspaces)
-	labels := make([]string, len(h.rows))
-	for i, row := range h.rows {
-		labels[i] = row.Label
+	h.buildMenu(0)
+	w, height, err := h.remeasureLocked()
+	if err != nil {
+		h.open_ = false
+		h.closed = true
+		return err
 	}
-	h.menu = NewMenu(labels, 0)
-	h.menu.Open()
-	h.rebuild()
-	w, height := h.size()
 	h.place = h.r.barMenuPlacementLocked(output, anchor, w, height)
 	h.rootGen = h.r.roots.openRoot(runningAppsMenuRoot(output))
 	h.r.roots.onClose(h.rootGen, h.releaseForChainClose)
 	h.r.dwell.leave()
 	h.request(wayland.AuxRequest{Output: output, Open: h.shieldSpec()})
 	h.request(wayland.AuxRequest{Output: output, Open: h.spec()})
+	return nil
 }
 
 func (h *runningAppMenuHost) releaseForChainClose() {
@@ -122,92 +146,204 @@ func (h *runningAppMenuHost) spec() *wayland.AuxSpec {
 }
 
 func (h *runningAppMenuHost) size() (int, int) {
-	width := h.menuWidth()
-	height := 0
-	if h.root != nil {
-		height, _ = ui.ContentHeight(h.root, width, h.measureText())
+	width := h.logicalW
+	if width <= 0 {
+		width = h.menuWidth()
 	}
-	if height <= 0 {
-		n := len(h.visibleRows)
-		if n == 0 {
-			n = min(len(h.rows), menuVisibleRows)
-		}
-		if n == 0 {
-			n = 1
-		}
-		height = n*trayMenuRowHeight + 2*runningAppMenuPad
-		if h.hasCloseSeparator() && n == len(h.rows) {
-			height += runningAppMenuSep
-		}
+	if h.root == nil {
+		return width, 0
 	}
-	return width, min(max(height, trayMenuRowHeight+2*runningAppMenuPad), trayMenuMaxHeight)
+	height, err := ui.ContentHeight(h.root, width, h.measureText)
+	if err != nil {
+		log.Printf("running-app menu measure: %v", err)
+		height = h.style.Metrics.BaseWidget + 2*theme.MarginS
+	}
+	height = min(height, h.maxHeight())
+	return width, height
 }
 
-func (h *runningAppMenuHost) hasCloseSeparator() bool {
-	return len(h.rows) > 1 && h.rows[len(h.rows)-1].CloseAll
+func (h *runningAppMenuHost) maxHeight() int {
+	height := trayMenuMaxHeight
+	if _, _, _, output := h.r.barGeometryOnOutputLocked(h.output, h.anchor); output.H > 0 {
+		height = min(height, output.H)
+	}
+	return height
+}
+
+func (h *runningAppMenuHost) remeasureLocked() (int, int, error) {
+	h.logicalW = h.menuWidth()
+	h.logicalH = 0
+	width := h.logicalW
+	if h.menu != nil {
+		h.menu.setVisibleRows(menuVisibleRows)
+	}
+	var height int
+	for {
+		h.rebuild()
+		var err error
+		height, err = ui.ContentHeight(h.root, width, h.measureText)
+		if err != nil {
+			return 0, 0, err
+		}
+		if h.menu == nil || h.menu.visibleRows <= 1 || height <= h.maxHeight() {
+			break
+		}
+		h.menu.setVisibleRows(h.menu.visibleRows - 1)
+	}
+	height = min(height, h.maxHeight())
+	h.logicalW, h.logicalH = width, height
+	h.style.Body = ui.Rect{W: width, H: height}
+	if err := h.relayout(); err != nil {
+		return 0, 0, err
+	}
+	return width, height, nil
+}
+
+func (h *runningAppMenuHost) resizeVisibleContentLocked() bool {
+	oldWidth, oldHeight := h.logicalW, h.logicalH
+	width, height, err := h.remeasureLocked()
+	if err != nil {
+		log.Printf("running-app menu scroll layout: %v", err)
+		h.closeLocked()
+		return false
+	}
+	h.place = h.r.barMenuPlacementLocked(h.output, h.anchor, width, height)
+	if width == oldWidth && height == oldHeight {
+		return true
+	}
+	spec := h.spec()
+	h.updateSurfaceGeometryLocked(spec)
+	return true
+}
+
+func (h *runningAppMenuHost) updateSurfaceGeometryLocked(spec *wayland.AuxSpec) {
+	width, height := uint32(spec.Width), uint32(spec.Height)
+	top, bottom := spec.MarginTop, spec.MarginBottom
+	left, right := spec.MarginLeft, spec.MarginRight
+	h.request(wayland.AuxRequest{
+		Output: h.output,
+		ID:     runningAppMenuSurfaceID,
+		Update: &wayland.AuxUpdate{
+			Width: &width, Height: &height,
+			MarginTop: &top, MarginBottom: &bottom,
+			MarginLeft: &left, MarginRight: &right,
+		},
+	})
 }
 
 func (h *runningAppMenuHost) menuWidth() int {
 	maxW := 0
 	for _, row := range h.rows {
-		w := len([]rune(row.Label)) * 8
-		if h.text != nil && h.style.Size > 0 {
-			if mw, _, err := h.text.Measure(row.Label, render.SpecFor(h.style, ui.TextAttrs{}), false); err == nil {
-				w = mw
-			}
+		w, _ := h.measureText(h.displayLabel(row), ui.TextAttrs{})
+		if row.Kind == runningAppMenuHeader || row.Kind == runningAppMenuSection {
+			w, _ = h.measureText(row.Label, ui.TextAttrs{Role: theme.RoleTitle})
+		}
+		if row.Kind == runningAppMenuWindow {
+			w += h.closeButtonWidth() + theme.MarginXS
 		}
 		if w > maxW {
 			maxW = w
 		}
 	}
-	return min(max(maxW+2*6+2*runningAppMenuPad, 140), 220)
+	width := maxW + 2*theme.MarginS + 2*theme.MarginS
+	_, _, _, output := h.r.barGeometryOnOutputLocked(h.output, h.anchor)
+	maxWidth := 420
+	if output.W > 0 {
+		maxWidth = min(maxWidth, max(200, output.W*2/5))
+	}
+	width = min(max(width, 200), maxWidth)
+	if output.W > 0 {
+		width = min(width, output.W)
+	}
+	return max(width, 1)
 }
 
-func (h *runningAppMenuHost) measureText() ui.MeasureText {
-	return func(text string, attrs ui.TextAttrs) (int, int) {
-		if h.text != nil && h.style.Size > 0 {
-			if w, height, err := h.text.Measure(text, render.SpecFor(h.style, attrs), attrs.Tabular); err == nil {
-				return w, height
+func (h *runningAppMenuHost) closeButtonWidth() int {
+	return max(h.style.Metrics.IconButton, 24)
+}
+
+func (h *runningAppMenuHost) displayLabel(row runningAppMenuRow) string {
+	if row.Kind == runningAppMenuWindow && row.Focused {
+		return "● " + row.Label
+	}
+	return row.Label
+}
+
+func (h *runningAppMenuHost) buildMenu(selectedWindow uint64) {
+	labels := make([]string, 0, len(h.rows))
+	h.optionRows = make([]int, 0, len(h.rows))
+	initial := 0
+	windowOption := -1
+	for i, row := range h.rows {
+		if row.Kind == runningAppMenuHeader || row.Kind == runningAppMenuSection {
+			continue
+		}
+		if row.Kind == runningAppMenuWindow {
+			if windowOption < 0 {
+				windowOption = len(labels)
+			}
+			if selectedWindow != 0 && row.WindowID == selectedWindow {
+				initial = len(labels)
 			}
 		}
-		return len([]rune(text)) * 8, 16
+		labels = append(labels, row.Label)
+		h.optionRows = append(h.optionRows, i)
 	}
+	if selectedWindow != 0 {
+		for _, rowIndex := range h.optionRows {
+			if h.rows[rowIndex].Kind == runningAppMenuWindow && h.rows[rowIndex].WindowID == selectedWindow {
+				windowOption = -1
+				break
+			}
+		}
+		if windowOption >= 0 {
+			initial = windowOption
+		}
+	} else if windowOption >= 0 {
+		initial = windowOption
+	}
+	h.menu = NewMenu(labels, initial)
+	h.menu.Open()
 }
 
-func (h *runningAppMenuHost) prepareRenderStateLocked(output uint32) error {
-	scale := ui.ScaleUnit
-	if bar := h.r.bars[output]; bar != nil {
-		if configured := ui.Scale120(bar.scale120()); configured.Valid() {
-			scale = configured
-		}
+func (h *runningAppMenuHost) refreshLocked(slot runningAppSlot, snapshot niri.Snapshot) bool {
+	if !h.open_ {
+		return false
 	}
-	h.scale120 = int(scale)
-	body := h.style.Body
-	h.style = h.r.surfaceTheme().OverlayStyle()
-	h.style.Scale120, h.style.Body = scale, body
-	h.style.Background = h.style.Capsule
-	if h.text == nil {
-		text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
-		if err != nil {
-			return err
-		}
-		h.text = text
+	var selectedWindow uint64
+	if row, ok := h.optionRow(h.menu.cursor); ok && h.rows[row].Kind == runningAppMenuWindow {
+		selectedWindow = h.rows[row].WindowID
 	}
-	return nil
+	h.slot = slot
+	h.rows = runningAppForceQuitMenuRows(slot, h.forceQuitState, h.forceQuitMessage, snapshot.Workspaces)
+	h.buildMenu(selectedWindow)
+	h.pressed = ""
+	h.pointer = ""
+	h.keyed = true
+	if !h.resizeVisibleContentLocked() {
+		return false
+	}
+	return true
 }
 
-func runningAppMenuWheelDelta(event wayland.Event) float64 {
-	if event.Axis != 0 {
-		return 0
+func (h *runningAppMenuHost) measureText(text string, attrs ui.TextAttrs) (int, int) {
+	if h.text != nil {
+		if width, height, err := h.text.Measure(text, render.SpecFor(h.style, attrs), attrs.Tabular); err == nil {
+			return width, height
+		}
 	}
-	switch {
-	case event.AxisDiscrete != 0:
-		return float64(event.AxisDiscrete) * wheelStepPixels
-	case event.AxisValue120 != 0:
-		return float64(event.AxisValue120) * wheelStepPixels / 120
-	default:
-		return event.AxisValue
+	return len([]rune(text)) * 8, 16
+}
+
+func (h *runningAppMenuHost) truncate(text string, width int, attrs ui.TextAttrs) string {
+	if h.text == nil || width <= 0 {
+		return text
 	}
+	fitted, _, err := h.text.Truncate(text, render.SpecFor(h.style, attrs), width, attrs.Tabular)
+	if err != nil {
+		return text
+	}
+	return fitted
 }
 
 func (h *runningAppMenuHost) configureLocking(width, height, scale120 int) error {
@@ -229,25 +365,56 @@ func (h *runningAppMenuHost) handleLocking(event wayland.Event) bool {
 }
 
 func (h *runningAppMenuHost) configure(width, height, scale120 int) error {
-	h.logicalW, h.logicalH, h.scale120 = width, height, scale120
+	h.scale120 = scale120
 	h.style.Scale120 = ui.Scale120(scale120)
-	h.style.Body = ui.Rect{W: width, H: height}
-	return h.relayout()
+	measuredW, measuredH, err := h.remeasureLocked()
+	if err != nil {
+		return err
+	}
+	if measuredW != width || measuredH != height {
+		h.place = h.r.barMenuPlacementLocked(h.output, h.anchor, measuredW, measuredH)
+		h.updateSurfaceGeometryLocked(h.spec())
+	}
+	return nil
+}
+
+func (h *runningAppMenuHost) rethemeLocked(next Theme, fontFamily string) bool {
+	if !h.open_ {
+		return false
+	}
+	if fontFamily != h.fontFamily {
+		text, err := h.r.textRenderer(fontFamily)
+		if err != nil {
+			log.Printf("running-app menu font: %v", err)
+			h.closeLocked()
+			return false
+		}
+		h.text = text
+		h.fontFamily = fontFamily
+	}
+	scale := h.style.Scale120
+	h.style = next.OverlayStyle()
+	h.style.Scale120 = scale
+	h.style.Background = h.style.Capsule
+	oldWidth, oldHeight := h.logicalW, h.logicalH
+	width, height, err := h.remeasureLocked()
+	if err != nil {
+		log.Printf("running-app menu retheme layout: %v", err)
+		h.closeLocked()
+		return false
+	}
+	h.place = h.r.barMenuPlacementLocked(h.output, h.anchor, width, height)
+	if width != oldWidth || height != oldHeight {
+		h.updateSurfaceGeometryLocked(h.spec())
+	}
+	return true
 }
 
 func (h *runningAppMenuHost) relayout() error {
 	if h.root == nil {
 		return nil
 	}
-	measure := func(text string, attrs ui.TextAttrs) (int, int) {
-		if h.text != nil {
-			if w, textHeight, err := h.text.Measure(text, render.SpecFor(h.style, attrs), attrs.Tabular); err == nil {
-				return w, textHeight
-			}
-		}
-		return len([]rune(text)) * 8, 16
-	}
-	return ui.LayoutColumn(h.root, ui.Rect{W: h.logicalW, H: h.logicalH}, measure)
+	return ui.LayoutColumn(h.root, ui.Rect{W: h.logicalW, H: h.logicalH}, h.measureText)
 }
 
 // blur-exempt: the shield paints nothing, exactly as the panel shield does.
@@ -281,17 +448,8 @@ func (h *runningAppMenuHost) shieldHandleLocking(event wayland.Event) bool {
 }
 
 func (h *runningAppMenuHost) render(pixels []byte, width, height, stride int) error {
-	createdText := false
 	if h.text == nil {
-		if err := h.prepareRenderStateLocked(h.output); err != nil {
-			return fmt.Errorf("running apps menu text renderer: %w", err)
-		}
-		createdText = true
-	}
-	if createdText && h.logicalW > 0 {
-		if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
-			return err
-		}
+		return errors.New("running-app menu has no text renderer")
 	}
 	canvas, err := render.NewCanvas(pixels, width, height, stride)
 	if err != nil {
@@ -309,155 +467,288 @@ func (h *runningAppMenuHost) handle(event wayland.Event) bool {
 		if h.menu == nil {
 			return false
 		}
+		if runningAppMenuCloseShortcut(event) {
+			option := h.menu.cursor
+			if row, ok := h.optionRow(option); ok && h.rows[row].Kind == runningAppMenuWindow {
+				h.closeWindowLocked(h.rows[row].WindowID)
+				return true
+			}
+			return false
+		}
 		if !h.menu.Handle(event.Key) {
 			return false
 		}
 		h.keyed = true
-		h.pointerRow = -1
+		h.pointer = ""
 		if !h.menu.Opened() {
 			if event.Key == keyEsc {
 				h.closeLocked()
 				return true
 			}
-			h.chooseLocked(h.menu.Index())
+			if row, ok := h.optionRow(h.menu.Index()); ok {
+				h.chooseLocked(row)
+			} else {
+				h.closeLocked()
+			}
 			return true
 		}
-		h.rebuild()
+		if !h.resizeVisibleContentLocked() {
+			return true
+		}
 		h.r.publishSurface(h.output, runningAppMenuSurfaceID)
 		return true
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
-		i, ok := h.hitRow(int(math.Floor(event.X)), int(math.Floor(event.Y)))
-		next := -1
-		if ok {
-			next = i
-		}
-		if next == h.pointerRow && !h.keyed {
+		action := h.hitAction(int(math.Floor(event.X)), int(math.Floor(event.Y)))
+		if action == h.pointer && !h.keyed {
 			return false
 		}
-		h.pointerRow = next
+		previous := h.pointer
+		h.pointer = action
 		h.keyed = false
 		h.rebuild()
 		h.r.publishSurface(h.output, runningAppMenuSurfaceID)
-		return true
+		return action != "" || previous != ""
 	case wayland.EventPointerLeave:
-		if h.pointerRow < 0 {
+		if h.pointer == "" {
 			return false
 		}
-		h.pointerRow = -1
-		h.rebuild()
-		h.r.publishSurface(h.output, runningAppMenuSurfaceID)
-		return true
-	case wayland.EventPointerAxis:
-		delta := runningAppMenuWheelDelta(event)
-		if delta == 0 || h.menu == nil {
-			return false
-		}
-		h.wheelRemainder += delta
-		steps := int(h.wheelRemainder / float64(wheelStepPixels))
-		h.wheelRemainder -= float64(steps * wheelStepPixels)
-		if steps == 0 {
-			return true
-		}
-		if !h.menu.wheel(steps) {
-			return false
-		}
-		h.keyed = true
-		h.pointerRow = -1
+		h.pointer = ""
 		h.rebuild()
 		h.r.publishSurface(h.output, runningAppMenuSurfaceID)
 		return true
 	case wayland.EventPointerPress:
-		i, ok := h.hitRow(int(math.Floor(event.X)), int(math.Floor(event.Y)))
-		if !ok {
-			h.pressed = -1
+		if event.Button != 0 && event.Button != buttonLeft {
+			h.pressed = ""
 			return false
 		}
-		h.pressed = i
-		return true
+		action := h.hitAction(int(math.Floor(event.X)), int(math.Floor(event.Y)))
+		h.pressed = action
+		return action != ""
 	case wayland.EventPointerRelease:
-		i, ok := h.hitRow(int(math.Floor(event.X)), int(math.Floor(event.Y)))
+		if event.Button != 0 && event.Button != buttonLeft {
+			h.pressed = ""
+			return false
+		}
+		action := h.hitAction(int(math.Floor(event.X)), int(math.Floor(event.Y)))
 		pressed := h.pressed
-		h.pressed = -1
-		if ok && i == pressed {
-			h.chooseLocked(i)
+		h.pressed = ""
+		if action != "" && action == pressed {
+			h.activateAction(action)
 			return true
 		}
 		return false
+	case wayland.EventPointerAxis:
+		if event.Axis != 0 || h.menu == nil {
+			return false
+		}
+		steps := int(event.AxisDiscrete)
+		if steps == 0 && event.AxisValue120 != 0 {
+			steps = int(event.AxisValue120 / 120)
+			if steps == 0 {
+				steps = signInt(int(event.AxisValue120))
+			}
+		}
+		if steps == 0 && event.AxisValue != 0 {
+			steps = int(math.Round(event.AxisValue))
+			if steps == 0 {
+				steps = signInt(int(math.Copysign(1, event.AxisValue)))
+			}
+		}
+		if steps == 0 {
+			return false
+		}
+		if h.menu.wheel(steps) {
+			h.keyed = true
+			h.pointer = ""
+			if !h.resizeVisibleContentLocked() {
+				return true
+			}
+			h.r.publishSurface(h.output, runningAppMenuSurfaceID)
+		}
+		return true
 	}
 	return false
 }
 
-func (h *runningAppMenuHost) hitRow(x, y int) (int, bool) {
-	if h.root == nil {
+func runningAppMenuCloseShortcut(event wayland.Event) bool {
+	if event.Key == keyDelete && event.Mods == 0 {
+		return true
+	}
+	return (event.Sym == uint32('x') && event.Mods == 0) ||
+		(event.Sym == uint32('X') && event.Mods == ui.ModShift)
+}
+
+func signInt(value int) int {
+	if value < 0 {
+		return -1
+	}
+	if value > 0 {
+		return 1
+	}
+	return 0
+}
+
+func (h *runningAppMenuHost) optionRow(option int) (int, bool) {
+	if option < 0 || option >= len(h.optionRows) {
 		return 0, false
 	}
-	visible := 0
-	for _, c := range h.root.Children {
-		if c == nil || c.Kind != ui.KindCapsule {
-			continue
-		}
-		if c.Bounds.Contains(x, y) {
-			if visible >= len(h.visibleRows) {
-				return 0, false
-			}
-			return h.visibleRows[visible], true
-		}
-		visible++
-	}
-	return 0, false
+	return h.optionRows[option], true
 }
 
-func (h *runningAppMenuHost) highlight() int {
-	if h.pointerRow >= 0 {
-		return h.pointerRow
+func (h *runningAppMenuHost) hitAction(x, y int) string {
+	if action, ok := ui.Hit(h.root, x, y); ok {
+		return action
 	}
-	if h.keyed && h.menu != nil {
-		return h.menu.cursor
-	}
-	return -1
+	return ""
 }
 
-// Hallmark · component: menu · genre: modern-minimal · theme: shell tokens
-// states: default · hover · focus (keyboard) · active · (no loading/error/success)
-// Rows are KindCapsule + KindText, the launcher list language. KindButton is a
-// CTA stadium; KindMenu is a panel combobox. Neither is a popup list.
+func (h *runningAppMenuHost) activateAction(action string) {
+	if id, ok := h.hitCloses[action]; ok {
+		h.closeWindowLocked(id)
+		return
+	}
+	if row, ok := h.hitRows[action]; ok {
+		h.chooseLocked(row)
+	}
+}
+
+func (h *runningAppMenuHost) actionForRow(row runningAppMenuRow) string {
+	switch row.Kind {
+	case runningAppMenuWindow:
+		return "running-app-window:" + strconv.FormatUint(row.WindowID, 10)
+	case runningAppMenuAction:
+		return "running-app-action:" + row.ActionID
+	case runningAppMenuWorkspace:
+		return "running-app-workspace:" + strconv.FormatUint(row.MoveWindowID, 10) + ":" + strconv.FormatUint(row.MoveWorkspaceID, 10)
+	case runningAppMenuForceQuit:
+		return "running-app-force-quit"
+	case runningAppMenuForceQuitConfirm:
+		return "running-app-force-quit-confirm"
+	case runningAppMenuForceQuitCancel:
+		return "running-app-force-quit-cancel"
+	case runningAppMenuForceQuitDismiss:
+		return "running-app-force-quit-dismiss"
+	default:
+		return ""
+	}
+}
+
+func (h *runningAppMenuHost) highlightAction() string {
+	if !h.keyed {
+		return h.pointer
+	}
+	if h.menu == nil {
+		return ""
+	}
+	if row, ok := h.optionRow(h.menu.cursor); ok {
+		return h.actionForRow(h.rows[row])
+	}
+	return ""
+}
+
 func (h *runningAppMenuHost) rebuild() {
-	col := &ui.Node{Kind: ui.KindColumn, Padding: runningAppMenuPad}
-	h.visibleRows = h.visibleRows[:0]
-	on := h.highlight()
+	col := &ui.Node{Kind: ui.KindColumn, Padding: theme.MarginS, Gap: theme.MarginXS}
+	h.hitRows = make(map[string]int)
+	h.hitCloses = make(map[string]uint64)
+	visible := make(map[int]bool)
+	start, end := 0, 0
 	if h.menu != nil {
-		start, end := h.menu.visibleRange()
-		for i := start; i < end; i++ {
-			opt := h.menu.options[i]
-			if i > 0 && i == len(h.rows)-1 && h.rows[i].CloseAll {
-				col.Children = append(col.Children, &ui.Node{
-					Kind: ui.KindRow, Padding: theme.MarginXS,
-					Children: []*ui.Node{{Kind: ui.KindSeparator}},
-				})
+		start, end = h.menu.visibleRange()
+		for option := start; option < end; option++ {
+			if row, ok := h.optionRow(option); ok {
+				visible[row] = true
 			}
+		}
+	}
+	on := h.highlightAction()
+	for index, row := range h.rows {
+		switch row.Kind {
+		case runningAppMenuHeader:
+			col.Children = append(col.Children, &ui.Node{
+				Kind: ui.KindText, Text: h.truncate(row.Label, max(h.logicalW-2*theme.MarginS, 0), ui.TextAttrs{Role: theme.RoleTitle}),
+				TextRole: theme.RoleTitle,
+			})
+		case runningAppMenuSection:
+			if h.sectionVisible(index, visible) {
+				col.Children = append(col.Children, &ui.Node{Kind: ui.KindText, Text: row.Label,
+					TextRole: theme.RoleCaption})
+			}
+		default:
+			if !visible[index] {
+				continue
+			}
+			if row.Kind == runningAppMenuForceQuit && len(visible) > 1 {
+				col.Children = append(col.Children, &ui.Node{Kind: ui.KindSeparator})
+			}
+			action := h.actionForRow(row)
+			h.hitRows[action] = index
 			fill := ui.FillNone
-			if i == on {
+			if action == on {
 				fill = ui.FillSoft
 			}
-			label := &ui.Node{Kind: ui.KindText, Text: opt}
-			if i < len(h.rows) && h.rows[i].CloseAll {
+			if row.Kind == runningAppMenuWindow {
+				col.Children = append(col.Children, h.windowRowNode(row, action, fill))
+				continue
+			}
+			attrs := ui.TextAttrs{}
+			text := row.Label
+			if row.Kind == runningAppMenuForceQuit || row.Kind == runningAppMenuForceQuitConfirm {
+				attrs.Role = theme.RoleLabel
+			}
+			contentWidth := max(h.logicalW-2*theme.MarginS-2*theme.MarginS, 0)
+			label := &ui.Node{Kind: ui.KindText, Text: h.truncate(text, contentWidth, attrs), Tone: ui.ToneNormal}
+			if row.Kind == runningAppMenuForceQuit || row.Kind == runningAppMenuForceQuitConfirm {
 				label.Tone = ui.ToneError
 			}
 			col.Children = append(col.Children, &ui.Node{
-				Kind: ui.KindCapsule, Radius: runningAppMenuRadius, Padding: theme.MarginS,
-				Fill: fill, Focusable: true, Role: "menuitem",
+				Kind: ui.KindCapsule, Radius: h.style.Shapes.Small, Padding: theme.MarginS,
+				Fill: fill, Action: action, Name: row.Label, Focusable: true, Role: "menuitem",
 				Children: []*ui.Node{label},
 			})
-			h.visibleRows = append(h.visibleRows, i)
-		}
-		if h.hasCloseSeparator() && end < len(h.rows) {
-			col.Children = append(col.Children, &ui.Node{Kind: ui.KindRow, Height: runningAppMenuSep})
 		}
 	}
 	h.root = col
 	if h.logicalW > 0 {
 		_ = h.relayout()
 	}
+}
+
+func (h *runningAppMenuHost) sectionVisible(section int, visible map[int]bool) bool {
+	for i := section + 1; i < len(h.rows); i++ {
+		if h.rows[i].Kind == runningAppMenuSection || h.rows[i].Kind == runningAppMenuHeader {
+			break
+		}
+		if visible[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *runningAppMenuHost) windowRowNode(row runningAppMenuRow, action string, fill ui.Fill) *ui.Node {
+	contentWidth := max(h.logicalW-2*theme.MarginS, 0)
+	closeWidth := h.closeButtonWidth()
+	labelWidth := max(contentWidth-closeWidth-theme.MarginXS-2*theme.MarginS, 0)
+	attrs := ui.TextAttrs{}
+	label := &ui.Node{Kind: ui.KindText, Text: h.truncate(h.displayLabel(row), labelWidth, attrs)}
+	window := &ui.Node{
+		Kind: ui.KindCapsule, Radius: h.style.Shapes.Small, Padding: theme.MarginS,
+		Width: max(contentWidth-closeWidth-theme.MarginXS, 0),
+		Fill:  fill, Action: action, Name: row.Label, Focusable: true, Role: "menuitem",
+		Children: []*ui.Node{label},
+	}
+	closeAction := "running-app-close:" + strconv.FormatUint(row.WindowID, 10)
+	h.hitCloses[closeAction] = row.WindowID
+	closeFill := ui.FillNone
+	if h.highlightAction() == closeAction {
+		closeFill = ui.FillSoft
+	}
+	close := &ui.Node{
+		Kind: ui.KindButton, Width: closeWidth, Height: closeWidth, Radius: h.style.Shapes.Small,
+		Text: "×", Fill: closeFill, Action: closeAction,
+		Name: "Close " + row.Label, Role: "button", Focusable: true,
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{window, close}}
 }
 
 func (h *runningAppMenuHost) choose(i int) {
@@ -471,33 +762,100 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 		return
 	}
 	row := h.rows[i]
-	slot := h.slot
-	h.closeLocked()
-	if row.CloseAll {
-		for _, w := range slot.Members {
-			if _, foldedSteamGame := slot.SteamGameIDs[w.ID]; w.ID == 0 || foldedSteamGame {
-				continue
-			}
-			h.r.sendNiriLocked(niri.CloseWindow{ID: w.ID})
-		}
+	switch row.Kind {
+	case runningAppMenuForceQuit:
+		h.showForceQuitStateLocked(runningAppForceQuitConfirming, "")
+		return
+	case runningAppMenuForceQuitConfirm:
+		h.startForceQuitLocked()
+		return
+	case runningAppMenuForceQuitCancel, runningAppMenuForceQuitDismiss:
+		h.closeLocked()
 		return
 	}
-	if row.MoveWindowID != 0 || row.MoveWorkspaceID != 0 {
-		if workspaceMoveTargetExists(h.r.niriSnapshot, row.MoveWindowID, row.MoveWorkspaceID) {
+	slot := h.slot
+	h.closeLocked()
+	switch row.Kind {
+	case runningAppMenuWindow:
+		if currentRunningWindow(h.r.running, slot.Key, row.WindowID) {
+			h.r.sendNiriLocked(niri.FocusWindow{ID: row.WindowID})
+		}
+	case runningAppMenuWorkspace:
+		if currentRunningWindow(h.r.running, slot.Key, row.MoveWindowID) &&
+			workspaceMoveTargetExists(h.r.niriSnapshot, row.MoveWindowID, row.MoveWorkspaceID) {
 			h.r.sendNiriLocked(niri.MoveWindowToWorkspace{
 				WindowID: row.MoveWindowID, WorkspaceID: row.MoveWorkspaceID, Focus: false,
 			})
 		}
+	case runningAppMenuAction:
+		execLine := ""
+		for _, a := range slot.Actions {
+			if a.ID == row.ActionID {
+				execLine = a.Exec
+				break
+			}
+		}
+		h.r.spawnDesktopExecLocked(execLine)
+	}
+}
+
+func (h *runningAppMenuHost) showForceQuitStateLocked(state runningAppForceQuitState, message string) {
+	h.forceQuitState = state
+	h.forceQuitMessage = message
+	h.rows = runningAppForceQuitMenuRows(h.slot, state, message, h.r.niriSnapshot.Workspaces)
+	h.buildMenu(0)
+	h.pressed = ""
+	h.pointer = ""
+	h.keyed = true
+	if !h.resizeVisibleContentLocked() {
 		return
 	}
-	execLine := ""
-	for _, a := range slot.Actions {
-		if a.ID == row.ActionID {
-			execLine = a.Exec
-			break
-		}
+	h.r.publishSurface(h.output, runningAppMenuSurfaceID)
+}
+
+func (h *runningAppMenuHost) startForceQuitLocked() {
+	slot, ok := runningSlotByKey(h.r.running, h.slot.Key)
+	if !ok {
+		h.showForceQuitStateLocked(runningAppForceQuitFailed,
+			runningAppForceQuitErrorMessage(errors.New("the app has no current Niri windows")))
+		return
 	}
-	h.r.spawnDesktopExecLocked(execLine)
+	appIDs := runningAppScopeAppIDs(slot)
+	windowPIDs := runningAppScopeWindowPIDs(slot)
+	if len(appIDs) == 0 && len(windowPIDs) == 0 {
+		h.showForceQuitStateLocked(runningAppForceQuitFailed,
+			runningAppForceQuitErrorMessage(errors.New("the app has no current Niri window identity")))
+		return
+	}
+	h.slot = slot
+	h.showForceQuitStateLocked(runningAppForceQuitPending, "")
+	generation := h.forceQuitGeneration
+	go h.finishForceQuit(generation, slot.Key, appIDs, windowPIDs)
+}
+
+func (h *runningAppMenuHost) finishForceQuit(generation uint64, appKey string, appIDs []string, windowPIDs []int) {
+	err := h.r.forceQuitRunningAppScopes(appIDs, windowPIDs)
+	if err != nil {
+		log.Printf("running-app force quit %q: %v", appKey, err)
+	}
+
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	if !h.open_ || h.forceQuitGeneration != generation || h.forceQuitState != runningAppForceQuitPending {
+		return
+	}
+	if err == nil {
+		h.closeLocked()
+		return
+	}
+	h.showForceQuitStateLocked(runningAppForceQuitFailed, runningAppForceQuitErrorMessage(err))
+}
+
+func (h *runningAppMenuHost) closeWindowLocked(windowID uint64) {
+	h.closeLocked()
+	if currentRunningWindow(h.r.running, h.slot.Key, windowID) {
+		h.r.sendNiriLocked(niri.CloseWindow{ID: windowID})
+	}
 }
 
 func (h *runningAppMenuHost) closeLocked() {

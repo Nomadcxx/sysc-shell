@@ -610,6 +610,13 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 | `2026-10-06-file-browser-polish-commission.md` | commission | Open commission to a shell agent: finish the post-#99 file browser — P0 real-use errors (SFTP mount lifecycle, copy caps, preview stalls, invisible xdg-open failures), P1 chrome-catalogue polish, P2 sort/filter/range-selection expansion, P3 jail hardening. Minor 16 semantics frozen; one item per PR. First item executed here: the dead `…` breadcrumb is now a jump-to-ancestor crumb with full-path tooltips. |
 | `2026-10-09-assets-capture-design.md` | design | Documentation and promo assets: gated fixture scenes in `internal/shell` rendered at the laptop's 125% over a blurred real wallpaper, real-session `grim` stills and a `wl-screenrec` terminal-art video from the laptop, collected into `/home/nomadx/sysc-assets` with a manifest by `scripts/capture-assets`. Owner-approved; plan not yet written. |
 
+## Running apps menu safety (#235)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-14-running-apps-menu-safety-design.md](2026-10-14-running-apps-menu-safety-design.md) | design | Complete Niri app menu: exact per-window actions, explicit force quit through validated systemd app scopes, and a measured six-row popup. |
+| [2026-10-14-running-apps-menu-safety.md](2026-10-14-running-apps-menu-safety.md) | plan | Test-first implementation and gate for the #235 window menu and systemd-scoped app force quit. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not
