@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,6 +44,19 @@ var (
 	}
 	knownScreenshotModes = map[string]bool{"region": true, "screen": true, "window": true}
 )
+
+// PanelIDs lists the panel vocabulary in a stable order. The documentation
+// gate and the panel dispatcher have to agree on the same set; exporting it
+// lets a test assert they do, rather than an example drifting until it names a
+// panel the shell refuses.
+func PanelIDs() []string {
+	out := make([]string, 0, len(knownPanels))
+	for id := range knownPanels {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // DefaultSocket returns $XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock.
 // os.TempDir() is world-writable and shared between users; the XDG base spec's
