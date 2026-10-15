@@ -3,39 +3,27 @@
 #
 # Run it against a pinned nixpkgs, for example:
 #
-#   nix-shell -p nixpkgs --run 'nix-instantiate --eval --strict nix/tests/module.nix'
+#   nix-instantiate --eval --strict nix/tests/module.nix
 #
-# Every value printed must be true. The module itself needs no new flake input.
+# The flake also exposes it as the `module-harness` check. Every value printed
+# must be true. The module itself needs no new flake input.
 
 { pkgs ? import <nixpkgs> { } }:
 
 let
   inherit (pkgs) lib;
 
-  # Stubs for the three home-manager options the module writes. Only their
-  # shapes matter here.
+  # Stubs for the home-manager options the module writes. Only their shapes
+  # matter here.
   stubs = {
     options = {
+      assertions = lib.mkOption {
+        type = lib.types.listOf lib.types.anything;
+        default = [ ];
+      };
       home.homeDirectory = lib.mkOption {
         type = lib.types.str;
         default = "/home/tester";
-      };
-      systemd.user.services = lib.mkOption {
-        type = lib.types.attrsOf (
-          lib.types.submodule {
-            options = {
-              Unit = lib.mkOption {
-                type = lib.types.lines;
-                default = [ ];
-              };
-              Install = lib.mkOption {
-                type = lib.types.attrs;
-                default = { };
-              };
-            };
-          }
-        );
-        default = { };
       };
       xdg.configFile = lib.mkOption {
         type = lib.types.attrs;
@@ -50,6 +38,7 @@ let
         stubs
         ../module.nix
         ({ ... }: extra)
+        { config._module.args.pkgs = pkgs; }
       ];
       check = true;
     };
@@ -79,11 +68,17 @@ let
     programs.sysc-shell.plugins = [ plugin ];
   };
 
-  unitText = on.config.systemd.user.services.sysc-shell.Unit;
+  wantsFile = "systemd/user/graphical-session.target.wants/sysc-shell.service";
+  configFileNames = cfg: builtins.attrNames cfg.xdg.configFile;
+
+  unitFile = on.config.xdg.configFile."systemd/user/sysc-shell.service".source;
+  # A derivation source is read through import-from-derivation; a plain string
+  # source (a stub) is used as-is.
+  unitText = if builtins.isString unitFile then unitFile else builtins.readFile unitFile;
   says = text: needle: builtins.match ".*${needle}.*" text != null;
 in
 {
-  disabledWritesNothing = off.config.systemd.user.services ? sysc-shell == false;
+  disabledWritesNothing = off.config.xdg.configFile == { };
 
   enabledStartsAStorePath = says unitText "ExecStart=/nix/store/";
 
@@ -99,11 +94,13 @@ in
   # a different binary than the one Nix built.
   enabledDroppedTheInstallerPath = builtins.match ".*%h/.local/bin.*" unitText == null;
 
-  autostartInstallsAtGraphicalSession = on.config.systemd.user.services.sysc-shell.Install.WantedBy == [
-    "graphical-session.target"
-  ];
+  # The deploy-guard drop-in exists to undo hand-copied binaries; it is
+  # deliberately not installed beside a store path.
+  enabledInstallsNoDeployGuard = !(lib.any (n: lib.hasInfix "deploy-guard" n) (configFileNames on.config));
 
-  autostartFalseOmitsInstall = manual.config.systemd.user.services.sysc-shell.Install == { };
+  autostartWantsAtGraphicalSession = builtins.elem wantsFile (configFileNames on.config);
 
-  pluginIsLinkedUnderItsManifestId = withPlugin.config.xdg.configFile ? "sysc-shell/plugins/org.test.plugin";
+  autostartFalseOmitsWants = !(builtins.elem wantsFile (configFileNames manual.config));
+
+  pluginIsLinkedUnderItsManifestId = builtins.elem "sysc-shell/plugins/org.test.plugin" (configFileNames withPlugin.config);
 }

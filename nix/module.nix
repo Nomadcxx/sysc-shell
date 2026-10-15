@@ -74,16 +74,15 @@ in
       }
     ];
 
-    systemd.user.services.sysc-shell = {
-      Unit = unit;
-      Install = lib.optionals cfg.autostart {
-        WantedBy = [ "graphical-session.target" ];
-      };
-    };
-
-    # mkMerge takes a list of attribute sets. Each plugin becomes one
-    # xdg.configFile entry, which home-manager links into XDG_CONFIG_HOME.
+    # The unit is deployed as the repository's own substituted file, because
+    # the key/value section model of systemd.user.services cannot carry a whole
+    # unit. A file under systemd/user is what systemd itself reads; the wants
+    # link is the enablement, and omitting it is what autostart = false means.
     xdg.configFile = lib.mkMerge [
+      { "systemd/user/sysc-shell.service".source = unit; }
+      (lib.mkIf cfg.autostart {
+        "systemd/user/graphical-session.target.wants/sysc-shell.service".source = unit;
+      })
       (
         lib.listToAttrs (
           map
