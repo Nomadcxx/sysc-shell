@@ -59,6 +59,9 @@ type Status struct {
 	Stderr []byte
 	// Since is when the current state began.
 	Since time.Time
+	// Consent is the most recent start's answer against the recorded
+	// approval. Its zero value means no start has checked one.
+	Consent ConsentVerdict
 }
 
 // RuntimeOptions configures one runtime.
@@ -76,6 +79,10 @@ type RuntimeOptions struct {
 	// re-announce them; on a first start there are none and the host does
 	// nothing.
 	SessionStarted func()
+	// Consent looks up the approval recorded for a copy. Every start
+	// compares the copy's bytes with it, and a copy that changed starts with
+	// no capabilities. Nil skips the check.
+	Consent ConsentLookup
 	// Now is the clock, injected so restart policy is testable without
 	// waiting out a sixty-second window.
 	Now func() time.Time
@@ -112,6 +119,7 @@ type Runtime struct {
 	failure       string
 	starts        int
 	stderr        []byte
+	consent       ConsentVerdict
 	session       *Session
 	sessionCancel context.CancelFunc
 	disp          *Dispatcher
@@ -291,6 +299,7 @@ func (r *Runtime) Status() Status {
 		Starts:  r.starts,
 		Stderr:  r.stderr,
 		Since:   r.since,
+		Consent: r.consent,
 	}
 	if r.session != nil {
 		st.PID = r.session.PID()
@@ -356,9 +365,19 @@ func (r *Runtime) launch(ctx context.Context) error {
 
 	r.setState(StateStarting, "")
 
+	supported := r.opts.Supported
+	if r.opts.Consent != nil {
+		verdict := VerifyConsent(r.candidate.Manifest, r.candidate.Source, r.opts.Consent)
+		r.mu.Lock()
+		r.consent = verdict
+		r.mu.Unlock()
+		if !verdict.Grants() {
+			supported = nil
+		}
+	}
 	sup := &Supervisor{
 		Manifest:         r.candidate.Manifest,
-		Supported:        r.opts.Supported,
+		Supported:        supported,
 		Limits:           r.opts.Limits,
 		HandshakeTimeout: r.opts.HandshakeTimeout,
 		ShutdownGrace:    r.opts.ShutdownGrace,

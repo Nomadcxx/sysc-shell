@@ -145,7 +145,10 @@ func (in *Installer) swapIn(id, staged string, rec Record) error {
 		rec.Previous = &old
 	}
 	records[id] = rec
-	return records.Save(in.Root)
+	if err := records.Save(in.Root); err != nil {
+		return err
+	}
+	return in.recordConsent(plugin.SourceManaged, id, active)
 }
 
 // Rollback swaps the installed version with the kept previous one.
@@ -192,6 +195,9 @@ func (in *Installer) Rollback(id string) error {
 		if err := records.Save(in.Root); err != nil {
 			return err
 		}
+		if err := in.recordConsent(plugin.SourceManaged, id, active); err != nil {
+			return err
+		}
 		if keepErr != nil {
 			return fail(KindDisk, keepErr, "rolled back, but the replaced version could not be kept")
 		}
@@ -217,7 +223,10 @@ func (in *Installer) Remove(id string) error {
 			}
 		}
 		delete(records, id)
-		return records.Save(in.Root)
+		if err := records.Save(in.Root); err != nil {
+			return err
+		}
+		return in.forgetConsent(id)
 	})
 }
 

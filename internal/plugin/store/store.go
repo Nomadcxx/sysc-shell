@@ -476,6 +476,7 @@ func (s *Store) rebuild() {
 		slog.Warn("plugin store: cannot read installed plugins", "err", err)
 		installed = Installed{}
 	}
+	s.adoptApprovals(installed)
 	var local map[string]string
 	if s.opts.Local != nil {
 		local = s.opts.Local()
