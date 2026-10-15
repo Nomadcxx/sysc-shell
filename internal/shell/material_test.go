@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -163,16 +162,29 @@ func TestMaterialCannotBreakTheTextFloorInEitherScheme(t *testing.T) {
 			text := theme.Color{R: th.OnSurface.R, G: th.OnSurface.G, B: th.OnSurface.B, A: 0xff}
 			for _, tone := range []render.Tone{render.ToneSmoke, render.ToneMilk, render.ToneAuto} {
 				bound := clampMaterialIntensity(th, render.Material{Tone: tone, Intensity: theme.GlassIntensityMax}, fill)
+				// A bound of zero is not a pass: it means the material paints
+				// nothing, which is the live defect this test previously slept
+				// through, because a zero bound satisfies every contrast
+				// constraint by doing nothing at all.
+				if bound == 0 {
+					t.Errorf("%s/opacity %d/%v: the bound resolved the material off entirely",
+						scheme.name, opacity, tone)
+				}
 				contrast := func(intensity uint8, ground uint8) float64 {
 					l := overlayLuma(fill, render.TransferLuma(tone, intensity, ground))
 					return theme.ContrastRatio(text, theme.Color{R: l, G: l, B: l, A: 0xff})
 				}
 				for g := 0; g <= 255; g++ {
 					g8 := uint8(g)
-					want := math.Min(theme.TextContrast, contrast(0, g8)) - materialContrastTolerance
-					if got := contrast(uint8(bound), g8); got < want {
-						t.Errorf("%s/opacity %d/%v over ground %d: %.2f:1 at intensity %d, want at least %.2f:1",
-							scheme.name, opacity, tone, g, got, bound, want)
+					base := contrast(0, g8)
+					// Only grounds the surface already makes legible are the
+					// material's business; the rest are the opacity floor's.
+					if base < theme.TextContrast {
+						continue
+					}
+					if got := contrast(uint8(bound), g8); got < theme.TextContrast-materialContrastTolerance {
+						t.Errorf("%s/opacity %d/%v over ground %d: %.2f:1 at intensity %d, below the %.1f:1 floor",
+							scheme.name, opacity, tone, g, got, bound, theme.TextContrast)
 					}
 				}
 			}

@@ -1951,8 +1951,24 @@ func clampMaterialIntensity(t Theme, m render.Material, fill render.Color) int {
 		ok := true
 		for g := 0; g <= 255; g++ {
 			g8 := uint8(g)
-			want := math.Min(theme.TextContrast, contrastAt(0, g8)) - materialContrastTolerance
-			if contrastAt(i8, g8) < want {
+			base := contrastAt(0, g8)
+			// Only the grounds this surface already makes legible are the
+			// material's business: where the capture itself leaves text under
+			// the floor, repairing that is the opacity floor's problem, not the
+			// material's, and every range of grounds crosses the text's own luma
+			// somewhere.
+			//
+			// Above the floor the rule is the floor, not the base contrast. One
+			// of the two tones always moves the ground towards the text — milk
+			// for light text, smoke for dark — so demanding that no ground lose
+			// contrast forbids that tone outright. Measured live on 2026-10-15:
+			// the first version of this rule left smoke byte-identical to no
+			// material at all, and the second left milk at zero in the dark
+			// scheme.
+			if base < theme.TextContrast {
+				continue
+			}
+			if contrastAt(i8, g8) < theme.TextContrast-materialContrastTolerance {
 				ok = false
 				break
 			}
