@@ -938,10 +938,14 @@ func TestRunArgvDefaultRefusesToLaunchFromATestBinary(t *testing.T) {
 func TestSessionPanelHoldsTheBatteryAndProfileCards(t *testing.T) {
 	reg := newPanelRegistry(t)
 	withTestBar(t, reg, 7, reg.cfg)
+	// The registry's relays read the sample under reg.mu from the moment
+	// NewRegistry returns, so the test writes it under the same lock.
+	reg.mu.Lock()
 	reg.sample.Battery = &metrics.BatterySnapshot{
 		Present: true, ChargeValid: true, Charge: 0.24, State: metrics.BatteryDischarging,
 		TimeRemaining: 52 * time.Minute, RateWatts: 16.2,
 	}
+	reg.mu.Unlock()
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
 		t.Fatal(err)
 	}
