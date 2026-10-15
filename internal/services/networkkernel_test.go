@@ -114,7 +114,8 @@ func TestSelectionPrefersNetworkManagerThenTheKernel(t *testing.T) {
 		{"no manager", errors.New("no bus"), kernel, TierKernel, true},
 		{"neither", errors.New("no bus"), fstest.MapFS{}, TierNone, false},
 	} {
-		be, tier := selectNetworkBackend(func() (backend, error) { return nm, tc.nmErr }, tc.kernel, func(string) string { return "" })
+		noIWD := func() (backend, error) { return nil, errors.New("absent") }
+		be, tier := selectNetworkBackend(func() (backend, error) { return nm, tc.nmErr }, noIWD, tc.kernel, func(string) string { return "" })
 		if tier != tc.want {
 			t.Errorf("%s: tier = %v, want %v", tc.name, tier, tc.want)
 		}

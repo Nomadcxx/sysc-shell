@@ -172,11 +172,14 @@ func interfaceIPv4(iface string) string {
 	return ""
 }
 
-// selectNetworkBackend tries NetworkManager, then the kernel. Selection
-// happens once; the reload path is the only re-probe.
-func selectNetworkBackend(nm func() (backend, error), kernel fs.FS, ipv4 func(string) string) (backend, Tier) {
+// selectNetworkBackend tries NetworkManager, then iwd, then the kernel.
+// Selection happens once; the reload path is the only re-probe.
+func selectNetworkBackend(nm, iwd func() (backend, error), kernel fs.FS, ipv4 func(string) string) (backend, Tier) {
 	if be, err := nm(); err == nil {
 		return be, TierNM
+	}
+	if be, err := iwd(); err == nil {
+		return be, TierIWD
 	}
 	k := newKernelBackend(kernel, ipv4)
 	if _, err := k.State(); err == nil {

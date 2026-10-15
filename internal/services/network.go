@@ -47,6 +47,8 @@ const (
 	TierNone Tier = iota
 	// TierNM is NetworkManager.
 	TierNM
+	// TierIWD is iwd, with wired links read from the kernel.
+	TierIWD
 	// TierKernel is the kernel's read-only view, used when no manager runs.
 	TierKernel
 )
@@ -88,10 +90,10 @@ func SignalBand(signal uint8) int {
 }
 
 // backend is the seam between the service and whatever answers for the
-// network: the pinned NetworkManager binding, or the kernel's read-only view
-// when no manager runs (networkkernel.go). Tests replace it with a fake rather
-// than a live system bus. Another writable backend is an owner decision, not
-// a slot this interface keeps open.
+// network: the pinned NetworkManager binding, iwd (networkiwd.go), or the
+// kernel's read-only view when no manager runs (networkkernel.go). Tests
+// replace it with a fake rather than a live system bus. A further writable
+// backend is an owner decision, not a slot this interface keeps open.
 type backend interface {
 	State() (NetworkState, error)
 	AccessPoints() ([]AccessPoint, error)
@@ -331,7 +333,10 @@ func (n *Network) Close() {
 // every method here dereferences it and a nil one would panic inside a widget
 // refresh, which presents as a shell that paints nothing.
 func NewSystemNetwork() *Network {
-	be, tier := selectNetworkBackend(func() (backend, error) { return newNMBackend() }, rootFS(), interfaceIPv4)
+	be, tier := selectNetworkBackend(
+		func() (backend, error) { return newNMBackend() },
+		func() (backend, error) { return newIWDBackend() },
+		rootFS(), interfaceIPv4)
 	switch tier {
 	case TierNone:
 		n := NewNetwork(be)
@@ -343,7 +348,11 @@ func NewSystemNetwork() *Network {
 		return NewNetwork(be)
 	}
 	n := NewNetwork(be)
-	if err := n.startSecrets(startSystemSecretExport); err != nil {
+	start := startSystemSecretExport
+	if iwd, ok := be.(*iwdBackend); ok {
+		start = func(e *secretExport) (func(), error) { return iwd.bus.ExportAgent(&iwdAgent{export: e, bus: iwd.bus}) }
+	}
+	if err := n.startSecrets(start); err != nil {
 		// A partial service would let secured activation wait for a prompt that
 		// can never arrive. Fail closed until the export can be registered.
 		n.ok = false
