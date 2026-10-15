@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,8 +28,14 @@ type StateStore interface {
 
 // CallEnv is the host surface one plugin is allowed to use.
 type CallEnv struct {
-	PluginID            string
-	Granted             []Capability
+	PluginID string
+	// Granted is what the plugin declared and accepted, broad or narrow; the
+	// gate expands it through grantsOf.
+	Granted []Capability
+	// Protocol is the minor the plugin's manifest declares. It decides which
+	// names a refusal can tell the plugin to declare, and whether output
+	// context is gated at all.
+	Protocol            v1.Version
 	DeclaredPanels      []Panel
 	Store               StateStore
 	OpenPanel           func(context.Context, v1.PanelParams) (v1.PanelResult, error)
@@ -60,12 +67,61 @@ func (e CallEnv) maxPending() int {
 }
 
 func (e CallEnv) allows(c Capability) bool {
+	if c == CapOutputsRead && e.Protocol.Minor < NarrowCapabilityMinor {
+		return true
+	}
 	for _, have := range e.Granted {
-		if have == c {
+		if slices.Contains(grantsOf(have), c) {
 			return true
 		}
 	}
 	return false
+}
+
+// classOf is the capability class one call needs, or "" for a call this host
+// does not know, which the dispatcher refuses on its own terms.
+func classOf(call v1.CallKind) Capability {
+	switch call {
+	case v1.CallStateGet, v1.CallStateList:
+		return CapStateRead
+	case v1.CallStateSet:
+		return CapStateWrite
+	case v1.CallPanelOpen, v1.CallPanelClose, v1.CallPanelResize, v1.CallViewFocus:
+		return CapPanels
+	case v1.CallSurfaceOpen, v1.CallSurfaceClose, v1.CallSurfacePin:
+		return CapFloatingSurfaces
+	case v1.CallNotify:
+		return CapNotifications
+	case v1.CallOutputContext:
+		return CapOutputsRead
+	case v1.CallWallpaperSnapshot:
+		return CapWallpaperRead
+	case v1.CallWallpaperMaskSet:
+		return CapWallpaperWrite
+	case v1.CallClipboardRead:
+		return CapClipboardRead
+	case v1.CallOpenURL:
+		return CapOpenURL
+	case v1.CallClipboardWrite:
+		return CapClipboardWrite
+	case v1.CallScreenshotStart:
+		return CapScreenshotCapture
+	case v1.CallScreenshotDirectory:
+		return CapScreenshotRead
+	case v1.CallFilesBrowse:
+		return CapFiles
+	}
+	return ""
+}
+
+// declareErr is the refusal for a call the plugin was not granted. It names
+// the declaration that would grant it, in the vocabulary the plugin's own
+// protocol minor can declare, so an author can paste it into the manifest.
+func (e CallEnv) declareErr(call v1.CallKind, c Capability) string {
+	if e.Protocol.Minor < NarrowCapabilityMinor {
+		c = broadNameOf(c)
+	}
+	return fmt.Sprintf(`call %q needs capability %q; declare it in manifest.json as {"capabilities":[%q]}`, call, c, c)
 }
 
 func (e CallEnv) hasPanel(id string) bool {
@@ -156,46 +212,28 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 	if err := ctx.Err(); err != nil {
 		return failReply(call.ID, err.Error())
 	}
+	if c := classOf(call.Call); c != "" && !d.env.allows(c) {
+		return failReply(call.ID, d.env.declareErr(call.Call, c))
+	}
 	switch call.Call {
 	case v1.CallStateGet, v1.CallStateSet, v1.CallStateList:
-		if !d.env.allows(CapState) {
-			return failReply(call.ID, "capability state is not granted")
-		}
 		if d.env.Store == nil {
 			return failReply(call.ID, "no state store")
 		}
 		return d.state(ctx, call)
 	case v1.CallPanelOpen, v1.CallPanelClose:
-		if !d.env.allows(CapPanels) {
-			return failReply(call.ID, "capability panels is not granted")
-		}
 		return d.panel(ctx, call)
 	case v1.CallPanelResize, v1.CallViewFocus:
-		if !d.env.allows(CapPanels) {
-			return failReply(call.ID, "capability panels is not granted")
-		}
 		return d.panelSurface(ctx, call)
 	case v1.CallSurfaceOpen, v1.CallSurfaceClose, v1.CallSurfacePin:
-		if !d.env.allows(CapFloatingSurfaces) {
-			return failReply(call.ID, "capability floating_surfaces is not granted")
-		}
 		return d.floatingSurface(ctx, call)
 	case v1.CallNotify:
-		if !d.env.allows(CapNotifications) {
-			return failReply(call.ID, "capability notifications is not granted")
-		}
 		return d.notify(ctx, call)
 	case v1.CallOutputContext:
 		return d.output(ctx, call)
 	case v1.CallWallpaperSnapshot, v1.CallWallpaperMaskSet:
-		if !d.env.allows(CapWallpaper) {
-			return failReply(call.ID, "capability wallpaper is not granted")
-		}
 		return d.wallpaper(ctx, call)
 	case v1.CallClipboardRead:
-		if !d.env.allows(CapClipboardRead) {
-			return failReply(call.ID, "capability clipboard-read is not granted")
-		}
 		var params v1.ClipboardReadParams
 		if err := decodeStrictParams(call.Params, &params); err != nil {
 			return failReply(call.ID, err.Error())
@@ -212,24 +250,12 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 		}
 		return okReply(call.ID, result)
 	case v1.CallOpenURL:
-		if !d.env.allows(CapOpenURL) {
-			return failReply(call.ID, "capability open-url is not granted")
-		}
 		return d.openURL(ctx, call)
 	case v1.CallClipboardWrite:
-		if !d.env.allows(CapClipboardWrite) {
-			return failReply(call.ID, "capability clipboard-write is not granted")
-		}
 		return d.clipboardWrite(ctx, call)
 	case v1.CallScreenshotStart, v1.CallScreenshotDirectory:
-		if !d.env.allows(CapScreenshot) {
-			return failReply(call.ID, "capability screenshot is not granted")
-		}
 		return d.screenshot(ctx, call)
 	case v1.CallFilesBrowse:
-		if !d.env.allows(CapFiles) {
-			return failReply(call.ID, "capability files is not granted")
-		}
 		return d.filesBrowse(ctx, call)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))

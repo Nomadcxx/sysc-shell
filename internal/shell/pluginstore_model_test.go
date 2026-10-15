@@ -229,3 +229,24 @@ func TestUpdateConsentSaysWhatTheAsksGainedAndLost(t *testing.T) {
 		}
 	}
 }
+
+func TestConsentCardReadsAnOldGrantWithItsMeaning(t *testing.T) {
+	l := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.5.0")
+	l.Entry.Release.Capabilities = []string{"state", "files:browser"}
+	l.Resolution.Release = &l.Entry.Release
+	if !containsString(detailFor(l, false, nil, "", "en").ConsentLines, "Capabilities: state (read and write), files:browser") {
+		t.Fatalf("install card = %v", detailFor(l, false, nil, "", "en").ConsentLines)
+	}
+	// Respelling a grant is not a change to ask about.
+	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"state-read", "state-write", "files"}, Requires: []string{"notify-send"}}
+	l.Status, l.UpdateAvailable = store.StatusUpdateAvailable, true
+	detail := detailFor(l, false, nil, "", "en")
+	if detail.NeedsConsent {
+		t.Fatalf("a respelt grant asked for consent: %v", detail.ConsentLines)
+	}
+	for _, line := range detail.ConsentLines {
+		if strings.HasPrefix(line, "Capabilities added") || strings.HasPrefix(line, "Capabilities removed") {
+			t.Fatalf("a respelt grant reads as a change: %q", line)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
@@ -303,7 +304,7 @@ func (s *Store) Update(id string, want ReleaseRef, confirmed bool) (<-chan error
 		return nil, err
 	}
 	rel := l.Resolution.Release
-	if !confirmed && (!catalog.SameSet(l.Installed.Capabilities, rel.Capabilities) || !catalog.SameSet(l.Installed.Requires, rel.Requires.Commands)) {
+	if !confirmed && (!plugin.SameGrants(l.Installed.Capabilities, rel.Capabilities) || !catalog.SameSet(l.Installed.Requires, rel.Requires.Commands)) {
 		return nil, fail(KindConsent, nil, "%s %s asks for capabilities %v and commands %v; installed %s has %v and %v",
 			id, rel.Version, rel.Capabilities, rel.Requires.Commands, l.Installed.Version, l.Installed.Capabilities, l.Installed.Requires)
 	}

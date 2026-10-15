@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
@@ -312,7 +313,7 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 	action, reason := detailAction(listing)
 	needsConsent := action == ActionInstall
 	if action == ActionUpdate && listing.Installed != nil {
-		needsConsent = !catalog.SameSet(listing.Installed.Capabilities, release.Capabilities) ||
+		needsConsent = !plugin.SameGrants(listing.Installed.Capabilities, release.Capabilities) ||
 			!catalog.SameSet(listing.Installed.Requires, release.Requires.Commands)
 	}
 	description := listing.Entry.LongDescription
@@ -345,11 +346,13 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 			versionLine,
 			"Catalog commit: " + listing.CatalogCommit,
 			"SHA-256: " + sha,
-			"Capabilities: " + joinOrNone(detail.Capabilities),
+			"Capabilities: " + joinOrNone(describeCapabilities(detail.Capabilities)),
 			"Required commands: " + joinOrNone(detail.RequiredCommands),
 		}
 		if action == ActionUpdate && listing.Installed != nil {
-			detail.ConsentLines = append(detail.ConsentLines, changeLines("Capabilities", listing.Installed.Capabilities, detail.Capabilities)...)
+			if !plugin.SameGrants(listing.Installed.Capabilities, detail.Capabilities) {
+				detail.ConsentLines = append(detail.ConsentLines, changeLines("Capabilities", listing.Installed.Capabilities, detail.Capabilities)...)
+			}
 			detail.ConsentLines = append(detail.ConsentLines, changeLines("Required commands", listing.Installed.Requires, detail.RequiredCommands)...)
 		}
 		detail.ConsentLines = append(detail.ConsentLines, "It runs as your user with full file and network access.")
@@ -383,6 +386,14 @@ func changeLines(what string, from, to []string) []string {
 		lines = append(lines, what+" removed: "+strings.Join(removed, ", "))
 	}
 	return lines
+}
+
+func describeCapabilities(names []string) []string {
+	out := make([]string, len(names))
+	for i, name := range names {
+		out[i] = plugin.DescribeCapability(name)
+	}
+	return out
 }
 
 func joinOrNone(values []string) string {

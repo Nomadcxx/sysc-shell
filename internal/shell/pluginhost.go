@@ -114,6 +114,8 @@ var hostPluginCaps = []plugin.Capability{
 	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
 	plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapScreenshot,
 	plugin.CapFiles,
+	plugin.CapStateRead, plugin.CapStateWrite, plugin.CapWallpaperRead, plugin.CapWallpaperWrite,
+	plugin.CapScreenshotCapture, plugin.CapScreenshotRead, plugin.CapOutputsRead, plugin.CapFilesBrowser,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -929,6 +931,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 	return plugin.CallEnv{
 		PluginID:       id,
 		Granted:        grantedCaps(rt),
+		Protocol:       m.Protocol,
 		DeclaredPanels: m.Panels,
 		Store:          store,
 		CallTimeout:    pluginCallTimeout,

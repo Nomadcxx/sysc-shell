@@ -72,7 +72,7 @@ func TestHostCallWallpaperDeniedWithoutCapability(t *testing.T) {
 
 	for _, call := range []v1.CallKind{v1.CallWallpaperSnapshot, v1.CallWallpaperMaskSet} {
 		reply := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "wallpaper", Call: call})
-		if reply.OK || !strings.Contains(reply.Error, "capability wallpaper is not granted") {
+		if reply.OK || !strings.Contains(reply.Error, `needs capability "wallpaper"`) {
 			t.Errorf("%s reply = %+v, want wallpaper capability denial", call, reply)
 		}
 	}
