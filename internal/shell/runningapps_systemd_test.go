@@ -269,3 +269,75 @@ func installRunningAppScopeTestCommands(r *Registry, stop func(string) error) {
 	}
 	r.forceQuitRunningAppScope = stop
 }
+
+func TestAppScopeUnitFromProcCgroup(t *testing.T) {
+	t.Parallel()
+	uid := os.Getuid()
+	appSlice := fmt.Sprintf("/user.slice/user-%d.slice/user@%d.service/app.slice/", uid, uid)
+	for _, tc := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{"Steam launcher scope", "0::" + appSlice + "app-niri-steam-3743000.scope", "app-niri-steam-3743000.scope"},
+		{"legacy app scope", "0::" + appSlice + "app-discord-3431535.scope", "app-discord-3431535.scope"},
+		{"wrong slice", fmt.Sprintf("0::/user.slice/user-%d.slice/user@%d.service/session.slice/app-niri-steam-3743000.scope", uid+1, uid+1), ""},
+		{"nested cgroup", "0::" + appSlice + "app-niri-steam-3743000.scope/child.scope", ""},
+		{"non-app scope", "0::" + appSlice + "session-1.scope", ""},
+		{"malformed PID suffix", "0::" + appSlice + "app-niri-steam-x.scope", ""},
+		{"zero PID suffix", "0::" + appSlice + "app-niri-steam-0.scope", ""},
+		{"service unit", "0::" + appSlice + "app-niri-steam-3743000.service", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := appScopeUnitFromProcCgroup(uid, tc.line+"\n")
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("unit = %q, want no scope", got)
+				}
+				return
+			}
+			if !ok || got != tc.want {
+				t.Fatalf("unit = %q, ok = %t, want %q", got, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestForceQuitRunningAppScopesFindsContainingProcessCgroup(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	uid := os.Getuid()
+	reg.readProcessCgroup = func(pid int) (string, error) {
+		if pid != 3746511 {
+			t.Fatalf("read cgroup for PID %d, want Steam client PID 3746511", pid)
+		}
+		return fmt.Sprintf("0::/user.slice/user-%d.slice/user@%d.service/app.slice/app-niri-steam-3743000.scope\n", uid, uid), nil
+	}
+	reg.runArgvOutput = func(argv []string) (string, error) {
+		switch {
+		case argv[0] == "systemd-escape":
+			return "xwayland-mismatched-app-id\n", nil
+		case argv[0] == "systemctl" && argv[2] == "list-units":
+			return "app-niri-steam-3743000.scope loaded active running app-niri-steam-3743000.scope\n", nil
+		case argv[0] == "systemctl" && argv[2] == "show":
+			unit := argv[len(argv)-1]
+			return fmt.Sprintf("Id=%s\nLoadState=loaded\nActiveState=active\nKillMode=control-group\nControlGroup=/user.slice/user-%d.slice/user@%d.service/app.slice/%s\n",
+				unit, uid, uid, unit), nil
+		default:
+			return "", fmt.Errorf("unexpected command: %v", argv)
+		}
+	}
+	var stopped []string
+	reg.forceQuitRunningAppScope = func(unit string) error {
+		stopped = append(stopped, unit)
+		return nil
+	}
+
+	if err := reg.forceQuitRunningAppScopes([]string{"xwayland-mismatched-app-id"}, []int{3746511}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stopped) != 1 || stopped[0] != "app-niri-steam-3743000.scope" {
+		t.Fatalf("killed scopes = %v, want containing Steam scope only", stopped)
+	}
+}

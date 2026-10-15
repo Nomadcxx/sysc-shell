@@ -254,6 +254,11 @@ func runningAppMenu(slot runningAppSlot, workspaces []niri.Workspace) []runningA
 		Kind:  runningAppMenuHeader,
 		Label: fmt.Sprintf("%s (%s)", name, windowCount(len(slot.Members))),
 	}}
+	if len(slot.Members) > 0 {
+		rows = append(rows, runningAppMenuRow{
+			Kind: runningAppMenuForceQuit, Label: "Close all and force quit",
+		})
+	}
 
 	members := slices.Clone(slot.Members)
 	slices.SortFunc(members, compareWindowMRU)
@@ -289,11 +294,6 @@ func runningAppMenu(slot runningAppSlot, workspaces []niri.Workspace) []runningA
 				MoveWorkspaceID: workspace.ID,
 			})
 		}
-	}
-	if len(slot.Members) > 0 {
-		rows = append(rows, runningAppMenuRow{
-			Kind: runningAppMenuForceQuit, Label: "Close all and force quit",
-		})
 	}
 	return rows
 }
@@ -450,17 +450,60 @@ func appScopeUnitMatchesAppID(escapedAppID, unit string) bool {
 
 func appScopeUnitMatchesWindowPID(pid int, unit string) bool {
 	const prefix = "app-niri-"
-	if pid <= 0 || !strings.HasPrefix(unit, prefix) || !strings.HasSuffix(unit, ".scope") {
+	if pid <= 0 || !strings.HasPrefix(unit, prefix) {
 		return false
+	}
+	value, ok := appScopeUnitPID(unit)
+	return ok && value == uint64(pid)
+}
+
+func appScopeUnitPID(unit string) (uint64, bool) {
+	const prefix = "app-"
+	if !strings.HasPrefix(unit, prefix) || !strings.HasSuffix(unit, ".scope") {
+		return 0, false
 	}
 	base := strings.TrimSuffix(unit, ".scope")
 	lastDash := strings.LastIndexByte(base, '-')
 	if lastDash <= len(prefix) {
-		return false
+		return 0, false
 	}
 	suffix := base[lastDash+1:]
-	value, err := strconv.Atoi(suffix)
-	return err == nil && value > 0 && strconv.Itoa(value) == suffix && value == pid
+	value, err := strconv.ParseUint(suffix, 10, 64)
+	return value, err == nil && value > 0 && strconv.FormatUint(value, 10) == suffix
+}
+
+func appScopeUnitFromProcCgroup(uid int, contents string) (string, bool) {
+	prefix := fmt.Sprintf("/user.slice/user-%d.slice/user@%d.service/app.slice/", uid, uid)
+	for _, line := range strings.Split(contents, "\n") {
+		fields := strings.SplitN(line, ":", 3)
+		if len(fields) != 3 || fields[0] != "0" || fields[1] != "" {
+			continue
+		}
+		path := fields[2]
+		if !strings.HasPrefix(path, prefix) {
+			return "", false
+		}
+		unit := strings.TrimPrefix(path, prefix)
+		if strings.Contains(unit, "/") {
+			return "", false
+		}
+		if _, ok := appScopeUnitPID(unit); !ok {
+			return "", false
+		}
+		return unit, true
+	}
+	return "", false
+}
+
+func readProcessCgroupDefault(pid int) (string, error) {
+	if pid <= 0 {
+		return "", errors.New("invalid process ID")
+	}
+	contents, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cgroup"))
+	if err != nil {
+		return "", fmt.Errorf("read process %d cgroup: %w", pid, err)
+	}
+	return string(contents), nil
 }
 
 func parseNiriAppScopeProperties(output string) niriAppScopeProperties {
@@ -523,6 +566,20 @@ func (r *Registry) forceQuitRunningAppScopes(appIDs []string, windowPIDs []int) 
 	}
 	slices.Sort(pids)
 	pids = slices.Compact(pids)
+	processScopes := make(map[string]struct{}, len(pids))
+	var processCgroupErrors []error
+	if r.readProcessCgroup != nil {
+		for _, pid := range pids {
+			contents, err := r.readProcessCgroup(pid)
+			if err != nil {
+				processCgroupErrors = append(processCgroupErrors, fmt.Errorf("read current Niri window PID %d cgroup: %w", pid, err))
+				continue
+			}
+			if unit, ok := appScopeUnitFromProcCgroup(os.Getuid(), contents); ok {
+				processScopes[unit] = struct{}{}
+			}
+		}
+	}
 	if len(ids) == 0 && len(pids) == 0 {
 		return errors.New("no current Niri app IDs or window PIDs")
 	}
@@ -556,7 +613,7 @@ func (r *Registry) forceQuitRunningAppScopes(appIDs []string, windowPIDs []int) 
 	var units []string
 	seenUnits := make(map[string]struct{})
 	for _, unit := range parseActiveAppScopeUnits(unitsOutput) {
-		matched := false
+		_, matched := processScopes[unit]
 		for _, appID := range escaped {
 			if appScopeUnitMatchesAppID(appID, unit) {
 				matched = true
@@ -579,6 +636,9 @@ func (r *Registry) forceQuitRunningAppScopes(appIDs []string, windowPIDs []int) 
 		}
 	}
 	if len(units) == 0 {
+		if len(processCgroupErrors) > 0 {
+			return fmt.Errorf("no active app scope found for current Niri windows: %w", errors.Join(processCgroupErrors...))
+		}
 		return errors.New("no active app scope found for current Niri windows")
 	}
 	slices.Sort(units)
