@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,6 +31,69 @@ func TestRunConfigCheckUsageRefusals(t *testing.T) {
 			}
 			if out.Len() != 0 {
 				t.Fatalf("stdout = %q, want empty on refusal", out.String())
+			}
+		})
+	}
+}
+
+func TestRunConfigCheckReportsOKAndDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+
+	var out, errOut bytes.Buffer
+	if code := runConfigCheck(nil, &out, &errOut); code != 0 {
+		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
+	}
+	want := filepath.Join(dir, "config", "sysc-shell", "config.json") + ": ok (defaults, file not found)\n"
+	if out.String() != want {
+		t.Fatalf("stdout = %q, want %q", out.String(), want)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", errOut.String())
+	}
+
+	if err := os.WriteFile(path, []byte(`{"terminal-opacity":90}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := runConfigCheck([]string{path}, &out, &errOut); code != 0 {
+		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
+	}
+	if got, want := out.String(), path+": ok\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestRunConfigCheckReportsLoaderErrorsVerbatim(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantCode int
+		wantErr  string
+	}{
+		{"unknown field", `{"nope":1}`, 1, `config: `},
+		{"opacity out of range", `{"terminal-opacity":10}`, 1, "config: terminal-opacity: 10 is outside 50..100"},
+		{"blur out of range", `{"terminal-art":{"blur":900}}`, 1, "config: terminal-art.blur: must be in 0..64"},
+		{"second value", `{"terminal-opacity":90} {"terminal-opacity":90}`, 1, "config: more than one JSON value"},
+		{"empty file", ``, 1, `config: `},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			code := runConfigCheck([]string{path}, &out, &errOut)
+			if code != tc.wantCode {
+				t.Fatalf("code = %d, want %d (stderr %q)", code, tc.wantCode, errOut.String())
+			}
+			if !strings.Contains(errOut.String(), tc.wantErr) {
+				t.Fatalf("stderr = %q, want it to contain %q", errOut.String(), tc.wantErr)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty on failure", out.String())
 			}
 		})
 	}
