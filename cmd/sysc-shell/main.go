@@ -206,7 +206,9 @@ func run(ctx context.Context) (err error) {
 	hupDone := make(chan struct{})
 	go func() {
 		defer close(watcherDone)
-		_ = config.Watch(ctx, cfgPath, func() { queueReload(reloads) })
+		if err := config.Watch(ctx, cfgPath, func() { queueReload(reloads) }); err != nil {
+			log.Printf("sysc-shell: %v; saves need SIGHUP to apply", err)
+		}
 	}()
 	go func() {
 		defer close(hupDone)
