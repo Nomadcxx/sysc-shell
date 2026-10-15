@@ -229,6 +229,8 @@ type Registry struct {
 	runArgvOutput func([]string) (string, error)
 	// forceQuitRunningAppScope kills one validated app scope outside Registry.mu.
 	forceQuitRunningAppScope func(string) error
+	// readProcessCgroup reads the cgroup for a current Niri window PID.
+	readProcessCgroup func(int) (string, error)
 	// startInhibit creates the process-backed caffeine hold. Tests replace it.
 	startInhibit    func() (io.Closer, error)
 	inhibit         io.Closer
@@ -457,6 +459,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		settingsReadDir:          os.ReadDir,
 		runArgvOutput:            runArgvOutputDefault,
 		forceQuitRunningAppScope: forceQuitNiriAppScopeDefault,
+		readProcessCgroup:        readProcessCgroupDefault,
 		startInhibit:             startInhibitDefault,
 		autoPauseApplied:         make(map[string]wallpaper.Reasons),
 		autoPauseFPS:             make(map[string]int),
