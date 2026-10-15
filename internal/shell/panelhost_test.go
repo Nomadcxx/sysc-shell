@@ -966,10 +966,16 @@ func settleHostAnimation(reg *Registry, h *PanelHost) {
 	}
 }
 
+// asyncTestWait bounds a wait for something that must happen. It only sets
+// how long a failing test takes to say so; a passing test returns as soon as
+// the event arrives, so it is long enough for the package's parallel -race
+// run on a loaded machine.
+const asyncTestWait = 10 * time.Second
+
 func drainAux(t *testing.T, reg *Registry, n int) []wayland.AuxRequest {
 	t.Helper()
 	out := make([]wayland.AuxRequest, 0, n)
-	deadline := time.After(time.Second)
+	deadline := time.After(asyncTestWait)
 	for len(out) < n {
 		select {
 		case req := <-reg.AuxRequests():
