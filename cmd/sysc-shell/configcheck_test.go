@@ -17,6 +17,7 @@ func TestRunConfigCheckUsageRefusals(t *testing.T) {
 	}{
 		{"too many paths", []string{"check", "a.json", "b.json"}, 2, "usage: sysc-shell config check [path]"},
 		{"flag is refused", []string{"check", "--json"}, 2, "usage: sysc-shell config check [path]"},
+		{"empty path", []string{"check", ""}, 2, "usage: sysc-shell config check [path]"},
 		{"directory", []string{"check", "."}, 2, "config: read ."},
 	}
 	for _, tc := range cases {
@@ -163,5 +164,22 @@ func TestRunConfigCheckRefusesAnIncompleteGrammar(t *testing.T) {
 				t.Fatalf("stdout = %q, want empty", out.String())
 			}
 		})
+	}
+}
+
+func TestRunConfigCheckRefusesWithoutAConfigHome(t *testing.T) {
+	// With HOME and XDG_CONFIG_HOME unset there is no default path to resolve;
+	// the refusal must say which input is missing.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	var out, errOut bytes.Buffer
+	if code := runConfigCheck([]string{"check"}, &out, &errOut); code != 2 {
+		t.Fatalf("code = %d, want 2 (stderr %q)", code, errOut.String())
+	}
+	if got, want := errOut.String(), "config: no config path: HOME is unset\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", out.String())
 	}
 }

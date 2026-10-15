@@ -28,6 +28,10 @@ func runConfigCheck(args []string, stdout, stderr io.Writer) int {
 		path = args[1]
 	}
 	if path == "" {
+		if len(args) == 2 {
+			fmt.Fprintln(stderr, "usage: sysc-shell config check [path]")
+			return 2
+		}
 		fmt.Fprintln(stderr, "config: no config path: HOME is unset")
 		return 2
 	}
