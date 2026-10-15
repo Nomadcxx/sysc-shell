@@ -626,3 +626,51 @@ func hasNamedNode(n *ui.Node, name string) bool {
 	}
 	return false
 }
+
+func countToggles(n *ui.Node) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if n.Kind == ui.KindToggle {
+		count++
+	}
+	for _, c := range n.Children {
+		count += countToggles(c)
+	}
+	return count
+}
+
+func TestTheKernelTierSaysNoManagerAnsweredNotThatTheRadioIsOff(t *testing.T) {
+	st := services.NetworkState{Tier: services.TierKernel, ReadOnly: true, WirelessEnabled: true,
+		Kind: services.ConnWireless, Connected: true, Interface: "wlan0", Strength: 80}
+	h := &PanelHost{networkTab: "wifi"}
+
+	card := networkHeaderCard(h, st, services.Snapshot{}, standardMetrics())
+	texts := strings.Join(collectText(card), "|")
+	if strings.Contains(strings.ToLower(texts), "off") {
+		t.Errorf("a working radio under the kernel tier reads as off: %s", texts)
+	}
+	if !strings.Contains(texts, "Connected via wlan0") {
+		t.Errorf("a connected link with no SSID must say what carries it: %s", texts)
+	}
+	if countToggles(card) != 0 {
+		t.Error("the kernel tier cannot switch the radio, so it must offer no switch")
+	}
+
+	body := strings.Join(collectText(networkWifiTree(nil, st, h, standardMetrics())), "|")
+	if !strings.Contains(body, "NetworkManager is not running") ||
+		!strings.Contains(body, "Showing what the kernel reports. Networks can't be listed or joined without it.") {
+		t.Errorf("the Wi-Fi body must name the tier and why there is no list: %s", body)
+	}
+	if strings.Contains(body, "No networks found") || strings.Contains(body, "Turn the radio on") {
+		t.Errorf("the Wi-Fi body blames the radio or the air: %s", body)
+	}
+}
+
+func TestNoTierKeepsTodaysRadioNotice(t *testing.T) {
+	tree := networkWifiTree(nil, services.NetworkState{Tier: services.TierNone, ReadOnly: true}, &PanelHost{networkTab: "wifi"}, standardMetrics())
+	if !strings.Contains(strings.Join(collectText(tree), "|"), "Wi-Fi is off") {
+		t.Fatal("TierNone lost today's notice")
+	}
+}

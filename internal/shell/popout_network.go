@@ -115,9 +115,10 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 	}
 
 	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Height: well}
-	if !wired {
+	if !wired && !st.ReadOnly {
 		// The wired link has no radio to switch, so the toggle belongs to the
-		// Wi-Fi tab alone.
+		// Wi-Fi tab alone; and a tier that can change nothing offers no
+		// switch it would refuse.
 		trailing.Children = append(trailing.Children, &ui.Node{
 			Kind: ui.KindToggle, Value: toggleValue(st.WirelessEnabled),
 			Action: "network-radio", Name: cardT(tr, "net.tab.wifi", "Wi-Fi"), Role: "switch", Focusable: true,
@@ -179,6 +180,11 @@ func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *Pa
 		return networkPasswordCard(h)
 	}
 	switch {
+	case st.Tier == services.TierKernel:
+		// No manager answered. The radio may be fine; what is missing is
+		// anything that can list or join a network.
+		return networkNotice(cardT(tr, "net.tier.kernel", "NetworkManager is not running"),
+			cardT(tr, "net.hint.kernel", "Showing what the kernel reports. Networks can't be listed or joined without it."), m)
 	case !st.WirelessEnabled:
 		// Not an empty list: an empty list claims "no networks here", which is
 		// a different and wrong statement.
@@ -441,6 +447,10 @@ func headerTitle(st services.NetworkState, wired bool, tr translateFunc) string 
 	}
 	if st.Connected && st.SSID != "" {
 		return st.SSID
+	}
+	if st.Connected && st.Interface != "" {
+		// The kernel tier carries traffic it cannot name a network for.
+		return fmt.Sprintf(cardT(tr, "net.connected_via", "Connected via %s"), st.Interface)
 	}
 	if st.Resolving {
 		return cardT(tr, "net.connecting", "Connecting…")
