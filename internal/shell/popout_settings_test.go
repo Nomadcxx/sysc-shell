@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/buildinfo"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
@@ -198,7 +199,7 @@ func TestRegistryStatusReportsOpenPanelsAndTemplates(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
 	st := reg.Status()
-	if st["version"] != "sysc-shell" {
+	if st["version"] != buildinfo.Line() {
 		t.Fatalf("version = %v", st["version"])
 	}
 	if _, ok := st["audio"].(bool); !ok {
