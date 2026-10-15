@@ -336,20 +336,53 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 		detail.InstalledVersion = listing.Installed.Version
 	}
 	if action == ActionInstall || action == ActionUpdate {
+		versionLine := "Version: " + version
+		if action == ActionUpdate && listing.Installed != nil {
+			versionLine = "Version: " + listing.Installed.Version + " → " + version
+		}
 		detail.ConsentLines = []string{
 			"Source: " + detail.SourceBadge,
-			"Version: " + version,
+			versionLine,
 			"Catalog commit: " + listing.CatalogCommit,
 			"SHA-256: " + sha,
 			"Capabilities: " + joinOrNone(detail.Capabilities),
 			"Required commands: " + joinOrNone(detail.RequiredCommands),
-			"It runs as your user with full file and network access.",
 		}
+		if action == ActionUpdate && listing.Installed != nil {
+			detail.ConsentLines = append(detail.ConsentLines, changeLines("Capabilities", listing.Installed.Capabilities, detail.Capabilities)...)
+			detail.ConsentLines = append(detail.ConsentLines, changeLines("Required commands", listing.Installed.Requires, detail.RequiredCommands)...)
+		}
+		detail.ConsentLines = append(detail.ConsentLines, "It runs as your user with full file and network access.")
 		if enabled {
 			detail.ConsentLines = append(detail.ConsentLines, "It is still enabled, so it will start immediately.")
 		}
 	}
 	return detail
+}
+
+// changeLines names what an update adds to and removes from one list of
+// asks, so a consent to changed asks reads as the change, not as a list to
+// compare by eye.
+func changeLines(what string, from, to []string) []string {
+	var added, removed []string
+	for _, v := range to {
+		if !slices.Contains(from, v) {
+			added = append(added, v)
+		}
+	}
+	for _, v := range from {
+		if !slices.Contains(to, v) {
+			removed = append(removed, v)
+		}
+	}
+	var lines []string
+	if len(added) > 0 {
+		lines = append(lines, what+" added: "+strings.Join(added, ", "))
+	}
+	if len(removed) > 0 {
+		lines = append(lines, what+" removed: "+strings.Join(removed, ", "))
+	}
+	return lines
 }
 
 func joinOrNone(values []string) string {

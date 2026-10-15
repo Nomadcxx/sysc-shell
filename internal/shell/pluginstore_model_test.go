@@ -199,3 +199,33 @@ func containsString(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+func TestUpdateConsentSaysWhatTheAsksGainedAndLost(t *testing.T) {
+	l := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.5.0")
+	l.Entry.Release.Capabilities = []string{"panels", "notifications"}
+	l.Entry.Release.Requires.Commands = []string{"curl"}
+	l.Resolution.Release = &l.Entry.Release
+	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"panels", "state"}, Requires: []string{"notify-send"}}
+	l.Status = store.StatusUpdateAvailable
+	l.UpdateAvailable = true
+	detail := detailFor(l, false, nil, "", "en")
+	for _, want := range []string{
+		"Version: 1.4.0 → 1.5.0",
+		"Capabilities added: notifications",
+		"Capabilities removed: state",
+		"Required commands added: curl",
+		"Required commands removed: notify-send",
+	} {
+		if !containsString(detail.ConsentLines, want) {
+			t.Errorf("consent lines %v lack %q", detail.ConsentLines, want)
+		}
+	}
+
+	// An install has nothing to compare with, and says nothing about change.
+	l.Installed, l.UpdateAvailable, l.Status = nil, false, store.StatusAvailable
+	for _, line := range detailFor(l, false, nil, "", "en").ConsentLines {
+		if strings.Contains(line, "added:") || strings.Contains(line, "removed:") || strings.Contains(line, "→") {
+			t.Errorf("install consent line %q describes a change", line)
+		}
+	}
+}
