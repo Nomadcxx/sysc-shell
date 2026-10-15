@@ -62,3 +62,7 @@ func (s *pulseStream) Close() {
 }
 
 func (s *pulseStream) Lost() bool { return s.stream.Closed() || s.stream.Error() != nil }
+
+// NotificationCue is the one earcon the shell plays: a short rising tone,
+// quiet enough to sit under whatever is already playing.
+var NotificationCue = Tone{Hz: 880, To: 1320, Seconds: 0.12}

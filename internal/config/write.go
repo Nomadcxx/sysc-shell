@@ -40,6 +40,9 @@ func Write(path string, c Config) error {
 	if _, err := applyMonitor(*monitorWire(c.Monitor), "monitor"); err != nil {
 		return err
 	}
+	if _, err := applySounds(*soundsWire(c.Sounds), "sounds"); err != nil {
+		return err
+	}
 	if err := ValidateNightLight(c.NightLight); err != nil {
 		return err
 	}
@@ -153,6 +156,9 @@ func toWire(c Config) wireConfig {
 	}
 	if c.Monitor != defaultMonitor() {
 		w.Monitor = monitorWire(c.Monitor)
+	}
+	if c.Sounds != defaultSounds() {
+		w.Sounds = soundsWire(c.Sounds)
 	}
 	for i := range c.Outputs {
 		conn := c.Outputs[i].Connector
@@ -653,6 +659,19 @@ func themeDiff(got Theme) *wireTheme {
 		}
 	}
 	return &w
+}
+
+// soundsWire emits only the sounds fields that differ from the default.
+func soundsWire(s Sounds) *wireSounds {
+	d := defaultSounds()
+	out := &wireSounds{}
+	if s.Notification != d.Notification {
+		out.Notification = &s.Notification
+	}
+	if s.Volume != d.Volume {
+		out.Volume = &s.Volume
+	}
+	return out
 }
 
 // monitorWire emits only the monitor fields that differ from the default.

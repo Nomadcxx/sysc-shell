@@ -375,6 +375,20 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setBool("monitor.show-processes", func(c *config.Config, v bool) { c.Monitor.ShowProcesses = v }),
 		},
 		{
+			Path: "sounds.notification", Label: "Notification sound", Section: "Sounds", Group: "Cues",
+			Describe: "Play a short tone when a notification arrives, unless do not disturb is on.",
+			Kind:     KindBool,
+			Get:      getBool(func(c config.Config) bool { return c.Sounds.Notification }),
+			Set:      setBool("sounds.notification", func(c *config.Config, v bool) { c.Sounds.Notification = v }),
+		},
+		{
+			Path: "sounds.volume", Present: PresentSlider, Unit: "%", Label: "Cue volume", Section: "Sounds", Group: "Cues",
+			Describe: "The cues' own level, under the system volume.",
+			Kind:     KindInt, Min: config.SoundsVolumeMin, Max: config.SoundsVolumeMax,
+			Get: getInt(func(c config.Config) int { return c.Sounds.Volume }),
+			Set: setInt("sounds.volume", config.SoundsVolumeMin, config.SoundsVolumeMax, func(c *config.Config, n int) { c.Sounds.Volume = n }),
+		},
+		{
 			Path: "session.locker", Label: "Locker", Section: "Session", Group: "Lock",
 			Describe: "Command that locks the session. Empty hides the lock action.",
 			Kind:     KindString,
@@ -840,7 +854,7 @@ func SectionClusters() []Cluster {
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
-		{"System", []string{"Session", "Lock Screen", "Accessibility"}},
+		{"System", []string{"Session", "Lock Screen", "Accessibility", "Sounds"}},
 	}
 }
 

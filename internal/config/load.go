@@ -183,6 +183,11 @@ type wireMedia struct {
 	Blacklist []string `json:"blacklist,omitempty"`
 }
 
+type wireSounds struct {
+	Notification *bool `json:"notification,omitempty"`
+	Volume       *int  `json:"volume,omitempty"`
+}
+
 type wireMonitor struct {
 	Refresh         *int    `json:"refresh,omitempty"`
 	SortBackground  *string `json:"sort_column_background,omitempty"`
@@ -227,6 +232,7 @@ type wireConfig struct {
 	NightLight    *wireNightLight      `json:"night-light,omitempty"`
 	Media         *wireMedia           `json:"media,omitempty"`
 	Monitor       *wireMonitor         `json:"monitor,omitempty"`
+	Sounds        *wireSounds          `json:"sounds,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
 	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
@@ -432,6 +438,13 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Media = media
+	}
+	if wire.Sounds != nil {
+		sounds, err := applySounds(*wire.Sounds, "sounds")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Sounds = sounds
 	}
 	if wire.Monitor != nil {
 		monitor, err := applyMonitor(*wire.Monitor, "monitor")
@@ -842,6 +855,21 @@ func isBusNameStart(c byte) bool {
 
 func isBusNameChar(c byte) bool {
 	return isBusNameStart(c) || c >= '0' && c <= '9'
+}
+
+// applySounds resolves the sounds block over its defaults.
+func applySounds(w wireSounds, path string) (Sounds, error) {
+	out := defaultSounds()
+	if w.Notification != nil {
+		out.Notification = *w.Notification
+	}
+	if w.Volume != nil {
+		if *w.Volume < SoundsVolumeMin || *w.Volume > SoundsVolumeMax {
+			return Sounds{}, pathErr(path+".volume", "%d is outside %d through %d", *w.Volume, SoundsVolumeMin, SoundsVolumeMax)
+		}
+		out.Volume = *w.Volume
+	}
+	return out, nil
 }
 
 // applyMonitor resolves the monitor block over its defaults. A colour must be
