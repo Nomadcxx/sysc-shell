@@ -846,3 +846,33 @@ func TestHostCallFilesBrowseDoesNotUseCallTimeout(t *testing.T) {
 		t.Fatalf("pick timed out: %+v", reply)
 	}
 }
+
+// TestAWithheldGrantSaysWhy: a capability the manifest declares but the host
+// did not grant is refused with the reason, not with advice to declare what
+// is already declared (sysc-1252).
+func TestAWithheldGrantSaysWhy(t *testing.T) {
+	t.Parallel()
+	minor17 := v1.Version{Major: 1, Minor: NarrowCapabilityMinor}
+	call := func(env CallEnv) string {
+		return NewDispatcher(env).Handle(context.Background(), &v1.HostCall{
+			ID: "1", Call: v1.CallStateGet, Params: jsonOf(t, v1.StateGetParams{Key: "k"}),
+		}).Error
+	}
+	changed := call(CallEnv{Protocol: minor17, Declared: []Capability{CapStateRead}, Withheld: WithheldChanged})
+	if strings.Contains(changed, "declare it") || !strings.Contains(changed, "changed since the user approved it") {
+		t.Errorf("a changed plugin was told: %q", changed)
+	}
+	// Declared through the broad name, which grants the narrow one.
+	broad := call(CallEnv{Protocol: v1.Version{Major: 1, Minor: 3}, Declared: []Capability{CapState}, Withheld: WithheldChanged})
+	if strings.Contains(broad, "declare it") {
+		t.Errorf("a broad declaration was told to declare: %q", broad)
+	}
+	unoffered := call(CallEnv{Protocol: minor17, Declared: []Capability{CapStateRead}})
+	if strings.Contains(unoffered, "declare it") || !strings.Contains(unoffered, "this shell did not grant it") {
+		t.Errorf("a declared but ungranted capability was told: %q", unoffered)
+	}
+	undeclared := call(CallEnv{Protocol: minor17})
+	if !strings.Contains(undeclared, `declare it in manifest.json as {"capabilities":["state-read"]}`) {
+		t.Errorf("an undeclared capability lost its advice: %q", undeclared)
+	}
+}

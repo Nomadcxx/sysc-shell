@@ -936,9 +936,15 @@ const pluginCallTimeout = 10 * time.Second
 // panel or post a toast after the plugin was told it failed.
 func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateStore) plugin.CallEnv {
 	m := rt.Manifest()
+	var withheld plugin.Withheld
+	if !rt.Status().Consent.Grants() {
+		withheld = plugin.WithheldChanged
+	}
 	return plugin.CallEnv{
 		PluginID:       id,
 		Granted:        grantedCaps(rt),
+		Declared:       m.Capabilities,
+		Withheld:       withheld,
 		Protocol:       m.Protocol,
 		DeclaredPanels: m.Panels,
 		Store:          store,

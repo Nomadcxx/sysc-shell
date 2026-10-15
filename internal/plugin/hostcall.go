@@ -32,6 +32,12 @@ type CallEnv struct {
 	// Granted is what the plugin declared and accepted, broad or narrow; the
 	// gate expands it through grantsOf.
 	Granted []Capability
+	// Declared is what the manifest asked for. A refusal of something it
+	// declared says why it was withheld instead of advising a declaration.
+	Declared []Capability
+	// Withheld is why the host started the plugin without its declared
+	// grants, or empty when it did not.
+	Withheld Withheld
 	// Protocol is the minor the plugin's manifest declares. It decides which
 	// names a refusal can tell the plugin to declare, and whether output
 	// context is gated at all.
@@ -114,14 +120,31 @@ func classOf(call v1.CallKind) Capability {
 	return ""
 }
 
-// declareErr is the refusal for a call the plugin was not granted. It names
-// the declaration that would grant it, in the vocabulary the plugin's own
-// protocol minor can declare, so an author can paste it into the manifest.
+// Withheld is why a plugin runs without capabilities its manifest declares.
+type Withheld string
+
+// WithheldChanged is a copy whose bytes changed since the user approved it.
+const WithheldChanged Withheld = "changed"
+
+// declareErr is the refusal for a call the plugin was not granted. For a
+// capability the manifest never declared it names the declaration that would
+// grant it, in the vocabulary the plugin's own protocol minor can declare, so
+// an author can paste it into the manifest. For one it declared, it says why
+// the grant was withheld: telling an author to add what is already there
+// sends them the wrong way.
 func (e CallEnv) declareErr(call v1.CallKind, c Capability) string {
+	name := c
 	if e.Protocol.Minor < NarrowCapabilityMinor {
-		c = broadNameOf(c)
+		name = broadNameOf(c)
 	}
-	return fmt.Sprintf(`call %q needs capability %q; declare it in manifest.json as {"capabilities":[%q]}`, call, c, c)
+	declared := slices.ContainsFunc(e.Declared, func(d Capability) bool { return slices.Contains(grantsOf(d), c) })
+	switch {
+	case declared && e.Withheld == WithheldChanged:
+		return fmt.Sprintf("call %q needs capability %q, which the manifest declares; it is withheld because the plugin changed since the user approved it, and returns when they approve it again in Settings > Plugins", call, name)
+	case declared:
+		return fmt.Sprintf("call %q needs capability %q, which the manifest declares; this shell did not grant it", call, name)
+	}
+	return fmt.Sprintf(`call %q needs capability %q; declare it in manifest.json as {"capabilities":[%q]}`, call, name, name)
 }
 
 func (e CallEnv) hasPanel(id string) bool {
