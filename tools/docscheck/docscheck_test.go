@@ -65,9 +65,12 @@ func TestIPCExamplesAreChecked(t *testing.T) {
 }
 
 func TestDefaultInputListAndExitCodes(t *testing.T) {
+	// The tool is invoked from the repository root, so the contract is the
+	// document set as seen from there.
+	t.Chdir(filepath.Join("..", ".."))
 	paths := defaultPaths()
 	want := []string{"README.md"}
-	matches, err := filepath.Glob(filepath.Join("..", "..", "docs", "*.md"))
+	matches, err := filepath.Glob(filepath.Join("docs", "*.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +80,9 @@ func TestDefaultInputListAndExitCodes(t *testing.T) {
 	if len(paths) != len(want) {
 		t.Fatalf("paths = %v, want %v", paths, want)
 	}
+}
+
+func TestRunExitCodes(t *testing.T) {
 	if code := run([]string{"testdata/nonexistent.md"}, io.Discard, io.Discard); code != 2 {
 		t.Fatalf("missing file exit = %d, want 2", code)
 	}
