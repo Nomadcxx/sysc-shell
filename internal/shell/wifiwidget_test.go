@@ -80,3 +80,18 @@ func TestWifiWidgetRefreshReportsChangeOnlyWhenGlyphMoves(t *testing.T) {
 		t.Error("a band change must report a change")
 	}
 }
+
+func TestTheKernelTierNeverPaintsAPresentRadioAsOff(t *testing.T) {
+	for _, tc := range []struct {
+		st   services.NetworkState
+		want string
+	}{
+		{services.NetworkState{Tier: services.TierKernel, ReadOnly: true, WirelessEnabled: true, Kind: services.ConnNone}, "signal_wifi_0_bar"},
+		{services.NetworkState{Tier: services.TierKernel, ReadOnly: true, WirelessEnabled: true, Kind: services.ConnWireless, Connected: true, Strength: 80}, "signal_wifi_4_bar"},
+		{services.NetworkState{Tier: services.TierKernel, ReadOnly: true, Kind: services.ConnWired, Connected: true}, "lan"},
+	} {
+		if got := wifiGlyph(tc.st); got != tc.want {
+			t.Errorf("%+v: glyph %q, want %q", tc.st, got, tc.want)
+		}
+	}
+}

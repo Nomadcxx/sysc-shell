@@ -274,7 +274,7 @@ func TestATooltipPaintsItsCapturedBackdrop(t *testing.T) {
 	for i := 0; i < len(shot.Pix); i += 4 {
 		shot.Pix[i], shot.Pix[i+1], shot.Pix[i+2], shot.Pix[i+3] = 0, 0xff, 0, 0xff
 	}
-	spec.Callbacks.Backdrop(shot)
+	spec.Callbacks.Backdrop(nil, shot)
 	withBackdrop := paint()
 	i := (hgt/2*w + 2) * 4 // inside the ground, clear of glyphs
 	if string(plain[i:i+4]) == string(withBackdrop[i:i+4]) {

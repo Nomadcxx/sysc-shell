@@ -26,7 +26,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/sysc-shell ./cmd/sysc-shell
+          version="${GITHUB_REF_NAME#v}"
+          commit="$(git rev-parse --short=8 HEAD)"
+          if [ -z "$version" ]; then version=development; fi
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Version=$version -X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Commit=$commit" -o dist/sysc-shell ./cmd/sysc-shell
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/sysc-plugin-weather ./cmd/sysc-plugin-weather
           (cd dist && sha256sum * > SHA256SUMS)
 

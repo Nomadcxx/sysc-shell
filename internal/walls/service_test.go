@@ -1269,3 +1269,15 @@ func TestConfigureIdleReturnsUnitFailure(t *testing.T) {
 		t.Fatalf("disable result: %v", err)
 	}
 }
+
+func TestConfigureIdleDisablesRuntimeEnabledUnit(t *testing.T) {
+	service, command, _ := newActionService(t, "enabled-runtime", "active", "running", nil)
+	if err := service.ConfigureIdle(false, ""); err != nil {
+		t.Fatalf("disable runtime-enabled unit: %v", err)
+	}
+	want := []string{"systemctl", "--user", "disable", "--now", unitName}
+	calls := command.callsCopy()
+	if len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint(want) {
+		t.Fatalf("commands = %q, want %q", calls, want)
+	}
+}

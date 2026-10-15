@@ -524,6 +524,24 @@ func defaultMonitor() Monitor {
 		HoverBackground: "surface_variant", HoverColor: "on_surface_variant", ShowApps: true, ShowProcesses: true}
 }
 
+// Sounds is the shell's own audible cues. Off by default: a shell that starts
+// making noise after an update is a defect.
+type Sounds struct {
+	// Notification plays one short cue when a notification arrives and do
+	// not disturb is off.
+	Notification bool
+	// Volume is the cues' own gain, 0..100, under the system volume.
+	Volume int
+}
+
+const (
+	SoundsVolumeMin     = 0
+	SoundsVolumeMax     = 100
+	soundsVolumeDefault = 60
+)
+
+func defaultSounds() Sounds { return Sounds{Volume: soundsVolumeDefault} }
+
 // Config is an immutable, fully resolved configuration.
 type Config struct {
 	Bar           Bar
@@ -538,6 +556,7 @@ type Config struct {
 	NightLight    NightLight
 	Media         Media
 	Monitor       Monitor
+	Sounds        Sounds
 	Wallpaper     Wallpaper
 	TerminalArt   TerminalArt
 	Outputs       []OutputOverride
@@ -697,6 +716,7 @@ func Default() Config {
 		Panels:     Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
 		Session:    Session{PolkitAgent: "auto"},
 		Monitor:    defaultMonitor(),
+		Sounds:     defaultSounds(),
 		Idle:       Idle{MediaExempt: true},
 		NightLight: defaultNightLight(),
 		Wallpaper: Wallpaper{

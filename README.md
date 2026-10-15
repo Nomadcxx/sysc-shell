@@ -103,6 +103,19 @@ The service starts with your Niri session and restarts the shell if it crashes. 
 already has a `spawn-at-startup` line for sysc-shell, remove it, or you'll get two shells. More
 detail in [packaging/systemd](packaging/systemd/README.md).
 
+### Which build am I running?
+
+```bash
+sysc-shell --version
+sysc-shell ipc status
+```
+
+Release binaries are stamped with their version and commit; the same two values appear as `version` in
+`ipc status`. Builds from source, from your AUR helper, and from Nix are not stamped and report
+`sysc-shell development (unknown)`. That is the honest answer, not a lookup failure: an unstamped
+build has no version to report until the release workflow stamps it. Use `sysc --version` from the
+installer to see which suite an install actually recorded.
+
 ### Companion daemons
 
 Notifications, the tray and clipboard history each run as their own small daemon, so a crash in one

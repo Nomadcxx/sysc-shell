@@ -132,6 +132,32 @@ type PanelHost struct {
 	// taken before either of its surfaces existed. Nil means no blur, and the
 	// panel then paints over whatever the compositor shows, as it always has.
 	backdrop *ui.Image
+	// backdropSharp is the reduced pre-blur capture, present only when the
+	// resolved material compares the two halves (auto-frost).
+	backdropSharp *ui.Image
+	// global is the output this panel's surface was opened on, which a
+	// recapture request has to name.
+	global uint32
+	// lensPending is true between asking the platform for a fresh ground and
+	// receiving it: one capture in flight per surface.
+	lensPending bool
+	// lensAt is when the last ground arrived, which the cadence measures from.
+	lensAt time.Time
+	// lensLast is the ground the still-frame skip compares a new frame against.
+	lensLast *ui.Image
+	// lensFrame is the live ground: a recaptured frame, painted only while the
+	// ladder says it is current. It is separate from backdrop so that
+	// degrading is a choice of which image to paint rather than a lost frame.
+	lensFrame *ui.Image
+	// lensFailures counts consecutive captures that never came back, which is
+	// how the surface stops asking on a machine that cannot capture.
+	lensFailures int
+	// lensOursFrame is the shell's own pixels in the recaptured region, which
+	// Unmix subtracts. Nil until that buffer is retained, and the ladder reads
+	// nil as "the shell cannot account for itself": the recapture then contains
+	// this panel, so the ground stays static rather than painting the panel
+	// inside itself.
+	lensOursFrame *ui.Image
 	// paper is the sticky-note fill a floating plugin surface paints as its
 	// ground; FillNone keeps the theme's panel ground.
 	paper    ui.Fill
@@ -1465,6 +1491,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 
 	r.panelHosts[id] = h
+	// A recapture request has to name the output the surface was opened on, and
+	// the paint path is where one is sent from.
+	h.global = output
 
 	if openShield {
 		if r.panelShields == nil {
@@ -1478,7 +1507,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelSession || id == PanelControlCenter {
 		r.scheduleLoadProfiles(h)
 	}
-	if id == PanelNetwork && r.network != nil && r.network.Available() {
+	if id == PanelNetwork && r.network != nil && r.network.Available() && !r.network.CachedState().ReadOnly {
 		network := r.network
 		r.scheduleControl(h, network.Scan)
 	}
@@ -1764,6 +1793,219 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 	}
 }
 
+// glassCadence is how often a visible material surface asks for a fresh ground.
+//
+// The default is deliberately conservative: the screencopy readback is the
+// tranche's largest unmeasured cost, and the design makes the cadence a
+// measured value rather than a taste. One hundred milliseconds is one capture in
+// ten frames, and the still-frame skip removes most of those.
+const glassCadence = 100 * time.Millisecond
+
+// lensSampleRows is how many rows the still-frame skip compares: enough to
+// notice a region that changed, far cheaper than the capture itself.
+const lensSampleRows = 8
+
+// wantsLens reports whether this surface should keep asking for fresh frames:
+// the material paints from a capture, the shell can account for its own pixels
+// in that capture, and the captures have not failed past the ladder's cap.
+//
+// Auto-frost over plain content paints the sharp capture, which no recapture
+// replaces, so wantsLens does not distinguish the tones: the gate is the
+// ladder's, and a frame that changes nothing is dropped on arrival.
+func (h *PanelHost) wantsLens(t Theme) bool {
+	m := materialFor(t, true)
+	if m.Tone == render.ToneNone || m.Intensity == 0 || h.lensOursFrame == nil {
+		return false
+	}
+	return h.lensFailures < render.MaxLensFailures
+}
+
+// lensRung answers whether the frame this surface holds is current. The paint
+// path uses it to choose between the live frame and the capture the surface
+// opened with, so a stale lens degrades to a ground the surface can trust
+// rather than showing content from an unbounded moment ago.
+func (h *PanelHost) lensRung(now time.Time) render.LensRung {
+	age := time.Duration(0)
+	if !h.lensAt.IsZero() && h.lensFrame != nil {
+		age = now.Sub(h.lensAt)
+	}
+	return render.LensRungFor(render.LensState{
+		FrameAge:     age,
+		Failures:     h.lensFailures,
+		OursComplete: h.lensOursFrame != nil,
+	})
+}
+
+// maybeRecapture asks the platform for one fresh ground when the surface's
+// material wants one.
+//
+// The paint path is the only caller, so "painting" is what "visible" means here.
+// While the surface is still fading in the requests are back-to-back, which is
+// what makes the ground track the content as the panel appears; afterwards the
+// cadence applies, and never more than one capture is in flight.
+func (h *PanelHost) maybeRecapture(r *Registry, t Theme, now time.Time) {
+	// A request that never came back is a failure. The owner has no channel to
+	// report a dropped capture, and the age bound is the same fact either way:
+	// the frame did not arrive.
+	if h.lensPending && now.Sub(h.lensAt) > render.MaxLensAge {
+		h.lensPending = false
+		h.lensFailures++
+	}
+	if r == nil || h.global == 0 || !h.wantsLens(t) || h.lensPending {
+		return
+	}
+	opacity, _, _ := h.panelReveal()
+	interval := lensInterval(opacity < 1)
+	if interval > 0 && !h.lensAt.IsZero() && now.Sub(h.lensAt) < interval {
+		return
+	}
+	h.lensAt = now
+	if r.trySendAux(wayland.AuxRequest{Output: h.global, ID: panelSurfaceID(h.id), Recapture: true}) {
+		h.lensPending = true
+	}
+}
+
+// lensInterval is how long to wait before asking for another frame: none at all
+// while the surface is still appearing, which is what makes the ground track the
+// content as the panel fades in, and the cadence once it has settled.
+func lensInterval(revealing bool) time.Duration {
+	if revealing {
+		return 0
+	}
+	return glassCadence
+}
+
+// backdropFor is the image this panel composites beneath its root fill: the
+// material's ground when the theme names one, and the blurred capture
+// otherwise. A material whose capture never arrived falls back to the capture
+// path rather than painting a guess. Its strength is bounded by the text floor,
+// not by taste.
+func (h *PanelHost) backdropFor(t Theme) *ui.Image {
+	m := materialFor(t, h.backdrop != nil)
+	if m.Tone == render.ToneNone || m.Intensity == 0 {
+		return h.backdrop
+	}
+	ground := h.backdrop
+	// The lens is a candidate, not a replacement: while the ladder says the
+	// frame is current it paints, and when it stops saying so the surface drops
+	// back to the capture it opened with.
+	if h.lensFrame != nil && h.lensRung(time.Now()) == render.LensLive {
+		ground = h.lensFrame
+	}
+	ground = render.Materialize(h.backdropSharp, ground, m)
+	if m.Refract > 0 {
+		ground = render.Refract(ground, h.refractionFor(ground))
+	}
+	return ground
+}
+
+// refractionFor scales this surface's geometry into the capture's pixels: the
+// capture is taken at reduced resolution, so a corner radius in logical pixels
+// has to come down with it. The profile's own distances are in capture pixels
+// already.
+//
+// The terms are full whenever the material refracts: stage 1 offers one glass
+// look, and the intensity axis drives its tone. The press ring rides the ripple
+// the latest press started, so it travels while that ripple runs and is gone
+// when it has finished.
+func (h *PanelHost) refractionFor(img *ui.Image) render.Refraction {
+	if img == nil || img.Width <= 0 || img.Height <= 0 {
+		return render.Refraction{}
+	}
+	scale := 1.0
+	if w, _ := h.surfaceSize(); w > 0 {
+		scale = float64(w) / float64(img.Width)
+	}
+	radius := int(float64(h.theme.Radius) / scale)
+	r := render.Refraction{
+		W: img.Width, H: img.Height,
+		Radius: radius,
+		Bend:   1, Fringe: 1, Dome: 1,
+	}
+	if phase, x, y, ok := h.anim.LastRipple(); ok && phase > 0 && phase < 1 {
+		r.Press = phase
+		r.PressX, r.PressY = int(float64(x)/scale), int(float64(y)/scale)
+	}
+	return r
+}
+
+// clampMaterialIntensity returns the highest intensity at which the material
+// keeps the ground behind a panel's text as legible as that surface already is.
+//
+// Contrast is not monotone in the ground: it falls as the ground approaches the
+// text's own luma, so the bound has to look at every ground, not the extremes
+// alone. It sweeps all 256, which is affordable because it is resolved once per
+// theme rather than per frame, and takes the strongest intensity that leaves
+// every ground at least as legible as it was without the material and never
+// below the theme's text floor. Where a surface is already under that floor, the
+// material may not make it worse either.
+//
+// Panels are opaque at the default preset, where no ground shows through and
+// nothing binds; at the translucent end the bound bites in the tens.
+func clampMaterialIntensity(t Theme, m render.Material, fill render.Color) int {
+	if m.Tone == render.ToneNone || fill.A == 0 {
+		return 0
+	}
+	text := theme.Color{R: t.OnSurface.R, G: t.OnSurface.G, B: t.OnSurface.B, A: 0xff}
+	contrastAt := func(intensity uint8, ground uint8) float64 {
+		l := overlayLuma(fill, render.TransferLuma(m.Tone, intensity, ground))
+		return theme.ContrastRatio(text, theme.Color{R: l, G: l, B: l, A: 0xff})
+	}
+	allowed := 0
+	for i := 1; i <= theme.GlassIntensityMax; i++ {
+		i8 := uint8(i)
+		ok := true
+		for g := 0; g <= 255; g++ {
+			g8 := uint8(g)
+			base := contrastAt(0, g8)
+			// Only the grounds this surface already makes legible are the
+			// material's business: where the capture itself leaves text under
+			// the floor, repairing that is the opacity floor's problem, not the
+			// material's, and every range of grounds crosses the text's own luma
+			// somewhere.
+			//
+			// Above the floor the rule is the floor, not the base contrast. One
+			// of the two tones always moves the ground towards the text — milk
+			// for light text, smoke for dark — so demanding that no ground lose
+			// contrast forbids that tone outright. Measured live on 2026-10-15:
+			// the first version of this rule left smoke byte-identical to no
+			// material at all, and the second left milk at zero in the dark
+			// scheme.
+			if base < theme.TextContrast {
+				continue
+			}
+			if contrastAt(i8, g8) < theme.TextContrast-materialContrastTolerance {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			break
+		}
+		allowed = i
+	}
+	if limit := int(m.Intensity); allowed > limit {
+		allowed = limit
+	}
+	return allowed
+}
+
+// materialContrastTolerance is how much contrast the material may cost a
+// ground, in ratio units, before the bound stops it. A material is a deliberate
+// change to what shows through, so requiring it to be exact to the last decimal
+// would resolve every translucent panel to no material at all; a tenth is below
+// the resolution of the floors themselves and far below a visible difference.
+const materialContrastTolerance = 0.1
+
+// overlayLuma composites a root fill over a grey ground: the luma the painter
+// leaves in a panel's interior. Colour is dropped because the floor is a
+// luminance rule and the worst-case contents are achromatic.
+func overlayLuma(fill render.Color, ground uint8) uint8 {
+	a := float64(fill.A) / 255
+	l := float64(fill.R)*0.299 + float64(fill.G)*0.587 + float64(fill.B)*0.114
+	return uint8(l*a + float64(ground)*(1-a) + 0.5)
+}
+
 // rootStyle picks the alpha this panel's root fill paints at.
 //
 // An attached panel normally resolves its root at the *bar's* opacity, because
@@ -1797,6 +2039,11 @@ func (h *PanelHost) rootStyle(t Theme, blurBehind bool) render.Style {
 		// onboarding backdrop. Keep the setup frame lightly translucent when
 		// blur is enabled; its content card remains independently opaque.
 		s.SurfaceOpacity = min(s.SurfaceOpacity, opacityAlpha(onboardingBlurOpacityPercent, true))
+	}
+	// A refracting material draws a wider edge than a hairline: the bevel reads
+	// against the surface's own boundary.
+	if t.Glass == theme.GlassFull {
+		s.RimWidth = 2
 	}
 	return s
 }
@@ -1864,9 +2111,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	}
 	// Nil disables the capture entirely, so a shell with blur off pays none of
 	// its cost rather than capturing and discarding. A compositor that blurs
-	// does the job itself, through BlurShape.
+	// does the job itself, through BlurShape — unless this surface paints a
+	// material, which needs the captured pixels and therefore takes the capture
+	// whichever compositor it is on.
+	material := materialFor(h.theme, r.cfg.Theme.BlurBehind)
 	var blurRegion *ui.Rect
-	if r.cfg.Theme.BlurBehind && !r.caps.Blur {
+	if r.cfg.Theme.BlurBehind && (material.Tone != render.ToneNone || !r.caps.Blur) {
 		blurRegion = &region
 	}
 	return &wayland.AuxSpec{
@@ -1885,14 +2135,45 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Keyboard:      keyboardExclusive,
 		BlurRegion:    blurRegion,
 		BlurRadius:    r.cfg.Theme.BlurRadius,
-		OnDrop:        func() { r.dropPanelAux(h) },
+		BackdropSharp: material.Tone == render.ToneAuto,
+		// A material that paints from the blurred ground keeps that ground
+		// live: the region stays capturable and the shell asks for frames at
+		// its own cadence.
+		Recapture: material.Tone != render.ToneNone,
+		OnDrop:    func() { r.dropPanelAux(h) },
 		Callbacks: wayland.HostCallbacks{
 			// Delivered from the Wayland goroutine before the surface exists,
 			// so it takes the registry lock exactly as Render does.
-			Backdrop: func(img *ui.Image) {
+			Backdrop: func(sharp, ground *ui.Image) {
 				r.mu.Lock()
 				defer r.mu.Unlock()
-				h.backdrop = img
+				h.backdropSharp, h.backdrop = sharp, ground
+			},
+			// A live ground: the frame becomes the lens's candidate, and the
+			// ladder decides at paint time whether it is current enough to
+			// paint. A frame that matches the last one updates the clock and
+			// nothing else, so a still region costs no repaint.
+			MaterialFrame: func(img *ui.Image) {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				h.lensPending = false
+				if img == nil {
+					h.lensFailures++
+					return
+				}
+				h.lensFailures = 0
+				now := time.Now()
+				if !render.FrameDiffers(h.lensLast, img, lensSampleRows) {
+					h.lensAt = now
+					return
+				}
+				h.lensLast, h.lensAt = img, now
+				frame := img
+				if h.lensOursFrame != nil {
+					frame = render.Unmix(img, h.lensOursFrame)
+				}
+				h.lensFrame = frame
+				r.publishSurface(h.global, panelSurfaceID(h.id))
 			},
 			BlurShape: func() []ui.Rect {
 				r.mu.Lock()
@@ -1928,6 +2209,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 // panel blurs when blur-behind is on and the compositor can. Caller holds
 // r.mu.
 func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
+	// A material paints its own ground from the capture, so the compositor's
+	// blur would be a second blur over it.
+	if materialFor(h.theme, r.cfg.Theme.BlurBehind).Tone != render.ToneNone {
+		return nil
+	}
 	if !(h.place.Attached() && h.theme.Blur) && !(r.cfg.Theme.BlurBehind && r.caps.Blur) {
 		return nil
 	}
@@ -2099,6 +2385,11 @@ func (h *PanelHost) renderLocking(r *Registry) func([]byte, int, int, int) error
 	return func(pixels []byte, width, height, stride int) error {
 		held := r.lockPanelOwner()
 		defer r.unlockPanelOwner(held)
+		// The paint path is where a surface is by definition visible, so it is
+		// where a live ground asks for its next frame.
+		if r.cfg.Theme.BlurBehind {
+			h.maybeRecapture(r, h.theme, time.Now())
+		}
 		return h.render(r.cfg.Theme.BlurBehind, pixels, width, height, stride)
 	}
 }
@@ -2321,7 +2612,7 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 		style.JointLeft, style.JointRight, style.EdgeFillet = h.revealJoints(opacity)
 		style.EdgeLeft, style.EdgeRight = j.FlushLeft, j.FlushRight
 	}
-	style.Backdrop = h.backdrop
+	style.Backdrop = h.backdropFor(paintTheme)
 	err = render.Paint(c, root, h.text, style)
 	if err != nil {
 		return err
@@ -4557,6 +4848,19 @@ func (r *Registry) sendAux(req wayland.AuxRequest) {
 	select {
 	case r.aux <- req:
 	case <-r.closed:
+	}
+}
+
+// trySendAux sends without waiting. A recapture retries at the next cadence, so
+// a busy owner is a frame skipped rather than a paint stalled.
+func (r *Registry) trySendAux(req wayland.AuxRequest) bool {
+	select {
+	case r.aux <- req:
+		return true
+	case <-r.closed:
+		return false
+	default:
+		return false
 	}
 }
 

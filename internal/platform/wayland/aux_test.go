@@ -527,7 +527,7 @@ func TestAuxOpenAbandonsAHostRemovedDuringBackdropCapture(t *testing.T) {
 			Configure: func(int, int, int) error { return nil },
 			Render:    func([]byte, int, int, int) error { return nil },
 			Handle:    func(Event) bool { return false },
-			Backdrop:  func(*ui.Image) {},
+			Backdrop:  func(*ui.Image, *ui.Image) {},
 		},
 	}
 
@@ -549,7 +549,7 @@ func TestAuxOpenAbandonsAHostRemovedDuringBackdropCapture(t *testing.T) {
 	}
 }
 
-func freezeSpec(backdrop func(*ui.Image)) *AuxSpec {
+func freezeSpec(backdrop func(sharp, ground *ui.Image)) *AuxSpec {
 	return &AuxSpec{
 		ID: "screenshot:DP-1", Namespace: "sysc-shell-screenshot", Freeze: true,
 		Callbacks: HostCallbacks{
@@ -576,7 +576,7 @@ func TestFreezeOpenFailsWithoutAFrame(t *testing.T) {
 	}
 	delivered := false
 	reply := make(chan error, 1)
-	spec := freezeSpec(func(*ui.Image) { delivered = true })
+	spec := freezeSpec(func(*ui.Image, *ui.Image) { delivered = true })
 	o.handleAux(AuxRequest{Output: 7, ID: spec.ID, Open: spec, Reply: reply})
 	if err := <-reply; err == nil {
 		t.Fatal("a freeze with no frame opened")
@@ -597,7 +597,7 @@ func TestFreezeOpenAbandonsAHostRemovedDuringCapture(t *testing.T) {
 	o.rs.singletons["zwlr_layer_shell_v1"] = globalEntry{version: 4}
 	o.capture = removeDuringCapture(t, o, s, h)
 	reply := make(chan error, 1)
-	spec := freezeSpec(func(*ui.Image) { t.Error("a frame was delivered for a removed output") })
+	spec := freezeSpec(func(*ui.Image, *ui.Image) { t.Error("a frame was delivered for a removed output") })
 	o.handleAux(AuxRequest{Output: 7, ID: spec.ID, Open: spec, Reply: reply})
 	if err := <-reply; !errors.Is(err, errOutputGone) {
 		t.Fatalf("reply = %v, want errOutputGone", err)

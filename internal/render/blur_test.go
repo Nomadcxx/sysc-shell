@@ -1,10 +1,19 @@
 package render
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+// sharedBacking reports whether two images hand out the same pixel array.
+func sharedBacking(a, b *ui.Image) bool {
+	if len(a.Pix) == 0 || len(b.Pix) == 0 {
+		return false
+	}
+	return &a.Pix[0] == &b.Pix[0]
+}
 
 // solid builds a uniform premultiplied image.
 func solid(w, h int, r, g, b, a byte) *ui.Image {
@@ -83,5 +92,66 @@ func TestBlurRejectsDegenerateInput(t *testing.T) {
 	short := &ui.Image{Width: 8, Height: 8, Stride: 32, Pix: make([]byte, 16)}
 	if Blur(short, 1, 2) != nil {
 		t.Error("a buffer shorter than its declared geometry should return nil")
+	}
+}
+
+// TestBlurPairReturnsTheSharpCopyBesideTheBlur pins the contract the material's
+// auto-frost needs: the reduced sharp capture and the blurred one from one
+// downsample, at the same geometry, as separate buffers.
+func TestBlurPairReturnsTheSharpCopyBesideTheBlur(t *testing.T) {
+	t.Parallel()
+	src := solid(64, 32, 0x40, 0x30, 0x20, 0xff)
+	sharp, blurred := BlurPair(src, 4, 24)
+	if sharp == nil || blurred == nil {
+		t.Fatal("BlurPair returned nil for a valid source")
+	}
+	want := Blur(src, 4, 24)
+	if blurred.Width != want.Width || blurred.Height != want.Height {
+		t.Fatalf("blurred = %dx%d, Blur gives %dx%d", blurred.Width, blurred.Height, want.Width, want.Height)
+	}
+	if !bytes.Equal(blurred.Pix, want.Pix) {
+		t.Error("BlurPair's blurred half differs from Blur")
+	}
+	if sharp.Width != want.Width || sharp.Height != want.Height {
+		t.Fatalf("sharp = %dx%d, want the reduced %dx%d", sharp.Width, sharp.Height, want.Width, want.Height)
+	}
+	if sharedBacking(sharp, src) || sharedBacking(blurred, src) {
+		t.Error("a returned image aliases the source's pixels")
+	}
+	if sharedBacking(sharp, blurred) {
+		t.Error("the sharp copy aliases the blurred image; the busy check needs both")
+	}
+
+	// The sharp half must be the reduced capture, not a second blurred copy.
+	spiked := solid(32, 32, 0, 0, 0, 0xff)
+	o := (16*32 + 16) * 4
+	spiked.Pix[o], spiked.Pix[o+1], spiked.Pix[o+2] = 0xff, 0xff, 0xff
+	sharpSpike, blurredSpike := BlurPair(spiked, 1, 3)
+	centre := (16*32 + 16) * 4
+	if sharpSpike.Pix[centre] != 0xff {
+		t.Errorf("the sharp half lost the bright pixel: %d", sharpSpike.Pix[centre])
+	}
+	if blurredSpike.Pix[centre] >= sharpSpike.Pix[centre] {
+		t.Error("the blurred half is not lower than the sharp one")
+	}
+}
+
+func TestBlurPairRejectsDegenerateInput(t *testing.T) {
+	t.Parallel()
+	if sharp, blurred := BlurPair(nil, 4, 8); sharp != nil || blurred != nil {
+		t.Error("nil source should return nils")
+	}
+	if sharp, blurred := BlurPair(solid(2, 2, 0, 0, 0, 0xff), 4, 8); sharp != nil || blurred != nil {
+		t.Error("a source smaller than the factor should return nils")
+	}
+	short := &ui.Image{Width: 8, Height: 8, Stride: 32, Pix: make([]byte, 16)}
+	if sharp, blurred := BlurPair(short, 1, 2); sharp != nil || blurred != nil {
+		t.Error("a buffer shorter than its declared geometry should return nils")
+	}
+	// With no radius there is nothing to blur, so both halves are the same
+	// reduced capture.
+	sharp, blurred := BlurPair(solid(16, 16, 7, 7, 7, 0xff), 1, 0)
+	if sharp == nil || !bytes.Equal(sharp.Pix, blurred.Pix) {
+		t.Error("a zero radius did not return one reduced capture for both halves")
 	}
 }

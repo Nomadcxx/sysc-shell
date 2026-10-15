@@ -184,6 +184,9 @@ type animator struct {
 	spatial theme.Curve
 	values  map[animKey]animValue
 	origins map[string][2]int
+	// lastRipple is the node whose ripple started most recently: a surface
+	// that bends under a press follows that one.
+	lastRipple string
 	// wake is nudged whenever a value is aimed somewhere new, so a frame
 	// loop resting between sprite poses picks up a hover or a glide at once
 	// instead of at the next pose.
@@ -811,6 +814,7 @@ func (a *animator) TargetRipple(node string, x, y int) {
 		a.origins = map[string][2]int{}
 	}
 	a.origins[node] = [2]int{x, y}
+	a.lastRipple = node
 	a.Reset(node, animRipple)
 	a.Target(node, animRipple, 1)
 }
@@ -822,6 +826,14 @@ func (a *animator) Ripple(node string) (phase float64, x, y int, ok bool) {
 	}
 	p := a.origins[node]
 	return a.Value(node, animRipple), p[0], p[1], true
+}
+
+// LastRipple returns the most recently started ripple's frame and origin.
+func (a *animator) LastRipple() (phase float64, x, y int, ok bool) {
+	if a == nil {
+		return 0, 0, 0, false
+	}
+	return a.Ripple(a.lastRipple)
 }
 
 // has reports whether a channel has ever been aimed at anything. A value that

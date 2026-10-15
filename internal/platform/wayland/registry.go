@@ -110,7 +110,14 @@ func (r *registryState) addGlobal(global uint32, iface string, server uint32) (u
 		}
 		return version, true
 	}
-	r.singletons[iface] = globalEntry{global: global, version: version}
+	// The first advertised global of an interface wins. A singleton cannot be
+	// rebound once bound, and wl_seat can legitimately repeat: a compositor
+	// with a seat for injected input creates the user's seat first, so the
+	// later one must neither replace it at startup nor, when it goes away,
+	// take the bound entry with it.
+	if _, exists := r.singletons[iface]; !exists {
+		r.singletons[iface] = globalEntry{global: global, version: version}
+	}
 	return version, true
 }
 

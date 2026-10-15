@@ -15,15 +15,48 @@ import "github.com/Nomadcxx/sysc-shell/internal/ui"
 // which is why the canvas stores premultiplied pixels, so neither resample
 // needs an un-premultiply round trip.
 func Blur(src *ui.Image, factor, radius int) *ui.Image {
-	if src == nil || factor < 1 || src.Width < factor || src.Height < factor {
-		return nil
-	}
-	if src.Stride < src.Width*4 || len(src.Pix) < src.Height*src.Stride {
+	if !blurrable(src, factor) {
 		return nil
 	}
 	dst := downsample(src, factor)
+	blurReduced(dst, factor, radius)
+	return dst
+}
+
+// BlurPair is Blur with the reduced sharp capture returned beside the blurred
+// one, from one downsample. A busy-area material compares the two, so it needs
+// both; Blur's callers need only the blurred half and keep its cost.
+//
+// With a radius below one there is nothing to blur, and both halves are the
+// same reduced image: a caller must not mutate one and read the other.
+func BlurPair(src *ui.Image, factor, radius int) (*ui.Image, *ui.Image) {
+	if !blurrable(src, factor) {
+		return nil, nil
+	}
+	sharp := downsample(src, factor)
 	if radius < 1 {
-		return dst
+		return sharp, sharp
+	}
+	blurred := &ui.Image{Width: sharp.Width, Height: sharp.Height, Stride: sharp.Stride,
+		Pix: make([]byte, len(sharp.Pix))}
+	copy(blurred.Pix, sharp.Pix)
+	blurReduced(blurred, factor, radius)
+	return sharp, blurred
+}
+
+// blurrable reports whether src can be reduced by factor at all.
+func blurrable(src *ui.Image, factor int) bool {
+	if src == nil || factor < 1 || src.Width < factor || src.Height < factor {
+		return false
+	}
+	return src.Stride >= src.Width*4 && len(src.Pix) >= src.Height*src.Stride
+}
+
+// blurReduced runs the three box passes per axis over an already reduced
+// image, at a proportionally reduced radius.
+func blurReduced(dst *ui.Image, factor, radius int) {
+	if radius < 1 {
+		return
 	}
 	r := radius / factor
 	if r < 1 {
@@ -35,7 +68,6 @@ func Blur(src *ui.Image, factor, radius int) *ui.Image {
 		boxH(dst, scratch, r)
 		boxV(scratch, dst, r)
 	}
-	return dst
 }
 
 func clampInt(v, lo, hi int) int {

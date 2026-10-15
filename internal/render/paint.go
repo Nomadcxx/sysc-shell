@@ -223,7 +223,11 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 	}
 	blendMask(c, body, box.X, box.Y, style.rootFill())
 	if style.Rim.A > 0 {
-		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
+		width := style.Scale120.Physical(1)
+		if style.RimWidth > 0 {
+			width = style.Scale120.Physical(style.RimWidth)
+		}
+		c.StrokeRounded(box, radius, max(width, 1), style.Rim)
 	}
 	jointL, jointR := style.Scale120.Physical(style.JointLeft), style.Scale120.Physical(style.JointRight)
 	fillAttachFillets(c, box, jointL, jointR, style.AttachEdge, style.FilletFill)

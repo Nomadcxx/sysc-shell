@@ -39,7 +39,7 @@ func openTestSelector(t *testing.T, r *Registry, frame *ui.Image, logicalW, logi
 	spec := r.selectorSpec(sel, s)
 	s.opened = true
 	r.mu.Unlock()
-	spec.Callbacks.Backdrop(frame)
+	spec.Callbacks.Backdrop(nil, frame)
 	if err := spec.Callbacks.Configure(logicalW, logicalH, 120); err != nil {
 		t.Fatal(err)
 	}

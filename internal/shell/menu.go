@@ -33,6 +33,7 @@ type Menu struct {
 	filterHeight int
 	matches      []int
 	windowStart  int
+	visibleRows  int
 }
 
 func NewMenu(options []string, index int) *Menu {
@@ -51,7 +52,7 @@ func newMenu(options, values []string, index int, filtered bool) *Menu {
 	} else if index < 0 || index >= len(options) {
 		index = 0
 	}
-	m := &Menu{options: options, values: values, index: index, cursor: index}
+	m := &Menu{options: options, values: values, index: index, cursor: index, visibleRows: menuVisibleRows}
 	if filtered {
 		m.filter = ui.NewField("")
 	}
@@ -159,7 +160,11 @@ func (m *Menu) cursorPosition() (int, bool) {
 
 func (m *Menu) keepCursorVisible() {
 	count := m.optionCount()
-	maxStart := max(count-menuVisibleRows, 0)
+	visible := m.visibleRows
+	if visible <= 0 {
+		visible = menuVisibleRows
+	}
+	maxStart := max(count-visible, 0)
 	m.windowStart = min(max(m.windowStart, 0), maxStart)
 	position, ok := m.cursorPosition()
 	if !ok {
@@ -167,8 +172,8 @@ func (m *Menu) keepCursorVisible() {
 	}
 	if position < m.windowStart {
 		m.windowStart = position
-	} else if position >= m.windowStart+menuVisibleRows {
-		m.windowStart = position - menuVisibleRows + 1
+	} else if position >= m.windowStart+visible {
+		m.windowStart = position - visible + 1
 	}
 	m.windowStart = min(max(m.windowStart, 0), maxStart)
 }
@@ -176,7 +181,19 @@ func (m *Menu) keepCursorVisible() {
 func (m *Menu) visibleRange() (int, int) {
 	m.keepCursorVisible()
 	start := m.windowStart
-	return start, min(start+menuVisibleRows, m.optionCount())
+	visible := m.visibleRows
+	if visible <= 0 {
+		visible = menuVisibleRows
+	}
+	return start, min(start+visible, m.optionCount())
+}
+
+func (m *Menu) setVisibleRows(rows int) {
+	if m == nil {
+		return
+	}
+	m.visibleRows = min(max(rows, 1), menuVisibleRows)
+	m.keepCursorVisible()
 }
 
 func (m *Menu) Index() int {
