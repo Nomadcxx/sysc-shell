@@ -365,7 +365,11 @@ func parseCandidate(data []byte) (Config, error) {
 		return Config{}, parseIssueFor(err, offset)
 	}
 	firstEnd := decoder.InputOffset()
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	// The trailing value decodes as raw JSON: the strict field check applies to
+	// the configuration, and a second object carrying fields is still just a
+	// second value. Malformed trailing bytes stay a syntax error.
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		offset := decoderOffset(err)
 		if err == nil {
 			err = extraJSONValueError{}

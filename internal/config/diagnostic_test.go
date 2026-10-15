@@ -161,3 +161,20 @@ func TestDiagnosticFilenameSanitizesControlsAndBoundsOutput(t *testing.T) {
 		t.Fatalf("unsafe diagnostic: %q (%d bytes)", err, len(err.Error()))
 	}
 }
+
+// A second complete value is "more than one JSON value" at that value, whatever
+// fields it carries: the strict field check belongs to the configuration, not
+// to whatever follows it.
+func TestSecondValueWithFieldsIsAnExtraValue(t *testing.T) {
+	_, err := Parse([]byte(`{"terminal-opacity":90} {"terminal-opacity":90}`))
+	var d *Diagnostic
+	if !errors.As(err, &d) {
+		t.Fatalf("not a diagnostic: %T %v", err, err)
+	}
+	if d.Message != "more than one JSON value" || d.Line != 1 || d.Column != 25 {
+		t.Fatalf("diagnostic = %+v, want more than one JSON value at 1:25", d)
+	}
+	if _, err := Parse([]byte(`{} x`)); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
+		t.Fatalf("trailing garbage: %v, want invalid JSON", err)
+	}
+}
