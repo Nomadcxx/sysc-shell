@@ -32,6 +32,21 @@ func checkBlock(path string, b block) []string {
 	switch b.info {
 	case "json":
 		return checkJSON(at, strings.Join(b.lines, "\n"))
+	case "kdl":
+		var findings []string
+		for _, line := range b.lines {
+			findings = append(findings, checkKDL(at, line)...)
+		}
+		return findings
+	case "sh", "bash":
+		var findings []string
+		for _, line := range b.lines {
+			if isShellComment(line) {
+				continue
+			}
+			findings = append(findings, checkShellCommand(at, line)...)
+		}
+		return findings
 	default:
 		return nil
 	}
@@ -49,6 +64,10 @@ func checkJSON(at, body string) []string {
 	case '{':
 		if _, err := config.Parse([]byte(body)); err != nil {
 			return []string{at + err.Error()}
+		}
+		var decoded any
+		if err := json.Unmarshal([]byte(body), &decoded); err == nil {
+			return checkPanelValue(at, decoded)
 		}
 		return nil
 	case '[':
