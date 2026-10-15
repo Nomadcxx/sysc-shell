@@ -135,6 +135,29 @@ type PanelHost struct {
 	// backdropSharp is the reduced pre-blur capture, present only when the
 	// resolved material compares the two halves (auto-frost).
 	backdropSharp *ui.Image
+	// global is the output this panel's surface was opened on, which a
+	// recapture request has to name.
+	global uint32
+	// lensPending is true between asking the platform for a fresh ground and
+	// receiving it: one capture in flight per surface.
+	lensPending bool
+	// lensAt is when the last ground arrived, which the cadence measures from.
+	lensAt time.Time
+	// lensLast is the ground the still-frame skip compares a new frame against.
+	lensLast *ui.Image
+	// lensFrame is the live ground: a recaptured frame, painted only while the
+	// ladder says it is current. It is separate from backdrop so that
+	// degrading is a choice of which image to paint rather than a lost frame.
+	lensFrame *ui.Image
+	// lensFailures counts consecutive captures that never came back, which is
+	// how the surface stops asking on a machine that cannot capture.
+	lensFailures int
+	// lensOursFrame is the shell's own pixels in the recaptured region, which
+	// Unmix subtracts. Nil until that buffer is retained, and the ladder reads
+	// nil as "the shell cannot account for itself": the recapture then contains
+	// this panel, so the ground stays static rather than painting the panel
+	// inside itself.
+	lensOursFrame *ui.Image
 	// paper is the sticky-note fill a floating plugin surface paints as its
 	// ground; FillNone keeps the theme's panel ground.
 	paper    ui.Fill
@@ -1468,6 +1491,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 
 	r.panelHosts[id] = h
+	// A recapture request has to name the output the surface was opened on, and
+	// the paint path is where one is sent from.
+	h.global = output
 
 	if openShield {
 		if r.panelShields == nil {
@@ -1767,6 +1793,88 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 	}
 }
 
+// glassCadence is how often a visible material surface asks for a fresh ground.
+//
+// The default is deliberately conservative: the screencopy readback is the
+// tranche's largest unmeasured cost, and the design makes the cadence a
+// measured value rather than a taste. One hundred milliseconds is one capture in
+// ten frames, and the still-frame skip removes most of those.
+const glassCadence = 100 * time.Millisecond
+
+// lensSampleRows is how many rows the still-frame skip compares: enough to
+// notice a region that changed, far cheaper than the capture itself.
+const lensSampleRows = 8
+
+// wantsLens reports whether this surface should keep asking for fresh frames:
+// the material paints from a capture, the shell can account for its own pixels
+// in that capture, and the captures have not failed past the ladder's cap.
+//
+// Auto-frost over plain content paints the sharp capture, which no recapture
+// replaces, so wantsLens does not distinguish the tones: the gate is the
+// ladder's, and a frame that changes nothing is dropped on arrival.
+func (h *PanelHost) wantsLens(t Theme) bool {
+	m := materialFor(t, true)
+	if m.Tone == render.ToneNone || m.Intensity == 0 || h.lensOursFrame == nil {
+		return false
+	}
+	return h.lensFailures < render.MaxLensFailures
+}
+
+// lensRung answers whether the frame this surface holds is current. The paint
+// path uses it to choose between the live frame and the capture the surface
+// opened with, so a stale lens degrades to a ground the surface can trust
+// rather than showing content from an unbounded moment ago.
+func (h *PanelHost) lensRung(now time.Time) render.LensRung {
+	age := time.Duration(0)
+	if !h.lensAt.IsZero() && h.lensFrame != nil {
+		age = now.Sub(h.lensAt)
+	}
+	return render.LensRungFor(render.LensState{
+		FrameAge:     age,
+		Failures:     h.lensFailures,
+		OursComplete: h.lensOursFrame != nil,
+	})
+}
+
+// maybeRecapture asks the platform for one fresh ground when the surface's
+// material wants one.
+//
+// The paint path is the only caller, so "painting" is what "visible" means here.
+// While the surface is still fading in the requests are back-to-back, which is
+// what makes the ground track the content as the panel appears; afterwards the
+// cadence applies, and never more than one capture is in flight.
+func (h *PanelHost) maybeRecapture(r *Registry, t Theme, now time.Time) {
+	// A request that never came back is a failure. The owner has no channel to
+	// report a dropped capture, and the age bound is the same fact either way:
+	// the frame did not arrive.
+	if h.lensPending && now.Sub(h.lensAt) > render.MaxLensAge {
+		h.lensPending = false
+		h.lensFailures++
+	}
+	if r == nil || h.global == 0 || !h.wantsLens(t) || h.lensPending {
+		return
+	}
+	opacity, _, _ := h.panelReveal()
+	interval := lensInterval(opacity < 1)
+	if interval > 0 && !h.lensAt.IsZero() && now.Sub(h.lensAt) < interval {
+		return
+	}
+	h.lensAt = now
+	if r.trySendAux(wayland.AuxRequest{Output: h.global, ID: panelSurfaceID(h.id), Recapture: true}) {
+		h.lensPending = true
+	}
+}
+
+// lensInterval is how long to wait before asking for another frame: none at all
+// while the surface is still appearing, which is what makes the ground track the
+// content as the panel fades in, and the cadence once it has settled.
+func lensInterval(revealing bool) time.Duration {
+	if revealing {
+		return 0
+	}
+	return glassCadence
+}
+
 // backdropFor is the image this panel composites beneath its root fill: the
 // material's ground when the theme names one, and the blurred capture
 // otherwise. A material whose capture never arrived falls back to the capture
@@ -1777,7 +1885,14 @@ func (h *PanelHost) backdropFor(t Theme) *ui.Image {
 	if m.Tone == render.ToneNone || m.Intensity == 0 {
 		return h.backdrop
 	}
-	ground := render.Materialize(h.backdropSharp, h.backdrop, m)
+	ground := h.backdrop
+	// The lens is a candidate, not a replacement: while the ladder says the
+	// frame is current it paints, and when it stops saying so the surface drops
+	// back to the capture it opened with.
+	if h.lensFrame != nil && h.lensRung(time.Now()) == render.LensLive {
+		ground = h.lensFrame
+	}
+	ground = render.Materialize(h.backdropSharp, ground, m)
 	if m.Refract > 0 {
 		ground = render.Refract(ground, h.refractionFor(ground))
 	}
@@ -1999,7 +2114,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		BlurRegion:    blurRegion,
 		BlurRadius:    r.cfg.Theme.BlurRadius,
 		BackdropSharp: material.Tone == render.ToneAuto,
-		OnDrop:        func() { r.dropPanelAux(h) },
+		// A material that paints from the blurred ground keeps that ground
+		// live: the region stays capturable and the shell asks for frames at
+		// its own cadence.
+		Recapture: material.Tone != render.ToneNone,
+		OnDrop:    func() { r.dropPanelAux(h) },
 		Callbacks: wayland.HostCallbacks{
 			// Delivered from the Wayland goroutine before the surface exists,
 			// so it takes the registry lock exactly as Render does.
@@ -2007,6 +2126,32 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 				r.mu.Lock()
 				defer r.mu.Unlock()
 				h.backdropSharp, h.backdrop = sharp, ground
+			},
+			// A live ground: the frame becomes the lens's candidate, and the
+			// ladder decides at paint time whether it is current enough to
+			// paint. A frame that matches the last one updates the clock and
+			// nothing else, so a still region costs no repaint.
+			MaterialFrame: func(img *ui.Image) {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				h.lensPending = false
+				if img == nil {
+					h.lensFailures++
+					return
+				}
+				h.lensFailures = 0
+				now := time.Now()
+				if !render.FrameDiffers(h.lensLast, img, lensSampleRows) {
+					h.lensAt = now
+					return
+				}
+				h.lensLast, h.lensAt = img, now
+				frame := img
+				if h.lensOursFrame != nil {
+					frame = render.Unmix(img, h.lensOursFrame)
+				}
+				h.lensFrame = frame
+				r.publishSurface(h.global, panelSurfaceID(h.id))
 			},
 			BlurShape: func() []ui.Rect {
 				r.mu.Lock()
@@ -2218,6 +2363,11 @@ func (h *PanelHost) renderLocking(r *Registry) func([]byte, int, int, int) error
 	return func(pixels []byte, width, height, stride int) error {
 		held := r.lockPanelOwner()
 		defer r.unlockPanelOwner(held)
+		// The paint path is where a surface is by definition visible, so it is
+		// where a live ground asks for its next frame.
+		if r.cfg.Theme.BlurBehind {
+			h.maybeRecapture(r, h.theme, time.Now())
+		}
 		return h.render(r.cfg.Theme.BlurBehind, pixels, width, height, stride)
 	}
 }
@@ -4674,6 +4824,19 @@ func (r *Registry) sendAux(req wayland.AuxRequest) {
 	select {
 	case r.aux <- req:
 	case <-r.closed:
+	}
+}
+
+// trySendAux sends without waiting. A recapture retries at the next cadence, so
+// a busy owner is a frame skipped rather than a paint stalled.
+func (r *Registry) trySendAux(req wayland.AuxRequest) bool {
+	select {
+	case r.aux <- req:
+		return true
+	case <-r.closed:
+		return false
+	default:
+		return false
 	}
 }
 

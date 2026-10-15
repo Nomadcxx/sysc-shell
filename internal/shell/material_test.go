@@ -3,6 +3,7 @@ package shell
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -353,6 +354,237 @@ func halfImage(w, h int) *ui.Image {
 		}
 	}
 	return img
+}
+
+// TestLensAsksForOneCaptureAtATime holds the live ground's traffic rules: the
+// paint path is the only requester, one capture is in flight at a time, the
+// cadence holds afterwards, and the request names the surface's own region.
+func TestLensAsksForOneCaptureAtATime(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	cfg.Theme.Glass = theme.GlassAuto
+	cfg.Theme.PanelOpacity = theme.OpacityMinBlurred
+	reg := newPanelRegistry(t)
+	reg.cfg = cfg
+	resolved, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &PanelHost{
+		id:     PanelSettings,
+		global: 7,
+		place:  Placement{Output: ui.Rect{W: 1920, H: 1080}, Panel: ui.Rect{W: 400, H: 300}},
+		theme:  resolved,
+		// Until the shell retains its own pixels for the region, the ladder
+		// keeps the ground static and nothing is asked for; this is the state
+		// the lens runs in once that buffer exists.
+		lensOursFrame: solidImage(8, 8, 0, 0, 0),
+	}
+	now := time.Now()
+
+	h.maybeRecapture(reg, resolved, now)
+	select {
+	case req := <-reg.AuxRequests():
+		if !req.Recapture {
+			t.Fatalf("request = %+v, want a recapture", req)
+		}
+		if req.ID != panelSurfaceID(PanelSettings) {
+			t.Errorf("request names %q, want the panel's own surface", req.ID)
+		}
+		if req.Output != 7 {
+			t.Errorf("request output = %d, want the surface's 7", req.Output)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no recapture was asked for")
+	}
+
+	// One in flight: a second frame in the same moment asks for nothing.
+	h.lensPending = true
+	h.maybeRecapture(reg, resolved, now.Add(glassCadence))
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("a second capture was asked for while one was in flight: %+v", req)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	// The frame arrives, and the cadence holds the next request back.
+	h.lensPending = false
+	h.lensAt = now
+	h.maybeRecapture(reg, resolved, now.Add(glassCadence/2))
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("a capture was asked for inside the cadence: %+v", req)
+	case <-time.After(20 * time.Millisecond):
+	}
+	h.maybeRecapture(reg, resolved, now.Add(glassCadence+time.Millisecond))
+	select {
+	case req := <-reg.AuxRequests():
+		if !req.Recapture {
+			t.Fatalf("request = %+v, want a recapture", req)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the cadence never asked again")
+	}
+
+	if lensInterval(true) != 0 {
+		t.Error("a revealing surface waits; the ground should track it")
+	}
+	if lensInterval(false) != glassCadence {
+		t.Error("a settled surface does not use the cadence")
+	}
+}
+
+// TestLensIsQuietWithoutAMaterial keeps the default shell free of capture
+// traffic: no material, no requests, and none before the surface has an output.
+func TestLensIsQuietWithoutAMaterial(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	cfg.Theme.PanelOpacity = theme.OpacityMinBlurred
+	reg := newPanelRegistry(t)
+	reg.cfg = cfg
+	resolved, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := &PanelHost{
+		id:     PanelSettings,
+		global: 7,
+		place:  Placement{Output: ui.Rect{W: 1920, H: 1080}, Panel: ui.Rect{W: 400, H: 300}},
+		theme:  resolved,
+	}
+	plain.maybeRecapture(reg, resolved, time.Now())
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("a theme without a material asked for a capture: %+v", req)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	cfg.Theme.Glass = theme.GlassAuto
+	withGlass, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unopened := &PanelHost{id: PanelSettings, place: plain.place, theme: withGlass}
+	unopened.maybeRecapture(reg, withGlass, time.Now())
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("a surface with no output asked for a capture: %+v", req)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	// A material surface whose region the shell cannot account for asks for
+	// nothing: a recaptured region contains the surface itself, and painting
+	// that back is the artefact the ladder exists to prevent.
+	unaccounted := &PanelHost{
+		id: PanelSettings, global: 7, place: plain.place,
+		theme: withGlass, lensOursFrame: nil,
+	}
+	unaccounted.maybeRecapture(reg, withGlass, time.Now())
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("a surface the shell cannot account for asked for a capture: %+v", req)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	// A run of failures ends the conversation.
+	failing := &PanelHost{
+		id: PanelSettings, global: 7, place: plain.place,
+		theme: withGlass, lensOursFrame: solidImage(8, 8, 0, 0, 0),
+		lensFailures: render.MaxLensFailures,
+	}
+	failing.maybeRecapture(reg, withGlass, time.Now())
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("a surface past the failure cap asked again: %+v", req)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+// TestLensCountsARequestThatNeverCameBack: the owner cannot report a dropped
+// capture, so the surface counts the silence itself and stops asking rather than
+// paying the attempt every cadence forever.
+func TestLensCountsARequestThatNeverCameBack(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	cfg.Theme.Glass = theme.GlassSmoke
+	cfg.Theme.PanelOpacity = theme.OpacityMinBlurred
+	reg := newPanelRegistry(t)
+	reg.cfg = cfg
+	resolved, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &PanelHost{
+		id: PanelSettings, global: 7, place: Placement{Output: ui.Rect{W: 1920, H: 1080}, Panel: ui.Rect{W: 400, H: 300}},
+		theme: resolved, lensOursFrame: solidImage(8, 8, 0, 0, 0),
+	}
+	base := time.Now()
+	h.maybeRecapture(reg, resolved, base)
+	if !h.lensPending {
+		t.Fatal("the first request did not leave a capture in flight")
+	}
+	<-reg.AuxRequests()
+	// The frame never arrives: past the age bound the surface counts a failure
+	// and is free to ask again.
+	h.maybeRecapture(reg, resolved, base.Add(render.MaxLensAge+time.Millisecond))
+	if h.lensFailures != 1 {
+		t.Fatalf("failures = %d, want the silence counted", h.lensFailures)
+	}
+	// It is free to retry straight away: the run is bounded by the cap, not by
+	// an extra wait.
+	if !h.lensPending {
+		t.Error("the surface did not retry after counting the silence")
+	}
+	<-reg.AuxRequests()
+	// And a delivered frame clears the count.
+	h.lensAt, h.lensPending = base, true
+	spec := reg.panelSpec(h, Margins{})
+	spec.Callbacks.MaterialFrame(solidImage(16, 16, 0x40, 0x40, 0x40))
+	if h.lensFailures != 0 {
+		t.Errorf("failures = %d after a frame arrived, want zero", h.lensFailures)
+	}
+	if h.lensFrame == nil || h.lensLast == nil {
+		t.Error("the frame was not kept as the live ground")
+	}
+}
+
+// TestLensDropsAFrameThatDidNotChange: a still region is not worth a repaint,
+// and a changed one is.
+func TestLensDropsAFrameThatDidNotChange(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	cfg.Theme.Glass = theme.GlassSmoke
+	cfg.Theme.PanelOpacity = theme.OpacityMinBlurred
+	reg.cfg = cfg
+	resolved, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &PanelHost{id: PanelSettings, global: 7, theme: resolved}
+	frame := solidImage(32, 32, 0x40, 0x40, 0x40)
+
+	deliver := func(img *ui.Image) {
+		h.lensPending = true
+		h.lensLast, h.backdrop = img, img
+	}
+	deliver(frame)
+	if h.backdrop == nil {
+		t.Fatal("the fixture did not store a frame")
+	}
+	// The skip itself is the render-side rule; here the wiring is what matters:
+	// the callback is registered on the spec the panel opens.
+	spec := reg.panelSpec(h, Margins{})
+	if spec.Callbacks.MaterialFrame == nil {
+		t.Fatal("a material panel does not accept a live frame")
+	}
+	if !spec.Recapture {
+		t.Error("a material panel does not keep its region capturable")
+	}
 }
 
 func solidImage(w, h int, r, g, b byte) *ui.Image {
