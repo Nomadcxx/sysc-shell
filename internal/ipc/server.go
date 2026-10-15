@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,6 +44,19 @@ var (
 	}
 	knownScreenshotModes = map[string]bool{"region": true, "screen": true, "window": true}
 )
+
+// PanelIDs lists the panel vocabulary in a stable order. The documentation
+// gate and the panel dispatcher have to agree on the same set; exporting it
+// lets a test assert they do, rather than an example drifting until it names a
+// panel the shell refuses.
+func PanelIDs() []string {
+	out := make([]string, 0, len(knownPanels))
+	for id := range knownPanels {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // DefaultSocket returns $XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock.
 // os.TempDir() is world-writable and shared between users; the XDG base spec's
@@ -257,49 +271,28 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func (s *Server) handleLine(line string) []byte {
-	var req request
-	if err := json.Unmarshal([]byte(line), &req); err != nil {
-		return envelope(nil, "", "malformed json")
-	}
-	switch req.Method {
-	case "status":
+// methods is the whole exact-method vocabulary. Dispatching from it, rather
+// than from a switch, means the documentation gate and the socket read the same
+// list: an example naming a method the dispatcher does not carry fails, and a
+// new method is added in one place.
+var methods = map[string]func(*Server, request) []byte{
+	"status": func(s *Server, req request) []byte {
 		body := map[string]any{}
 		if s.h.Status != nil {
 			body = s.h.Status()
 		}
 		return envelope(req.ID, "ok", "", body)
-	case "session.lock-state":
+	},
+	"session.lock-state": func(s *Server, req request) []byte {
 		if s.h.LockState == nil {
 			return envelope(req.ID, "", "lock state handler unset")
 		}
 		return envelope(req.ID, "ok", "", s.h.LockState())
-	case "panel.toggle", "panel.open", "panel.close":
-		action := strings.TrimPrefix(req.Method, "panel.")
-		var params struct {
-			Panel   string `json:"panel"`
-			Section string `json:"section"`
-		}
-		if len(req.Params) > 0 {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
-				return envelope(req.ID, "", "malformed params")
-			}
-		}
-		msg, ok := knownPanels[params.Panel]
-		if !ok {
-			return envelope(req.ID, "", "unknown panel")
-		}
-		if msg != "" {
-			return envelope(req.ID, "", msg)
-		}
-		if s.h.Panel == nil {
-			return envelope(req.ID, "", "panel handler unset")
-		}
-		if err := s.h.Panel(action, params.Panel, params.Section); err != nil {
-			return envelope(req.ID, "", err.Error())
-		}
-		return envelope(req.ID, "ok", "")
-	case "osd.step":
+	},
+	"panel.toggle": panelMethod,
+	"panel.open":   panelMethod,
+	"panel.close":  panelMethod,
+	"osd.step": func(s *Server, req request) []byte {
 		var params struct {
 			Kind   string `json:"kind"`
 			Action string `json:"action"`
@@ -316,7 +309,8 @@ func (s *Server) handleLine(line string) []byte {
 			return envelope(req.ID, "", err.Error())
 		}
 		return envelope(req.ID, "ok", "")
-	case "screenshot":
+	},
+	"screenshot": func(s *Server, req request) []byte {
 		var params struct {
 			Mode string `json:"mode"`
 		}
@@ -335,7 +329,8 @@ func (s *Server) handleLine(line string) []byte {
 			return envelope(req.ID, "", err.Error())
 		}
 		return envelope(req.ID, "ok", "")
-	case "switcher.show":
+	},
+	"switcher.show": func(s *Server, req request) []byte {
 		if len(req.Params) > 0 {
 			var params struct{}
 			if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -349,39 +344,98 @@ func (s *Server) handleLine(line string) []byte {
 			return envelope(req.ID, "", err.Error())
 		}
 		return envelope(req.ID, "ok", "")
-	default:
-		if strings.HasPrefix(req.Method, "plugins.") {
-			if s.h.Plugins == nil {
-				return envelope(req.ID, "", "plugin store handler unset")
-			}
-			body, err := s.h.Plugins(req.Method, req.Params)
-			if err != nil {
-				return envelope(req.ID, "", err.Error())
-			}
-			return envelope(req.ID, "ok", "", body)
-		}
-		if strings.HasPrefix(req.Method, "theme.") {
-			if s.h.Theme == nil {
-				return envelope(req.ID, "", "theme handler unset")
-			}
-			body, err := s.h.Theme(req.Method, req.Params)
-			if err != nil {
-				return envelope(req.ID, "", err.Error())
-			}
-			return envelope(req.ID, "ok", "", body)
-		}
-		if strings.HasPrefix(req.Method, "nightlight.") {
-			if s.h.NightLight == nil {
-				return envelope(req.ID, "", "night light handler unset")
-			}
-			body, err := s.h.NightLight(req.Method, req.Params)
-			if err != nil {
-				return envelope(req.ID, "", err.Error())
-			}
-			return envelope(req.ID, "ok", "", body)
-		}
-		return envelope(req.ID, "", "unknown method")
+	},
+}
+
+func panelMethod(s *Server, req request) []byte {
+	action := strings.TrimPrefix(req.Method, "panel.")
+	var params struct {
+		Panel   string `json:"panel"`
+		Section string `json:"section"`
 	}
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return envelope(req.ID, "", "malformed params")
+		}
+	}
+	msg, ok := knownPanels[params.Panel]
+	if !ok {
+		return envelope(req.ID, "", "unknown panel")
+	}
+	if msg != "" {
+		return envelope(req.ID, "", msg)
+	}
+	if s.h.Panel == nil {
+		return envelope(req.ID, "", "panel handler unset")
+	}
+	if err := s.h.Panel(action, params.Panel, params.Section); err != nil {
+		return envelope(req.ID, "", err.Error())
+	}
+	return envelope(req.ID, "ok", "")
+}
+
+// delegatedFamily is a method prefix one handler owns whole.
+type delegatedFamily struct {
+	prefix string
+	unset  string
+	owner  func(*Handlers) delegated
+}
+
+var delegatedFamilies = []delegatedFamily{
+	{"plugins.", "plugin store handler unset", func(h *Handlers) delegated { return h.Plugins }},
+	{"theme.", "theme handler unset", func(h *Handlers) delegated { return h.Theme }},
+	{"nightlight.", "night light handler unset", func(h *Handlers) delegated { return h.NightLight }},
+}
+
+// delegated is the shape every family handler has: the whole method name and
+// its raw params, or a body and an error.
+type delegated func(string, json.RawMessage) (map[string]any, error)
+
+// Methods lists the exact methods the socket dispatches, in a stable order.
+func Methods() []string {
+	out := make([]string, 0, len(methods))
+	for name := range methods {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// MethodPrefixes lists the delegated method families in a stable order. The
+// dispatch order inside delegatedFamilies is its own concern and is not
+// exported.
+func MethodPrefixes() []string {
+	out := make([]string, 0, len(delegatedFamilies))
+	for _, fam := range delegatedFamilies {
+		out = append(out, fam.prefix)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Server) handleLine(line string) []byte {
+	var req request
+	if err := json.Unmarshal([]byte(line), &req); err != nil {
+		return envelope(nil, "", "malformed json")
+	}
+	if fn, ok := methods[req.Method]; ok {
+		return fn(s, req)
+	}
+	for _, fam := range delegatedFamilies {
+		if !strings.HasPrefix(req.Method, fam.prefix) {
+			continue
+		}
+		owner := fam.owner(&s.h)
+		if owner == nil {
+			return envelope(req.ID, "", fam.unset)
+		}
+		body, err := owner(req.Method, req.Params)
+		if err != nil {
+			return envelope(req.ID, "", err.Error())
+		}
+		return envelope(req.ID, "ok", "", body)
+	}
+	return envelope(req.ID, "", "unknown method")
 }
 
 func envelope(id json.RawMessage, ok, err string, extra ...map[string]any) []byte {

@@ -220,22 +220,7 @@ func (e *secretExport) GetSecrets(
 		return nil, dbus.NewError(errNoSecrets, []any{"nothing stored"})
 	}
 
-	req := SecretRequest{SSID: ssidFromSettings(settings), SettingName: settingName}
-	ch := make(chan secretReply, 1)
-	gen, ok := e.slot.begin(req, ch)
-	if !ok {
-		return nil, dbus.NewError(errNoSecrets, []any{"a prompt is already open"})
-	}
-	select {
-	case e.requests <- req:
-		e.armDeadline(gen)
-	default:
-		// A stale notification must not strand this call. Answer once with
-		// UserCanceled and let NetworkManager stop.
-		e.slot.cancel()
-	}
-
-	switch r := <-ch; {
+	switch r := e.prompt(SecretRequest{SSID: ssidFromSettings(settings), SettingName: settingName}); {
 	case r.cancelled:
 		return nil, dbus.NewError(errUserCanceled, []any{"cancelled"})
 	case r.noSecrets:
@@ -245,6 +230,26 @@ func (e *secretExport) GetSecrets(
 			settingName: {"psk": dbus.MakeVariant(r.psk)},
 		}, nil
 	}
+}
+
+// prompt shows the panel one passphrase request and waits for its answer.
+// A prompt already open answers noSecrets at once; the deadline answers
+// cancelled. NetworkManager's holder and iwd's agent both ask through here.
+func (e *secretExport) prompt(req SecretRequest) secretReply {
+	ch := make(chan secretReply, 1)
+	gen, ok := e.slot.begin(req, ch)
+	if !ok {
+		return <-ch
+	}
+	select {
+	case e.requests <- req:
+		e.armDeadline(gen)
+	default:
+		// A stale notification must not strand this call. Answer once with
+		// a cancellation and let the asker stop.
+		e.slot.cancel()
+	}
+	return <-ch
 }
 
 // armDeadline cancels prompt gen if it is still unanswered after the timeout,

@@ -1,0 +1,39 @@
+name: Docs examples
+
+# This is a separate workflow on purpose. The CI workflow carries a
+# workflow-level paths-ignore so a documentation edit does not spend a full
+# race build, and paths-ignore cannot re-include a path: a job inside that
+# workflow never runs for markdown. The heavy job keeps its ignore; this one
+# names the markdown paths positively.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'internal/config/**'
+      - 'internal/ipc/**'
+      - 'tools/docscheck/**'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'internal/config/**'
+      - 'internal/ipc/**'
+      - 'tools/docscheck/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-examples-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check documented examples against the code
+        run: go run ./tools/docscheck -v
