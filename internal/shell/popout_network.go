@@ -48,7 +48,7 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 
 	body := networkWifiTree(aps, st, h, m)
 	if h.networkTab == "ethernet" {
-		body = networkEthernetTree(st, m, hostT(h))
+		body = networkEthernetTree(st, h, m)
 	}
 
 	panelH := h.place.Panel.H
@@ -183,16 +183,16 @@ func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *Pa
 	case st.Tier == services.TierKernel:
 		// No manager answered. The radio may be fine; what is missing is
 		// anything that can list or join a network.
-		return networkNotice(cardT(tr, "net.tier.kernel", "NetworkManager is not running"),
+		return networkNotice(h, cardT(tr, "net.tier.kernel", "NetworkManager is not running"),
 			cardT(tr, "net.hint.kernel", "Showing what the kernel reports. Networks can't be listed or joined without it."), m)
 	case !st.WirelessEnabled:
 		// Not an empty list: an empty list claims "no networks here", which is
 		// a different and wrong statement.
-		return networkNotice(cardT(tr, "net.wifi_off", "Wi-Fi is off"), cardT(tr, "net.hint.radio_on", "Turn the radio on to scan for networks."), m)
+		return networkNotice(h, cardT(tr, "net.wifi_off", "Wi-Fi is off"), cardT(tr, "net.hint.radio_on", "Turn the radio on to scan for networks."), m)
 	case st.Scanning && len(aps) == 0:
-		return networkNotice(cardT(tr, "net.scanning", "Searching for networks…"), orAbsent(st.Interface), m)
+		return networkNotice(h, cardT(tr, "net.scanning", "Searching for networks…"), orAbsent(st.Interface), m)
 	case len(aps) == 0:
-		return networkNotice(cardT(tr, "net.none", "No networks found"), cardT(tr, "net.hint.none", "Nothing is in range on this adapter."), m)
+		return networkNotice(h, cardT(tr, "net.none", "No networks found"), cardT(tr, "net.hint.none", "Nothing is in range on this adapter."), m)
 	}
 
 	rows := make([]*ui.Node, 0, len(aps))
@@ -287,9 +287,10 @@ func apDetail(ap services.AccessPoint, tr translateFunc) string {
 }
 
 // networkEthernetTree is the wired tab: one interface, or the absence of one.
-func networkEthernetTree(st services.NetworkState, m theme.Metrics, tr translateFunc) *ui.Node {
+func networkEthernetTree(st services.NetworkState, h *PanelHost, m theme.Metrics) *ui.Node {
+	tr := hostT(h)
 	if st.Kind != services.ConnWired || !st.Connected {
-		return networkNotice(cardT(tr, "net.no_wired", "No wired connection"), cardT(tr, "net.hint.cable", "Plug in a cable to use this tab."), m)
+		return networkNotice(h, cardT(tr, "net.no_wired", "No wired connection"), cardT(tr, "net.hint.cable", "Plug in a cable to use this tab."), m)
 	}
 	row := &ui.Node{
 		Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: true, Padding: m.CardPadding,
@@ -311,12 +312,16 @@ func networkEthernetTree(st services.NetworkState, m theme.Metrics, tr translate
 
 // networkNotice is the shared empty state: a title that names the situation
 // and a line that says what to do about it.
-func networkNotice(title, hint string, m theme.Metrics) *ui.Node {
+func networkNotice(h *PanelHost, title, hint string, m theme.Metrics) *ui.Node {
+	// The hint wraps inside the card: the kernel tier's is a sentence, and a
+	// translation is longer still. The width is the card's content box, sized
+	// from the panel the same way the header's figures are.
+	width := max(panelTargetSize(PanelNetwork).W-2*m.PanelPadding-2*m.CardPadding, 1)
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
-			{Kind: ui.KindText, Text: hint, TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel, MaxWidth: width},
+			h.wrappedText(hint, theme.RoleCaption, ui.ToneNormal, width, 0),
 		}}},
 	}
 }

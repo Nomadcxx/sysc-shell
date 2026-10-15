@@ -393,7 +393,7 @@ func TestRadioOffShowsAnOffStateNotAnEmptyList(t *testing.T) {
 
 func TestEthernetTabShowsTheWiredInterface(t *testing.T) {
 	st := services.NetworkState{Kind: services.ConnWired, Connected: true, Interface: "enp7s0", IPv4: "192.168.1.24"}
-	tree := networkEthernetTree(st, standardMetrics(), nil)
+	tree := networkEthernetTree(st, &PanelHost{}, standardMetrics())
 	texts := collectText(tree)
 	if !slices.Contains(texts, "enp7s0") {
 		t.Errorf("ethernet tab must name the interface; got %v", texts)
@@ -659,8 +659,9 @@ func TestTheKernelTierSaysNoManagerAnsweredNotThatTheRadioIsOff(t *testing.T) {
 	}
 
 	body := strings.Join(collectText(networkWifiTree(nil, st, h, standardMetrics())), "|")
+	// The hint wraps, so its lines are read back as one sentence.
 	if !strings.Contains(body, "NetworkManager is not running") ||
-		!strings.Contains(body, "Showing what the kernel reports. Networks can't be listed or joined without it.") {
+		!strings.Contains(strings.ReplaceAll(body, "|", " "), "Showing what the kernel reports. Networks can't be listed or joined without it.") {
 		t.Errorf("the Wi-Fi body must name the tier and why there is no list: %s", body)
 	}
 	if strings.Contains(body, "No networks found") || strings.Contains(body, "Turn the radio on") {
@@ -672,5 +673,24 @@ func TestNoTierKeepsTodaysRadioNotice(t *testing.T) {
 	tree := networkWifiTree(nil, services.NetworkState{Tier: services.TierNone, ReadOnly: true}, &PanelHost{networkTab: "wifi"}, standardMetrics())
 	if !strings.Contains(strings.Join(collectText(tree), "|"), "Wi-Fi is off") {
 		t.Fatal("TierNone lost today's notice")
+	}
+}
+
+// TestANoticeHintWrapsInsideThePanel: the kernel tier's hint is the longest a
+// notice carries, and its translations are longer still. It must wrap inside
+// the card rather than run past it into an ellipsis.
+func TestANoticeHintWrapsInsideThePanel(t *testing.T) {
+	m := standardMetrics()
+	st := services.NetworkState{Tier: services.TierKernel, ReadOnly: true, WirelessEnabled: true}
+	notice := networkWifiTree(nil, st, &PanelHost{networkTab: "wifi"}, m)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return 8 * len([]rune(s)), 20 }
+	inner := panelTargetSize(PanelNetwork).W - 2*m.PanelPadding
+	h, err := ui.ContentHeight(notice, inner, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A title line and a hint that wraps onto at least two more.
+	if lines := (h - 2*m.CardPadding) / 20; lines < 3 {
+		t.Errorf("the notice is %d high, %d lines; its hint did not wrap", h, lines)
 	}
 }
