@@ -28,7 +28,7 @@ func TestRunningAppsClick(t *testing.T) {
 		return nil
 	}
 	reg.runningIndex = []runningAppEntry{{
-		ID: "com.valvesoftware.Steam", StartupWMClass: "steam",
+		ID: "steam",
 		Actions: []runningAppAction{
 			{ID: "Store", Name: "Store", Exec: "steam steam://store"},
 			{ID: "Library", Name: "Library", Exec: "steam steam://open/games"},
@@ -39,13 +39,12 @@ func TestRunningAppsClick(t *testing.T) {
 	reg.runningMenu = newRunningAppMenuHost(reg)
 	reg.runningMenu.request = func(wayland.AuxRequest) {}
 	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
-		{ID: 80, AppID: "steam", Focused: true, Pid: 4242},
-		{ID: 81, AppID: "steam", Pid: 4242},
-		{ID: 82, AppID: "steam_app_123", Pid: 4343},
+		{ID: 80, AppID: "steam", Title: "Steam store", Focused: true, Pid: 1 << 30, FocusTimestamp: 10},
+		{ID: 81, AppID: "steam", Title: "Steam library", Pid: 1 << 30, FocusTimestamp: 20},
 	}})
 
 	bar := reg.bars[1]
-	if !bar.onAction("running-app:com.valvesoftware.steam", buttonLeft) {
+	if !bar.onAction("running-app:steam", buttonLeft) {
 		t.Fatal("left click ignored")
 	}
 	if len(sent) != 1 {
@@ -55,7 +54,7 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatalf("left click sent %+v, want FocusWindow 81 (cycle)", sent[0])
 	}
 
-	if !bar.onAction("running-app:com.valvesoftware.steam", buttonRight) {
+	if !bar.onAction("running-app:steam", buttonRight) {
 		t.Fatal("right click ignored")
 	}
 	host := reg.runningMenu
@@ -66,7 +65,7 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatalf("layer = %d, want Overlay", host.spec().Layer)
 	}
 	got := labels(host.rows)
-	want := []string{"Store", "Library", "Friends", "Close all"}
+	want := []string{"steam (2 windows)", "Steam library", "Steam store", "Store", "Library", "Friends", "Close all and force quit"}
 	if len(got) != len(want) {
 		t.Fatalf("menu = %v, want %v", got, want)
 	}
@@ -76,7 +75,17 @@ func TestRunningAppsClick(t *testing.T) {
 		}
 	}
 
-	host.choose(0)
+	actionIndex := -1
+	for i, row := range host.rows {
+		if row.ActionID == "Store" {
+			actionIndex = i
+			break
+		}
+	}
+	if actionIndex < 0 {
+		t.Fatal("Store action missing")
+	}
+	host.choose(actionIndex)
 	if len(spawned) != 1 {
 		t.Fatalf("spawns = %d, want 1", len(spawned))
 	}
@@ -84,43 +93,67 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatalf("spawn argv = %v, want niri msg action spawn -- …", spawned[0])
 	}
 
-	bar.onAction("running-app:com.valvesoftware.steam", buttonRight)
+	bar.onAction("running-app:steam", buttonRight)
 	reg.runningMenu.choose(len(reg.runningMenu.rows) - 1)
-	var closed []uint64
 	for _, body := range sent[1:] {
-		if close, ok := body.(niri.CloseWindow); ok {
-			closed = append(closed, close.ID)
+		if _, ok := body.(niri.CloseWindow); ok {
+			t.Fatalf("app-level action sent Niri CloseWindow: %v", body)
 		}
 	}
-	if len(closed) != 2 || closed[0] != 80 || closed[1] != 81 {
-		t.Fatalf("Close all window IDs = %v, want [80 81] and no Steam game window", closed)
+	if !reg.runningMenu.open_ || reg.runningMenu.forceQuitState != runningAppForceQuitConfirming {
+		t.Fatal("app-level action did not ask for confirmation")
 	}
-
-	bar.onAction("running-app:com.valvesoftware.steam", buttonRight)
-	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
-		{ID: 80, AppID: "steam", Focused: true},
-		{ID: 81, AppID: "steam"},
-		{ID: 82, AppID: "steam_app_123"},
-		{ID: 83, AppID: "steam"},
-	}})
-	if reg.runningMenu == nil || !reg.runningMenu.open_ {
-		t.Fatal("menu closed when another Steam window opened")
-	}
-	reg.runningMenu.choose(len(reg.runningMenu.rows) - 1)
-	var updatedClosed []uint64
-	for _, body := range sent[3:] {
-		if close, ok := body.(niri.CloseWindow); ok {
-			updatedClosed = append(updatedClosed, close.ID)
+	cancel := -1
+	for i, row := range reg.runningMenu.rows {
+		if row.Kind == runningAppMenuForceQuitCancel {
+			cancel = i
+			break
 		}
 	}
-	if len(updatedClosed) != 3 || updatedClosed[0] != 80 || updatedClosed[1] != 81 || updatedClosed[2] != 83 {
-		t.Fatalf("Close all after snapshot update = %v, want [80 81 83]", updatedClosed)
+	if cancel < 0 {
+		t.Fatal("force-quit confirmation has no cancel action")
+	}
+	reg.runningMenu.choose(cancel)
+	if reg.runningMenu.open_ {
+		t.Fatal("cancel did not close the force-quit confirmation")
 	}
 
-	bar.onAction("running-app:com.valvesoftware.steam", buttonRight)
+	bar.onAction("running-app:steam", buttonRight)
 	reg.UpdateNiri(niri.Snapshot{})
 	if reg.runningMenu != nil && reg.runningMenu.open_ {
 		t.Fatal("menu stayed open after the slot disappeared")
+	}
+}
+
+func TestRunningAppsMenuWindowRowFocusesExactNiriID(t *testing.T) {
+	t.Parallel()
+	reg, bar := steamMenuReg(t)
+	var sent []any
+	reg.niriSend = func(action any) error { sent = append(sent, action); return nil }
+	reg.runArgv = func([]string) error { return nil }
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Store", Focused: true, Pid: 1 << 30, FocusTimestamp: 10},
+		{ID: 81, AppID: "steam", Title: "Library", Pid: 1 << 30, FocusTimestamp: 20},
+	}})
+	if !bar.onAction("running-app:steam", buttonRight) {
+		t.Fatal("right click ignored")
+	}
+	index := -1
+	for i, row := range reg.runningMenu.rows {
+		if row.Kind == runningAppMenuWindow && row.WindowID == 81 {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatalf("window 81 missing from menu rows: %+v", reg.runningMenu.rows)
+	}
+	reg.runningMenu.choose(index)
+	if len(sent) != 1 {
+		t.Fatalf("Niri actions = %v, want one FocusWindow", sent)
+	}
+	if got, ok := sent[0].(niri.FocusWindow); !ok || got.ID != 81 {
+		t.Fatalf("focus action = %#v, want window 81", sent[0])
 	}
 }
 
@@ -276,9 +309,9 @@ func TestRunningAppsMenuChoosesOnPressRelease(t *testing.T) {
 	if err := host.configure(w, h, 120); err != nil {
 		t.Fatal(err)
 	}
-	row := firstCapsule(host.root)
+	row := findAction(host.root, "running-app-action:Store")
 	if row == nil {
-		t.Fatal("no capsule row")
+		t.Fatal("Store desktop action missing from menu tree")
 	}
 	x, y := float64(row.Bounds.X+1), float64(row.Bounds.Y+1)
 	if host.handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y}) {
@@ -330,23 +363,19 @@ func TestRunningAppsMenuRowsAreCapsules(t *testing.T) {
 	t.Parallel()
 	reg, bar := steamMenuReg(t)
 	bar.onAction("running-app:steam", buttonRight)
-	root := reg.runningMenu.root
-	if root == nil || root.Gap != 0 {
-		t.Fatal("menu column should stack with no inter-row gap")
-	}
-	row := firstCapsule(root)
+	host := reg.runningMenu
+	row := findAction(host.root, "running-app-window:80")
 	if row == nil {
-		t.Fatal("no capsule row")
+		t.Fatal("no window row")
 	}
-	if row.Kind != ui.KindCapsule || row.Radius != runningAppMenuRadius {
-		t.Fatalf("row = kind %d radius %d, want KindCapsule radius %d", row.Kind, row.Radius, runningAppMenuRadius)
+	if row.Kind != ui.KindCapsule || row.Radius != host.style.Shapes.Small {
+		t.Fatalf("row = kind %d radius %d, want KindCapsule radius %d", row.Kind, row.Radius, host.style.Shapes.Small)
 	}
-	if row.Fill != ui.FillNone {
-		t.Fatalf("idle fill = %v, want FillNone until hover or a key", row.Fill)
+	if row.Fill != ui.FillSoft {
+		t.Fatalf("initial MRU fill = %v, want keyboard selection FillSoft", row.Fill)
 	}
-	w, _ := reg.runningMenu.size()
-	if w >= trayMenuWidth {
-		t.Fatalf("width = %d, want less than the 280px tray constant", w)
+	if host.root == nil || host.root.Gap <= 0 {
+		t.Fatal("menu column should use theme spacing between rows")
 	}
 }
 
@@ -359,14 +388,18 @@ func TestRunningAppsMenuHighlightsOnMotion(t *testing.T) {
 	if err := host.configure(w, h, 120); err != nil {
 		t.Fatal(err)
 	}
-	second := capsules(host.root)[1]
+	second := findAction(host.root, "running-app-action:Store")
+	if second == nil {
+		t.Fatal("desktop action row missing")
+	}
 	x, y := float64(second.Bounds.X+1), float64(second.Bounds.Y+1)
 	if !host.handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y}) {
 		t.Fatal("motion ignored")
 	}
-	got := capsules(host.root)
-	if got[0].Fill != ui.FillNone || got[1].Fill != ui.FillSoft {
-		t.Fatalf("fills = %v %v, want idle then FillSoft under the pointer", got[0].Fill, got[1].Fill)
+	got := findAction(host.root, "running-app-action:Store")
+	window := findAction(host.root, "running-app-window:80")
+	if got.Fill != ui.FillSoft || window.Fill != ui.FillNone {
+		t.Fatalf("fills = action %v window %v, want hover on action only", got.Fill, window.Fill)
 	}
 }
 
@@ -376,24 +409,17 @@ func TestRunningAppsMenuSeparatesCloseAll(t *testing.T) {
 	bar.onAction("running-app:steam", buttonRight)
 	root := reg.runningMenu.root
 	var sawSep bool
-	var closeTone ui.Tone
 	for _, c := range root.Children {
-		if c != nil && c.Kind == ui.KindRow {
-			for _, inner := range c.Children {
-				if inner != nil && inner.Kind == ui.KindSeparator {
-					sawSep = true
-				}
-			}
-		}
-		if c != nil && c.Kind == ui.KindCapsule && len(c.Children) == 1 && c.Children[0].Text == "Close all" {
-			closeTone = c.Children[0].Tone
+		if c != nil && c.Kind == ui.KindSeparator {
+			sawSep = true
 		}
 	}
 	if !sawSep {
-		t.Fatal("no separator before Close all")
+		t.Fatal("no separator before app close")
 	}
-	if closeTone != ui.ToneError {
-		t.Fatalf("Close all tone = %v, want ToneError", closeTone)
+	close := findAction(root, "running-app-force-quit")
+	if close == nil || len(close.Children) != 1 || close.Children[0].Tone != ui.ToneError {
+		t.Fatalf("app close action = %+v, want ToneError", close)
 	}
 }
 
@@ -461,7 +487,10 @@ func TestRunningAppsMenuRejectsStaleWorkspaceAndWindow(t *testing.T) {
 			if index < 0 {
 				t.Fatalf("menu rows = %+v, missing workspace %d", reg.runningMenu.rows, tc.wsID)
 			}
+			staleRows := append([]runningAppMenuRow(nil), reg.runningMenu.rows...)
 			reg.UpdateNiri(tc.update)
+			// Keep the old projection to exercise the action-time target checks.
+			reg.runningMenu.rows = staleRows
 			reg.runningMenu.choose(index)
 			if len(sent) != 0 {
 				t.Fatalf("stale move sent Niri actions: %v", sent)
