@@ -104,6 +104,10 @@ type Registry struct {
 	// themeErr is why the published palette is not the requested one, empty
 	// when it is. Surfaced by the picker; never fatal.
 	themeErr string
+	// configReloadError and its timestamp are the latest safe refused reload.
+	// Both are protected by Registry.mu and copied by Status.
+	configReloadError   string
+	configReloadErrorAt string
 	// previewing keeps the preview session open until hide so its committed
 	// generation reason can be restored. previewTheme is the separate in-memory
 	// presentation used by every surface; commits clear it without persisting it.
@@ -1124,6 +1128,8 @@ func (r *Registry) Status() map[string]any {
 	}
 	cfg := r.cfg
 	polkitStatus := r.polkitStatusLocked()
+	configError := r.configReloadError
+	configErrorAt := r.configReloadErrorAt
 	inhibitors := make([]string, 0, len(r.externalInhibitors))
 	for _, in := range r.externalInhibitors {
 		inhibitors = append(inhibitors, in.App)
@@ -1143,6 +1149,8 @@ func (r *Registry) Status() map[string]any {
 		"templates":       templates,
 		"idle_inhibitors": inhibitors,
 		"polkit":          polkitStatus,
+		"config_error":    configError,
+		"config_error_at": configErrorAt,
 	}
 }
 
