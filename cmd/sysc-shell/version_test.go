@@ -44,6 +44,9 @@ func TestVersionFlagRefusesExtraArguments(t *testing.T) {
 	if !strings.Contains(errOut.String(), "usage: sysc-shell") {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
+	if !strings.Contains(errOut.String(), "config check [path]") {
+		t.Fatalf("stderr = %q, want the config verb in the usage line", errOut.String())
+	}
 	if out.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", out.String())
 	}
