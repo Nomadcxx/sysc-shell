@@ -164,3 +164,20 @@ func TestDescribeCapabilitySpellsOutABroadName(t *testing.T) {
 		}
 	}
 }
+
+func TestTheHostSpeaksTheMinorThatIntroducedTheNarrowNames(t *testing.T) {
+	t.Parallel()
+	// A shell that accepts the narrowed names in a manifest must also accept
+	// the minor such a manifest declares, or every such plugin is refused.
+	if HostProtocolMinor < NarrowCapabilityMinor {
+		t.Fatalf("host speaks minor %d; the narrowed names need %d", HostProtocolMinor, NarrowCapabilityMinor)
+	}
+	m, err := ParseManifest([]byte(`{"schema":1,"id":"org.example.probe","name":"Probe","version":"1.0.0",
+"protocol":{"major":1,"minor":17},"exec":"bin/probe","capabilities":["state-read","outputs-read"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HostSupports(m.Protocol) {
+		t.Fatalf("a minor-%d manifest is refused by this host", m.Protocol.Minor)
+	}
+}

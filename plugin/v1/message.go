@@ -13,7 +13,13 @@ const (
 	// Minor 14 adds the moonbit icon, the Moonbit orb for its bar pill.
 	// Minor 15 adds masked text inputs, for a password the plugin needs.
 	// Minor 16 adds files.browse, the host-owned file browser.
-	ProtocolMinor = 16
+	// Minor 17 narrows the capability vocabulary: state-read and state-write,
+	// wallpaper-read and wallpaper-write, screenshot-capture and
+	// screenshot-read, outputs-read for output.context, and the scoped
+	// files:browser. A manifest may declare those names only at minor 17 or
+	// later, so a shell older than this one refuses it at load; the broad
+	// names keep their meaning at every minor.
+	ProtocolMinor = 17
 )
 
 // The version-one message names. Every line on the wire carries one of these
