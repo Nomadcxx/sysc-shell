@@ -143,9 +143,14 @@ func TestOpenPanelLoadsProfileTabsFromList(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() { errc <- reg.OpenPanel(PanelSession, 7, Trigger{}) }()
+	// The waits are generous because the first panel build shapes text
+	// against a fresh font configuration, which under the package's parallel
+	// -race run has taken longer than a second (sysc-1237). A held lock still
+	// fails: release is only closed after both waits, so OpenPanel would
+	// never return.
 	select {
 	case <-listed:
-	case <-time.After(time.Second):
+	case <-time.After(asyncTestWait):
 		t.Fatal("runArgvOutput was not called")
 	}
 	select {
@@ -153,7 +158,7 @@ func TestOpenPanelLoadsProfileTabsFromList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(asyncTestWait):
 		t.Fatal("OpenPanel held the lock across list")
 	}
 	_ = drainAux(t, reg, 2)
@@ -570,7 +575,7 @@ func activateNamed(h *PanelHost, r *Registry, name string) {
 
 func waitProfileTabNames(t *testing.T, reg *Registry, want ...string) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(asyncTestWait)
 	var names []string
 	for {
 		reg.mu.Lock()
@@ -938,10 +943,14 @@ func TestRunArgvDefaultRefusesToLaunchFromATestBinary(t *testing.T) {
 func TestSessionPanelHoldsTheBatteryAndProfileCards(t *testing.T) {
 	reg := newPanelRegistry(t)
 	withTestBar(t, reg, 7, reg.cfg)
+	// The registry's relays read the sample under reg.mu from the moment
+	// NewRegistry returns, so the test writes it under the same lock.
+	reg.mu.Lock()
 	reg.sample.Battery = &metrics.BatterySnapshot{
 		Present: true, ChargeValid: true, Charge: 0.24, State: metrics.BatteryDischarging,
 		TimeRemaining: 52 * time.Minute, RateWatts: 16.2,
 	}
+	reg.mu.Unlock()
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
 		t.Fatal(err)
 	}

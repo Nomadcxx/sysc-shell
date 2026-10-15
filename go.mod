@@ -18,6 +18,8 @@ require (
 	github.com/Nomadcxx/sysc-terminal v0.2.0
 	github.com/Nomadcxx/sysc-tray v0.1.2
 	github.com/godbus/dbus/v5 v5.2.2
+	github.com/jfreymuth/oggvorbis v1.0.5
+	github.com/jfreymuth/pulse v0.1.3
 	github.com/junegunn/fzf v0.74.3
 	github.com/rivo/uniseg v0.4.7
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
@@ -35,6 +37,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
+	github.com/jfreymuth/vorbis v1.0.2 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

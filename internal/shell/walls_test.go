@@ -70,6 +70,7 @@ func (f *fakeWallsService) ConfigureIdle(enabled bool, timeout string) error {
 	if enabled {
 		f.patches = append(f.patches, []walls.Setting{{Key: "timeout", Value: timeout}})
 	}
+	f.snapshot.ActionError = ""
 	accept, result := f.accept, f.idleResult
 	f.mu.Unlock()
 	if !accept {
@@ -77,14 +78,21 @@ func (f *fakeWallsService) ConfigureIdle(enabled bool, timeout string) error {
 	}
 	if result != nil {
 		if err := <-result; err != nil {
+			f.mu.Lock()
+			snapshot := f.snapshot
+			snapshot.ActionError = err.Error()
+			f.mu.Unlock()
+			f.Publish(snapshot)
 			return err
 		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.snapshot.UnitFileState = "disabled"
+	f.snapshot.ActiveState, f.snapshot.SubState = "inactive", "dead"
 	if enabled {
 		f.snapshot.UnitFileState = "enabled"
+		f.snapshot.ActiveState, f.snapshot.SubState = "active", "running"
 		f.snapshot.Timeout = timeout
 	}
 	return nil
@@ -167,6 +175,118 @@ func newOpenWallsSettings(t *testing.T, snapshot walls.Snapshot) (*Registry, *Pa
 	h := r.panelHosts[PanelSettings]
 	r.mu.Unlock()
 	return r, h, service
+}
+
+func TestSavedIdleLockDisablesWallsOnStartup(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.UnitFileState, snapshot.ActiveState, snapshot.SubState = "enabled", "active", "running"
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	service := newFakeWallsService(snapshot)
+	r.attachWallsService(service)
+
+	waitFor(t, func() bool {
+		return service.Snapshot().UnitFileState == "disabled"
+	})
+	waitFor(t, func() bool {
+		return !service.Snapshot().Running()
+	})
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.wallsSnapshot.UnitFileState == "disabled" && !r.wallsSnapshot.Running()
+	})
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if !slices.Equal(service.enables, []bool{false}) {
+		t.Fatalf("startup enablement calls = %v, want one disable", service.enables)
+	}
+	if len(service.patches) != 0 {
+		t.Fatalf("startup reconciliation rewrote daemon settings: %v", service.patches)
+	}
+	if service.snapshot.Timeout != "5m" {
+		t.Fatalf("startup reconciliation changed the independent timeout to %q", service.snapshot.Timeout)
+	}
+}
+
+func TestSavedIdleLockDisablesRuntimeEnabledWallsOnStartup(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.UnitFileState = "enabled-runtime"
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	service := newFakeWallsService(snapshot)
+	r.attachWallsService(service)
+
+	waitFor(t, func() bool {
+		return service.Snapshot().UnitFileState == "disabled"
+	})
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if !slices.Equal(service.enables, []bool{false}) {
+		t.Fatalf("runtime-enabled startup calls = %v, want one disable", service.enables)
+	}
+	if service.snapshot.Timeout != "5m" {
+		t.Fatalf("startup reconciliation changed the independent timeout to %q", service.snapshot.Timeout)
+	}
+}
+
+func TestUnsetIdleLockLeavesWallsEnabledOnStartup(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.UnitFileState, snapshot.ActiveState, snapshot.SubState = "enabled", "active", "running"
+	r := newPanelRegistry(t)
+	r.cfg.Session.Locker = "sysc-lock"
+	service := newFakeWallsService(snapshot)
+	r.attachWallsService(service)
+
+	changed := snapshot
+	changed.Effect = "rain"
+	service.Publish(changed)
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.wallsSnapshot.Effect == "rain"
+	})
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if len(service.enables) != 0 {
+		t.Fatalf("unset Idle.Lock changed Walls enablement: %v", service.enables)
+	}
+	if !service.snapshot.EnabledAtLogin() || !service.snapshot.Running() {
+		t.Fatalf("unset Idle.Lock changed the running unit: %+v", service.snapshot)
+	}
+}
+
+func TestSavedIdleLockDisableFailureIsVisibleOnStartup(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.UnitFileState, snapshot.ActiveState, snapshot.SubState = "enabled", "active", "running"
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	service := newFakeWallsService(snapshot)
+	result := make(chan error, 1)
+	service.idleResult = result
+	r.attachWallsService(service)
+	result <- errors.New("systemctl denied")
+
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying && strings.Contains(r.wallsSnapshot.ActionError, "systemctl denied")
+	})
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if !slices.Equal(service.enables, []bool{false}) {
+		t.Fatalf("failed startup enablement calls = %v, want one disable attempt", service.enables)
+	}
+	if !service.snapshot.EnabledAtLogin() || !service.snapshot.Running() {
+		t.Fatalf("failed disable unexpectedly changed the unit: %+v", service.snapshot)
+	}
 }
 
 func TestScreensaverSettingsOpeningRefreshesWithoutStartingPreview(t *testing.T) {

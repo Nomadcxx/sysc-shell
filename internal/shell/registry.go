@@ -19,6 +19,7 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	metrics "github.com/Nomadcxx/sysc-metrics"
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/buildinfo"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
@@ -229,8 +230,16 @@ type Registry struct {
 	// watch the reveal's pacing without racing the wall clock; production
 	// leaves it nil and the animator runs on time.Now.
 	animClock func() time.Time
+	// sound plays the shell's cues; nil until the first cue with sounds on.
+	sound cuePlayer
+	// newSoundPlayer makes it. Tests replace it with a counting player.
+	newSoundPlayer func() cuePlayer
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
+	// forceQuitRunningAppScope kills one validated app scope outside Registry.mu.
+	forceQuitRunningAppScope func(string) error
+	// readProcessCgroup reads the cgroup for a current Niri window PID.
+	readProcessCgroup func(int) (string, error)
 	// startInhibit creates the process-backed caffeine hold. Tests replace it.
 	startInhibit    func() (io.Closer, error)
 	inhibit         io.Closer
@@ -433,41 +442,44 @@ func NewRegistry(cfg config.Config) *Registry {
 	weather.SetLocationLabel(cfg.Weather.Location)
 	weather.SetCity(cfg.Weather.City)
 	r := &Registry{
-		cfg:                cfg,
-		now:                time.Now(),
-		outputs:            make(map[string]outputState),
-		bars:               make(map[uint32]*Bar),
-		leases:             make(map[uint32][]*services.Lease),
-		clock:              services.NewClock(),
-		metrics:            services.NewMetrics(),
-		weather:            weather,
-		gammaEvents:        make(chan wayland.GammaEvent, 16),
-		themeGen:           gen,
-		paletteStore:       palettes,
-		paletteLister:      listPalettes,
-		paletteImportDir:   paletteImportDir(),
-		invalidations:      make(chan wayland.Invalidation, 8),
-		aux:                make(chan wayland.AuxRequest, 8),
-		selections:         make(chan wayland.SelectionRequest, 8),
-		polkitOutputEvents: make(chan struct{}, 1),
-		panelHosts:         make(map[PanelID]*PanelHost),
-		panelShields:       make(map[uint32]*PanelHost),
-		closed:             make(chan struct{}),
-		dwell:              newDwell(defaultDwell),
-		runArgv:            runArgvDefault,
-		lookPath:           exec.LookPath,
-		settingsReadDir:    os.ReadDir,
-		runArgvOutput:      runArgvOutputDefault,
-		startInhibit:       startInhibitDefault,
-		autoPauseApplied:   make(map[string]wallpaper.Reasons),
-		autoPauseFPS:       make(map[string]int),
-		readBattery:        metrics.ReadBattery,
-		signalProcess:      signalProcessDefault,
-		notify:             newNotifyState(),
-		batteryWarning:     newBatteryWarning(),
-		clipboard:          newClipboardProjection(),
-		tray:               newTrayState(),
-		trayCh:             make(chan trayclient.Message, 32),
+		cfg:                      cfg,
+		now:                      time.Now(),
+		outputs:                  make(map[string]outputState),
+		bars:                     make(map[uint32]*Bar),
+		leases:                   make(map[uint32][]*services.Lease),
+		clock:                    services.NewClock(),
+		metrics:                  services.NewMetrics(),
+		weather:                  weather,
+		gammaEvents:              make(chan wayland.GammaEvent, 16),
+		themeGen:                 gen,
+		paletteStore:             palettes,
+		paletteLister:            listPalettes,
+		paletteImportDir:         paletteImportDir(),
+		invalidations:            make(chan wayland.Invalidation, 8),
+		aux:                      make(chan wayland.AuxRequest, 8),
+		selections:               make(chan wayland.SelectionRequest, 8),
+		polkitOutputEvents:       make(chan struct{}, 1),
+		panelHosts:               make(map[PanelID]*PanelHost),
+		panelShields:             make(map[uint32]*PanelHost),
+		closed:                   make(chan struct{}),
+		dwell:                    newDwell(defaultDwell),
+		runArgv:                  runArgvDefault,
+		lookPath:                 exec.LookPath,
+		settingsReadDir:          os.ReadDir,
+		runArgvOutput:            runArgvOutputDefault,
+		forceQuitRunningAppScope: forceQuitNiriAppScopeDefault,
+		readProcessCgroup:        readProcessCgroupDefault,
+		newSoundPlayer:           newSystemSoundPlayer,
+		startInhibit:             startInhibitDefault,
+		autoPauseApplied:         make(map[string]wallpaper.Reasons),
+		autoPauseFPS:             make(map[string]int),
+		readBattery:              metrics.ReadBattery,
+		signalProcess:            signalProcessDefault,
+		notify:                   newNotifyState(),
+		batteryWarning:           newBatteryWarning(),
+		clipboard:                newClipboardProjection(),
+		tray:                     newTrayState(),
+		trayCh:                   make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
 		trayCloses:                     newTrayCloseTracker(),
@@ -1117,7 +1129,7 @@ func (r *Registry) BrightnessAvailable() bool {
 
 func (r *Registry) Status() map[string]any {
 	if r == nil {
-		return map[string]any{"version": "sysc-shell"}
+		return map[string]any{"version": buildinfo.Line()}
 	}
 	r.mu.Lock()
 	audio := r.audio != nil && r.audio.Available()
@@ -1141,7 +1153,7 @@ func (r *Registry) Status() map[string]any {
 	}
 	_, err := exec.LookPath("matugen")
 	return map[string]any{
-		"version":         "sysc-shell",
+		"version":         buildinfo.Line(),
 		"audio":           audio,
 		"brightness":      bright,
 		"panels":          panels,
@@ -2118,6 +2130,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				r.syncSoundLocked()
 				r.pushIdleInputsLocked()
 				// An open settings panel holds its own draft, and a change
 				// arriving from outside it would otherwise be reverted by the
@@ -2297,6 +2310,7 @@ func (r *Registry) Close() {
 	var wallpaperThumbCancel context.CancelFunc
 	var polkitCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
+	var soundPlayer cuePlayer
 	var depthEffects depthClockEffects
 	if locked {
 		if r.polkitHost != nil && r.polkitHost.open_ {
@@ -2346,6 +2360,8 @@ func (r *Registry) Close() {
 		r.wallpaperThumbCancel = nil
 		mediaArt = r.mediaArt
 		r.mediaArt = nil
+		soundPlayer = r.sound
+		r.sound = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -2398,6 +2414,9 @@ func (r *Registry) Close() {
 	}
 	if wallpaperThumbCancel != nil {
 		wallpaperThumbCancel()
+	}
+	if soundPlayer != nil {
+		_ = soundPlayer.Close()
 	}
 	if mediaArt != nil {
 		mediaArt.Close()
@@ -2607,10 +2626,14 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.tryOpenOnboardingLocked(0)
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
+	var runningMenuUpdated bool
+	var runningMenuOutput uint32
 	if h := r.runningMenu; h != nil && h.open_ {
-		if slot, ok := runningSlotForKey(r.running, h.slot.Key); ok {
-			h.slot = slot
-		} else {
+		// A scope can outlive its Niri window; keep pending or failure feedback until dismissed.
+		if slot, ok := runningSlotByKey(r.running, h.slot.Key); ok {
+			runningMenuUpdated = h.refreshLocked(slot, r.niriSnapshot)
+			runningMenuOutput = h.output
+		} else if h.forceQuitState != runningAppForceQuitPending && h.forceQuitState != runningAppForceQuitFailed {
 			h.closeLocked()
 		}
 	}
@@ -2629,6 +2652,9 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if runningMenuUpdated {
+		r.publishSurface(runningMenuOutput, runningAppMenuSurfaceID)
+	}
 	if switcherUpdated {
 		r.publishSurface(switcherOutput, windowSwitcherSurfaceID)
 	}
@@ -2915,6 +2941,12 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 		h.retheme(next)
 		if h.open_ {
 			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: windowSwitcherSurfaceID})
+		}
+	}
+	if h := r.runningMenu; h != nil && h.open_ {
+		next := withBarGeometry(r.panelThemeForState(h.output, cfg, tokens), cfg.Bar)
+		if h.rethemeLocked(next, cfg.Bar.FontFamily) {
+			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: runningAppMenuSurfaceID})
 		}
 	}
 	if h := r.polkitHost; h != nil && h.open_ {

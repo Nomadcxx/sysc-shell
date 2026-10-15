@@ -1134,6 +1134,30 @@ func TestThemeRadiusReachesTheBar(t *testing.T) {
 	}
 }
 
+// TestThemeGlassAxisRoundTrips holds the material's closed set at the loader:
+// every option the settings registry offers must load, an omitted key means the
+// preset's value, and a default configuration pins neither axis.
+func TestThemeGlassAxisRoundTrips(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"theme":{"glass":"auto","glass-intensity":70}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme.Glass != theme.GlassAuto || cfg.Theme.GlassIntensity != 70 {
+		t.Fatalf("glass = %q/%d, want auto/70", cfg.Theme.Glass, cfg.Theme.GlassIntensity)
+	}
+	for _, m := range theme.GlassMaterials() {
+		if _, err := Parse([]byte(`{"theme":{"glass":"` + string(m) + `"}}`)); err != nil {
+			t.Errorf("%s: %v", m, err)
+		}
+	}
+	def := Default()
+	if def.Theme.Glass != theme.GlassOff || def.Theme.GlassIntensity != theme.GlassIntensityDefault {
+		t.Errorf("default = %q/%d, want off/%d",
+			def.Theme.Glass, def.Theme.GlassIntensity, theme.GlassIntensityDefault)
+	}
+}
+
 func TestThemeRejectsEveryInvalidAxisWithItsPath(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1145,6 +1169,8 @@ func TestThemeRejectsEveryInvalidAxisWithItsPath(t *testing.T) {
 		{"density", `{"theme":{"density":"dense"}}`, "theme.density"},
 		{"motion", `{"theme":{"motion":"springy"}}`, "theme.motion"},
 		{"elevation", `{"theme":{"elevation":"high"}}`, "theme.elevation"},
+		{"glass", `{"theme":{"glass":"shiny"}}`, "theme.glass"},
+		{"glass intensity", `{"theme":{"glass-intensity":101}}`, "theme.glass-intensity"},
 		{"font scale low", `{"theme":{"font-scale":74}}`, "theme.font-scale"},
 		{"font scale high", `{"theme":{"font-scale":201}}`, "theme.font-scale"},
 		{"font weight low", `{"theme":{"font-weight":99}}`, "theme.font-weight"},

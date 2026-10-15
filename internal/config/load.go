@@ -113,6 +113,8 @@ type wireTheme struct {
 	OverlayOpacity *int    `json:"overlay-opacity,omitempty"`
 	BlurBehind     *bool   `json:"blur-behind,omitempty"`
 	BlurRadius     *int    `json:"blur-radius,omitempty"`
+	Glass          *string `json:"glass,omitempty"`
+	GlassIntensity *int    `json:"glass-intensity,omitempty"`
 	Elevation      *string `json:"elevation,omitempty"`
 }
 
@@ -184,6 +186,11 @@ type wireMedia struct {
 	Blacklist []string `json:"blacklist,omitempty"`
 }
 
+type wireSounds struct {
+	Notification *bool `json:"notification,omitempty"`
+	Volume       *int  `json:"volume,omitempty"`
+}
+
 type wireMonitor struct {
 	Refresh         *int    `json:"refresh,omitempty"`
 	SortBackground  *string `json:"sort_column_background,omitempty"`
@@ -228,6 +235,7 @@ type wireConfig struct {
 	NightLight    *wireNightLight      `json:"night-light,omitempty"`
 	Media         *wireMedia           `json:"media,omitempty"`
 	Monitor       *wireMonitor         `json:"monitor,omitempty"`
+	Sounds        *wireSounds          `json:"sounds,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
 	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
@@ -469,6 +477,13 @@ func parseCandidate(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Media = media
+	}
+	if wire.Sounds != nil {
+		sounds, err := applySounds(*wire.Sounds, "sounds")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Sounds = sounds
 	}
 	if wire.Monitor != nil {
 		monitor, err := applyMonitor(*wire.Monitor, "monitor")
@@ -879,6 +894,21 @@ func isBusNameStart(c byte) bool {
 
 func isBusNameChar(c byte) bool {
 	return isBusNameStart(c) || c >= '0' && c <= '9'
+}
+
+// applySounds resolves the sounds block over its defaults.
+func applySounds(w wireSounds, path string) (Sounds, error) {
+	out := defaultSounds()
+	if w.Notification != nil {
+		out.Notification = *w.Notification
+	}
+	if w.Volume != nil {
+		if *w.Volume < SoundsVolumeMin || *w.Volume > SoundsVolumeMax {
+			return Sounds{}, pathErr(path+".volume", "%d is outside %d through %d", *w.Volume, SoundsVolumeMin, SoundsVolumeMax)
+		}
+		out.Volume = *w.Volume
+	}
+	return out, nil
 }
 
 // applyMonitor resolves the monitor block over its defaults. A colour must be
@@ -1549,6 +1579,14 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	if w.BlurBehind != nil {
 		out.BlurBehind = *w.BlurBehind
 	}
+	if w.Glass != nil {
+		m := theme.GlassMaterial(*w.Glass)
+		if !slices.Contains(theme.GlassMaterialNames(), *w.Glass) {
+			return Theme{}, pathErr(path+".glass", "%q is not one of %s",
+				*w.Glass, strings.Join(theme.GlassMaterialNames(), ", "))
+		}
+		out.Glass = m
+	}
 	for _, f := range []struct {
 		key      string
 		supplied *string
@@ -1584,6 +1622,7 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 		{"panel-opacity", w.PanelOpacity, &out.PanelOpacity, theme.OpacityMinBlurred, theme.OpacityMax},
 		{"overlay-opacity", w.OverlayOpacity, &out.OverlayOpacity, theme.OpacityMin, theme.OpacityMax},
 		{"blur-radius", w.BlurRadius, &out.BlurRadius, theme.BlurRadiusMin, theme.BlurRadiusMax},
+		{"glass-intensity", w.GlassIntensity, &out.GlassIntensity, theme.GlassIntensityMin, theme.GlassIntensityMax},
 	} {
 		if f.supplied == nil {
 			continue
