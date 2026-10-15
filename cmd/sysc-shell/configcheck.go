@@ -16,13 +16,16 @@ import (
 // are a contract: 0 accepted, 1 the loader rejected the content, 2 usage or a
 // read failure. Scripts compare them, so they are not renumbered.
 func runConfigCheck(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 1 || (len(args) == 1 && strings.HasPrefix(args[0], "-")) {
+	// args are the words after `config`, so the grammar lives here: `check`
+	// is the only verb, and a `-` prefixed path is an error, not a flag.
+	if len(args) == 0 || args[0] != "check" || len(args) > 2 ||
+		(len(args) == 2 && strings.HasPrefix(args[1], "-")) {
 		fmt.Fprintln(stderr, "usage: sysc-shell config check [path]")
 		return 2
 	}
 	path := config.DefaultPath()
-	if len(args) == 1 {
-		path = args[0]
+	if len(args) == 2 {
+		path = args[1]
 	}
 	if path == "" {
 		fmt.Fprintln(stderr, "config: no config path: HOME is unset")

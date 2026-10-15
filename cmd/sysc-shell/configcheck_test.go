@@ -15,9 +15,9 @@ func TestRunConfigCheckUsageRefusals(t *testing.T) {
 		wantCode int
 		wantErr  string
 	}{
-		{"too many paths", []string{"a.json", "b.json"}, 2, "usage: sysc-shell config check [path]"},
-		{"flag is refused", []string{"--json"}, 2, "usage: sysc-shell config check [path]"},
-		{"directory", []string{"."}, 2, "config: read ."},
+		{"too many paths", []string{"check", "a.json", "b.json"}, 2, "usage: sysc-shell config check [path]"},
+		{"flag is refused", []string{"check", "--json"}, 2, "usage: sysc-shell config check [path]"},
+		{"directory", []string{"check", "."}, 2, "config: read ."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestRunConfigCheckReportsOKAndDefaults(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
 
 	var out, errOut bytes.Buffer
-	if code := runConfigCheck(nil, &out, &errOut); code != 0 {
+	if code := runConfigCheck([]string{"check"}, &out, &errOut); code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
 	}
 	want := filepath.Join(dir, "config", "sysc-shell", "config.json") + ": ok (defaults, file not found)\n"
@@ -57,7 +57,7 @@ func TestRunConfigCheckReportsOKAndDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if code := runConfigCheck([]string{path}, &out, &errOut); code != 0 {
+	if code := runConfigCheck([]string{"check", path}, &out, &errOut); code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
 	}
 	if got, want := out.String(), path+": ok\n"; got != want {
@@ -86,7 +86,7 @@ func TestRunConfigCheckReportsLoaderErrorsVerbatim(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out, errOut bytes.Buffer
-			code := runConfigCheck([]string{path}, &out, &errOut)
+			code := runConfigCheck([]string{"check", path}, &out, &errOut)
 			if code != tc.wantCode {
 				t.Fatalf("code = %d, want %d (stderr %q)", code, tc.wantCode, errOut.String())
 			}
@@ -112,7 +112,7 @@ func TestRunConfigCheckTouchesNoCompositorOrSocket(t *testing.T) {
 	t.Setenv("WAYLAND_DISPLAY", "")
 
 	var out, errOut bytes.Buffer
-	if code := runConfigCheck(nil, &out, &errOut); code != 0 {
+	if code := runConfigCheck([]string{"check"}, &out, &errOut); code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
 	}
 	entries, err := os.ReadDir(runtime)
@@ -130,11 +130,38 @@ func TestRunConfigCheckOutputIsByteStable(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := runConfigCheck([]string{path}, &out, &errOut); code != 1 {
+	if code := runConfigCheck([]string{"check", path}, &out, &errOut); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
 	want := "config: terminal-opacity: 10 is outside 50..100\n"
 	if errOut.String() != want {
 		t.Fatalf("stderr = %q, want exactly %q", errOut.String(), want)
+	}
+}
+
+func TestRunConfigCheckRefusesAnIncompleteGrammar(t *testing.T) {
+	// `sysc-shell config` on its own must not fall through into a compositor
+	// run and must not quietly check a default path.
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"no verb", nil},
+		{"unknown verb", []string{"show"}},
+		{"verb after a path", []string{"/tmp/config.json", "check"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			if code := runConfigCheck(tc.args, &out, &errOut); code != 2 {
+				t.Fatalf("code = %d, want 2 (stderr %q)", code, errOut.String())
+			}
+			if got, want := errOut.String(), "usage: sysc-shell config check [path]\n"; got != want {
+				t.Fatalf("stderr = %q, want %q", got, want)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty", out.String())
+			}
+		})
 	}
 }
