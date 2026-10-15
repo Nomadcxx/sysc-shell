@@ -541,6 +541,27 @@ type Composition struct {
 	Glass          GlassMaterial
 	GlassIntensity int
 	Elevation      Elevation
+	// FrameCap is the user's ceiling on animation repaints. It is a closed
+	// vocabulary rather than a number so the setting can only name rates the
+	// sampler can approach; Durations turns it into the motion table's cap.
+	FrameCap RepaintCap
+}
+
+// RepaintCap names a ceiling on animation-driven repaints. Display keeps the
+// table's own guard and leaves pacing to the compositor's frame callbacks.
+type RepaintCap string
+
+const (
+	RepaintDisplay RepaintCap = "display"
+	Repaint60      RepaintCap = "60"
+	Repaint90      RepaintCap = "90"
+	Repaint120     RepaintCap = "120"
+)
+
+// RepaintCaps lists the closed set in a stable order, for the settings
+// registry and for error messages.
+func RepaintCaps() []RepaintCap {
+	return []RepaintCap{RepaintDisplay, Repaint60, Repaint90, Repaint120}
 }
 
 // presets are the three bundled compositions from design D2.
@@ -561,6 +582,7 @@ var presets = map[Preset]Composition{
 		BlurRadius: 24,
 		Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 		Elevation: ElevationSubtle,
+		FrameCap:  RepaintDisplay,
 	},
 	PresetCompact: {
 		Density:     DensityCompact,
@@ -572,6 +594,7 @@ var presets = map[Preset]Composition{
 		BlurRadius: 24,
 		Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 		Elevation: ElevationSubtle,
+		FrameCap:  RepaintDisplay,
 	},
 	PresetExpressive: {
 		Density:     DensityDefault,
@@ -583,6 +606,7 @@ var presets = map[Preset]Composition{
 		BlurRadius: 24,
 		Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 		Elevation: ElevationStandard,
+		FrameCap:  RepaintDisplay,
 	},
 }
 
@@ -655,6 +679,9 @@ func Rebase(current, from, to Composition) Composition {
 	if current.Elevation == from.Elevation {
 		out.Elevation = to.Elevation
 	}
+	if current.FrameCap == from.FrameCap {
+		out.FrameCap = to.FrameCap
+	}
 	rebaseString(current.FontFamily, from.FontFamily, to.FontFamily, &out.FontFamily)
 	rebaseString(current.MonoFontFamily, from.MonoFontFamily, to.MonoFontFamily, &out.MonoFontFamily)
 	rebaseInt(current.FontScale, from.FontScale, to.FontScale, &out.FontScale)
@@ -724,9 +751,19 @@ func (c Composition) Family(role TextRole) string {
 	return c.FontFamily
 }
 
-// Motion durations for this composition, already divided by its speed.
+// Motion durations for this composition, already divided by its speed. The
+// repaint ceiling replaces only FrameCap, which AtSpeed leaves unscaled.
 func (c Composition) Durations() MotionTokens {
-	return BaseMotion.AtSpeed(c.MotionSpeed)
+	m := BaseMotion.AtSpeed(c.MotionSpeed)
+	switch c.FrameCap {
+	case Repaint60:
+		m.FrameCap = time.Second / 60
+	case Repaint90:
+		m.FrameCap = time.Second / 90
+	case Repaint120:
+		m.FrameCap = time.Second / 120
+	}
+	return m
 }
 
 // Valid reports whether every axis is in range. The loader adds the JSON path;
@@ -742,6 +779,11 @@ func (c Composition) Valid() error {
 	case ElevationNone, ElevationSubtle, ElevationStandard:
 	default:
 		return fmt.Errorf("elevation %q is not one of none, subtle, standard", c.Elevation)
+	}
+	switch c.FrameCap {
+	case RepaintDisplay, Repaint60, Repaint90, Repaint120:
+	default:
+		return fmt.Errorf("frame-cap %q is not one of display, 60, 90, 120", c.FrameCap)
 	}
 	switch c.Glass {
 	case GlassOff, GlassSmoke, GlassMilk, GlassFrost, GlassAuto, GlassFull:

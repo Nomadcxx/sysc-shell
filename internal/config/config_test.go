@@ -1877,3 +1877,37 @@ func TestLauncherCommandProviderRejectsInvalidRoutesAndCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestFrameCapConfigVocabulary(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		doc  string
+		want theme.RepaintCap
+	}{
+		{`{}`, theme.RepaintDisplay},
+		{`{"theme":{"frame-cap":null}}`, theme.RepaintDisplay},
+		{`{"theme":{"frame-cap":"display"}}`, theme.RepaintDisplay},
+		{`{"theme":{"frame-cap":"60"}}`, theme.Repaint60},
+		{`{"theme":{"frame-cap":"90"}}`, theme.Repaint90},
+		{`{"theme":{"frame-cap":"120"}}`, theme.Repaint120},
+		{`{"theme":{"preset":"expressive","frame-cap":"60"}}`, theme.Repaint60},
+	} {
+		c, err := Parse([]byte(tc.doc))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.doc, err)
+		}
+		if c.Theme.FrameCap != tc.want {
+			t.Fatalf("%s: frame cap = %q, want %q", tc.doc, c.Theme.FrameCap, tc.want)
+		}
+	}
+}
+
+func TestFrameCapConfigRejectsUnknown(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{`""`, `"30"`, `"165"`, `"unlimited"`, `"0"`, `0`, `60`} {
+		_, err := Parse([]byte(`{"theme":{"frame-cap":` + value + `}}`))
+		if err == nil || !strings.Contains(err.Error(), "theme.frame-cap") {
+			t.Fatalf("value %s: error = %v, want theme.frame-cap refusal", value, err)
+		}
+	}
+}

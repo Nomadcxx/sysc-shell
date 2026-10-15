@@ -118,6 +118,7 @@ type wireTheme struct {
 	Glass          *string `json:"glass,omitempty"`
 	GlassIntensity *int    `json:"glass-intensity,omitempty"`
 	Elevation      *string `json:"elevation,omitempty"`
+	FrameCap       *string `json:"frame-cap,omitempty"`
 }
 
 type wireThemeGen struct {
@@ -1818,6 +1819,14 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 				"%q is not one of none, subtle, standard", *w.Elevation)
 		}
 		out.Elevation = e
+	}
+	if w.FrameCap != nil {
+		c := theme.RepaintCap(*w.FrameCap)
+		if !slices.Contains(theme.RepaintCaps(), c) {
+			return Theme{}, pathErr(path+".frame-cap",
+				"%q is not one of display, 60, 90, 120", *w.FrameCap)
+		}
+		out.FrameCap = c
 	}
 	// A bool has no range to check, so it takes no row in the table below.
 	if w.BlurBehind != nil {
