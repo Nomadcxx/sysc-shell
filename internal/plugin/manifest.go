@@ -235,7 +235,25 @@ type Filesystem struct {
 	Read []string
 	// ReadWrite names directories the plugin may read and change.
 	ReadWrite []string
+	// Sockets names the Unix sockets the plugin may connect to: a named
+	// endpoint the shell resolves at each start, or an absolute path. A
+	// confined plugin reaches no other socket where the kernel can refuse it.
+	Sockets []string
+	// SignalAny lets the plugin signal processes it did not start, written
+	// "signals": "any". By default a confined plugin signals only its own.
+	SignalAny bool
 }
+
+// Socket endpoints a manifest may name instead of a path. Each resolves at
+// start from the session the shell runs in.
+const (
+	SocketSessionBus = "session-bus"
+	SocketSystemBus  = "system-bus"
+	SocketCompositor = "compositor"
+	SocketWayland    = "wayland"
+)
+
+var socketEndpoints = []string{SocketSessionBus, SocketSystemBus, SocketCompositor, SocketWayland}
 
 // FilesystemMinor is the protocol minor that introduced the declaration.
 const FilesystemMinor = 18
@@ -371,6 +389,8 @@ type wireManifest struct {
 type wireFilesystem struct {
 	Read      []string `json:"read,omitempty"`
 	ReadWrite []string `json:"read_write,omitempty"`
+	Sockets   []string `json:"sockets,omitempty"`
+	Signals   string   `json:"signals,omitempty"`
 }
 
 type wireProtocol struct {
@@ -582,7 +602,7 @@ func validateManifest(w wireManifest) (Manifest, error) {
 }
 
 func filesystem(w wireFilesystem) (*Filesystem, error) {
-	if n := len(w.Read) + len(w.ReadWrite); n > maxFilesystemPaths {
+	if n := len(w.Read) + len(w.ReadWrite) + len(w.Sockets); n > maxFilesystemPaths {
 		return nil, fmt.Errorf("filesystem declares %d paths, more than the %d allowed", n, maxFilesystemPaths)
 	}
 	for _, list := range []struct {
@@ -595,7 +615,32 @@ func filesystem(w wireFilesystem) (*Filesystem, error) {
 			}
 		}
 	}
-	return &Filesystem{Read: slices.Clone(w.Read), ReadWrite: slices.Clone(w.ReadWrite)}, nil
+	for i, socket := range w.Sockets {
+		if err := declaredSocket(socket); err != nil {
+			return nil, fmt.Errorf("filesystem.sockets[%d]: %w", i, err)
+		}
+	}
+	switch w.Signals {
+	case "", "own", "any":
+	default:
+		return nil, fmt.Errorf(`filesystem.signals: %q is not "own" or "any"`, w.Signals)
+	}
+	return &Filesystem{Read: slices.Clone(w.Read), ReadWrite: slices.Clone(w.ReadWrite),
+		Sockets: slices.Clone(w.Sockets), SignalAny: w.Signals == "any"}, nil
+}
+
+// declaredSocket accepts a named endpoint or a clean absolute path. The "~/"
+// form paths take is refused: a socket is a session endpoint, and one written
+// against the home directory would hide an agent socket behind a short name
+// on the consent card. An absolute path is shown as written.
+func declaredSocket(socket string) error {
+	if slices.Contains(socketEndpoints, socket) {
+		return nil
+	}
+	if !filepath.IsAbs(socket) {
+		return fmt.Errorf("%q is neither an endpoint (%s) nor an absolute path", socket, strings.Join(socketEndpoints, ", "))
+	}
+	return declaredPath(socket)
 }
 
 // declaredPath accepts "~/..." or an absolute path, written in its clean form

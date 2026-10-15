@@ -109,3 +109,40 @@ func TestTheBoundaryFollowsTheDeclarationAndTheKernel(t *testing.T) {
 		}
 	}
 }
+
+func TestSocketsAndSignalsAreDeclaredWithTheFilesystem(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		decl map[string]any
+		err  string
+	}{
+		{"named endpoints", map[string]any{"sockets": []string{"session-bus", "system-bus", "compositor", "wayland"}}, ""},
+		{"an absolute socket", map[string]any{"sockets": []string{"/run/docker.sock"}}, ""},
+		{"unknown name", map[string]any{"sockets": []string{"x11"}}, `filesystem.sockets[0]`},
+		{"home-relative socket", map[string]any{"sockets": []string{"~/.ssh/agent.sock"}}, `filesystem.sockets[0]`},
+		{"unclean socket", map[string]any{"sockets": []string{"/run//docker.sock"}}, `filesystem.sockets[0]`},
+		{"signals any", map[string]any{"signals": "any"}, ""},
+		{"signals own", map[string]any{"signals": "own"}, ""},
+		{"signals other", map[string]any{"signals": "all"}, `filesystem.signals`},
+		{"sockets count toward the bound", map[string]any{"read": slices.Repeat([]string{"~/a"}, 30), "sockets": []string{"session-bus", "system-bus", "compositor"}}, "more than the 32 allowed"},
+	} {
+		_, err := ParseManifest(manifestWith(t, 18, tc.decl))
+		switch {
+		case tc.err == "" && err != nil:
+			t.Errorf("%s: %v", tc.name, err)
+		case tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)):
+			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.err)
+		}
+	}
+	m, err := ParseManifest(manifestWith(t, 18, map[string]any{"sockets": []string{"session-bus", "/run/docker.sock"}, "signals": "any"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(m.Filesystem.Sockets, []string{"session-bus", "/run/docker.sock"}) || !m.Filesystem.SignalAny {
+		t.Fatalf("declaration = %+v", m.Filesystem)
+	}
+	if m, _ := ParseManifest(manifestWith(t, 18, map[string]any{})); m.Filesystem.SignalAny {
+		t.Fatal("a declaration that names no signals may signal anything")
+	}
+}
