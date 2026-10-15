@@ -344,7 +344,7 @@ func TestEveryConfigDomainHasAnEntry(t *testing.T) {
 	for _, prefix := range []string{
 		"bar.", "appearance.", "theme.templates.", "panels.", "session.",
 		"accessibility.", "weather.", "wallpaper.", "tray.", "outputs.",
-		"terminal-art.",
+		"terminal-art.", "sounds.",
 	} {
 		found := false
 		for _, section := range SectionNames() {
@@ -371,9 +371,9 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Night Light adds one section to the Look cluster.
-	if len(names) != 17 {
-		t.Fatalf("SectionNames = %d sections, want seventeen", len(names))
+	// Night Light adds one section to the Look cluster, Sounds one to System.
+	if len(names) != 18 {
+		t.Fatalf("SectionNames = %d sections, want eighteen", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {

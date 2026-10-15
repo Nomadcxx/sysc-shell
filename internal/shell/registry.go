@@ -226,6 +226,10 @@ type Registry struct {
 	// watch the reveal's pacing without racing the wall clock; production
 	// leaves it nil and the animator runs on time.Now.
 	animClock func() time.Time
+	// sound plays the shell's cues; nil until the first cue with sounds on.
+	sound cuePlayer
+	// newSoundPlayer makes it. Tests replace it with a counting player.
+	newSoundPlayer func() cuePlayer
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
 	// forceQuitRunningAppScope kills one validated app scope outside Registry.mu.
@@ -461,6 +465,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		runArgvOutput:            runArgvOutputDefault,
 		forceQuitRunningAppScope: forceQuitNiriAppScopeDefault,
 		readProcessCgroup:        readProcessCgroupDefault,
+		newSoundPlayer:           newSystemSoundPlayer,
 		startInhibit:             startInhibitDefault,
 		autoPauseApplied:         make(map[string]wallpaper.Reasons),
 		autoPauseFPS:             make(map[string]int),
@@ -2114,6 +2119,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				r.syncSoundLocked()
 				r.pushIdleInputsLocked()
 				// An open settings panel holds its own draft, and a change
 				// arriving from outside it would otherwise be reverted by the
@@ -2289,6 +2295,7 @@ func (r *Registry) Close() {
 	var wallpaperThumbCancel context.CancelFunc
 	var polkitCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
+	var soundPlayer cuePlayer
 	var depthEffects depthClockEffects
 	if locked {
 		if r.polkitHost != nil && r.polkitHost.open_ {
@@ -2338,6 +2345,8 @@ func (r *Registry) Close() {
 		r.wallpaperThumbCancel = nil
 		mediaArt = r.mediaArt
 		r.mediaArt = nil
+		soundPlayer = r.sound
+		r.sound = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -2390,6 +2399,9 @@ func (r *Registry) Close() {
 	}
 	if wallpaperThumbCancel != nil {
 		wallpaperThumbCancel()
+	}
+	if soundPlayer != nil {
+		_ = soundPlayer.Close()
 	}
 	if mediaArt != nil {
 		mediaArt.Close()
