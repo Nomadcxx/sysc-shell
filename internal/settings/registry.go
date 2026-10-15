@@ -270,6 +270,15 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				func(c *config.Config, n int) { c.Theme.MotionSpeed = n }),
 		},
 		{
+			Path: "appearance.frame-cap", Label: "Maximum repaint rate", Section: "Appearance", Group: "Animation",
+			Describe: "Display keeps normal compositor pacing. Other values cap animation repaints in frames per second; effects may update more slowly.",
+			Kind:     KindEnum,
+			Options:  repaintCapNames, OptionLabels: []string{"Display", "60 fps", "90 fps", "120 fps"},
+			Get: func(c config.Config) string { return string(c.Theme.FrameCap) },
+			Set: setEnum("appearance.frame-cap", repaintCapNames,
+				func(c *config.Config, v string) { c.Theme.FrameCap = theme.RepaintCap(v) }),
+		},
+		{
 			Path: "appearance.bar-opacity", Present: PresentSlider, Unit: "%", Label: "Solid bar opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque the bar is when Style is Solid.",
 			Kind:     KindInt,
@@ -855,7 +864,7 @@ func presetAxisPaths() []string {
 		"appearance.motion", "appearance.motion-speed", "appearance.bar-opacity",
 		"appearance.panel-opacity", "appearance.overlay-opacity", "appearance.blur-behind",
 		"appearance.blur-radius", "appearance.glass", "appearance.glass-intensity",
-		"appearance.elevation",
+		"appearance.elevation", "appearance.frame-cap",
 	}
 }
 
@@ -954,8 +963,11 @@ var (
 		string(theme.DensityMini), string(theme.DensityCompact), string(theme.DensityDefault),
 		string(theme.DensityComfortable), string(theme.DensitySpacious),
 	}
-	motionNames    = []string{string(theme.MotionStandard), string(theme.MotionExpressive)}
-	glassNames     = theme.GlassMaterialNames()
+	motionNames     = []string{string(theme.MotionStandard), string(theme.MotionExpressive)}
+	glassNames      = theme.GlassMaterialNames()
+	repaintCapNames = []string{
+		string(theme.RepaintDisplay), string(theme.Repaint60), string(theme.Repaint90), string(theme.Repaint120),
+	}
 	elevationNames = []string{
 		string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
 	}

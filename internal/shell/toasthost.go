@@ -892,20 +892,7 @@ func (h *toastHost) rebuildWithLayouts(connector string, ids []uint32, layouts m
 		moved = h.noteTargets(connector, ids[:min(len(ids), len(rects))], rects)
 	}
 	if moved && !h.sliding && h.anim != nil && !h.anim.reduced && !h.anim.Settled() {
-		h.sliding = true
-		h.stopSlide = make(chan struct{})
-		stop := h.stopSlide
-		frameCap := h.anim.frameCap()
-		go animateSurface(stop, func() bool {
-			h.r.mu.Lock()
-			defer h.r.mu.Unlock()
-			settled := h.anim == nil || h.anim.Settled()
-			if settled {
-				h.sliding = false
-				h.stopSlide = nil
-			}
-			return settled
-		}, h.publishSlideFrame, func() time.Duration { return frameCap })
+		h.startSlideLocked()
 	}
 	cards := make([]toastCard, 0, len(ids))
 	for i, id := range ids {
@@ -931,6 +918,35 @@ func (h *toastHost) rebuildWithLayouts(connector string, ids []uint32, layouts m
 // publishSlideFrame repaints every toast surface and moves its input region
 // onto the rectangles drawn this frame. The slide continues after recompute,
 // and the compositor delivers clicks to the region it was last given.
+// startSlideLocked runs the one frame loop that carries cards to their new
+// places and returns a channel closed when the loop stops. Caller holds
+// Registry.mu.
+func (h *toastHost) startSlideLocked() <-chan struct{} {
+	h.sliding = true
+	h.stopSlide = make(chan struct{})
+	stop := h.stopSlide
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		animateSurface(stop, func() bool {
+			h.r.mu.Lock()
+			defer h.r.mu.Unlock()
+			settled := h.anim == nil || h.anim.Settled()
+			if settled {
+				h.sliding = false
+				h.stopSlide = nil
+			}
+			return settled
+		}, h.publishSlideFrame, func() time.Duration {
+			// Asked per tick, so a restyle's cap reaches a slide in flight.
+			h.r.mu.Lock()
+			defer h.r.mu.Unlock()
+			return h.anim.frameCap()
+		})
+	}()
+	return done
+}
+
 func (h *toastHost) publishSlideFrame() {
 	if h == nil || h.r == nil {
 		return

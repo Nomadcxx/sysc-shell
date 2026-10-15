@@ -1,11 +1,14 @@
 package shell
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -475,5 +478,76 @@ func TestToastRethemeAppliesMotion(t *testing.T) {
 	}
 	if h.anim.has(toastSlideKey("eDP-1", 1), animStackY) {
 		t.Fatal("reduced motion retained toast geometry state")
+	}
+}
+
+// The toast slide loop asks for the cap on every tick; see
+// TestOSDRevealUsesReloadedCap for why the frozen clock makes the second
+// publish attributable to the restyle alone.
+func TestToastSlideUsesReloadedCap(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = false
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	h := newToastHost(reg, nil)
+	reg.mu.Lock()
+	reg.toasts = h
+	reg.mu.Unlock()
+	frozen := time.Unix(500, 0)
+	frames := make(chan struct{}, 16)
+	// Only slide frames count: restyle's own relayout may send requests too,
+	// and those must not stand in for a publish from the loop.
+	var armed atomic.Bool
+	armed.Store(true)
+	reg.mu.Lock()
+	h.outputs["DP-1"] = 7
+	h.request = func(req wayland.AuxRequest) {
+		if !armed.Load() || req.Update == nil || !req.Update.SetInputRegion {
+			return
+		}
+		select {
+		case frames <- struct{}{}:
+		default:
+		}
+	}
+	h.anim = newAnimator(func() time.Time { return frozen }, false, reg.panelTheme().Motion)
+	h.anim.Target("card", animVisible, 1)
+	h.anim.motion.FrameCap = time.Hour
+	done := h.startSlideLocked()
+	stop := h.stopSlide
+	reg.mu.Unlock()
+	t.Cleanup(func() {
+		reg.mu.Lock()
+		if h.stopSlide == stop && stop != nil {
+			close(stop)
+			h.stopSlide = nil
+		}
+		reg.mu.Unlock()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("slide loop did not stop")
+		}
+	})
+
+	select {
+	case <-frames:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the slide published no opening frame")
+	}
+	reg.mu.Lock()
+	armed.Store(false)
+	reg.cfg.Theme.FrameCap = theme.Repaint120
+	h.restyleLocked()
+	for len(frames) > 0 {
+		<-frames
+	}
+	armed.Store(true)
+	reg.mu.Unlock()
+	select {
+	case <-frames:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a slide in flight kept the cap it started with")
 	}
 }
