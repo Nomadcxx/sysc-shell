@@ -75,8 +75,9 @@ func TestRunConfigCheckReportsLoaderErrorsVerbatim(t *testing.T) {
 		{"unknown field", `{"nope":1}`, 1, `config: `},
 		{"opacity out of range", `{"terminal-opacity":10}`, 1, "config: terminal-opacity: 10 is outside 50..100"},
 		{"blur out of range", `{"terminal-art":{"blur":900}}`, 1, "config: terminal-art.blur: must be in 0..64"},
-		{"second value", `{"terminal-opacity":90} {"terminal-opacity":90}`, 1, "config: more than one JSON value"},
-		{"empty file", ``, 1, `config: `},
+		{"second value", `{"terminal-opacity":90} {}`, 1, "config: more than one JSON value"},
+		{"second value with fields", `{"terminal-opacity":90} {"terminal-opacity":90}`, 1, "config: json: unknown field"},
+		{"empty file", ``, 1, "config: EOF"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,5 +97,44 @@ func TestRunConfigCheckReportsLoaderErrorsVerbatim(t *testing.T) {
 				t.Fatalf("stdout = %q, want empty on failure", out.String())
 			}
 		})
+	}
+}
+
+func TestRunConfigCheckTouchesNoCompositorOrSocket(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	runtime := filepath.Join(dir, "run")
+	if err := os.Mkdir(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	t.Setenv("NIRI_SOCKET", "")
+	t.Setenv("WAYLAND_DISPLAY", "")
+
+	var out, errOut bytes.Buffer
+	if code := runConfigCheck(nil, &out, &errOut); code != 0 {
+		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
+	}
+	entries, err := os.ReadDir(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("runtime dir holds %v, want nothing: the check must not open a socket", entries)
+	}
+}
+
+func TestRunConfigCheckOutputIsByteStable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"terminal-opacity":10}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := runConfigCheck([]string{path}, &out, &errOut); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	want := "config: terminal-opacity: 10 is outside 50..100\n"
+	if errOut.String() != want {
+		t.Fatalf("stderr = %q, want exactly %q", errOut.String(), want)
 	}
 }

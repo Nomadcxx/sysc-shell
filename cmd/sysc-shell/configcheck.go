@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -27,6 +28,9 @@ func runConfigCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "config: no config path: HOME is unset")
 		return 2
 	}
+	// Load treats an absent file as the defaults, so the file itself has to say
+	// whether a missing path is worth reporting. One stat, before the load.
+	_, statErr := os.Stat(path)
 	_, err := config.Load(path)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -39,6 +43,10 @@ func runConfigCheck(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: ok\n", path)
+	suffix := ""
+	if os.IsNotExist(statErr) {
+		suffix = " (defaults, file not found)"
+	}
+	fmt.Fprintf(stdout, "%s: ok%s\n", path, suffix)
 	return 0
 }
