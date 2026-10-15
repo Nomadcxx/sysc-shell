@@ -100,7 +100,7 @@ func (r *Registry) relayWalls(svc wallsController) {
 			return
 		}
 		idleLockChecked = true
-		stop := snapshot.EnabledAtLogin() || snapshot.Running()
+		stop := snapshot.EnabledAtLogin() || snapshot.UnitFileState == "enabled-runtime" || snapshot.Running()
 		if stop {
 			r.idleApplying = true
 		}

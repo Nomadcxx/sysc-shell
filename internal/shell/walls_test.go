@@ -211,6 +211,29 @@ func TestSavedIdleLockDisablesWallsOnStartup(t *testing.T) {
 	}
 }
 
+func TestSavedIdleLockDisablesRuntimeEnabledWallsOnStartup(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.UnitFileState = "enabled-runtime"
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	service := newFakeWallsService(snapshot)
+	r.attachWallsService(service)
+
+	waitFor(t, func() bool {
+		return service.Snapshot().UnitFileState == "disabled"
+	})
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if !slices.Equal(service.enables, []bool{false}) {
+		t.Fatalf("runtime-enabled startup calls = %v, want one disable", service.enables)
+	}
+	if service.snapshot.Timeout != "5m" {
+		t.Fatalf("startup reconciliation changed the independent timeout to %q", service.snapshot.Timeout)
+	}
+}
+
 func TestUnsetIdleLockLeavesWallsEnabledOnStartup(t *testing.T) {
 	snapshot := readyWallsSnapshot()
 	snapshot.UnitFileState, snapshot.ActiveState, snapshot.SubState = "enabled", "active", "running"
