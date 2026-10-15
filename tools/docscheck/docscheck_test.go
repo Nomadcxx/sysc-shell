@@ -18,6 +18,8 @@ func TestJSONExamplesAreChecked(t *testing.T) {
 		{"testdata/good/skipped-tag.md", nil},
 		{"testdata/bad/config-unknown-field.md", []string{":4:"}},
 		{"testdata/bad/item-unknown-id.md", []string{":4:"}},
+		{"testdata/bad/item-missing-id.md", []string{":4:"}},
+		{"testdata/bad/item-unknown-panel.md", []string{":4:"}},
 		{"testdata/bad/scalar-block.md", []string{":4:"}},
 	}
 	for _, tc := range cases {
@@ -43,6 +45,7 @@ func TestIPCExamplesAreChecked(t *testing.T) {
 		{"testdata/good/kdl-binds.md", nil},
 		{"testdata/good/shell-commands.md", nil},
 		{"testdata/good/kdl-unknown-escape.md", nil},
+		{"testdata/bad/kdl-unknown-escape-bad-method.md", []string{":4:"}},
 		{"testdata/bad/kdl-unknown-method.md", []string{":4:"}},
 		{"testdata/bad/kdl-unknown-panel.md", []string{":4:"}},
 		{"testdata/bad/shell-unknown-method.md", []string{":4:"}},

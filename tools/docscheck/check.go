@@ -71,7 +71,12 @@ func checkJSON(at, body string) []string {
 		}
 		return nil
 	case '[':
-		return checkItemArray(at, body)
+		findings := checkItemArray(at, body)
+		var decoded any
+		if err := json.Unmarshal([]byte(body), &decoded); err == nil {
+			findings = append(findings, checkPanelValue(at, decoded)...)
+		}
+		return findings
 	default:
 		return []string{at + "json block is neither a config object nor an item array"}
 	}
@@ -89,8 +94,12 @@ func checkItemArray(at, body string) []string {
 		known[id] = true
 	}
 	var findings []string
-	for _, item := range items {
-		if item.ID != "" && !known[item.ID] {
+	for i, item := range items {
+		if item.ID == "" {
+			findings = append(findings, fmt.Sprintf("%sbar item element %d has no id", at, i+1))
+			continue
+		}
+		if !known[item.ID] {
 			findings = append(findings, fmt.Sprintf("%sunknown bar item id %q", at, item.ID))
 		}
 	}

@@ -107,6 +107,12 @@ func kdlArgv(line string) [][]string {
 		case '"':
 			value, next, ok := readQuoted(runes, i)
 			if !ok {
+				// The escape is undecodable, so the params token is skipped.
+				// The method words already read are still checked: an example
+				// must not hide a bad method behind an escape.
+				if len(current) > 0 {
+					out = append(out, current)
+				}
 				return out
 			}
 			current = append(current, value)
