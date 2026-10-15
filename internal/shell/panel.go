@@ -80,6 +80,9 @@ type Placement struct {
 	// AnchorX and AnchorY are the logical centre of the triggering widget.
 	// Zero means unset; Align then centres along the bar's main axis.
 	AnchorX, AnchorY int
+	// AnchorAction lets config reloads resolve a widget anchor against the
+	// replacement bar, or centre the retained panel if that widget disappeared.
+	AnchorAction string
 	// CenterY centres the panel on the cross axis inside the remaining work
 	// area: Settings, the launcher and the clipboard float.
 	CenterY bool

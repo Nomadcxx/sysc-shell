@@ -1845,6 +1845,7 @@ func (r *Registry) bindBarPluginLocked(bar *Bar) {
 }
 
 func triggerAtAction(bar *Bar, trig Trigger, action string) Trigger {
+	trig.AnchorAction = action
 	w, h := bar.configuredSize()
 	anchor := barRectOnOutput(bar.actionBounds(action), trig.BarEdge, trig.OutW, trig.OutH, w, h)
 	if anchor.W <= 0 || anchor.H <= 0 {
@@ -2055,9 +2056,13 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				outgoing := r.leases
 				outgoingBars := r.bars
 				geometryOutputs := make(map[uint32]bool)
+				disabledOutputs := make(map[uint32]bool)
 				for global, oldBar := range outgoingBars {
 					oldPolicy := r.cfg.ForConnector(oldBar.connector())
 					nextPolicy := cfg.ForConnector(oldBar.connector())
+					if !nextPolicy.Enabled {
+						disabledOutputs[global] = true
+					}
 					if barGeometryChanged(oldPolicy, nextPolicy) {
 						geometryOutputs[global] = true
 					}
@@ -2096,10 +2101,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 						if h := r.runningMenu; h != nil && h.open_ && h.output == global {
 							h.closeLocked()
 						}
-						for _, id := range r.panelIDsOnOutputLocked(global) {
-							if id != PanelSettings {
-								r.closePanelLocked(id)
-							}
+						if disabledOutputs[global] {
+							r.closePanelsOnOutputLocked(global)
 						}
 					}
 				}
@@ -2136,10 +2139,14 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				r.bars = bars
 				r.leases = leases
-				for global := range geometryOutputs {
-					if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
-						r.repositionSettingsLocked(h)
+				panelOutputs := make(map[uint32]bool)
+				for _, h := range r.panelHosts {
+					if h != nil && !disabledOutputs[h.output] {
+						panelOutputs[h.output] = true
 					}
+				}
+				for global := range panelOutputs {
+					r.repositionPanelsLocked(global)
 				}
 				for global, bar := range r.bars {
 					r.bindBarTrayLocked(global, bar.connector(), bar)
@@ -2845,7 +2852,7 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		if err := innerConfigure(width, height, scale120); err != nil {
 			return err
 		}
-		r.refreshSettingsPlacement(global, bar)
+		r.refreshPanelPlacements(global, bar)
 		if bar.scale120() != prev {
 			r.reprojectTray()
 			r.reprojectRunningApps()
