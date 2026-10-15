@@ -1043,8 +1043,12 @@ func (s *Service) apply(snapshot Snapshot, patch []Setting) (string, error) {
 }
 
 func (s *Service) enable(snapshot Snapshot, enabled bool) (string, error) {
+	manageable := snapshot.UnitFileState == "enabled" || snapshot.UnitFileState == "disabled"
+	if !enabled && snapshot.UnitFileState == "enabled-runtime" {
+		manageable = true
+	}
 	if !snapshot.ServiceAvailable || !snapshot.UnitKnown || snapshot.UnitStale ||
-		(snapshot.UnitFileState != "enabled" && snapshot.UnitFileState != "disabled") {
+		!manageable {
 		return "", errors.New("unit enablement is unavailable in the current systemd state")
 	}
 	if enabled && snapshot.Previewing {
