@@ -143,9 +143,14 @@ func TestOpenPanelLoadsProfileTabsFromList(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() { errc <- reg.OpenPanel(PanelSession, 7, Trigger{}) }()
+	// The waits are generous because the first panel build shapes text
+	// against a fresh font configuration, which under the package's parallel
+	// -race run has taken longer than a second (sysc-1237). A held lock still
+	// fails: release is only closed after both waits, so OpenPanel would
+	// never return.
 	select {
 	case <-listed:
-	case <-time.After(time.Second):
+	case <-time.After(asyncTestWait):
 		t.Fatal("runArgvOutput was not called")
 	}
 	select {
@@ -153,7 +158,7 @@ func TestOpenPanelLoadsProfileTabsFromList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(asyncTestWait):
 		t.Fatal("OpenPanel held the lock across list")
 	}
 	_ = drainAux(t, reg, 2)
@@ -570,7 +575,7 @@ func activateNamed(h *PanelHost, r *Registry, name string) {
 
 func waitProfileTabNames(t *testing.T, reg *Registry, want ...string) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(asyncTestWait)
 	var names []string
 	for {
 		reg.mu.Lock()
