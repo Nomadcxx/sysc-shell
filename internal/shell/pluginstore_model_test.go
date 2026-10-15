@@ -253,22 +253,29 @@ func TestConsentCardReadsAnOldGrantWithItsMeaning(t *testing.T) {
 
 func TestTheConsentCardStatesTheBoundaryInForce(t *testing.T) {
 	declared := &catalog.Filesystem{Read: []string{"~/.local/share/opencode"}, ReadWrite: []string{"~/.cache/Proton"}}
+	sockets := &catalog.Filesystem{Sockets: []string{"session-bus", "/run/docker.sock"}}
+	const files = "It can read ~/.local/share/opencode and change ~/.cache/Proton, and no other files of yours."
+	const session = " This kernel cannot hold it to its declared sockets, so it can still reach your session and start programs through it."
+	const signals = " It can also signal your other programs."
+	const network = " Network access is not restricted."
 	for _, tc := range []struct {
 		name string
 		fs   *catalog.Filesystem
 		abi  int
 		want string
 	}{
-		{"undeclared", nil, 5, "It runs as your user with full file and network access."},
-		{"declared, confinable", declared, 5,
-			"It can read ~/.local/share/opencode and change ~/.cache/Proton, and no other files of yours. Network access is not restricted."},
-		{"declared, nothing extra", &catalog.Filesystem{}, 5,
-			"It can reach only its own files. Network access is not restricted."},
+		{"undeclared", nil, 10, "It runs as your user with full file and network access."},
+		{"declared, every right", declared, 10, files + network},
+		{"declared, nothing extra", &catalog.Filesystem{}, 10, "It can reach only its own files." + network},
+		{"sockets listed", sockets, 10, "It can reach only its own files. It can connect to session-bus, /run/docker.sock." + network},
+		{"signals declared", &catalog.Filesystem{Signals: "any"}, 10, "It can reach only its own files." + signals + network},
+		{"no socket right", declared, 8, files + session + network},
+		{"no scopes either", declared, 5, files + session + signals + network},
 		{"declared, no landlock", declared, 0,
 			"This kernel provides no filesystem confinement. It runs as your user with full file and network access."},
 	} {
 		if got := boundaryLine(tc.fs, tc.abi); got != tc.want {
-			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
 		}
 	}
 }

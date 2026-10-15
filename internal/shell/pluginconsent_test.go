@@ -149,15 +149,25 @@ func TestAnUnrecordedPluginKeepsItsGrantAndIsAskedOnce(t *testing.T) {
 }
 
 func TestTheManagerStatesTheBoundaryAPluginRunsInside(t *testing.T) {
-	for b, want := range map[plugin.Boundary]string{
-		plugin.BoundaryConfined:   "Confined to its own files and the paths it declared. Network access is not restricted.",
-		plugin.BoundaryLimited:    "Unconfined: it runs as your user with full file and network access.",
-		plugin.BoundaryNoLandlock: "This kernel provides no filesystem confinement, so it runs with full file and network access.",
-		plugin.BoundaryNone:       "",
-		"":                        "",
+	const filesOnly = "Its own files are confined, but it can still reach your session (the compositor and session services) and start programs through them. Network access is not restricted."
+	const signals = " It can also signal your other programs."
+	for _, tc := range []struct {
+		b         plugin.Boundary
+		signalAny bool
+		want      string
+	}{
+		{plugin.BoundaryConfined, false, "Confined to its own files and the paths and sockets it declared. Network access is not restricted."},
+		{plugin.BoundaryConfined, true, "Confined to its own files and the paths and sockets it declared. Network access is not restricted." + signals},
+		{plugin.BoundaryFilesOnly, false, filesOnly},
+		{plugin.BoundaryFilesOnly, true, filesOnly + signals},
+		{plugin.BoundaryFilesUnscoped, false, filesOnly + signals},
+		{plugin.BoundaryLimited, false, "Unconfined: it runs as your user with full file and network access."},
+		{plugin.BoundaryNoLandlock, false, "This kernel provides no filesystem confinement, so it runs with full file and network access."},
+		{plugin.BoundaryNone, false, ""},
+		{"", false, ""},
 	} {
-		if got := pluginBoundaryLine(nil, b); got != want {
-			t.Errorf("%q: %q, want %q", b, got, want)
+		if got := pluginBoundaryLine(nil, tc.b, tc.signalAny); got != tc.want {
+			t.Errorf("%q signals=%v: %q, want %q", tc.b, tc.signalAny, got, tc.want)
 		}
 	}
 }

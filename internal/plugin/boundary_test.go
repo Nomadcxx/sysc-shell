@@ -223,7 +223,7 @@ func TestAConfinedPluginReachesOnlyWhatItDeclared(t *testing.T) {
 			t.Errorf("probe output lacks %q:\n%s", want, out)
 		}
 	}
-	if st := r.Status(); st.Boundary != BoundaryConfined || st.State != StateRunning {
+	if st := r.Status(); st.Boundary != declaredBoundary() || st.State != StateRunning {
 		t.Errorf("status = %q %q, want a running confined plugin", st.State, st.Boundary)
 	}
 }
@@ -269,7 +269,7 @@ func TestConfinementLeavesTheDegradedPathAlone(t *testing.T) {
 	}
 	defer r.Stop()
 	waitRuntimeState(t, r, StateDegraded)
-	if st := r.Status(); st.Starts != 1 || st.Boundary != BoundaryConfined || !strings.Contains(st.Failure, "budget") {
+	if st := r.Status(); st.Starts != 1 || st.Boundary != declaredBoundary() || !strings.Contains(st.Failure, "budget") {
 		t.Fatalf("status = %+v", st)
 	}
 }
@@ -281,7 +281,7 @@ func TestConfinementLeavesTheRestartBudgetAlone(t *testing.T) {
 	_ = r.Start(context.Background())
 	defer r.Stop()
 	waitRuntimeState(t, r, StateFailed)
-	if st := r.Status(); st.Starts != MaxAutoStarts || st.Boundary != BoundaryConfined {
+	if st := r.Status(); st.Starts != MaxAutoStarts || st.Boundary != declaredBoundary() {
 		t.Fatalf("status = %+v, want %d starts inside the confined boundary", st, MaxAutoStarts)
 	}
 }
@@ -372,4 +372,10 @@ func TestAConfinedPluginIsIsolatedFromAbstractSocketsAndOtherProcesses(t *testin
 			t.Errorf("with signals any, probe output lacks %q:\n%s", want, out)
 		}
 	}
+}
+
+// declaredBoundary is the level a declared plugin runs at on this kernel.
+func declaredBoundary() Boundary {
+	b, _ := boundaryOf(Manifest{Filesystem: &Filesystem{}}, "/launcher", LandlockABI())
+	return b
 }

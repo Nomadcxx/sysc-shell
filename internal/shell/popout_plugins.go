@@ -655,8 +655,11 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	if consent.text != "" {
 		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: consent.text, TextRole: theme.RoleCaption, Tone: consent.tone, MaxWidth: labelW, Multiline: true})
 	}
-	if boundary := pluginBoundaryLine(h, status.Boundary); boundary != "" {
-		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: boundary, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: labelW, Multiline: true})
+	signalAny := row.candidate != nil && row.candidate.Manifest.Filesystem != nil && row.candidate.Manifest.Filesystem.SignalAny
+	if boundary := pluginBoundaryLine(h, status.Boundary, signalAny); boundary != "" {
+		// A text node's Multiline only keeps breaks already in the string, so
+		// the sentence is wrapped at the label's width rather than cut.
+		label.Children = append(label.Children, h.wrappedText(boundary, theme.RoleCaption, ui.ToneSubtle, labelW, 0))
 	}
 	if failing {
 		detail := status.Failure
@@ -727,12 +730,27 @@ func pluginConsentLine(h *PanelHost, v plugin.ConsentVerdict) pluginConsentRow {
 
 // pluginBoundaryLine states what a running plugin is held inside, in the
 // words the consent card uses; a plugin started without the launcher says
-// nothing, because nothing was applied to it.
-func pluginBoundaryLine(h *PanelHost, b plugin.Boundary) string {
+// nothing, because nothing was applied to it. It never claims more than the
+// kernel enforces: below the socket right a declared plugin can still reach
+// the session and start programs outside its boundary through it.
+func pluginBoundaryLine(h *PanelHost, b plugin.Boundary, signalAny bool) string {
 	tr := hostT(h)
+	signals := " " + cardT(tr, "plugins.boundary_signals", "It can also signal your other programs.")
+	filesOnly := cardT(tr, "plugins.boundary_files_only", "Its own files are confined, but it can still reach your session (the compositor and session services) and start programs through them. Network access is not restricted.")
 	switch b {
 	case plugin.BoundaryConfined:
-		return cardT(tr, "plugins.boundary_confined", "Confined to its own files and the paths it declared. Network access is not restricted.")
+		line := cardT(tr, "plugins.boundary_confined", "Confined to its own files and the paths and sockets it declared. Network access is not restricted.")
+		if signalAny {
+			line += signals
+		}
+		return line
+	case plugin.BoundaryFilesOnly:
+		if signalAny {
+			return filesOnly + signals
+		}
+		return filesOnly
+	case plugin.BoundaryFilesUnscoped:
+		return filesOnly + signals
 	case plugin.BoundaryLimited:
 		return cardT(tr, "plugins.boundary_limited", "Unconfined: it runs as your user with full file and network access.")
 	case plugin.BoundaryNoLandlock:

@@ -110,11 +110,18 @@ type Release struct {
 	Filesystem *Filesystem `json:"filesystem,omitempty"`
 }
 
-// Filesystem is a release's declared reach into the user's files.
+// Filesystem is a release's declared reach into the user's files, the
+// sockets it may connect to, and whether it may signal processes it did not
+// start ("any"; empty or "own" means only its own).
 type Filesystem struct {
 	Read      []string `json:"read,omitempty"`
 	ReadWrite []string `json:"read_write,omitempty"`
+	Sockets   []string `json:"sockets,omitempty"`
+	Signals   string   `json:"signals,omitempty"`
 }
+
+// SignalAny reports whether the release may signal processes it did not start.
+func (f Filesystem) SignalAny() bool { return f.Signals == "any" }
 
 // Entry is one catalog row. Its embedded Release is the newest version; older
 // ones in Releases exist for hosts below that version's protocol.

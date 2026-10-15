@@ -393,16 +393,17 @@ const unconfinedLine = "It runs as your user with full file and network access."
 
 // boundaryLine states the boundary a release will run inside on this
 // kernel. It never claims more than the launcher enforces: a declaration a
-// kernel without Landlock cannot hold reads as unconfined, and the network,
-// which no boundary restricts, is always said to be open.
+// kernel without Landlock cannot hold reads as unconfined; below the socket
+// right (ABI 9) the session stays reachable, and through it the programs it
+// can start; below the scopes (ABI 6), and when declared, so do signals to
+// other programs; and the network, which no boundary restricts, is always
+// said to be open.
 func boundaryLine(fs *catalog.Filesystem, abi int) string {
 	switch {
 	case fs == nil:
 		return unconfinedLine
 	case abi < 1:
 		return "This kernel provides no filesystem confinement. " + unconfinedLine
-	case len(fs.Read) == 0 && len(fs.ReadWrite) == 0:
-		return "It can reach only its own files. Network access is not restricted."
 	}
 	var reach []string
 	if len(fs.Read) > 0 {
@@ -411,7 +412,20 @@ func boundaryLine(fs *catalog.Filesystem, abi int) string {
 	if len(fs.ReadWrite) > 0 {
 		reach = append(reach, "change "+strings.Join(fs.ReadWrite, ", "))
 	}
-	return "It can " + strings.Join(reach, " and ") + ", and no other files of yours. Network access is not restricted."
+	line := "It can reach only its own files."
+	if len(reach) > 0 {
+		line = "It can " + strings.Join(reach, " and ") + ", and no other files of yours."
+	}
+	if len(fs.Sockets) > 0 {
+		line += " It can connect to " + strings.Join(fs.Sockets, ", ") + "."
+	}
+	if !plugin.EnforcesSockets(abi) {
+		line += " This kernel cannot hold it to its declared sockets, so it can still reach your session and start programs through it."
+	}
+	if fs.SignalAny() || !plugin.EnforcesScopes(abi) {
+		line += " It can also signal your other programs."
+	}
+	return line + " Network access is not restricted."
 }
 
 func describeCapabilities(names []string) []string {

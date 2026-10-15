@@ -33,10 +33,28 @@ const (
 	// kernel that cannot enforce it: the ceilings hold, the files do not.
 	BoundaryNoLandlock Boundary = "no-landlock"
 	// BoundaryConfined is a plugin held to its own directories, its declared
-	// paths and the system directories, under the ceilings. Its network is
-	// not restricted.
+	// paths and sockets and the system directories, isolated from abstract
+	// sockets and (unless it declared otherwise) from signalling processes it
+	// did not start, under the ceilings. Its network is not restricted.
 	BoundaryConfined Boundary = "confined"
+	// BoundaryFilesOnly is a declared plugin on a kernel that holds its
+	// files and isolates abstract sockets and signals, but cannot refuse a
+	// pathname socket (Landlock ABI 6-8): it can still reach the session bus
+	// and the compositor, and start programs outside its domain through them.
+	BoundaryFilesOnly Boundary = "files-only"
+	// BoundaryFilesUnscoped is BoundaryFilesOnly on a kernel without the
+	// scopes either (Landlock ABI 1-5): it can also signal any of the user's
+	// processes.
+	BoundaryFilesUnscoped Boundary = "files-unscoped"
 )
+
+// EnforcesSockets reports whether a kernel at this Landlock ABI can hold a
+// confined plugin to its declared sockets.
+func EnforcesSockets(abi int) bool { return abi >= resolveUnixABI }
+
+// EnforcesScopes reports whether a kernel at this Landlock ABI can isolate a
+// confined plugin from abstract sockets and from signalling other processes.
+func EnforcesScopes(abi int) bool { return abi >= scopeABI }
 
 // boundaryOf is the boundary a start of m will run inside, and whether the
 // launcher must apply a filesystem ruleset for it.
@@ -48,6 +66,10 @@ func boundaryOf(m Manifest, launcher string, abi int) (Boundary, bool) {
 		return BoundaryLimited, false
 	case abi < 1:
 		return BoundaryNoLandlock, false
+	case abi < scopeABI:
+		return BoundaryFilesUnscoped, true
+	case abi < resolveUnixABI:
+		return BoundaryFilesOnly, true
 	}
 	return BoundaryConfined, true
 }

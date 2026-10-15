@@ -102,7 +102,10 @@ func TestTheBoundaryFollowsTheDeclarationAndTheKernel(t *testing.T) {
 	}{
 		{"no launcher", declared, "", 5, BoundaryNone, false},
 		{"no declaration", Manifest{}, "/bin/shell", 5, BoundaryLimited, false},
-		{"declared, landlock", declared, "/bin/shell", 1, BoundaryConfined, true},
+		{"declared, files only", declared, "/bin/shell", 1, BoundaryFilesUnscoped, true},
+		{"declared, scopes but no socket right", declared, "/bin/shell", 6, BoundaryFilesOnly, true},
+		{"declared, no socket right at 8", declared, "/bin/shell", 8, BoundaryFilesOnly, true},
+		{"declared, sockets refused", declared, "/bin/shell", 9, BoundaryConfined, true},
 		{"declared, no landlock", declared, "/bin/shell", 0, BoundaryNoLandlock, false},
 	} {
 		got, confines := boundaryOf(tc.m, tc.launcher, tc.abi)

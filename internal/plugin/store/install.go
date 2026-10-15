@@ -128,6 +128,12 @@ func matchFilesystem(m plugin.Manifest, listed *catalog.Filesystem) error {
 		return fail(KindManifest, nil, "filesystem reach is read %v, change %v; the catalog says read %v, change %v",
 			m.Filesystem.Read, m.Filesystem.ReadWrite, listed.Read, listed.ReadWrite)
 	}
+	if !catalog.SameSet(m.Filesystem.Sockets, listed.Sockets) {
+		return fail(KindManifest, nil, "sockets are %v; the catalog says %v", m.Filesystem.Sockets, listed.Sockets)
+	}
+	if m.Filesystem.SignalAny != listed.SignalAny() {
+		return fail(KindManifest, nil, "signals to other processes: manifest %v, catalog %v", m.Filesystem.SignalAny, listed.SignalAny())
+	}
 	return nil
 }
 
