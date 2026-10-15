@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -58,5 +61,60 @@ func TestIPCExamplesAreChecked(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDefaultInputListAndExitCodes(t *testing.T) {
+	paths := defaultPaths()
+	want := []string{"README.md"}
+	matches, err := filepath.Glob(filepath.Join("..", "..", "docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range matches {
+		want = append(want, filepath.Join("docs", filepath.Base(m)))
+	}
+	if len(paths) != len(want) {
+		t.Fatalf("paths = %v, want %v", paths, want)
+	}
+	if code := run([]string{"testdata/nonexistent.md"}, io.Discard, io.Discard); code != 2 {
+		t.Fatalf("missing file exit = %d, want 2", code)
+	}
+	if code := run([]string{"testdata/good/item-array.md"}, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("good document exit = %d, want 0", code)
+	}
+	if code := run([]string{"testdata/bad/scalar-block.md"}, io.Discard, io.Discard); code != 1 {
+		t.Fatalf("bad document exit = %d, want 1", code)
+	}
+}
+
+func TestRunPrintsSummaryAndFindingPrefix(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"testdata/good/item-array.md"}, &out, &errOut); code != 0 {
+		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
+	}
+	if got, want := out.String(), "checked 1 blocks in 1 files\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run([]string{"testdata/bad/scalar-block.md"}, &out, &errOut); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if want := "docs/examples: testdata/bad/scalar-block.md:4: "; !strings.HasPrefix(errOut.String(), want) {
+		t.Fatalf("stderr = %q, want prefix %q", errOut.String(), want)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty when there are findings", out.String())
+	}
+}
+
+func TestRunListsSkippedBlocksWhenAsked(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"-v", "testdata/good/skipped-tag.md"}, &out, &errOut); code != 0 {
+		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "skipped-tag.md:4") || !strings.Contains(out.String(), "tag text") {
+		t.Fatalf("stdout = %q, want the skipped block and its reason", out.String())
 	}
 }
