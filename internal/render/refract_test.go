@@ -139,6 +139,13 @@ func TestRefractSamplePressRingTravels(t *testing.T) {
 	if d := refractedSigned(0.5, 100+pressRingRadius/2, 50); d <= 0 {
 		t.Errorf("the ring pulled inward (%.3f); a press should push out", d)
 	}
+	// At full phase the ring has spent itself: the surface settles exactly,
+	// so the last frame of a press does not leave a step behind.
+	for x := 100; x <= 100+int(pressRingRadius)*2; x++ {
+		if d := refractedAt(1, x, 50); d != 0 {
+			t.Fatalf("a finished press still displaces %.4f at x=%d", d, x)
+		}
+	}
 }
 
 func TestRefractResamplesTheCapture(t *testing.T) {

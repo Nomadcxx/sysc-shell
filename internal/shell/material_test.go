@@ -606,3 +606,63 @@ func solidImage(w, h int, r, g, b byte) *ui.Image {
 	}
 	return img
 }
+
+// TestReducedMotionDropsTheRefraction: under reduced motion the glass value
+// keeps its tone and loses the bend, the dome and the press ring (design D7).
+func TestReducedMotionDropsTheRefraction(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	cfg.Theme.Glass = theme.GlassFull
+	cfg.Theme.PanelOpacity = theme.OpacityMinBlurred
+	th, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th.materialIntensity = 60
+	got := materialFor(th, true)
+	if got.Tone != render.ToneAuto {
+		t.Errorf("reduced motion dropped the glass tone: %v", got.Tone)
+	}
+	if got.Refract != 0 {
+		t.Errorf("reduced motion still refracts by %d", got.Refract)
+	}
+}
+
+// TestPressRingFollowsThePanelRipple: a press on a glass panel feeds the
+// ripple it already starts into the refraction, scaled into the capture's
+// pixels, and the ring is gone once the ripple has finished.
+func TestPressRingFollowsThePanelRipple(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.Glass = theme.GlassFull
+	th, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anim, clock := newTestAnimator(false)
+	h := &PanelHost{
+		id:    PanelSettings,
+		place: Placement{Output: ui.Rect{W: 1920, H: 1080}, Panel: ui.Rect{W: 400, H: 300}},
+		theme: th,
+		anim:  anim,
+	}
+	body, _ := h.surfaceSize()
+	capture := solidImage(body/4, body/4, 0x40, 0x40, 0x40)
+	if got := h.refractionFor(capture); got.Press != 0 {
+		t.Fatalf("an unpressed panel carries a ring: %+v", got)
+	}
+	anim.TargetRipple("row", 200, 120)
+	clock.add((rippleGrow + rippleFade) / 2)
+	mid := h.refractionFor(capture)
+	if mid.Press <= 0 || mid.Press >= 1 {
+		t.Fatalf("mid-press phase = %.3f, want inside (0, 1)", mid.Press)
+	}
+	if mid.PressX != 50 || mid.PressY != 30 {
+		t.Errorf("press point = %d,%d, want 50,30 (the press at quarter resolution)", mid.PressX, mid.PressY)
+	}
+	clock.add(rippleGrow + rippleFade)
+	if got := h.refractionFor(capture); got.Press != 0 {
+		t.Errorf("a finished press still carries phase %.3f", got.Press)
+	}
+}

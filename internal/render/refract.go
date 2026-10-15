@@ -19,8 +19,9 @@ type Refraction struct {
 	// magnification, and Fringe the chromatic spread. All are 0..1; zero is no
 	// refraction at all.
 	Bend, Dome, Fringe float64
-	// Press is the ripple phase at the press point, zero at rest, and PressX and
-	// PressY are that point in surface-local pixels.
+	// Press is the ripple phase at the press point, zero before a press and
+	// spent at one, and PressX and PressY are that point in surface-local
+	// pixels.
 	Press          float64
 	PressX, PressY int
 }
@@ -104,7 +105,7 @@ func (r Refraction) Sample(x, y int) Sample {
 		}
 	}
 
-	if r.Press > 0 {
+	if r.Press > 0 && r.Press < 1 {
 		dx := float64(x) + 0.5 - float64(r.PressX)
 		dy := float64(y) + 0.5 - float64(r.PressY)
 		d := math.Hypot(dx, dy)
@@ -112,7 +113,10 @@ func (r Refraction) Sample(x, y int) Sample {
 			ring := pressRingRadius * r.Press
 			off := d - ring
 			t := math.Exp(-(off * off) / (2 * pressRingWidth * pressRingWidth))
-			mag := pressScale * r.Press * t
+			// The envelope rises and dies with the phase, so the ring is
+			// strongest mid-travel and the surface is exactly still once the
+			// ripple has finished rather than stepping back on its last frame.
+			mag := pressScale * math.Sin(math.Pi*r.Press) * t
 			s.DX += dx / d * mag
 			s.DY += dy / d * mag
 		}

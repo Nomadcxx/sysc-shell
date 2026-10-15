@@ -1905,8 +1905,9 @@ func (h *PanelHost) backdropFor(t Theme) *ui.Image {
 // already.
 //
 // The terms are full whenever the material refracts: stage 1 offers one glass
-// look, and the intensity axis drives its tone. A press ring needs a press
-// phase this host does not track yet, so it is not wired here.
+// look, and the intensity axis drives its tone. The press ring rides the ripple
+// the latest press started, so it travels while that ripple runs and is gone
+// when it has finished.
 func (h *PanelHost) refractionFor(img *ui.Image) render.Refraction {
 	if img == nil || img.Width <= 0 || img.Height <= 0 {
 		return render.Refraction{}
@@ -1916,11 +1917,16 @@ func (h *PanelHost) refractionFor(img *ui.Image) render.Refraction {
 		scale = float64(w) / float64(img.Width)
 	}
 	radius := int(float64(h.theme.Radius) / scale)
-	return render.Refraction{
+	r := render.Refraction{
 		W: img.Width, H: img.Height,
 		Radius: radius,
 		Bend:   1, Fringe: 1, Dome: 1,
 	}
+	if phase, x, y, ok := h.anim.LastRipple(); ok && phase > 0 && phase < 1 {
+		r.Press = phase
+		r.PressX, r.PressY = int(float64(x)/scale), int(float64(y)/scale)
+	}
+	return r
 }
 
 // clampMaterialIntensity returns the highest intensity at which the material

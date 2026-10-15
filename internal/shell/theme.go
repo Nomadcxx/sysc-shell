@@ -418,8 +418,9 @@ func materialFor(t Theme, withBackdrop bool) render.Material {
 		Intensity: uint8(clampInt(t.materialIntensity, 0, theme.GlassIntensityMax)),
 	}
 	// The spelled "glass" value adds refraction to the tone; every other value
-	// is a tone on its own.
-	if t.Glass == theme.GlassFull {
+	// is a tone on its own. Reduced motion keeps the static tone and drops the
+	// bend, the dome and the press ring with it.
+	if t.Glass == theme.GlassFull && !t.Motion.Reduced {
 		material.Refract = 1
 	}
 	return material
