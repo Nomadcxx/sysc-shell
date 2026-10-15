@@ -18,6 +18,12 @@ func newNMBackend() (backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("services: network manager: %w", err)
 	}
+	// The binding only connects to the bus and names an object, which succeeds
+	// on any machine with a system bus. Reading a property proves the daemon
+	// answers, so a machine without it falls through to the next tier.
+	if _, err := nm.GetPropertyVersion(); err != nil {
+		return nil, fmt.Errorf("services: network manager does not answer: %w", err)
+	}
 	set, err := gnm.NewSettings()
 	if err != nil {
 		return nil, fmt.Errorf("services: network settings: %w", err)
