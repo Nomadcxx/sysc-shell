@@ -56,7 +56,7 @@ func (b *nmBackend) devices() (wifi, wired gnm.Device) {
 // State prefers an activated wired link over Wi-Fi, which is what the machine
 // is actually routing over when both are up.
 func (b *nmBackend) State() (NetworkState, error) {
-	st := NetworkState{Kind: ConnUnknown}
+	st := NetworkState{Kind: ConnUnknown, Tier: TierNM}
 	if en, err := b.nm.GetPropertyWirelessEnabled(); err == nil {
 		st.WirelessEnabled = en
 	}
