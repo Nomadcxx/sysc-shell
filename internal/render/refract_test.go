@@ -3,6 +3,8 @@ package render
 import (
 	"math"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestRefractSampleBendsInwardAtTheEdge(t *testing.T) {
@@ -136,6 +138,85 @@ func TestRefractSamplePressRingTravels(t *testing.T) {
 	// outward under a hand.
 	if d := refractedSigned(0.5, 100+pressRingRadius/2, 50); d <= 0 {
 		t.Errorf("the ring pulled inward (%.3f); a press should push out", d)
+	}
+}
+
+func TestRefractResamplesTheCapture(t *testing.T) {
+	t.Parallel()
+	// A coloured strip at the capture's left edge: the bend reads inward, so
+	// the strip's colour must appear further in than it was painted.
+	src := &ui.Image{Width: 16, Height: 8, Stride: 64, Pix: make([]byte, 16*8*4)}
+	for y := 0; y < 8; y++ {
+		o := y * src.Stride
+		src.Pix[o], src.Pix[o+1], src.Pix[o+2], src.Pix[o+3] = 0x00, 0x00, 0xff, 0xff
+	}
+	r := Refraction{W: 16, H: 8, Bend: 1, Fringe: 1}
+	got := Refract(src, r)
+	if got == nil || got.Width != src.Width || got.Height != src.Height {
+		t.Fatalf("refraction changed the geometry: %+v", got)
+	}
+	if got == src {
+		t.Fatal("refraction returned the source, so nothing moved")
+	}
+	// With no terms the capture passes through untouched.
+	if same := Refract(src, Refraction{W: 16, H: 8}); same != src {
+		t.Error("a refraction with no terms allocated a new buffer")
+	}
+	if Refract(nil, r) != nil {
+		t.Error("a nil source returned a buffer")
+	}
+}
+
+func TestRefractSeparatesTheChannelsAtAnEdge(t *testing.T) {
+	t.Parallel()
+	// A hard edge: the fringe must move red and blue to different places, which
+	// is what a chromatic edge is.
+	src := &ui.Image{Width: 16, Height: 8, Stride: 64, Pix: make([]byte, 16*8*4)}
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 16; x++ {
+			o := y*src.Stride + x*4
+			v := byte(0x10)
+			if x >= 8 {
+				v = 0xf0
+			}
+			src.Pix[o], src.Pix[o+1], src.Pix[o+2], src.Pix[o+3] = v, v, v, 0xff
+		}
+	}
+	r := Refraction{W: 16, H: 8, Bend: 1, Fringe: 1}
+	plain := Refract(src, Refraction{W: 16, H: 8, Bend: 1})
+	got := Refract(src, r)
+	blue, red := 0, 2
+	differs := 0
+	for i := 0; i < len(got.Pix); i += 4 {
+		if got.Pix[i+blue] != plain.Pix[i+blue] || got.Pix[i+red] != plain.Pix[i+red] {
+			differs++
+		}
+	}
+	if differs == 0 {
+		t.Fatal("the fringe changed nothing: red and blue are in the same place")
+	}
+	if got.Pix[blue] == got.Pix[red] && differs < 4 {
+		t.Error("the channels are not separated enough to read as a fringe")
+	}
+}
+
+func TestSampleChannelClampsAtTheEdge(t *testing.T) {
+	t.Parallel()
+	src := &ui.Image{Width: 2, Height: 2, Stride: 8, Pix: []byte{
+		0x20, 0x20, 0x20, 0xff, 0x40, 0x40, 0x40, 0xff,
+		0x60, 0x60, 0x60, 0xff, 0x80, 0x80, 0x80, 0xff,
+	}}
+	if got := sampleChannel(src, -5, 0, 0); got != 0x20 {
+		t.Errorf("left of the edge = %#x, want the edge's 0x20", got)
+	}
+	if got := sampleChannel(src, 99, 0, 0); got != 0x40 {
+		t.Errorf("right of the edge = %#x, want the edge's 0x40", got)
+	}
+	if got := sampleChannel(src, 0.5, 0, 0); got != 0x30 {
+		t.Errorf("between two pixels = %#x, want the 0x30 average", got)
+	}
+	if got := sampleChannel(nil, 0, 0, 0); got != 0 {
+		t.Errorf("a nil source read %#x", got)
 	}
 }
 

@@ -1,6 +1,10 @@
 package render
 
-import "math"
+import (
+	"math"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+)
 
 // Refraction is the resolved refraction of one material surface: how far the
 // bevel bends the sample coordinate, how much the centre magnifies, how wide
@@ -33,21 +37,25 @@ const (
 	// bevelBand is how far inside the edge the bevel profile reaches, in
 	// pixels: wide enough to read as thickness, narrow enough that a panel's
 	// interior is untouched.
-	bevelBand = 8.0
+	//
+	// These distances are in the *capture's* pixels, which are the surface's
+	// divided by the backdrop downsample factor (four today), so the band is
+	// about eight logical pixels on screen.
+	bevelBand = 2.0
 	// bevelScale is the largest inward sample shift the bevel reaches at full
 	// bend, in pixels.
-	bevelScale = 3.0
+	bevelScale = 0.75
 	// domeCap bounds the centre magnification, so text over the middle of a
 	// surface cannot smear.
 	domeCap = 0.06
 	// fringeScale is the largest per-channel spread at full fringe, in pixels.
-	fringeScale = 1.2
+	fringeScale = 0.3
 	// pressRingRadius is how far the press ring has travelled at full phase,
 	// and pressRingWidth its sigma.
-	pressRingRadius = 24.0
-	pressRingWidth  = 8.0
+	pressRingRadius = 6.0
+	pressRingWidth  = 2.0
 	// pressScale is the largest displacement the ring adds, in pixels.
-	pressScale = 2.5
+	pressScale = 0.6
 )
 
 // Sample answers where a destination pixel reads from.
@@ -110,6 +118,136 @@ func (r Refraction) Sample(x, y int) Sample {
 		}
 	}
 	return s
+}
+
+// Refract resamples src where r displaces it: the ground a material surface
+// paints is the capture seen through the bevel, not a blurred copy of it.
+//
+// The result has src's geometry and is a new buffer. A nil source, or a
+// refraction with no bending terms, returns src unchanged, so a caller can
+// apply it unconditionally. All of r's distances are in src's pixels, which are
+// the surface's pixels divided by the backdrop downsample factor.
+func Refract(src *ui.Image, r Refraction) *ui.Image {
+	if src == nil || (r.Bend <= 0 && r.Dome <= 0) {
+		return src
+	}
+	out := &ui.Image{Width: src.Width, Height: src.Height, Stride: src.Stride,
+		Pix: make([]byte, len(src.Pix))}
+	for y := 0; y < src.Height; y++ {
+		for x := 0; x < src.Width; x++ {
+			s := r.Sample(x, y)
+			o := y*out.Stride + x*4
+			dx, dy := s.DX, s.DY
+			if dx == 0 && dy == 0 && s.Fringe == ([3]float64{}) {
+				// The flat interior, which is most of a panel: a copy.
+				copy(out.Pix[o:o+4], src.Pix[o:o+4])
+				continue
+			}
+			if s.Fringe == ([3]float64{}) {
+				// One position for every channel: the pixel's taps are shared
+				// rather than repeated per channel.
+				samplePixel(src, float64(x)+dx, float64(y)+dy, out.Pix[o:o+4])
+				out.Pix[o+3] = src.Pix[o+3]
+				continue
+			}
+			// The fringe spreads along the displacement's direction, or along
+			// +x where the bend is zero.
+			mag := math.Hypot(dx, dy)
+			if mag == 0 {
+				dx, dy, mag = 1, 0, 1
+			}
+			// Pix is BGRA, and Fringe is ordered red, green, blue: the blue
+			// channel takes the third offset.
+			for ch := 0; ch < 3; ch++ {
+				off := s.Fringe[2-ch]
+				sx := float64(x) + dx + dx/mag*off
+				sy := float64(y) + dy + dy/mag*off
+				out.Pix[o+ch] = sampleChannel(src, sx, sy, ch)
+			}
+			out.Pix[o+3] = src.Pix[o+3]
+		}
+	}
+	return out
+}
+
+// samplePixel reads one RGB pixel bilinearly into dst, sharing the weights
+// across the channels: three channels at one position cost one set of taps, not
+// three.
+func samplePixel(src *ui.Image, fx, fy float64, dst []byte) {
+	if src == nil || len(dst) < 4 {
+		return
+	}
+	fx, fy, x0, y0, x1, y1, tx, ty := bilinear(src, fx, fy)
+	at := func(x, y, ch int) float64 { return float64(src.Pix[y*src.Stride+x*4+ch]) }
+	for ch := 0; ch < 3; ch++ {
+		top := at(x0, y0, ch)*(1-tx) + at(x1, y0, ch)*tx
+		bottom := at(x0, y1, ch)*(1-tx) + at(x1, y1, ch)*tx
+		dst[ch] = byte(top*(1-ty) + bottom*ty + 0.5)
+	}
+}
+
+// bilinear clamps a fractional position and answers the four taps and weights
+// every channel shares.
+func bilinear(src *ui.Image, fx, fy float64) (cx, cy float64, x0, y0, x1, y1 int, tx, ty float64) {
+	if fx < 0 {
+		fx = 0
+	}
+	if fy < 0 {
+		fy = 0
+	}
+	maxX, maxY := float64(src.Width-1), float64(src.Height-1)
+	if fx > maxX {
+		fx = maxX
+	}
+	if fy > maxY {
+		fy = maxY
+	}
+	x0, y0 = int(fx), int(fy)
+	x1, y1 = x0+1, y0+1
+	if x1 > src.Width-1 {
+		x1 = src.Width - 1
+	}
+	if y1 > src.Height-1 {
+		y1 = src.Height - 1
+	}
+	return fx, fy, x0, y0, x1, y1, fx - float64(x0), fy - float64(y0)
+}
+
+// sampleChannel reads one channel of src at a fractional position, bilinearly
+// and clamped to the edge. Edges clamp rather than wrap for the same reason the
+// blur's do: a wrapped sample bleeds the opposite side of the capture in.
+func sampleChannel(src *ui.Image, fx, fy float64, ch int) byte {
+	if src == nil || src.Width <= 0 || src.Height <= 0 {
+		return 0
+	}
+	if fx < 0 {
+		fx = 0
+	}
+	if fy < 0 {
+		fy = 0
+	}
+	maxX, maxY := float64(src.Width-1), float64(src.Height-1)
+	if fx > maxX {
+		fx = maxX
+	}
+	if fy > maxY {
+		fy = maxY
+	}
+	x0, y0 := int(fx), int(fy)
+	x1, y1 := x0+1, y0+1
+	if x1 > src.Width-1 {
+		x1 = src.Width - 1
+	}
+	if y1 > src.Height-1 {
+		y1 = src.Height - 1
+	}
+	tx, ty := fx-float64(x0), fy-float64(y0)
+	at := func(x, y int) float64 {
+		return float64(src.Pix[y*src.Stride+x*4+ch])
+	}
+	top := at(x0, y0)*(1-tx) + at(x1, y0)*tx
+	bottom := at(x0, y1)*(1-tx) + at(x1, y1)*tx
+	return byte(top*(1-ty) + bottom*ty + 0.5)
 }
 
 // inset is how far a pixel sits inside the rounded rect's edge, in pixels. It

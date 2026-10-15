@@ -1772,12 +1772,40 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 // otherwise. A material whose capture never arrived falls back to the capture
 // path rather than painting a guess. Its strength is bounded by the text floor,
 // not by taste.
-func (h *PanelHost) backdropFor(t Theme, style render.Style) *ui.Image {
+func (h *PanelHost) backdropFor(t Theme) *ui.Image {
 	m := materialFor(t, h.backdrop != nil)
 	if m.Tone == render.ToneNone || m.Intensity == 0 {
 		return h.backdrop
 	}
-	return render.Materialize(h.backdropSharp, h.backdrop, m)
+	ground := render.Materialize(h.backdropSharp, h.backdrop, m)
+	if m.Refract > 0 {
+		ground = render.Refract(ground, h.refractionFor(ground))
+	}
+	return ground
+}
+
+// refractionFor scales this surface's geometry into the capture's pixels: the
+// capture is taken at reduced resolution, so a corner radius in logical pixels
+// has to come down with it. The profile's own distances are in capture pixels
+// already.
+//
+// The terms are full whenever the material refracts: stage 1 offers one glass
+// look, and the intensity axis drives its tone. A press ring needs a press
+// phase this host does not track yet, so it is not wired here.
+func (h *PanelHost) refractionFor(img *ui.Image) render.Refraction {
+	if img == nil || img.Width <= 0 || img.Height <= 0 {
+		return render.Refraction{}
+	}
+	scale := 1.0
+	if w, _ := h.surfaceSize(); w > 0 {
+		scale = float64(w) / float64(img.Width)
+	}
+	radius := int(float64(h.theme.Radius) / scale)
+	return render.Refraction{
+		W: img.Width, H: img.Height,
+		Radius: radius,
+		Bend:   1, Fringe: 1, Dome: 1,
+	}
 }
 
 // clampMaterialIntensity returns the highest intensity at which the material
@@ -1874,6 +1902,11 @@ func (h *PanelHost) rootStyle(t Theme, blurBehind bool) render.Style {
 		// onboarding backdrop. Keep the setup frame lightly translucent when
 		// blur is enabled; its content card remains independently opaque.
 		s.SurfaceOpacity = min(s.SurfaceOpacity, opacityAlpha(onboardingBlurOpacityPercent, true))
+	}
+	// A refracting material draws a wider edge than a hairline: the bevel reads
+	// against the surface's own boundary.
+	if t.Glass == theme.GlassFull {
+		s.RimWidth = 2
 	}
 	return s
 }
@@ -2407,7 +2440,7 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 		style.JointLeft, style.JointRight, style.EdgeFillet = h.revealJoints(opacity)
 		style.EdgeLeft, style.EdgeRight = j.FlushLeft, j.FlushRight
 	}
-	style.Backdrop = h.backdropFor(paintTheme, style)
+	style.Backdrop = h.backdropFor(paintTheme)
 	err = render.Paint(c, root, h.text, style)
 	if err != nil {
 		return err

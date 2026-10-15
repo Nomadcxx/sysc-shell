@@ -120,7 +120,7 @@ func TestMaterialGroundReplacesTheBlurredBackdrop(t *testing.T) {
 	if reg.cfg.Theme.Glass != theme.GlassSmoke {
 		t.Fatalf("fixture glass = %q", reg.cfg.Theme.Glass)
 	}
-	got := h.backdropFor(h.theme, h.theme.PanelStyle())
+	got := h.backdropFor(h.theme)
 	if got == nil {
 		t.Fatal("the material ground is nil")
 	}
@@ -129,7 +129,7 @@ func TestMaterialGroundReplacesTheBlurredBackdrop(t *testing.T) {
 	}
 	// Nothing named a material with the axis off, so the capture passes through.
 	h.theme.Glass = theme.GlassOff
-	if got := h.backdropFor(h.theme, h.theme.PanelStyle()); got != h.backdrop {
+	if got := h.backdropFor(h.theme); got != h.backdrop {
 		t.Error("with the material off the blurred capture should be composited unchanged")
 	}
 }
@@ -247,6 +247,112 @@ func lightTokens() theme.Tokens {
 	tok := theme.Fallback
 	tok.Surface, tok.OnSurface = tok.OnSurface, tok.Surface
 	return tok
+}
+
+// TestRefractionComesWithTheGlassValueOnly keeps the vocabulary honest: the
+// tuned tone values paint a tone, and only the spelled "glass" value adds the
+// bend. It also keeps the capture's scale honest — the profile works in the
+// capture's pixels, so a logical radius has to come down with it.
+func TestRefractionComesWithTheGlassValueOnly(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.PanelOpacity = theme.OpacityMinBlurred
+	resolved, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, axis := range []theme.GlassMaterial{theme.GlassSmoke, theme.GlassMilk, theme.GlassFrost, theme.GlassAuto} {
+		th := resolved
+		th.Glass = axis
+		th.materialIntensity = 60
+		if got := materialFor(th, true); got.Refract != 0 {
+			t.Errorf("%s refracts by %d, want a tone only", axis, got.Refract)
+		}
+	}
+	full := resolved
+	full.Glass = theme.GlassFull
+	full.materialIntensity = 60
+	if got := materialFor(full, true); got.Refract == 0 {
+		t.Error("the glass value does not refract")
+	}
+
+	// The radius is scaled into the capture's pixels: a 12px radius on a
+	// quarter-resolution capture is 3.
+	h := &PanelHost{
+		id:    PanelSettings,
+		place: Placement{Output: ui.Rect{W: 1920, H: 1080}, Panel: ui.Rect{W: 400, H: 300}},
+		theme: full,
+	}
+	body, _ := h.surfaceSize()
+	capture := solidImage(body/4, body/4, 0x40, 0x40, 0x40)
+	got := h.refractionFor(capture)
+	if got.W != capture.Width || got.H != capture.Height {
+		t.Errorf("refraction geometry = %dx%d, want the capture's %dx%d", got.W, got.H, capture.Width, capture.Height)
+	}
+	if want := full.Radius / 4; got.Radius < want-1 || got.Radius > want+1 {
+		t.Errorf("radius = %d, want about %d (the theme's %d at quarter resolution)", got.Radius, want, full.Radius)
+	}
+	if got.Bend == 0 || got.Fringe == 0 || got.Dome == 0 {
+		t.Errorf("glass terms are incomplete: %+v", got)
+	}
+	if (&PanelHost{}).refractionFor(nil) != (render.Refraction{}) {
+		t.Error("a surface without a capture resolved a refraction")
+	}
+}
+
+// TestGlassValueRefractsTheGround: the ground a glass surface paints is the
+// capture bent by the bevel, not the tone alone, and the wider rim comes with
+// it.
+func TestGlassValueRefractsTheGround(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.Glass = theme.GlassFull
+	cfg.Theme.PanelOpacity = theme.OpacityMinBlurred
+	reg := newPanelRegistry(t)
+	reg.cfg = cfg
+	resolved, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &PanelHost{
+		id:    PanelSettings,
+		place: Placement{Output: ui.Rect{W: 1920, H: 1080}, Panel: ui.Rect{W: 400, H: 300}},
+		theme: resolved,
+	}
+	// A capture with an edge to bend: half dark, half light.
+	h.backdrop = halfImage(120, 80)
+	h.backdropSharp = h.backdrop
+	tone := render.Materialize(nil, h.backdrop, render.Material{Tone: render.ToneAuto, Intensity: uint8(resolved.materialIntensity)})
+	got := h.backdropFor(resolved)
+	if got == nil {
+		t.Fatal("the glass ground is nil")
+	}
+	if got == tone {
+		t.Error("the glass value painted the tone ground; nothing bent")
+	}
+
+	if style := h.rootStyle(resolved, true); style.RimWidth != 2 {
+		t.Errorf("rim width = %d, want the wider edge a refracting material draws", style.RimWidth)
+	}
+	plain, err := ResolveTheme(config.Default(), config.Default().Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if style := h.rootStyle(plain, true); style.RimWidth != 0 {
+		t.Errorf("a theme without glass drew a %dpx rim", style.RimWidth)
+	}
+}
+
+// halfImage is a two-tone capture: an edge for the bevel to work on.
+func halfImage(w, h int) *ui.Image {
+	img := solidImage(w, h, 0x20, 0x20, 0x20)
+	for y := 0; y < h; y++ {
+		for x := w / 2; x < w; x++ {
+			o := y*img.Stride + x*4
+			img.Pix[o], img.Pix[o+1], img.Pix[o+2] = 0xc0, 0xc0, 0xc0
+		}
+	}
+	return img
 }
 
 func solidImage(w, h int, r, g, b byte) *ui.Image {
