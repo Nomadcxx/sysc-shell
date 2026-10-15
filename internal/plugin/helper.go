@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -68,7 +71,9 @@ func HelperServe(args []string) int {
 	}
 	// probe reports the boundary the process started inside, on stderr, then
 	// serves normally: its resource ceilings, and the outcome of each
-	// "read:<path>" or "write:<path>" named in SYSC_PROBE (";"-separated).
+	// "read:<path>", "write:<path>", "connect:<socket>" (a leading @ for an
+	// abstract one), "signal:<pid>" or "child-signal:<program>" named in
+	// SYSC_PROBE (";"-separated).
 	if mode == "probe" {
 		probeBoundary(os.Getenv("SYSC_PROBE"))
 		mode = "ok"
@@ -293,6 +298,25 @@ func probeBoundary(spec string) {
 			_, err = os.ReadFile(path)
 		case "write":
 			err = os.WriteFile(path, []byte("probe"), 0o600)
+		case "connect":
+			// net reads a leading @ as an abstract socket.
+			var conn net.Conn
+			if conn, err = net.Dial("unix", path); err == nil {
+				conn.Close()
+			}
+		case "signal":
+			var pid int
+			if pid, err = strconv.Atoi(path); err == nil {
+				err = syscall.Kill(pid, 0)
+			}
+		case "child-signal":
+			// Start the program at path and signal it: a plugin may always
+			// stop what it started.
+			child := exec.Command(path, "5")
+			if err = child.Start(); err == nil {
+				err = child.Process.Signal(syscall.SIGTERM)
+				_ = child.Wait()
+			}
 		}
 		result := "ok"
 		if err != nil {

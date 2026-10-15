@@ -69,11 +69,13 @@ func TestPathRulesGrantOwnDirectoriesAndDeclarationsOnly(t *testing.T) {
 	m := Manifest{ID: "org.example.p", Dir: "/plugins/org.example.p",
 		Filesystem: &Filesystem{Read: []string{"~/.local/share/opencode/auth.json"}, ReadWrite: []string{"~/.cache/Proton"}}}
 	system := []PathRule{{Path: "/usr", Access: AccessReadExec}}
-	got := pathRules(m, "/state", "/home/u", system)
+	got := pathRules(m, "/state", "/run/user/1/sysc-plugins/org.example.p", "/home/u", []string{"/run/user/1/bus"}, system)
 	want := []PathRule{
 		{Path: "/usr", Access: AccessReadExec},
 		{Path: "/plugins/org.example.p", Access: AccessReadExec},
 		{Path: "/state/org.example.p", Access: AccessReadWriteExec, Create: true},
+		{Path: "/run/user/1/sysc-plugins/org.example.p", Access: AccessReadWrite, Create: true},
+		{Path: "/run/user/1/bus", Access: AccessSocket},
 		{Path: "/home/u/.local/share/opencode/auth.json", Access: AccessRead},
 		{Path: "/home/u/.cache/Proton", Access: AccessReadWrite, Create: true},
 	}

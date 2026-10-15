@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -43,5 +44,23 @@ func TestDeclaredSocketsResolveFromTheSession(t *testing.T) {
 		if !slices.Equal(paths, tc.paths) || !slices.Equal(pass, tc.pass) || !slices.Equal(unresolved, tc.unresolved) {
 			t.Errorf("%s: paths %q env %q unresolved %q, want %q %q %q", tc.name, paths, pass, unresolved, tc.paths, tc.pass, tc.unresolved)
 		}
+	}
+}
+
+func TestAConfinedPluginIsToldOnlyAboutTheEndpointsItDeclared(t *testing.T) {
+	t.Parallel()
+	base := []string{"PATH=/usr/bin", "HOME=/home/u", "XDG_RUNTIME_DIR=/run/user/1000",
+		"WAYLAND_DISPLAY=wayland-1", "NIRI_SOCKET=/run/user/1000/niri.sock", "DISPLAY=:0", "XAUTHORITY=/x",
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "SYSC_WEATHER=1"}
+	got := confinedEnvironment(base, "/run/user/1000/sysc-plugins/p", []string{"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"})
+	want := []string{"PATH=/usr/bin", "HOME=/home/u", "SYSC_WEATHER=1",
+		"XDG_RUNTIME_DIR=/run/user/1000/sysc-plugins/p", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("env =\n%q\nwant\n%q", got, want)
+	}
+	if got := confinedEnvironment(base, "", nil); slices.ContainsFunc(got, func(kv string) bool {
+		return strings.HasPrefix(kv, "NIRI_SOCKET=") || strings.HasPrefix(kv, "XDG_RUNTIME_DIR=")
+	}) {
+		t.Fatalf("an undeclared endpoint or the session runtime dir leaked: %q", got)
 	}
 }

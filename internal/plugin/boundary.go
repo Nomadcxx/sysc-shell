@@ -62,6 +62,8 @@ const (
 	AccessReadWriteExec
 	// AccessDevice is read, write and device control, for /dev.
 	AccessDevice
+	// AccessSocket is connecting to the one Unix socket the rule names.
+	AccessSocket
 )
 
 // PathRule grants one access beneath one path. Create makes the directory
@@ -73,8 +75,11 @@ type PathRule struct {
 }
 
 // systemPaths are what any process needs from the system: its programs and
-// libraries, configuration, the kernel's views of itself, devices, scratch
-// space and the session's runtime directory. None of them is the user's.
+// libraries, configuration, the kernel's views of itself, devices and scratch
+// space. None of them is the user's. The session's runtime directory is not
+// among them: it holds the bus and compositor sockets, so a confined plugin
+// gets a directory of its own there instead (pluginRuntimeDir), and reaches
+// a socket only by declaring it.
 func systemPaths() []PathRule {
 	rules := []PathRule{
 		{Path: "/usr", Access: AccessReadExec}, {Path: "/bin", Access: AccessReadExec},
@@ -86,21 +91,34 @@ func systemPaths() []PathRule {
 		{Path: "/dev", Access: AccessDevice},
 		{Path: "/tmp", Access: AccessReadWrite}, {Path: "/var/tmp", Access: AccessReadWrite},
 	}
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); filepath.IsAbs(dir) {
-		rules = append(rules, PathRule{Path: dir, Access: AccessReadWrite})
-	}
 	return rules
 }
 
+// pluginRuntimeDir is a confined plugin's own runtime directory, beneath the
+// session's, or empty when the session has none.
+func pluginRuntimeDir(sessionRuntime, id string) string {
+	if !filepath.IsAbs(sessionRuntime) {
+		return ""
+	}
+	return filepath.Join(sessionRuntime, "sysc-plugins", id)
+}
+
 // pathRules is everything a confined plugin may reach: the system, its own
-// directory to read and run, its state directory to change, and what it
-// declared. Nothing else in the user's home is granted.
-func pathRules(m Manifest, stateDir, home string, system []PathRule) []PathRule {
+// directory to read and run, its state and runtime directories to change, the
+// sockets its declaration resolved to, and the paths it declared. Nothing else
+// in the user's home is granted.
+func pathRules(m Manifest, stateDir, runtimeDir, home string, sockets []string, system []PathRule) []PathRule {
 	rules := slices.Clone(system)
 	rules = append(rules,
 		PathRule{Path: m.Dir, Access: AccessReadExec},
 		PathRule{Path: filepath.Join(stateDir, m.ID), Access: AccessReadWriteExec, Create: true},
 	)
+	if runtimeDir != "" {
+		rules = append(rules, PathRule{Path: runtimeDir, Access: AccessReadWrite, Create: true})
+	}
+	for _, socket := range sockets {
+		rules = append(rules, PathRule{Path: socket, Access: AccessSocket})
+	}
 	expand := func(path string) string {
 		if rest, ok := strings.CutPrefix(path, "~/"); ok {
 			return filepath.Join(home, rest)
@@ -138,6 +156,9 @@ type launchSpec struct {
 	Limits []launchLimit `json:"limits"`
 	// Paths confines the plugin when present.
 	Paths []PathRule `json:"paths,omitempty"`
+	// SignalAny leaves signals to other processes open, as the plugin
+	// declared; otherwise a confined plugin signals only its own.
+	SignalAny bool `json:"signal_any,omitempty"`
 }
 
 type launchLimit struct {
@@ -155,11 +176,15 @@ func ceilings() []launchLimit {
 
 // launchArgs is the launcher's argument list for one plugin.
 func launchArgs(m Manifest, paths []PathRule) ([]string, error) {
-	spec, err := json.Marshal(launchSpec{Exec: m.ExecPath, Limits: ceilings(), Paths: paths})
+	spec := launchSpec{Exec: m.ExecPath, Limits: ceilings(), Paths: paths}
+	if m.Filesystem != nil {
+		spec.SignalAny = m.Filesystem.SignalAny
+	}
+	encoded, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
 	}
-	return []string{LaunchFlag, string(spec)}, nil
+	return []string{LaunchFlag, string(encoded)}, nil
 }
 
 // LaunchMain applies a boundary to this process and executes the plugin. It
@@ -187,7 +212,7 @@ func LaunchMain(args []string) int {
 		}
 	}
 	if spec.Paths != nil {
-		if err := restrictPaths(spec.Paths); err != nil {
+		if err := restrictPaths(spec.Paths, spec.SignalAny); err != nil {
 			fmt.Fprintf(os.Stderr, "plugin launcher: confine: %v\n", err)
 			return 126
 		}

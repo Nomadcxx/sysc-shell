@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -390,15 +391,23 @@ func (r *Runtime) launch(ctx context.Context) error {
 			supported = nil
 		}
 	}
-	boundary, confine := boundaryOf(r.candidate.Manifest, r.opts.Launcher, LandlockABI())
+	m := r.candidate.Manifest
+	boundary, confine := boundaryOf(m, r.opts.Launcher, LandlockABI())
 	var paths []PathRule
+	var env []string
 	if confine {
 		system := r.opts.SystemPaths
 		if system == nil {
 			system = systemPaths()
 		}
 		home, _ := os.UserHomeDir()
-		paths = pathRules(r.candidate.Manifest, r.opts.StateDir, home, system)
+		runtimeDir := pluginRuntimeDir(os.Getenv("XDG_RUNTIME_DIR"), m.ID)
+		sockets, socketEnv, unresolved := resolveSockets(m.Filesystem.Sockets, os.Getenv)
+		for _, name := range unresolved {
+			slog.Info("plugin socket not available this session", "plugin", m.ID, "socket", name)
+		}
+		paths = pathRules(m, r.opts.StateDir, runtimeDir, home, sockets, system)
+		env = confinedEnvironment(pluginEnvironment(), runtimeDir, socketEnv)
 	}
 	r.mu.Lock()
 	r.boundary = boundary
@@ -407,6 +416,7 @@ func (r *Runtime) launch(ctx context.Context) error {
 		Manifest:         r.candidate.Manifest,
 		Launcher:         r.opts.Launcher,
 		Paths:            paths,
+		Env:              env,
 		Supported:        supported,
 		Limits:           r.opts.Limits,
 		HandshakeTimeout: r.opts.HandshakeTimeout,

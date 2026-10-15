@@ -19,10 +19,22 @@ const (
 		unix.LANDLOCK_ACCESS_FS_MAKE_FIFO | unix.LANDLOCK_ACCESS_FS_MAKE_SYM |
 		unix.LANDLOCK_ACCESS_FS_REFER | unix.LANDLOCK_ACCESS_FS_TRUNCATE
 	llDevice = unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
+	// llResolveUnix is LANDLOCK_ACCESS_FS_RESOLVE_UNIX (ABI 9, uapi
+	// linux/landlock.h): connecting to a pathname Unix socket whose server
+	// started outside the plugin's domain. x/sys v0.47.0 does not name it.
+	// Without it handled, a confined plugin reaches the session bus and the
+	// compositor by path and starts programs outside its domain through them.
+	llResolveUnix = 1 << 16
 	// llFile are the rights a rule on a single file may carry.
 	llFile = unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_WRITE_FILE |
 		unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_TRUNCATE |
-		unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
+		unix.LANDLOCK_ACCESS_FS_IOCTL_DEV | llResolveUnix
+)
+
+// The Landlock ABIs that introduced what the boundary relies on beyond files.
+const (
+	scopeABI       = 6
+	resolveUnixABI = 9
 )
 
 // handledFor is every filesystem right a kernel at this ABI can deny. A
@@ -37,6 +49,9 @@ func handledFor(abi int) uint64 {
 	}
 	if abi < 5 {
 		handled &^= unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
+	}
+	if abi >= resolveUnixABI {
+		handled |= llResolveUnix
 	}
 	return handled
 }
@@ -53,6 +68,8 @@ func (a Access) rights() uint64 {
 		return llRead | llChange | llExec
 	case AccessDevice:
 		return llRead | llChange | llDevice
+	case AccessSocket:
+		return llResolveUnix
 	}
 	return 0
 }
@@ -69,19 +86,37 @@ var landlockABI = sync.OnceValue(func() int {
 // none (an old kernel, or Landlock not among the enabled security modules).
 func LandlockABI() int { return landlockABI() }
 
+// scopesFor is the IPC a kernel at this ABI can isolate the plugin from:
+// abstract Unix sockets always, and signals to processes it did not start
+// unless the plugin declared it may send them.
+func scopesFor(abi int, signalAny bool) uint64 {
+	if abi < scopeABI {
+		return 0
+	}
+	scoped := uint64(unix.LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET)
+	if !signalAny {
+		scoped |= unix.LANDLOCK_SCOPE_SIGNAL
+	}
+	return scoped
+}
+
 // restrictPaths confines this thread, and whatever it executes, to rules.
 // Missing paths are skipped, except those a rule may create.
-func restrictPaths(rules []PathRule) error {
+func restrictPaths(rules []PathRule, signalAny bool) error {
 	abi := LandlockABI()
 	if abi < 1 {
 		return fmt.Errorf("landlock is not available")
 	}
 	handled := handledFor(abi)
-	// Only the filesystem rights are handled, so the size stops before the
-	// network and scope fields every ABI accepts it without.
-	attr := unix.LandlockRulesetAttr{Access_fs: handled}
+	attr := unix.LandlockRulesetAttr{Access_fs: handled, Scoped: scopesFor(abi, signalAny)}
+	// A kernel before the scopes rejects the longer attribute, so the size
+	// stops before the network field there; network rights are not handled.
+	size := unsafe.Sizeof(attr)
+	if attr.Scoped == 0 {
+		size = unsafe.Offsetof(attr.Access_net)
+	}
 	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET,
-		uintptr(unsafe.Pointer(&attr)), unsafe.Offsetof(attr.Access_net), 0)
+		uintptr(unsafe.Pointer(&attr)), size, 0)
 	if errno != 0 {
 		return fmt.Errorf("create ruleset: %w", errno)
 	}

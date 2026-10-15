@@ -3,8 +3,11 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -280,5 +283,93 @@ func TestConfinementLeavesTheRestartBudgetAlone(t *testing.T) {
 	waitRuntimeState(t, r, StateFailed)
 	if st := r.Status(); st.Starts != MaxAutoStarts || st.Boundary != BoundaryConfined {
 		t.Fatalf("status = %+v, want %d starts inside the confined boundary", st, MaxAutoStarts)
+	}
+}
+
+// listenUnix serves a socket outside any plugin's domain until the test ends.
+func listenUnix(t *testing.T, address string) {
+	t.Helper()
+	l, err := net.Listen("unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+}
+
+// probeRun starts the probe under the real boundary with ops in SYSC_PROBE
+// and returns its report once the last op has one.
+func probeRun(t *testing.T, decl map[string]any, ops []string) string {
+	t.Helper()
+	m := installContainedHelper(t, "probe", string(manifestWith(t, FilesystemMinor, decl)))
+	t.Setenv("SYSC_PROBE", strings.Join(ops, ";"))
+	r := NewRuntime(Candidate{Dir: m.Dir, Source: SourceUser, Manifest: m}, launcherOptions(t))
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v (stderr %q)", err, r.Status().Stderr)
+	}
+	t.Cleanup(r.Stop)
+	last := ops[len(ops)-1]
+	kind, target, _ := strings.Cut(last, ":")
+	waitStderr(t, r, "probe "+kind+" "+target+" ")
+	return string(r.Status().Stderr)
+}
+
+func TestAConfinedPluginReachesOnlyTheSocketsItDeclared(t *testing.T) {
+	if LandlockABI() < resolveUnixABI {
+		t.Skipf("this kernel offers Landlock ABI %d; socket confinement needs %d. Recorded unrun.", LandlockABI(), resolveUnixABI)
+	}
+	dir := t.TempDir()
+	declared, other := filepath.Join(dir, "declared.sock"), filepath.Join(dir, "other.sock")
+	listenUnix(t, declared)
+	listenUnix(t, other)
+	out := probeRun(t, map[string]any{"sockets": []string{declared}}, []string{"connect:" + declared, "connect:" + other})
+	for _, want := range []string{"probe connect " + declared + " ok", "probe connect " + other + " denied"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("probe output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAConfinedPluginIsIsolatedFromAbstractSocketsAndOtherProcesses(t *testing.T) {
+	if LandlockABI() < scopeABI {
+		t.Skipf("this kernel offers Landlock ABI %d; the scopes need %d. Recorded unrun.", LandlockABI(), scopeABI)
+	}
+	abstract := fmt.Sprintf("@sysc-probe-%d", os.Getpid())
+	listenUnix(t, abstract)
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep to start")
+	}
+	foreign := exec.Command(sleep, "30")
+	if err := foreign.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = foreign.Process.Kill(); _ = foreign.Wait() })
+	pid := strconv.Itoa(foreign.Process.Pid)
+
+	out := probeRun(t, map[string]any{}, []string{"connect:" + abstract, "signal:" + pid, "child-signal:" + sleep})
+	for _, want := range []string{
+		"probe connect " + abstract + " denied",
+		"probe signal " + pid + " denied",
+		"probe child-signal " + sleep + " ok",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("probe output lacks %q:\n%s", want, out)
+		}
+	}
+	// Declaring "signals": "any" opens signals and nothing else.
+	out = probeRun(t, map[string]any{"signals": "any"}, []string{"connect:" + abstract, "signal:" + pid})
+	for _, want := range []string{"probe connect " + abstract + " denied", "probe signal " + pid + " ok"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("with signals any, probe output lacks %q:\n%s", want, out)
+		}
 	}
 }
