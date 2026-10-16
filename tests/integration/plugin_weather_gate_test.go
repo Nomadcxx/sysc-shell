@@ -71,7 +71,22 @@ func TestPluginWeatherGateNetworkAndViews(t *testing.T) {
 	if err := h.send(&v1.ViewClose{ViewID: "tip-dp1"}); err != nil {
 		t.Fatal(err)
 	}
-	h.waitView("bar-dp1", func(n *v1.Node) bool { return strings.Contains(treeText(n), "18") })
+	// The plugin answers the close on its own schedule, so let what it sends
+	// for it land before measuring: the bar already reads "18", so waiting on
+	// its text proves nothing about the close (sysc-1282). A plugin that
+	// keeps redrawing never settles and fails here instead.
+	settled := h.snapCount.Load()
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		time.Sleep(100 * time.Millisecond)
+		now := h.snapCount.Load()
+		if now == settled {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("snapshots never settled after the tooltip closed: %d -> %d", settled, now)
+		}
+		settled = now
+	}
 
 	before := h.snapCount.Load()
 	time.Sleep(200 * time.Millisecond)
