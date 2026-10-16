@@ -174,10 +174,16 @@ func run(ctx context.Context) (err error) {
 	// so BindNotifications must run first. The pumps below still drain it.
 	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
 	registry.BindNotifications(notifyClient)
+	launcher, err := os.Executable()
+	if err != nil {
+		log.Printf("sysc-shell: plugins will start unbounded: cannot locate this binary: %v", err)
+		launcher = ""
+	}
 	_ = registry.BindPlugins(shell.PluginHostOptions{
 		Roots:    plugin.DefaultRoots("/usr/share/sysc-shell/plugins"),
 		StateDir: plugin.StateRoot(),
 		Notify:   registry.PluginNotify,
+		Launcher: launcher,
 	})
 	// Releases every service lease and stops the clock goroutine when the
 	// process unwinds, whether through cancellation or an error return.
@@ -445,6 +451,11 @@ func run(ctx context.Context) (err error) {
 }
 
 func main() {
+	// A plugin start re-runs this binary to apply the plugin's boundary
+	// before executing it; nothing else of the shell may run first.
+	if len(os.Args) > 1 && os.Args[1] == plugin.LaunchFlag {
+		os.Exit(plugin.LaunchMain(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		os.Exit(runVersion(os.Args[2:], os.Stdout, os.Stderr))
 	}

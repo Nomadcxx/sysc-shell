@@ -94,6 +94,14 @@ func (e ExitReason) String() string {
 // question "did this start work" stays separate from "should we try again".
 type Supervisor struct {
 	Manifest Manifest
+	// Launcher applies the plugin's boundary before executing it; empty
+	// starts the plugin directly.
+	Launcher string
+	// Paths confines the plugin to these rules, through the launcher.
+	Paths []PathRule
+	// Env replaces the allowlisted environment when set: a confined plugin
+	// is told only about the endpoints it may reach.
+	Env []string
 	// Supported is what this host offers. The grant is the intersection with
 	// what the manifest requested.
 	Supported []Capability
@@ -159,11 +167,21 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	// through a command shell.
 	cmd := exec.CommandContext(ctx, s.Manifest.ExecPath)
 	cmd.Args = []string{s.Manifest.ExecPath}
+	if s.Launcher != "" {
+		args, err := launchArgs(s.Manifest, s.Paths)
+		if err != nil {
+			return nil, fmt.Errorf("plugin: %s: %w", s.Manifest.ID, err)
+		}
+		cmd = exec.CommandContext(ctx, s.Launcher, args...)
+	}
 	cmd.Dir = s.Manifest.Dir
 	// GH #11: a third-party process gets the handful of variables it needs to
 	// find the compositor and its own config, not the whole session
 	// environment (which can carry tokens, proxy credentials, search paths).
 	cmd.Env = pluginEnvironment()
+	if s.Env != nil {
+		cmd.Env = s.Env
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -511,6 +529,32 @@ func pluginEnvironment() []string {
 		}
 	}
 	return env
+}
+
+// endpointEnvKeys name session endpoints. A confined plugin is told about
+// one only when it declared the socket, so it fails plainly rather than
+// reaching for an endpoint its boundary refuses; DISPLAY and XAUTHORITY lead
+// to Xwayland's socket, which no declaration names.
+var endpointEnvKeys = []string{
+	"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "NIRI_SOCKET",
+	"DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
+}
+
+// confinedEnvironment is base without the session endpoints, with the
+// plugin's own runtime directory, and with the endpoints it declared.
+func confinedEnvironment(base []string, runtimeDir string, declared []string) []string {
+	env := make([]string, 0, len(base)+len(declared))
+	for _, kv := range base {
+		key, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(endpointEnvKeys, key) || key == "XDG_RUNTIME_DIR" {
+			continue
+		}
+		env = append(env, kv)
+	}
+	if runtimeDir != "" {
+		env = append(env, "XDG_RUNTIME_DIR="+runtimeDir)
+	}
+	return append(env, declared...)
 }
 
 // pluginEnvKeys covers: finding binaries (PATH), config and state dirs (HOME,

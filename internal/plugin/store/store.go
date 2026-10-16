@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
@@ -243,6 +244,11 @@ func cloneRelease(release catalog.Release) catalog.Release {
 	release.Capabilities = slices.Clone(release.Capabilities)
 	release.Requires.Commands = slices.Clone(release.Requires.Commands)
 	release.Assets = maps.Clone(release.Assets)
+	if release.Filesystem != nil {
+		fs := *release.Filesystem
+		fs.Read, fs.ReadWrite, fs.Sockets = slices.Clone(fs.Read), slices.Clone(fs.ReadWrite), slices.Clone(fs.Sockets)
+		release.Filesystem = &fs
+	}
 	return release
 }
 
@@ -303,7 +309,7 @@ func (s *Store) Update(id string, want ReleaseRef, confirmed bool) (<-chan error
 		return nil, err
 	}
 	rel := l.Resolution.Release
-	if !confirmed && (!catalog.SameSet(l.Installed.Capabilities, rel.Capabilities) || !catalog.SameSet(l.Installed.Requires, rel.Requires.Commands)) {
+	if !confirmed && (!plugin.SameGrants(l.Installed.Capabilities, rel.Capabilities) || !catalog.SameSet(l.Installed.Requires, rel.Requires.Commands)) {
 		return nil, fail(KindConsent, nil, "%s %s asks for capabilities %v and commands %v; installed %s has %v and %v",
 			id, rel.Version, rel.Capabilities, rel.Requires.Commands, l.Installed.Version, l.Installed.Capabilities, l.Installed.Requires)
 	}
@@ -476,6 +482,7 @@ func (s *Store) rebuild() {
 		slog.Warn("plugin store: cannot read installed plugins", "err", err)
 		installed = Installed{}
 	}
+	s.adoptApprovals(installed)
 	var local map[string]string
 	if s.opts.Local != nil {
 		local = s.opts.Local()

@@ -591,6 +591,10 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	if failing {
 		actions = append(actions, pluginManagerIconButton("plugin-retry:"+id, "Retry "+name, "refresh", metrics))
 	}
+	consent := pluginConsentLine(h, status.Consent)
+	if consent.ask {
+		actions = append(actions, pluginManagerButton("plugins-approve:"+id, cardT(hostT(h), "plugins.approve", "Approve"), metrics))
+	}
 	if row.candidate != nil && len(row.candidate.Manifest.Settings) > 0 {
 		label := cardT(hostT(h), "plugins.plugin_settings", "Plugin settings")
 		if h.pluginManagerExpanded[id] {
@@ -648,6 +652,15 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	if provenance != "" {
 		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: provenance, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
+	if consent.text != "" {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: consent.text, TextRole: theme.RoleCaption, Tone: consent.tone, MaxWidth: labelW, Multiline: true})
+	}
+	signalAny := row.candidate != nil && row.candidate.Manifest.Filesystem != nil && row.candidate.Manifest.Filesystem.SignalAny
+	if boundary := pluginBoundaryLine(h, status.Boundary, signalAny); boundary != "" {
+		// A text node's Multiline only keeps breaks already in the string, so
+		// the sentence is wrapped at the label's width rather than cut.
+		label.Children = append(label.Children, h.wrappedText(boundary, theme.RoleCaption, ui.ToneSubtle, labelW, 0))
+	}
 	if failing {
 		detail := status.Failure
 		if row.candidate.Err != nil {
@@ -689,6 +702,112 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		}
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: children}
+}
+
+// pluginConsentRow is what a manager row says about a copy's approval.
+type pluginConsentRow struct {
+	text string
+	tone ui.Tone
+	ask  bool
+}
+
+// pluginConsentLine states where a copy stands against its approval. An
+// approved copy names the digest it was approved at; a changed or unrecorded
+// one says what that means for it and offers to approve it as it is now.
+func pluginConsentLine(h *PanelHost, v plugin.ConsentVerdict) pluginConsentRow {
+	switch v.State {
+	case plugin.ConsentApproved:
+		return pluginConsentRow{text: fmt.Sprintf(cardT(hostT(h), "plugins.consent_approved", "Approved at %s"), digestPrefix(v.Digest)), tone: ui.ToneSubtle}
+	case plugin.ConsentChanged:
+		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_changed",
+			"Changed since you approved it. It runs without its capabilities until you approve it again."), tone: ui.ToneError, ask: true}
+	case plugin.ConsentUnrecorded:
+		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_unrecorded",
+			"This plugin was enabled before approvals were recorded. Approve its current contents to keep it enabled."), tone: ui.ToneSubtle, ask: true}
+	}
+	return pluginConsentRow{}
+}
+
+// pluginBoundaryLine states what a running plugin is held inside, in the
+// words the consent card uses; a plugin started without the launcher says
+// nothing, because nothing was applied to it. It never claims more than the
+// kernel enforces: below the socket right a declared plugin can still reach
+// the session and start programs outside its boundary through it.
+func pluginBoundaryLine(h *PanelHost, b plugin.Boundary, signalAny bool) string {
+	tr := hostT(h)
+	signals := " " + cardT(tr, "plugins.boundary_signals", "It can also signal your other programs.")
+	filesOnly := cardT(tr, "plugins.boundary_files_only", "Its own files are confined, but it can still reach your session (the compositor and session services) and start programs through them. Network access is not restricted.")
+	switch b {
+	case plugin.BoundaryConfined:
+		line := cardT(tr, "plugins.boundary_confined", "Confined to its own files and the paths and sockets it declared. Network access is not restricted.")
+		if signalAny {
+			line += signals
+		}
+		return line
+	case plugin.BoundaryFilesOnly:
+		if signalAny {
+			return filesOnly + signals
+		}
+		return filesOnly
+	case plugin.BoundaryFilesUnscoped:
+		return filesOnly + signals
+	case plugin.BoundaryLimited:
+		return cardT(tr, "plugins.boundary_limited", "Unconfined: it runs as your user with full file and network access.")
+	case plugin.BoundaryNoLandlock:
+		return cardT(tr, "plugins.boundary_no_landlock", "This kernel provides no filesystem confinement, so it runs with full file and network access.")
+	}
+	return ""
+}
+
+// digestPrefix is the short form of a content digest a person can compare.
+func digestPrefix(digest string) string {
+	if len(digest) > 12 {
+		return digest[:12]
+	}
+	return digest
+}
+
+// approvePluginLocked records a copy as it is now, then restarts it so the
+// next start holds the capabilities the approval restores. The store's worker
+// does the file work; nothing here waits on it under Registry.mu.
+func (r *Registry) approvePluginLocked(h *PanelHost, id string) {
+	if r.pluginStore == nil || r.plugins == nil {
+		h.pluginManagerError = "plugin store unavailable"
+		r.rebuildPanel(h)
+		return
+	}
+	c, ok := r.plugins.discovered().Lookup(id)
+	if !ok {
+		h.pluginManagerError = fmt.Sprintf("plugin %s is not installed", id)
+		r.rebuildPanel(h)
+		return
+	}
+	done, err := r.pluginStore.Approve(c.Source, id)
+	if err != nil {
+		h.pluginManagerError = err.Error()
+		r.rebuildPanel(h)
+		return
+	}
+	h.pluginManagerError = ""
+	plugins := r.plugins
+	go func() {
+		err := <-done
+		if err == nil {
+			err = plugins.retry(id)
+		}
+		r.mu.Lock()
+		if r.panelHosts[h.id] != h {
+			r.mu.Unlock()
+			return
+		}
+		if err != nil {
+			h.pluginManagerError = err.Error()
+		}
+		r.rebuildPanel(h)
+		output, surface := h.output, panelSurfaceID(h.id)
+		r.mu.Unlock()
+		r.publishSurface(output, surface)
+	}()
 }
 
 // pluginStderrTail is the last lines a failing plugin wrote, so a noisy
@@ -936,6 +1055,10 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 			h.pluginManagerError = "plugin listing is no longer available"
 			r.rebuildPanel(h)
 		}
+		return true
+	}
+	if id, ok := strings.CutPrefix(action, "plugins-approve:"); ok {
+		r.approvePluginLocked(h, id)
 		return true
 	}
 	if id, ok := strings.CutPrefix(action, "plugins-update:"); ok {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -59,6 +61,11 @@ type Status struct {
 	Stderr []byte
 	// Since is when the current state began.
 	Since time.Time
+	// Consent is the most recent start's answer against the recorded
+	// approval. Its zero value means no start has checked one.
+	Consent ConsentVerdict
+	// Boundary is what the most recent start runs inside.
+	Boundary Boundary
 }
 
 // RuntimeOptions configures one runtime.
@@ -76,6 +83,20 @@ type RuntimeOptions struct {
 	// re-announce them; on a first start there are none and the host does
 	// nothing.
 	SessionStarted func()
+	// Launcher is the binary that applies a plugin's boundary and executes
+	// it (see LaunchFlag). Empty starts the plugin directly, unbounded.
+	Launcher string
+	// StateDir is the root holding every plugin's state directory, the one
+	// place outside its own directory a confined plugin may always write.
+	StateDir string
+	// SystemPaths replaces the system directories a confined plugin may
+	// reach. Nil uses the real ones; a test narrows them so its own
+	// temporary files are outside the boundary it checks.
+	SystemPaths []PathRule
+	// Consent looks up the approval recorded for a copy. Every start
+	// compares the copy's bytes with it, and a copy that changed starts with
+	// no capabilities. Nil skips the check.
+	Consent ConsentLookup
 	// Now is the clock, injected so restart policy is testable without
 	// waiting out a sixty-second window.
 	Now func() time.Time
@@ -112,6 +133,8 @@ type Runtime struct {
 	failure       string
 	starts        int
 	stderr        []byte
+	consent       ConsentVerdict
+	boundary      Boundary
 	session       *Session
 	sessionCancel context.CancelFunc
 	disp          *Dispatcher
@@ -286,11 +309,13 @@ func (r *Runtime) Status() Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st := Status{
-		State:   r.state,
-		Failure: r.failure,
-		Starts:  r.starts,
-		Stderr:  r.stderr,
-		Since:   r.since,
+		State:    r.state,
+		Failure:  r.failure,
+		Starts:   r.starts,
+		Stderr:   r.stderr,
+		Since:    r.since,
+		Consent:  r.consent,
+		Boundary: r.boundary,
 	}
 	if r.session != nil {
 		st.PID = r.session.PID()
@@ -356,9 +381,43 @@ func (r *Runtime) launch(ctx context.Context) error {
 
 	r.setState(StateStarting, "")
 
+	supported := r.opts.Supported
+	if r.opts.Consent != nil {
+		verdict := VerifyConsent(r.candidate.Manifest, r.candidate.Source, r.opts.Consent)
+		r.mu.Lock()
+		r.consent = verdict
+		r.mu.Unlock()
+		if !verdict.Grants() {
+			supported = nil
+		}
+	}
+	m := r.candidate.Manifest
+	boundary, confine := boundaryOf(m, r.opts.Launcher, LandlockABI())
+	var paths []PathRule
+	var env []string
+	if confine {
+		system := r.opts.SystemPaths
+		if system == nil {
+			system = systemPaths()
+		}
+		home, _ := os.UserHomeDir()
+		runtimeDir := pluginRuntimeDir(os.Getenv("XDG_RUNTIME_DIR"), m.ID)
+		sockets, socketEnv, unresolved := resolveSockets(m.Filesystem.Sockets, os.Getenv)
+		for _, name := range unresolved {
+			slog.Info("plugin socket not available this session", "plugin", m.ID, "socket", name)
+		}
+		paths = pathRules(m, r.opts.StateDir, runtimeDir, home, sockets, system)
+		env = confinedEnvironment(pluginEnvironment(), runtimeDir, socketEnv)
+	}
+	r.mu.Lock()
+	r.boundary = boundary
+	r.mu.Unlock()
 	sup := &Supervisor{
 		Manifest:         r.candidate.Manifest,
-		Supported:        r.opts.Supported,
+		Launcher:         r.opts.Launcher,
+		Paths:            paths,
+		Env:              env,
+		Supported:        supported,
 		Limits:           r.opts.Limits,
 		HandshakeTimeout: r.opts.HandshakeTimeout,
 		ShutdownGrace:    r.opts.ShutdownGrace,

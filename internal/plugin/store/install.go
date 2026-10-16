@@ -111,6 +111,29 @@ func matchManifest(m plugin.Manifest, p Plan) error {
 	case !catalog.SameSet(m.Requires, p.Release.Requires.Commands):
 		return fail(KindManifest, nil, "required commands are %v; the catalog says %v", m.Requires, p.Release.Requires.Commands)
 	}
+	return matchFilesystem(m, p.Release.Filesystem)
+}
+
+// matchFilesystem refuses a release whose catalog promises less filesystem
+// reach than its manifest takes. A catalog silent about it promised nothing,
+// and a plugin confined beyond what the consent said is no harm.
+func matchFilesystem(m plugin.Manifest, listed *catalog.Filesystem) error {
+	if listed == nil {
+		return nil
+	}
+	if m.Filesystem == nil {
+		return fail(KindManifest, nil, "the catalog says the plugin is confined; its manifest declares no filesystem reach")
+	}
+	if !catalog.SameSet(m.Filesystem.Read, listed.Read) || !catalog.SameSet(m.Filesystem.ReadWrite, listed.ReadWrite) {
+		return fail(KindManifest, nil, "filesystem reach is read %v, change %v; the catalog says read %v, change %v",
+			m.Filesystem.Read, m.Filesystem.ReadWrite, listed.Read, listed.ReadWrite)
+	}
+	if !catalog.SameSet(m.Filesystem.Sockets, listed.Sockets) {
+		return fail(KindManifest, nil, "sockets are %v; the catalog says %v", m.Filesystem.Sockets, listed.Sockets)
+	}
+	if m.Filesystem.SignalAny != listed.SignalAny() {
+		return fail(KindManifest, nil, "signals to other processes: manifest %v, catalog %v", m.Filesystem.SignalAny, listed.SignalAny())
+	}
 	return nil
 }
 
@@ -145,7 +168,10 @@ func (in *Installer) swapIn(id, staged string, rec Record) error {
 		rec.Previous = &old
 	}
 	records[id] = rec
-	return records.Save(in.Root)
+	if err := records.Save(in.Root); err != nil {
+		return err
+	}
+	return in.recordConsent(plugin.SourceManaged, id, active)
 }
 
 // Rollback swaps the installed version with the kept previous one.
@@ -192,6 +218,9 @@ func (in *Installer) Rollback(id string) error {
 		if err := records.Save(in.Root); err != nil {
 			return err
 		}
+		if err := in.recordConsent(plugin.SourceManaged, id, active); err != nil {
+			return err
+		}
 		if keepErr != nil {
 			return fail(KindDisk, keepErr, "rolled back, but the replaced version could not be kept")
 		}
@@ -217,7 +246,10 @@ func (in *Installer) Remove(id string) error {
 			}
 		}
 		delete(records, id)
-		return records.Save(in.Root)
+		if err := records.Save(in.Root); err != nil {
+			return err
+		}
+		return in.forgetConsent(id)
 	})
 }
 

@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
@@ -62,6 +67,15 @@ func HelperServe(args []string) int {
 	recordInput := ""
 	if p, ok := strings.CutPrefix(mode, "record-input:"); ok {
 		recordInput = p
+		mode = "ok"
+	}
+	// probe reports the boundary the process started inside, on stderr, then
+	// serves normally: its resource ceilings, and the outcome of each
+	// "read:<path>", "write:<path>", "connect:<socket>" (a leading @ for an
+	// abstract one), "signal:<pid>" or "child-signal:<program>" named in
+	// SYSC_PROBE (";"-separated).
+	if mode == "probe" {
+		probeBoundary(os.Getenv("SYSC_PROBE"))
 		mode = "ok"
 	}
 	out := v1.NewEncoder(os.Stdout)
@@ -120,6 +134,12 @@ func HelperServe(args []string) int {
 		fmt.Fprintln(os.Stdout, `{"type":"view.snapshot","unexpected":true}`)
 	case "crash-after-hello":
 		return 4
+	case "alloc-after-hello":
+		// Reserve more address space than the launcher's ceiling allows.
+		// Without the ceiling this succeeds: only one page is touched.
+		b := make([]byte, 9<<30)
+		b[0] = 1
+		fmt.Fprintf(os.Stderr, "helper: allocated %d bytes\n", len(b))
 	case "ignore-shutdown":
 		time.Sleep(time.Minute)
 		return 0
@@ -255,4 +275,56 @@ func helperSnapshot(viewID string, view v1.ViewKind) *v1.ViewSnapshot {
 		}}
 	}
 	return &v1.ViewSnapshot{ViewID: viewID, Revision: 1, Root: root}
+}
+
+func probeBoundary(spec string) {
+	for _, r := range []struct {
+		name string
+		res  int
+	}{{"as", syscall.RLIMIT_AS}, {"nofile", syscall.RLIMIT_NOFILE}, {"fsize", syscall.RLIMIT_FSIZE}} {
+		var lim syscall.Rlimit
+		if err := syscall.Getrlimit(r.res, &lim); err == nil {
+			fmt.Fprintf(os.Stderr, "probe rlimit %s %d\n", r.name, lim.Max)
+		}
+	}
+	for _, op := range strings.Split(spec, ";") {
+		kind, path, ok := strings.Cut(op, ":")
+		if !ok {
+			continue
+		}
+		var err error
+		switch kind {
+		case "read":
+			_, err = os.ReadFile(path)
+		case "write":
+			err = os.WriteFile(path, []byte("probe"), 0o600)
+		case "connect":
+			// net reads a leading @ as an abstract socket.
+			var conn net.Conn
+			if conn, err = net.Dial("unix", path); err == nil {
+				conn.Close()
+			}
+		case "signal":
+			var pid int
+			if pid, err = strconv.Atoi(path); err == nil {
+				err = syscall.Kill(pid, 0)
+			}
+		case "child-signal":
+			// Start the program at path and signal it: a plugin may always
+			// stop what it started.
+			child := exec.Command(path, "5")
+			if err = child.Start(); err == nil {
+				err = child.Process.Signal(syscall.SIGTERM)
+				_ = child.Wait()
+			}
+		}
+		result := "ok"
+		if err != nil {
+			result = "denied"
+			if !errors.Is(err, fs.ErrPermission) {
+				result = "error " + err.Error()
+			}
+		}
+		fmt.Fprintf(os.Stderr, "probe %s %s %s\n", kind, path, result)
+	}
 }
