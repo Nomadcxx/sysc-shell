@@ -88,6 +88,11 @@ type Handlers struct {
 	Theme func(method string, params json.RawMessage) (map[string]any, error)
 	// NightLight answers every nightlight.* method.
 	NightLight func(method string, params json.RawMessage) (map[string]any, error)
+	// API holds the API-2 methods, keyed by exact name. A method is listed in
+	// capabilities exactly when its entry is non-nil.
+	API map[string]APIMethod
+	// Topics holds the subscribable state topics, keyed by name.
+	Topics map[string]Provider
 }
 
 // shutdownGrace bounds how long Serve waits for in-flight requests once its
@@ -102,14 +107,20 @@ type Server struct {
 	path string
 	h    Handlers
 	ln   net.Listener
+	hubs map[string]*hub
+	// writeTimeout bounds one write; tests shorten it.
+	writeTimeout time.Duration
 
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
-	wg    sync.WaitGroup
+	mu        sync.Mutex
+	conns     map[net.Conn]struct{}
+	consumers int
+	wg        sync.WaitGroup
 }
 
 func NewServer(path string, h Handlers) *Server {
-	return &Server{path: path, h: h}
+	s := &Server{path: path, writeTimeout: writeTimeout}
+	s.SetHandlers(h)
+	return s
 }
 
 // Listen binds the socket and enforces single-instance. The production order
@@ -150,6 +161,12 @@ func (s *Server) Listen() error {
 // the handlers installed here.
 func (s *Server) SetHandlers(h Handlers) {
 	s.h = h
+	s.hubs = map[string]*hub{}
+	for name, p := range h.Topics {
+		if p.Start != nil {
+			s.hubs[name] = &hub{name: name, provider: p}
+		}
+	}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -250,13 +267,18 @@ type request struct {
 
 func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
+	c := newSession(s, conn)
 	defer func() {
+		c.close()
 		s.mu.Lock()
 		delete(s.conns, conn)
 		s.mu.Unlock()
 		_ = conn.Close()
 	}()
 	sc := bufio.NewScanner(conn)
+	// One byte over the limit, so a line of exactly lineBytes still fits
+	// beside its newline and anything longer is ErrTooLong.
+	sc.Buffer(make([]byte, 4096), lineBytes+1)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
@@ -265,9 +287,12 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 		if ctx.Err() != nil {
 			return
 		}
-		resp := s.handleLine(line)
-		_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-		_, _ = conn.Write(append(resp, '\n'))
+		if resp := s.dispatch(c, line); resp != nil {
+			c.reply(resp)
+		}
+	}
+	if errors.Is(sc.Err(), bufio.ErrTooLong) {
+		c.reply(codedError(nil, CodeLimitExceeded, fmt.Sprintf("request line over %d bytes", lineBytes)))
 	}
 }
 
@@ -391,12 +416,15 @@ var delegatedFamilies = []delegatedFamily{
 // its raw params, or a body and an error.
 type delegated func(string, json.RawMessage) (map[string]any, error)
 
-// Methods lists the exact methods the socket dispatches, in a stable order.
+// Methods lists the exact methods every server dispatches, legacy and
+// built-in API-2, in a stable order. Handlers.API entries are per server and
+// appear in that server's capabilities.
 func Methods() []string {
-	out := make([]string, 0, len(methods))
+	out := make([]string, 0, len(methods)+len(builtinAPI))
 	for name := range methods {
 		out = append(out, name)
 	}
+	out = append(out, builtinAPI...)
 	sort.Strings(out)
 	return out
 }
@@ -413,13 +441,36 @@ func MethodPrefixes() []string {
 	return out
 }
 
+// handleLine answers one request outside any connection, so ipc.subscribe
+// cannot succeed through it.
 func (s *Server) handleLine(line string) []byte {
+	return s.dispatch(nil, line)
+}
+
+// dispatch answers one request line on a connection. A nil reply means the
+// session has already queued its own.
+func (s *Server) dispatch(c *session, line string) []byte {
 	var req request
 	if err := json.Unmarshal([]byte(line), &req); err != nil {
-		return envelope(nil, "", "malformed json")
+		return codedError(nil, CodeInvalidParams, "malformed json")
+	}
+	switch req.Method {
+	case "ipc.subscribe":
+		return c.subscribe(req)
+	case "ipc.unsubscribe":
+		return c.unsubscribe(req)
+	}
+	if c.isEvents() {
+		return codedError(req.ID, CodeUnsupported, "this connection carries events; send commands on another connection")
+	}
+	if req.Method == "ipc.capabilities" {
+		return callAPI(req.ID, s.capabilities, req.Params)
 	}
 	if fn, ok := methods[req.Method]; ok {
 		return fn(s, req)
+	}
+	if fn := s.h.API[req.Method]; fn != nil {
+		return callAPI(req.ID, fn, req.Params)
 	}
 	for _, fam := range delegatedFamilies {
 		if !strings.HasPrefix(req.Method, fam.prefix) {
@@ -435,7 +486,7 @@ func (s *Server) handleLine(line string) []byte {
 		}
 		return envelope(req.ID, "ok", "", body)
 	}
-	return envelope(req.ID, "", "unknown method")
+	return codedError(req.ID, CodeUnsupported, "unknown method")
 }
 
 func envelope(id json.RawMessage, ok, err string, extra ...map[string]any) []byte {

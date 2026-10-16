@@ -3,10 +3,40 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 )
+
+// checkIPCArgv judges the words after `sysc-shell ipc`: the subscribe form, or
+// a method with optional params.
+func checkIPCArgv(at string, argv []string) []string {
+	if argv[0] == "subscribe" {
+		return checkSubscribeArgs(at, argv[1:])
+	}
+	params := ""
+	if len(argv) > 1 {
+		params = argv[1]
+	}
+	return checkIPCArgs(at, argv[0], params)
+}
+
+// checkSubscribeArgs judges `sysc-shell ipc subscribe TOPIC... [--seconds N]`
+// with the CLI's own parser and the shell's topic vocabulary.
+func checkSubscribeArgs(at string, args []string) []string {
+	topics, _, err := ipc.ParseSubscribeArgs(args)
+	if err != nil {
+		return []string{fmt.Sprintf("%s%v", at, err)}
+	}
+	var findings []string
+	for _, topic := range topics {
+		if !slices.Contains(ipc.TopicNames(), topic) {
+			findings = append(findings, fmt.Sprintf("%sunknown ipc topic %q", at, topic))
+		}
+	}
+	return findings
+}
 
 // checkIPCArgs judges a `sysc-shell ipc <method> [params]` example. An unknown
 // method, params that are not JSON, or a panel the shell does not have all fail
@@ -86,13 +116,9 @@ func checkKDL(at, line string) []string {
 		if len(argv) < 3 || argv[0] != "sysc-shell" || argv[1] != "ipc" {
 			continue
 		}
-		params := ""
-		if len(argv) > 3 {
-			// An escape this gate does not decode is not a failure: the method
-			// still gets checked, the params are left alone.
-			params = argv[3]
-		}
-		findings = append(findings, checkIPCArgs(at, argv[2], params)...)
+		// An escape this gate does not decode is not a failure: the method
+		// still gets checked, the params are left alone.
+		findings = append(findings, checkIPCArgv(at, argv[2:])...)
 	}
 	return findings
 }
@@ -174,11 +200,11 @@ func checkShellCommand(at, line string) []string {
 	if len(fields) < 3 || fields[0] != "sysc-shell" || fields[1] != "ipc" {
 		return nil
 	}
-	params := ""
-	if len(fields) > 3 {
-		params = unquote(fields[3])
+	argv := fields[2:]
+	if argv[0] != "subscribe" && len(argv) > 1 {
+		argv = []string{argv[0], unquote(argv[1])}
 	}
-	return checkIPCArgs(at, fields[2], params)
+	return checkIPCArgv(at, argv)
 }
 
 // unquote strips one matching pair of single or double quotes, which is what a

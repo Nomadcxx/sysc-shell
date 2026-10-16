@@ -172,6 +172,39 @@ sysc-shell ipc status
 sysc-shell ipc panel.toggle '{"panel":"control-center"}'
 ```
 
+### Scripting the socket
+
+The socket is `$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock`, readable only by your user. Each request is
+one JSON line, `{"id":…,"method":…,"params":{…}}`, and each reply is one line.
+
+`ipc.capabilities` reports the protocol version (`api`, currently 2), every method the running shell
+answers, the delegated method families, the topics you can subscribe to, and the limits below. A
+method or topic it does not list is unsupported.
+
+```bash
+sysc-shell ipc ipc.capabilities
+sysc-shell ipc subscribe panels --seconds 20
+```
+
+- **Replies.** The methods that existed before version 2 (`status`, `panel.*`, `osd.step`, …) keep
+  their flat reply shape; that shape is frozen. Newer methods (`ipc.*`) reply
+  `{"id":…,"ok":true,"result":{…}}`. Every error has an `error` message. Errors from the transport and
+  from newer methods also carry a `code`: `unsupported`, `invalid_params`, `limit_exceeded`, `timeout`,
+  `cancelled` or `busy`.
+- **Subscriptions.** `ipc.subscribe {"topics":["panels"]}` turns its connection into an event
+  connection, which then accepts only `ipc.subscribe` and `ipc.unsubscribe`; send commands on another
+  connection. Each topic starts with a `snapshot` event, then sends `state` events carrying the whole
+  new value with a rising `seq`. A reader that falls behind skips to the latest value, marked `resync`.
+  An `error` event ends one topic. Closing the connection ends every subscription.
+- **Topics.** `panels` is the sorted list of open panel ids.
+- **Limits.** A request line holds at most 65536 bytes. The shell serves at most 32 event
+  connections, 16 topics on each, and 2 MiB for one state. A reader that cannot take a write for five
+  seconds is disconnected.
+
+`sysc-shell ipc subscribe TOPIC... [--seconds N]` prints one event per line for N seconds (default
+30, at most 300). It exits 0 when the time runs out or on Ctrl+C, and nonzero if a topic is refused
+or ends.
+
 Settings are in the settings panel and saved to `$XDG_CONFIG_HOME/sysc-shell/config.json`
 (default: `~/.config/sysc-shell/config.json`). Logs go to
 `journalctl --user -u sysc-shell`.
