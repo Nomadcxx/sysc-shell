@@ -1337,6 +1337,10 @@ func pluginPanelError(reason string, actions bool) *ui.Node {
 }
 
 func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.PointerButton, text string, anchor ui.Rect) bool {
+	return h.deliverValue(hit, event, button, text, nil, anchor)
+}
+
+func (h *pluginHost) deliverValue(hit pluginHit, event v1.EventKind, button v1.PointerButton, text string, value *float64, anchor ui.Rect) bool {
 	h.mu.Lock()
 	v, ok := h.views[hit.ViewID]
 	var slot *pluginSlot
@@ -1357,7 +1361,7 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	if ok && declared {
 		ev := v1.InputEvent{
 			ViewID: hit.ViewID, Revision: v.Revision, Node: hit.Node,
-			Event: event, Button: button, Text: text, Output: v.Output, Generation: v.Generation,
+			Event: event, Button: button, Text: text, Value: value, Output: v.Output, Generation: v.Generation,
 		}
 		toSend = h.textOut.Push(ev)
 		h.inputs = append(h.inputs, toSend...)
@@ -1692,6 +1696,14 @@ func (r *Registry) deliverPluginText(action, text string, kind v1.EventKind) boo
 		return false
 	}
 	return r.plugins.deliver(hit, kind, "", text, ui.Rect{})
+}
+
+func (r *Registry) deliverPluginSlider(action string, value float64) bool {
+	hit, ok := parsePluginAction(action)
+	if !ok || r.plugins == nil {
+		return false
+	}
+	return r.plugins.deliverValue(hit, v1.EventChange, "", "", &value, ui.Rect{})
 }
 
 func (r *Registry) PluginPID(id string) int {
