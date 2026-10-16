@@ -2793,17 +2793,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				ui.SliderAt(n, h.hoverX)
 				h.sliderDrag = nil
 				h.pressed = ""
-				if strings.HasPrefix(n.Action, "plugin-set:") {
-					return r.handlePluginManager(h, n)
-				}
-				if strings.HasPrefix(n.Action, "audio-") {
-					return h.applyAudioControl(r, n)
-				}
-				if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
-					return true
-				}
-				h.applySetting(r, n)
-				return true
+				return h.commitSlider(r, n)
 			}
 			if h.scrollDrag != nil {
 				h.scrollDrag = nil
@@ -3665,11 +3655,18 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	if !ui.ControlKey(n, key) {
 		return false
 	}
+	return h.commitSlider(r, n)
+}
+
+func (h *PanelHost) commitSlider(r *Registry, n *ui.Node) bool {
 	if strings.HasPrefix(n.Action, "plugin-set:") {
 		return r.handlePluginManager(h, n)
 	}
 	if strings.HasPrefix(n.Action, "audio-") {
 		return h.applyAudioControl(r, n)
+	}
+	if _, ok := parsePluginAction(n.Action); ok {
+		return r.deliverPluginSlider(n.Action, n.Value)
 	}
 	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
 		return true

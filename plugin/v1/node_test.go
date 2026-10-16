@@ -68,6 +68,84 @@ func TestValidateAcceptsTheTimerPanel(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsASliderWithAnAccessibleValue(t *testing.T) {
+	t.Parallel()
+
+	node := &Node{
+		Kind: NodeKind("slider"), ID: "fan-level", Name: "Fan level", Role: "slider",
+		Min: 0, Max: 7, Step: 1, Value: 3,
+		Events: []EventKind{EventChange},
+	}
+	if err := Validate(node, ViewPanel); err != nil {
+		t.Fatalf("Validate slider: %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidSliderRanges(t *testing.T) {
+	base := Node{
+		Kind: KindSlider, ID: "level", Name: "Level", Role: "slider",
+		Min: 0, Max: 7, Step: 1, Value: 3,
+		Events: []EventKind{EventChange},
+	}
+	cases := []struct {
+		name string
+		edit func(*Node)
+	}{
+		{"equal bounds", func(n *Node) { n.Max = n.Min }},
+		{"zero step", func(n *Node) { n.Step = 0 }},
+		{"value below range", func(n *Node) { n.Value = -1 }},
+		{"value above range", func(n *Node) { n.Value = 8 }},
+		{"infinite bound", func(n *Node) { n.Max = math.Inf(1) }},
+		{"wrong role", func(n *Node) { n.Role = "button" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			node := base
+			tc.edit(&node)
+			if err := Validate(&node, ViewPanel); err == nil {
+				t.Fatal("Validate accepted an invalid slider")
+			}
+		})
+	}
+}
+
+func TestInputEventCarriesASliderValue(t *testing.T) {
+	value := 0.0
+	event := &InputEvent{Event: EventChange, Value: &value}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded InputEvent
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Value == nil || *decoded.Value != 0 {
+		t.Fatalf("decoded slider value = %v, want a present zero", decoded.Value)
+	}
+}
+
+func TestValidateAcceptsABarLogoButtonWithAnImage(t *testing.T) {
+	root := &Node{Kind: KindRow, Children: []*Node{{
+		Kind: KindButton, ID: "open", Name: "Open ThinkPad panel", Role: "button",
+		Events:   []EventKind{EventActivate, EventPointer},
+		Children: []*Node{{Kind: KindImage, Path: "/plugins/thinkpad.png", ImageW: 72, ImageH: 26}},
+	}}}
+	if err := Validate(root, ViewBar); err != nil {
+		t.Fatalf("Validate bar logo: %v", err)
+	}
+}
+
+func TestValidateBoundsBarImages(t *testing.T) {
+	root := &Node{Kind: KindColumn, Children: []*Node{{
+		Kind: KindImage, Path: "/plugins/large.png", ImageW: 129, ImageH: 26,
+	}}}
+	if err := Validate(root, ViewBar); err == nil {
+		t.Fatal("Validate accepted an oversized bar image")
+	}
+}
+
 func TestValidateRejectsANilRoot(t *testing.T) {
 	t.Parallel()
 
