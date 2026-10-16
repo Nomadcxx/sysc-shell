@@ -109,6 +109,48 @@ func TestValidateRejectsInvalidSliderRanges(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsSliderArithmeticOverflow(t *testing.T) {
+	t.Parallel()
+	for name, bounds := range map[string]struct {
+		min, max, step float64
+	}{
+		"range overflows":      {min: -1e308, max: 1e308, step: 1},
+		"step count overflows": {min: 0, max: 1e308, step: 1e-308},
+	} {
+		t.Run(name, func(t *testing.T) {
+			n := Node{
+				Kind: KindSlider, ID: "level", Name: "Level", Role: "slider",
+				Min: bounds.min, Max: bounds.max, Step: bounds.step, Value: bounds.min,
+				Events: []EventKind{EventChange},
+			}
+			if err := Validate(&n, ViewPanel); err == nil {
+				t.Fatal("Validate accepted slider arithmetic that overflows")
+			}
+		})
+	}
+}
+
+func TestValidateRejectsSliderStepsThatCannotChangeRepresentableValues(t *testing.T) {
+	t.Parallel()
+	for name, bounds := range map[string]struct {
+		min, max, step float64
+	}{
+		"finite step count exceeds exact precision": {min: 0, max: 1e308, step: 1},
+		"step is below range precision":             {min: 1e16, max: 1e16 + 4, step: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			n := Node{
+				Kind: KindSlider, ID: "level", Name: "Level", Role: "slider",
+				Min: bounds.min, Max: bounds.max, Step: bounds.step, Value: bounds.min,
+				Events: []EventKind{EventChange},
+			}
+			if err := Validate(&n, ViewPanel); err == nil {
+				t.Fatal("Validate accepted a slider whose steps collapse at float64 precision")
+			}
+		})
+	}
+}
+
 func TestInputEventCarriesASliderValue(t *testing.T) {
 	value := 0.0
 	event := &InputEvent{Event: EventChange, Value: &value}

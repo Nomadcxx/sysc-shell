@@ -657,6 +657,21 @@ func (v *validator) vocabulary(n *Node, path string) error {
 		if n.Step <= 0 {
 			return fmt.Errorf("%s: slider step must be positive", path)
 		}
+		rangeSize := n.Max - n.Min
+		if math.IsInf(rangeSize, 0) {
+			return fmt.Errorf("%s: slider range overflows", path)
+		}
+		steps := rangeSize / n.Step
+		// Node values are float64; beyond 2^53, adjacent integer step indexes
+		// are not all representable.
+		if math.IsInf(steps, 0) || steps > 1<<53 {
+			return fmt.Errorf("%s: slider has too many steps for float64 precision", path)
+		}
+		minResolution := math.Nextafter(n.Min, math.Inf(1)) - n.Min
+		maxResolution := n.Max - math.Nextafter(n.Max, math.Inf(-1))
+		if n.Step < minResolution || n.Step < maxResolution {
+			return fmt.Errorf("%s: slider step is below float64 resolution in its range", path)
+		}
 		if n.Value < n.Min || n.Value > n.Max {
 			return fmt.Errorf("%s: slider value %v is outside [%v,%v]", path, n.Value, n.Min, n.Max)
 		}
