@@ -45,7 +45,19 @@ func wallsIdleTimeout(d time.Duration) string {
 	return fmt.Sprintf("%ds", d/time.Second)
 }
 
+func idleWallsStopped(snapshot walls.Snapshot) bool {
+	if !snapshot.UnitKnown || snapshot.UnitStale || snapshot.Running() {
+		return false
+	}
+	if snapshot.LoadState == "not-found" {
+		return true
+	}
+	return snapshot.LoadState == "loaded" && !snapshot.EnabledAtLogin() && snapshot.UnitFileState != "enabled-runtime"
+}
+
 var wallsSettingOrder = []string{"effect", "theme", "timeout", "file", "datetime", "datetime-position"}
+
+const maxIdleLockAttempts = 2 // ponytail: allow one retry per continuously active Walls episode.
 
 var wallsDefaults = map[string]string{
 	"effect": "matrix-art", "theme": "rama", "timeout": "5m", "file": "",
@@ -83,39 +95,56 @@ func (r *Registry) attachWallsService(svc wallsController) {
 }
 
 func (r *Registry) relayWalls(svc wallsController) {
-	idleLockChecked := false
+	idleLockAttempts := 0
+	attemptedRevision := uint64(0)
 	reconcileIdleLock := func(snapshot walls.Snapshot) {
-		if idleLockChecked {
-			return
-		}
 		r.mu.Lock()
 		if r.wallsService != svc || r.idleApplying {
 			r.mu.Unlock()
 			return
 		}
 		cfg := r.cfg.Clone()
-		if cfg.Idle.Lock <= 0 || strings.TrimSpace(cfg.Session.Locker) == "" ||
-			!snapshot.UnitKnown || snapshot.UnitStale || snapshot.LoadState != "loaded" || !snapshot.ServiceAvailable {
+		if cfg.Idle.Lock <= 0 || strings.TrimSpace(cfg.Session.Locker) == "" {
+			idleLockAttempts = 0
+			attemptedRevision = 0
 			r.mu.Unlock()
 			return
 		}
-		idleLockChecked = true
-		stop := snapshot.EnabledAtLogin() || snapshot.UnitFileState == "enabled-runtime" || snapshot.Running()
-		if stop {
-			r.idleApplying = true
-		}
-		r.mu.Unlock()
-		if !stop {
+		if idleWallsStopped(snapshot) {
+			idleLockAttempts = 0
+			attemptedRevision = 0
+			r.mu.Unlock()
 			return
 		}
+		if !snapshot.UnitKnown || snapshot.UnitStale || snapshot.LoadState != "loaded" || !snapshot.ServiceAvailable {
+			r.mu.Unlock()
+			return
+		}
+		if idleLockAttempts >= maxIdleLockAttempts || (idleLockAttempts > 0 && attemptedRevision == snapshot.SystemdRevision) {
+			r.mu.Unlock()
+			return
+		}
+		idleLockAttempts++
+		attemptedRevision = snapshot.SystemdRevision
+		r.idleApplying = true
+		r.mu.Unlock()
 
-		// Apply the saved exclusive choice once unit discovery is trustworthy.
-		// The settings service owns --disable --now and preserves daemon.conf.
-		// It publishes command failures as ActionError for the status panel.
+		// Keep the saved lock choice exclusive whenever systemd reports Walls
+		// enabled or running. The service preserves daemon.conf and publishes
+		// command failures as ActionError for the status panel.
 		_ = settings.ApplyWhenIdle("lock", cfg.Idle.Lock, &cfg, idleWallsAdapter{service: svc})
 		r.mu.Lock()
+		current := svc.Snapshot()
 		if r.wallsService == svc {
-			r.wallsSnapshot = svc.Snapshot()
+			r.wallsSnapshot = current
+		}
+		if idleWallsStopped(current) {
+			idleLockAttempts = 0
+			attemptedRevision = 0
+		} else {
+			// Ignore systemd signals observed while the command was in flight;
+			// retry only after a later change, with a bounded attempt budget.
+			attemptedRevision = current.SystemdRevision
 		}
 		r.idleApplying = false
 		r.mu.Unlock()
@@ -125,10 +154,13 @@ func (r *Registry) relayWalls(svc wallsController) {
 		select {
 		case <-r.closed:
 			return
-		case snapshot, ok := <-svc.Updates():
+		case _, ok := <-svc.Updates():
 			if !ok {
 				return
 			}
+			// Updates are coalesced and may be stale by the time this relay
+			// handles them. Reconcile from the service's current state.
+			snapshot := svc.Snapshot()
 			reconcileIdleLock(snapshot)
 			r.applyWallsSnapshot(svc, svc.Snapshot())
 		}
