@@ -18,11 +18,43 @@ func stripTestRegistry(t *testing.T, state services.MediaState) (*Registry, *med
 	withTestBar(t, r, 7, cfg)
 	harness := &hostHarness{}
 	r.mu.Lock()
+	// The fixture owns the media state. The bar's media item leases the
+	// service, whose watch publishes an unavailable snapshot on this bus, and
+	// the relay would write it over the seeded state (sysc-1281). Stopping
+	// the relay is not enough: one already holding a snapshot waits on the
+	// lock and writes after it. Swapping in a fresh, unwatched service makes
+	// that late write fail publishMediaSnapshot's service check, as a real
+	// swap does, and the strip still takes and releases leases on it.
+	if r.mediaRelayCancel != nil {
+		close(r.mediaRelayCancel)
+		r.mediaRelayCancel = nil
+	}
+	old := r.media
+	r.media = services.NewUnavailableMedia()
 	r.mediaState = state
 	strip := newMediaStripHost(r, harness)
 	r.mediaStrip = strip
 	r.mu.Unlock()
+	if old != nil {
+		old.Close()
+	}
 	return r, strip, harness
+}
+
+// TestMediaStripFixtureStateSurvivesTheMediaWatch: the seeded state must
+// still be there once the media service's watch has run, or every strip test
+// races it (sysc-1281: "peek did not open" on CI).
+func TestMediaStripFixtureStateSurvivesTheMediaWatch(t *testing.T) {
+	r, _, _ := stripTestRegistry(t, services.MediaState{Available: true, Title: "Track"})
+	// The bar's lease starts the replaced service's watch, which publishes at
+	// once; give any relay that saw it time to land.
+	time.Sleep(200 * time.Millisecond)
+	r.mu.Lock()
+	available := r.mediaState.Available
+	r.mu.Unlock()
+	if !available {
+		t.Fatal("the seeded media state was overwritten by the media relay")
+	}
 }
 
 func TestMediaStripPeekOpensOneSurfaceAndPinAddsTheShield(t *testing.T) {
