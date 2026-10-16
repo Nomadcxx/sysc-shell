@@ -156,7 +156,10 @@ type Registry struct {
 	gammaEvents chan wayland.GammaEvent
 	panels      PanelSet
 	panelHosts  map[PanelID]*PanelHost
-	files       *filesSession
+	// panelsPublish feeds the "panels" IPC topic while someone subscribes;
+	// it is nil otherwise (PanelsTopic).
+	panelsPublish func(any)
+	files         *filesSession
 	// panelShields records which panel host opened each output's shared shield,
 	// even if that host closes while another panel keeps the shield alive.
 	panelShields map[uint32]*PanelHost

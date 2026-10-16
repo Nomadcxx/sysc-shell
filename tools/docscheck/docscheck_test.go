@@ -51,6 +51,9 @@ func TestIPCExamplesAreChecked(t *testing.T) {
 		{"testdata/bad/shell-unknown-method.md", []string{":4:"}},
 		{"testdata/bad/shell-unknown-panel.md", []string{":4:"}},
 		{"testdata/bad/kdl-bad-params.md", []string{":4:"}},
+		{"testdata/good/shell-subscribe.md", nil},
+		{"testdata/bad/shell-subscribe-unknown-topic.md", []string{":4:"}},
+		{"testdata/bad/shell-subscribe-bad-seconds.md", []string{":4:"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {

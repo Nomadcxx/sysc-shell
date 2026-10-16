@@ -1494,6 +1494,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	// A recapture request has to name the output the surface was opened on, and
 	// the paint path is where one is sent from.
 	h.global = output
+	r.publishPanelsLocked()
 
 	if openShield {
 		if r.panelShields == nil {
@@ -4821,6 +4822,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 		r.files = nil
 	}
 	delete(r.panelHosts, id)
+	r.publishPanelsLocked()
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})
 	if !r.hasPanelOnOutputLocked(h.output) {
 		r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelShieldSurfaceID(h.output)})
