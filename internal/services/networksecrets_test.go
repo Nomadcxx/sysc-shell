@@ -1,11 +1,41 @@
 package services
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/godbus/dbus/v5"
 )
+
+func TestSubmitSecretValidatesWPAInputWithoutEchoingIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		psk  string
+		want bool
+	}{
+		{"eight bytes", "12345678", true},
+		{"sixty-three bytes", strings.Repeat("x", 63), true},
+		{"raw PSK", strings.Repeat("aB09", 16), true},
+		{"empty", "", false},
+		{"too short", "secret", false},
+		{"contains NUL", "secret\x00x", false},
+		{"invalid UTF-8", "\xff2345678", false},
+		{"non-hex raw PSK", strings.Repeat("z", 64), false},
+		{"too long", strings.Repeat("x", 65), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := NewNetwork(&fakeBackend{})
+			err := n.SubmitSecret(tc.psk)
+			if (err == nil) != tc.want {
+				t.Fatalf("SubmitSecret error = %v, want valid=%v", err, tc.want)
+			}
+			if err != nil && tc.psk != "" && strings.Contains(err.Error(), tc.psk) {
+				t.Fatal("validation error echoed the passphrase")
+			}
+		})
+	}
+}
 
 // The slot is pure state with no D-Bus in it, which is why the whole
 // single-slot contract is testable without a bus.

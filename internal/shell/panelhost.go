@@ -257,6 +257,9 @@ type PanelHost struct {
 	mediaSeekPending   *int64
 	mediaSeekTrack     string
 	networkTab         string
+	manualEntry        bool
+	manualSSID         *ui.Field
+	manualSecurity     services.ManualSecurity
 	weatherView        string
 	pendingSSID        string
 	password           *ui.Field
@@ -1510,7 +1513,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	if id == PanelNetwork && r.network != nil && r.network.Available() && !r.network.CachedState().ReadOnly {
 		network := r.network
-		r.scheduleControl(h, network.Scan)
+		r.scheduleControl(h, func() error {
+			_ = network.RefreshVPNProfiles()
+			return network.Scan()
+		})
 	}
 	if id == PanelBluetooth {
 		r.startBluetoothDiscoveryLocked(h)
@@ -3440,6 +3446,10 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 		r.rebuildPanel(h)
 		return true
 	}
+	if n.Action == "network-manual-ssid" {
+		r.rebuildPanel(h)
+		return true
+	}
 	if h.id == PanelFiles && n.Action == files.ActionRename {
 		if r.files != nil {
 			r.files.renameDraft = f.Text
@@ -3505,6 +3515,12 @@ func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
 		}
 		h.password.SyncFrom(n)
 		f = h.password
+	} else if h.id == PanelNetwork && n.Action == "network-manual-ssid" {
+		if h.manualSSID == nil {
+			h.manualSSID = ui.NewField("")
+		}
+		h.manualSSID.SyncFrom(n)
+		f = h.manualSSID
 	} else if n.Name == "Search" {
 		if h.search == nil {
 			h.search = ui.NewField("")
@@ -4810,6 +4826,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	h.drag.Cancel()
 	if id == PanelNetwork {
 		h.clearNetworkSecret()
+		h.clearManualEntry()
 	}
 	if id == PanelMonitor {
 		// Owners are resolved for the panel's lifetime (D10).

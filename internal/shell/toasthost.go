@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"slices"
 	"sort"
@@ -33,10 +34,11 @@ type toastHost struct {
 	// toast surface open.
 	outputs map[string]uint32
 	// visible and queued are the last computed placement per output.
-	visible  map[string][]uint32
-	queued   map[string][]uint32
-	hovered  map[string]map[uint32]bool
-	expanded map[uint32]bool
+	visible           map[string][]uint32
+	queued            map[string][]uint32
+	hovered           map[string]map[uint32]bool
+	expanded          map[uint32]bool
+	fullscreenFocused bool
 
 	// geometry is the size each output's surface was configured at. Until a
 	// configure arrives an output has none, and the design default stands in.
@@ -774,7 +776,21 @@ func (h *toastHost) reply(id uint32, text string) {
 	h.r.sendNotify(protocol.Command{Kind: protocol.CommandReply, ID: id, Text: text})
 }
 func (h *toastHost) hover(uint32, bool) {}
-func (h *toastHost) openLink(string)    {}
+func (h *toastHost) openLink(href string) {
+	opener := openNotificationURL
+	if opener == nil || h.r == nil {
+		return
+	}
+	go func() {
+		// Wait for the pointer handler's Registry.mu critical section to end
+		// before starting the desktop opener.
+		h.r.mu.Lock()
+		h.r.mu.Unlock()
+		if err := opener(href); err != nil {
+			log.Printf("shell: notification link opener: %v", err)
+		}
+	}()
+}
 
 // updateHover recomputes the hovered set for one output and reports whether
 // it changed. Only a change is worth a frame.
@@ -1049,16 +1065,21 @@ func (h *toastHost) wrapBody(s string) []string {
 
 // recompute relayouts every open output from the current projection and
 // publishes each surface's input region. It is safe to call on any record,
-// geometry, or output change.
+// fullscreen, geometry, or output change. Production callers hold Registry.mu.
 func (h *toastHost) recompute() {
+	fullscreen := h.focusedWindowFillsOutput()
+	h.fullscreenFocused = fullscreen
 	s := h.r.notify
 	s.mu.Lock()
-	suppressed := s.dndActiveLocked(h.r.clockNow()) || s.centerOpen
+	dnd := s.dndActiveLocked(h.r.clockNow())
+	centerOpen := s.centerOpen
 	records := make([]uint32, 0, len(s.active))
 	active := make(map[uint32]struct{}, len(s.active))
-	for id := range s.active {
-		records = append(records, id)
+	for id, n := range s.active {
 		active[id] = struct{}{}
+		if !notificationSuppressed(dnd, centerOpen, fullscreen, n.Urgency) {
+			records = append(records, id)
+		}
 	}
 	s.mu.Unlock()
 	for id := range h.expanded {
@@ -1123,7 +1144,7 @@ func (h *toastHost) recompute() {
 		layouts := make(map[uint32]toastCardLayout, len(records))
 		heights := make([]int, 0, len(records))
 		ids := make([]uint32, 0, len(records))
-		if !suppressed && known {
+		if known {
 			layouts = h.cardLayouts(records, measure)
 			for _, id := range records {
 				heights = append(heights, layouts[id].height)
@@ -1160,6 +1181,30 @@ func (h *toastHost) recompute() {
 		h.r.publishSurface(global, toastSurfaceID(connector))
 	}
 	h.publishPresentation()
+}
+
+func (h *toastHost) focusedWindowFillsOutput() bool {
+	snapshot := h.r.niriSnapshot
+	if snapshot.FocusedOutput == "" {
+		return false
+	}
+	geometry, known := h.geometryFor(snapshot.FocusedOutput)
+	if !known || geometry.OutputW <= 0 || geometry.OutputH <= 0 {
+		return false
+	}
+	// Niri 26.04 exposes no fullscreen bit. ponytail: use a focused tile that
+	// matches the output within one logical pixel; replace this inference if
+	// Niri adds an explicit field. A non-fullscreen tile filling the output is
+	// a false positive; a fullscreen tile differing by more than one pixel is
+	// a false negative.
+	for _, window := range snapshot.Windows {
+		if window.Focused && window.HasLayout &&
+			math.Abs(window.TileW-float64(geometry.OutputW)) <= 1 &&
+			math.Abs(window.TileH-float64(geometry.OutputH)) <= 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // inputRegion is clipped to the accepted surface's coordinates. A pending
@@ -1350,7 +1395,7 @@ func (h *toastHost) cardRects(connector string, ids []uint32) []ui.Rect {
 // viewFor reports one record's placement for the aggregate presentation
 // state. The registry's precedence collapses it.
 func (h *toastHost) viewFor(id uint32) presentationView {
-	v := presentationView{}
+	v := presentationView{fullscreen: h.fullscreenFocused}
 	for connector := range h.outputs {
 		for _, vid := range h.visible[connector] {
 			if vid == id {

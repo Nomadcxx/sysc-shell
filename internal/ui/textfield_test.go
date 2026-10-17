@@ -15,6 +15,15 @@ func TestTextFieldCommitAppendsAndPreeditRenders(t *testing.T) {
 	}
 }
 
+func TestClearDropsUndoHistory(t *testing.T) {
+	f := NewField("")
+	f.Commit("secret")
+	f.Clear()
+	if f.Text != "" || f.Undo() {
+		t.Fatalf("clear retained text or an undo snapshot: %+v", f)
+	}
+}
+
 func TestTextFieldBackspaceAndCursor(t *testing.T) {
 	t.Parallel()
 	f := NewField("ab")

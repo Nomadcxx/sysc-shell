@@ -1,9 +1,12 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -164,7 +167,31 @@ func (n *Network) SecretExpiry() <-chan struct{} { return n.secretExpired }
 // The passphrase goes to NetworkManager over the system bus and is stored by
 // NetworkManager. It is never written to errLabel, the node tree, a log line,
 // or a process argument.
-func (n *Network) SubmitSecret(psk string) { n.secrets.submit(psk) }
+func (n *Network) SubmitSecret(psk string) error {
+	if err := validateWPAPassphrase(psk); err != nil {
+		return err
+	}
+	n.secrets.submit(psk)
+	return nil
+}
+
+func validateWPAPassphrase(psk string) error {
+	if !utf8.ValidString(psk) || strings.IndexByte(psk, 0) >= 0 {
+		return errors.New("services: WPA passphrase must be 8 to 63 bytes or 64 hexadecimal digits")
+	}
+	if len(psk) >= 8 && len(psk) <= 63 {
+		return nil
+	}
+	if len(psk) == 64 {
+		for _, r := range psk {
+			if !('0' <= r && r <= '9') && !('a' <= r && r <= 'f') && !('A' <= r && r <= 'F') {
+				return errors.New("services: WPA passphrase must be 8 to 63 bytes or 64 hexadecimal digits")
+			}
+		}
+		return nil
+	}
+	return errors.New("services: WPA passphrase must be 8 to 63 bytes or 64 hexadecimal digits")
+}
 
 // CancelSecret answers the open prompt with UserCanceled.
 func (n *Network) CancelSecret() { n.secrets.cancel() }

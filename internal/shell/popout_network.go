@@ -38,9 +38,13 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 	st := services.NetworkState{}
 	snap := services.Snapshot{}
 	var aps []services.AccessPoint
+	var vpns []services.VPNProfile
+	vpnErr := ""
 	if r != nil && r.network != nil {
 		st = r.network.CachedState()
 		aps = r.network.CachedAccessPoints()
+		vpns = r.network.CachedVPNProfiles()
+		vpnErr = r.network.CachedVPNError()
 	}
 	if r != nil {
 		snap = r.sample
@@ -49,6 +53,8 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 	body := networkWifiTree(aps, st, h, m)
 	if h.networkTab == "ethernet" {
 		body = networkEthernetTree(st, h, m)
+	} else if h.networkTab == "vpn" {
+		body = networkVPNTree(vpns, vpnErr, st, h, m)
 	}
 
 	panelH := h.place.Panel.H
@@ -150,8 +156,9 @@ func networkTabs(h *PanelHost, m theme.Metrics) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindSegmented, Key: "network-tab", Gap: theme.MarginXXS, Height: m.StandardControl,
 		Children: []*ui.Node{
-			networkSegment(m, "network-tab:wifi", cardT(tr, "net.tab.wifi", "Wi-Fi"), tab != "ethernet"),
+			networkSegment(m, "network-tab:wifi", cardT(tr, "net.tab.wifi", "Wi-Fi"), tab != "ethernet" && tab != "vpn"),
 			networkSegment(m, "network-tab:ethernet", cardT(tr, "net.tab.ethernet", "Ethernet"), tab == "ethernet"),
+			networkSegment(m, "network-tab:vpn", cardT(tr, "net.tab.vpn", "VPN"), tab == "vpn"),
 		},
 	}
 }
@@ -179,29 +186,84 @@ func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *Pa
 	if h != nil && h.pendingSSID != "" {
 		return networkPasswordCard(h)
 	}
+	if h != nil && h.manualEntry {
+		return networkManualCard(h)
+	}
+	var body *ui.Node
 	switch {
 	case st.Tier == services.TierKernel:
 		// No manager answered. The radio may be fine; what is missing is
 		// anything that can list or join a network.
-		return networkNotice(h, cardT(tr, "net.tier.kernel", "NetworkManager is not running"),
+		body = networkNotice(h, cardT(tr, "net.tier.kernel", "NetworkManager is not running"),
 			cardT(tr, "net.hint.kernel", "Showing what the kernel reports. Networks can't be listed or joined without it."), m)
 	case !st.WirelessEnabled:
 		// Not an empty list: an empty list claims "no networks here", which is
 		// a different and wrong statement.
-		return networkNotice(h, cardT(tr, "net.wifi_off", "Wi-Fi is off"), cardT(tr, "net.hint.radio_on", "Turn the radio on to scan for networks."), m)
+		body = networkNotice(h, cardT(tr, "net.wifi_off", "Wi-Fi is off"), cardT(tr, "net.hint.radio_on", "Turn the radio on to scan for networks."), m)
 	case st.Scanning && len(aps) == 0:
-		return networkNotice(h, cardT(tr, "net.scanning", "Searching for networks…"), orAbsent(st.Interface), m)
+		body = networkNotice(h, cardT(tr, "net.scanning", "Searching for networks…"), orAbsent(st.Interface), m)
 	case len(aps) == 0:
-		return networkNotice(h, cardT(tr, "net.none", "No networks found"), cardT(tr, "net.hint.none", "Nothing is in range on this adapter."), m)
+		body = networkNotice(h, cardT(tr, "net.none", "No networks found"), cardT(tr, "net.hint.none", "Nothing is in range on this adapter."), m)
+	default:
+		rows := make([]*ui.Node, 0, len(aps))
+		for _, ap := range aps {
+			rows = append(rows, networkAPRow(ap, m, tr))
+		}
+		body = &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
+			Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+			Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: rows}},
+		}
 	}
+	if h == nil || st.Tier == services.TierKernel || st.ReadOnly {
+		return body
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
+		body,
+		networkManualEntryButton(h, m),
+	}}
+}
 
-	rows := make([]*ui.Node, 0, len(aps))
-	for _, ap := range aps {
-		rows = append(rows, networkAPRow(ap, m, tr))
+func networkManualEntryButton(h *PanelHost, m theme.Metrics) *ui.Node {
+	tr := hostT(h)
+	label := cardT(tr, "net.manual.open", "Join a network by name")
+	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindButton, Action: "network-manual-open", Name: label, Role: "button",
+			Focusable: true, Height: m.StandardControl, Padding: m.ButtonPadding,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: label}}}},
 	}
-	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
-		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: rows}},
+}
+
+func networkManualCard(h *PanelHost) *ui.Node {
+	m, tr := h.metrics(), hostT(h)
+	if h.manualSSID == nil {
+		h.manualSSID = ui.NewField("")
+	}
+	if h.manualSecurity == 0 {
+		h.manualSecurity = services.ManualSecurityOpen
+	}
+	ssid := h.manualSSID.Node(cardT(tr, "net.manual.ssid", "Network name (SSID)"))
+	ssid.Action, ssid.Key = "network-manual-ssid", "network-manual-ssid"
+	security := &ui.Node{Kind: ui.KindSegmented, Key: "network-manual-security", Gap: theme.MarginXXS, Height: m.StandardControl,
+		Children: []*ui.Node{
+			networkSegment(m, "network-manual-security:open", cardT(tr, "net.manual.open_security", "Open"), h.manualSecurity == services.ManualSecurityOpen),
+			networkSegment(m, "network-manual-security:personal", cardT(tr, "net.manual.personal", "WPA-Personal"), h.manualSecurity == services.ManualSecurityWPAPersonal),
+		},
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginL, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: cardT(tr, "net.manual.title", "Join a hidden or unlisted network"), TextRole: theme.RoleTitle},
+			ssid,
+			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: cardT(tr, "net.manual.security", "Security"), TextRole: theme.RoleCaption},
+				security,
+			}},
+			{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
+				{Kind: ui.KindButton, Action: "network-manual-cancel", Name: cardT(tr, "common.cancel", "Cancel"), Role: "button", Focusable: true,
+					Height: m.StandardControl, Children: []*ui.Node{{Kind: ui.KindText, Text: cardT(tr, "common.cancel", "Cancel")}}},
+				{Kind: ui.KindButton, Action: "network-manual-submit", Name: cardT(tr, "common.connect", "Connect"), Role: "button", Focusable: true,
+					Height: m.StandardControl, Fill: ui.FillAccent, Children: []*ui.Node{{Kind: ui.KindText, Text: cardT(tr, "common.connect", "Connect")}}},
+			}},
+		}}},
 	}
 }
 
@@ -310,6 +372,76 @@ func networkEthernetTree(st services.NetworkState, h *PanelHost, m theme.Metrics
 	}
 }
 
+func networkVPNTree(profiles []services.VPNProfile, loadError string, st services.NetworkState, h *PanelHost, m theme.Metrics) *ui.Node {
+	tr := hostT(h)
+	if st.Tier != services.TierNM {
+		hint := cardT(tr, "net.vpn.unavailable", "VPN profiles require NetworkManager.")
+		if st.Tier == services.TierKernel {
+			hint = cardT(tr, "net.vpn.kernel", "The kernel network view is read-only and cannot control VPN profiles.")
+		} else if st.Tier == services.TierIWD {
+			hint = cardT(tr, "net.vpn.iwd", "VPN controls are unavailable while iwd manages Wi-Fi.")
+		}
+		return networkNotice(h, cardT(tr, "net.vpn.title", "VPN"), hint, m)
+	}
+	if loadError != "" {
+		return networkNotice(h, cardT(tr, "net.vpn.load_error", "Could not load VPN profiles"), loadError, m)
+	}
+	if len(profiles) == 0 {
+		return networkNotice(h, cardT(tr, "net.vpn.empty", "No installed VPN profiles"),
+			cardT(tr, "net.vpn.empty_hint", "Installed NetworkManager VPN profiles appear here."), m)
+	}
+	rows := make([]*ui.Node, 0, len(profiles))
+	for _, profile := range profiles {
+		rows = append(rows, networkVPNRow(profile, m, tr))
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: rows}},
+	}
+}
+
+func networkVPNRow(profile services.VPNProfile, m theme.Metrics, tr translateFunc) *ui.Node {
+	state := cardT(tr, "net.vpn.disconnected", "Disconnected")
+	disabled := false
+	action := "network-vpn-connect:"
+	button := cardT(tr, "net.vpn.connect", "Connect")
+	switch profile.Status {
+	case services.VPNConnecting:
+		state = cardT(tr, "net.vpn.connecting", "Connecting")
+		action = "network-vpn-disconnect:"
+		button = cardT(tr, "common.cancel", "Cancel")
+	case services.VPNConnected:
+		state = cardT(tr, "net.vpn.connected", "Connected")
+		action = "network-vpn-disconnect:"
+		button = cardT(tr, "net.vpn.disconnect", "Disconnect")
+	case services.VPNDisconnecting:
+		state, disabled = cardT(tr, "net.vpn.disconnecting", "Disconnecting"), true
+		action = "network-vpn-disconnect:"
+		button = cardT(tr, "net.vpn.disconnect", "Disconnect")
+	}
+	shortID := profile.UUID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	detail := fmt.Sprintf(cardT(tr, "net.vpn.profile_id", "Profile %s"), shortID) + " · " + state
+	label := fmt.Sprintf(cardT(tr, "net.vpn.action_named", "%s %s"), button, profile.Name)
+	control := &ui.Node{Kind: ui.KindButton, Action: action + profile.UUID, Name: label, Role: "button",
+		Focusable: true, Height: m.CompactControl, Padding: m.ButtonPadding,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: button}}}
+	if disabled {
+		control.State |= ui.StateDisabled
+		control.AriaDisabled = true
+	}
+	return &ui.Node{Kind: ui.KindRow, Key: profile.UUID, Gap: theme.MarginM, Height: m.StandardControl, PinEnd: true, Padding: m.ButtonPadding,
+		Children: []*ui.Node{
+			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: profile.Name},
+				{Kind: ui.KindText, Text: detail, TextRole: theme.RoleCaption},
+			}},
+			control,
+		},
+	}
+}
+
 // networkNotice is the shared empty state: a title that names the situation
 // and a line that says what to do about it.
 func networkNotice(h *PanelHost, title, hint string, m theme.Metrics) *ui.Node {
@@ -348,11 +480,19 @@ func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 		if h.password != nil {
 			psk = h.password.Text
 		}
-		h.clearNetworkSecret()
-		if r.network != nil {
-			r.network.SubmitSecret(psk)
+		if r.network == nil {
+			h.errLabel = cardT(hostT(h), "net.manual.unavailable", "Network service is unavailable.")
+			r.rebuildPanel(h)
+			return true
+		}
+		if r.network.SubmitSecret(psk) != nil {
+			h.errLabel = cardT(hostT(h), "net.password.invalid", "Use 8–63 characters or 64 hexadecimal digits.")
+			r.rebuildPanel(h)
+			return true
 		}
 		psk = ""
+		h.clearNetworkSecret()
+		h.errLabel = ""
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "network-password-cancel":
@@ -370,6 +510,45 @@ func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 		h.networkTab = "ethernet"
 		r.rebuildPanel(h)
 		return true
+	case n.Action == "network-tab:vpn":
+		h.networkTab = "vpn"
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "network-manual-open":
+		h.manualEntry = true
+		if h.manualSecurity == 0 {
+			h.manualSecurity = services.ManualSecurityOpen
+		}
+		h.errLabel = ""
+		r.rebuildPanel(h)
+		h.focusByName(cardT(hostT(h), "net.manual.ssid", "Network name (SSID)"))
+		return true
+	case n.Action == "network-manual-cancel":
+		h.clearManualEntry()
+		h.errLabel = ""
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "network-manual-submit":
+		req := services.ManualNetworkRequest{Security: h.manualSecurity}
+		if h.manualSSID != nil {
+			req.SSID = h.manualSSID.Text
+		}
+		if err := req.Validate(); err != nil {
+			h.errLabel = cardT(hostT(h), "net.manual.invalid", "Enter a network name of up to 32 bytes and choose Open or WPA-Personal.")
+			r.rebuildPanel(h)
+			return true
+		}
+		svc := r.network
+		if svc == nil {
+			h.errLabel = cardT(hostT(h), "net.manual.unavailable", "Network service is unavailable.")
+			r.rebuildPanel(h)
+			return true
+		}
+		h.errLabel = ""
+		h.manualEntry = false
+		r.scheduleControl(h, func() error { return svc.ConnectManual(req) })
+		r.rebuildPanel(h)
+		return true
 	case n.Action == "network-radio":
 		svc := r.network
 		if svc == nil {
@@ -377,6 +556,32 @@ func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 		}
 		want := !svc.CachedState().WirelessEnabled
 		r.scheduleControl(h, func() error { return svc.SetWirelessEnabled(want) })
+		return true
+	}
+	if security, ok := strings.CutPrefix(n.Action, "network-manual-security:"); ok {
+		switch security {
+		case "open":
+			h.manualSecurity = services.ManualSecurityOpen
+		case "personal":
+			h.manualSecurity = services.ManualSecurityWPAPersonal
+		default:
+			return true
+		}
+		r.rebuildPanel(h)
+		return true
+	}
+	if uuid, ok := strings.CutPrefix(n.Action, "network-vpn-connect:"); ok {
+		if r.network != nil {
+			svc := r.network
+			r.scheduleControl(h, func() error { return svc.ConnectVPN(uuid) })
+		}
+		return true
+	}
+	if uuid, ok := strings.CutPrefix(n.Action, "network-vpn-disconnect:"); ok {
+		if r.network != nil {
+			svc := r.network
+			r.scheduleControl(h, func() error { return svc.DisconnectVPN(uuid) })
+		}
 		return true
 	}
 
@@ -408,6 +613,14 @@ func (h *PanelHost) clearNetworkSecret() {
 		h.password.Masked = true
 	}
 	h.pendingSSID = ""
+}
+
+func (h *PanelHost) clearManualEntry() {
+	if h.manualSSID != nil {
+		h.manualSSID.Clear()
+	}
+	h.manualEntry = false
+	h.manualSecurity = services.ManualSecurityOpen
 }
 
 // networkFigures is the three-column row under the separator. Every value is

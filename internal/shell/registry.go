@@ -1005,6 +1005,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 	}
 	network.State()
 	network.AccessPoints()
+	_ = network.RefreshVPNProfiles()
 	r.publishNetworkSnapshot(network)
 
 	for {
@@ -1016,6 +1017,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 				return
 			}
 			network.AccessPoints()
+			_ = network.RefreshVPNProfiles()
 			r.publishNetworkSnapshot(network)
 		case req, ok := <-network.SecretRequests():
 			if !ok {
@@ -2625,6 +2627,10 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.outputs = next
 	r.niriSnapshot = cloneNiriSnapshot(s)
 	r.focused = s.FocusedOutput
+	if r.toasts != nil && r.toasts.focusedWindowFillsOutput() != r.toasts.fullscreenFocused {
+		// Layout events can change the toast policy without changing bar text.
+		r.toasts.recompute()
+	}
 	r.tryOpenOnboardingLocked(0)
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)

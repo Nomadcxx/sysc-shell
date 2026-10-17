@@ -357,7 +357,7 @@ func TestSlowConsumerDoesNotBlockCommands(t *testing.T) {
 		Panel:  func(string, string, string) error { return nil },
 	}, nil)
 	stalled := dial(t, sock)
-	stalled.send("ipc.subscribe", map[string]any{"topics": []string{"fake"}})
+	stalled.subscribe("fake")
 	// The stalled consumer never reads again.
 
 	pad := strings.Repeat("x", 32<<10)
@@ -379,7 +379,7 @@ func TestSlowConsumerGetsResync(t *testing.T) {
 	topic := &fakeTopic{initial: fill{}}
 	sock := startServerWith(t, Handlers{Topics: map[string]Provider{"fake": topic.provider()}}, nil)
 	c := dial(t, sock)
-	c.send("ipc.subscribe", map[string]any{"topics": []string{"fake"}})
+	c.subscribe("fake")
 	pad := strings.Repeat("x", 32<<10)
 	const total = 10000
 	for i := 1; i <= total; i++ {
