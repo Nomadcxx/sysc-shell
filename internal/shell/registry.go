@@ -2135,6 +2135,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 						h.set = r.settingsForLocked(cfg)
 						if id == PanelSettings {
 							h.reseedSettingsFields()
+							h.reseedSettingsMenus()
 						}
 					}
 				}

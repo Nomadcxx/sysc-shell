@@ -131,6 +131,57 @@ func TestSettingsExternalReloadRefreshesOpenControl(t *testing.T) {
 	}
 }
 
+func TestSettingsExternalReloadRefreshesOpenPicker(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	menu := h.menus["bar.edge"]
+	if menu == nil {
+		reg.mu.Unlock()
+		t.Fatal("Settings has no Edge menu")
+	}
+	menu.Open()
+	menu.Next()
+	pending := menu.options[menu.cursor]
+	h.menu, h.menuPath = menu, "bar.edge"
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.menus["bar.edge"] != menu || h.menu != menu || h.menuPath != "bar.edge" {
+		t.Fatal("reload replaced or detached the open Edge menu")
+	}
+	if !menu.Opened() {
+		t.Fatal("reload closed the Edge menu")
+	}
+	if got := menu.Value(); got != "right" {
+		t.Fatalf("open Edge menu committed value = %q, want right", got)
+	}
+	if got := menu.options[menu.cursor]; got != pending {
+		t.Fatalf("pending Edge option = %q, want preserved %q", got, pending)
+	}
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Right" {
+		t.Fatalf("open Edge control after reload = %+v, want Right", edge)
+	}
+}
+
 func TestSettingsRebuildFallsBackWhenFocusedControlDisappears(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -273,6 +324,42 @@ func TestSettingsExternalReloadRefreshesOpenTextField(t *testing.T) {
 	defer reg.mu.Unlock()
 	if city := findSettingsControl(h.root, "weather.city"); city == nil || city.Text != "Melbourne" || city.Cursor != len("Melbourne") {
 		t.Fatalf("reloaded City control = %+v, want Melbourne", city)
+	}
+}
+
+func TestRejectedSettingsReloadKeepsOpenControlAndError(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.errLabel = "local write error"
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+
+	broken := config.Default()
+	broken.Bar.Edge = "right"
+	broken.Bar.Height = 4
+	broken.Bar.Gap = 4
+	if _, err := reg.PrepareConfig(broken, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}}); err == nil {
+		t.Fatal("invalid config candidate was prepared")
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := h.draft.Bar.Edge; got != "top" {
+		t.Fatalf("rejected candidate changed draft Edge to %q", got)
+	}
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Top" {
+		t.Fatalf("rejected candidate changed Edge control to %+v", edge)
+	}
+	if h.errLabel != "local write error" {
+		t.Fatalf("rejected candidate cleared or changed local error to %q", h.errLabel)
 	}
 }
 

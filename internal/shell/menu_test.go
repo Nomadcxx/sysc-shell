@@ -89,6 +89,40 @@ func TestMenuEscapeReturnsToField(t *testing.T) {
 	}
 }
 
+func TestMenuReseedUpdatesOptionsAndKeepsPendingChoice(t *testing.T) {
+	t.Parallel()
+	m := newMenu(
+		[]string{"Top", "Bottom", "Left", "Right"},
+		[]string{"top", "bottom", "left", "right"},
+		0,
+		false,
+	)
+	m.Open()
+	m.Next()
+	if got := m.options[m.cursor]; got != "Bottom" {
+		t.Fatalf("pending option = %q, want Bottom", got)
+	}
+
+	m.reseed(
+		[]string{"Bottom", "Right", "Top", "Left"},
+		[]string{"bottom", "right", "top", "left"},
+		1,
+	)
+
+	if !m.Opened() {
+		t.Fatal("reseed closed the open menu")
+	}
+	if got := m.Value(); got != "right" {
+		t.Fatalf("committed value = %q, want right", got)
+	}
+	if got := m.options[m.cursor]; got != "Bottom" {
+		t.Fatalf("pending option after reorder = %q, want Bottom", got)
+	}
+	if got := m.Node().Text; got != "Right" {
+		t.Fatalf("open menu label = %q, want Right", got)
+	}
+}
+
 func TestMenuRowAtFindsTheOptionUnderAPoint(t *testing.T) {
 	n := &ui.Node{Kind: ui.KindMenu, Children: []*ui.Node{
 		{Kind: ui.KindText, Bounds: ui.Rect{Y: 0, W: 10, H: 10}},
