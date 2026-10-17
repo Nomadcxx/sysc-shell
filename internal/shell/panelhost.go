@@ -4607,35 +4607,39 @@ func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
-		r.mu.Lock()
-		if r.panelHosts[h.id] != h || h.writeTimer != timer {
-			// The host was replaced while the edit was settling; its draft is
-			// no longer the one on screen, or a newer timer replaced this one.
-			r.mu.Unlock()
-			return
-		}
-		h.writeTimer = nil
-		if h.id == PanelTerminalArt {
-			h.persistDraft(r)
-			r.mu.Unlock()
-			return
-		}
-		r.settingsWriteMu.Lock()
-		if h.settingsWriteRevision != revision {
-			r.settingsWriteMu.Unlock()
-			r.mu.Unlock()
-			return
-		}
-		changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
-		r.settingsWriteMu.Unlock()
-		r.mu.Unlock()
-		// scheduleControlResult runs the write off the Wayland owner, re-takes the
-		// lock, discards the result if the host has gone, and rebuilds.
-		r.scheduleControlResult(h, func() (bool, error) {
-			return r.writeDebouncedSettingsChanges(h, changes, revision)
-		})
+		h.writeTimerExpired(r, timer, revision)
 	})
 	h.writeTimer = timer
+}
+
+func (h *PanelHost) writeTimerExpired(r *Registry, timer *time.Timer, revision uint64) {
+	r.mu.Lock()
+	if r.panelHosts[h.id] != h || h.writeTimer != timer {
+		// The host was replaced while the edit was settling; its draft is
+		// no longer the one on screen, or a newer timer replaced this one.
+		r.mu.Unlock()
+		return
+	}
+	h.writeTimer = nil
+	if h.id == PanelTerminalArt {
+		h.persistDraft(r)
+		r.mu.Unlock()
+		return
+	}
+	r.settingsWriteMu.Lock()
+	if h.settingsWriteRevision != revision {
+		r.settingsWriteMu.Unlock()
+		r.mu.Unlock()
+		return
+	}
+	changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
+	r.settingsWriteMu.Unlock()
+	r.mu.Unlock()
+	// scheduleControlResult runs the write off the Wayland owner, re-takes the
+	// lock, discards the result if the host has gone, and rebuilds.
+	r.scheduleControlResult(h, func() (bool, error) {
+		return r.writeDebouncedSettingsChanges(h, changes, revision)
+	})
 }
 
 func appendSettingsWriteChange(changes []settingsWriteChange, path, value string) []settingsWriteChange {

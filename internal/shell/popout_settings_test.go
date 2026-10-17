@@ -1681,7 +1681,7 @@ func TestSettingsStaleTimerDoesNotHideReplacementFromFlush(t *testing.T) {
 	}
 	reloads := make(chan struct{}, 8)
 	reg.BindPersist(path, reloads)
-	reg.writeDelay = 10 * time.Millisecond
+	reg.writeDelay = time.Hour
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
@@ -1691,17 +1691,13 @@ func TestSettingsStaleTimerDoesNotHideReplacementFromFlush(t *testing.T) {
 	reg.mu.Lock()
 	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
 	staleTimer := h.writeTimer
-	time.Sleep(50 * time.Millisecond)
-	if staleTimer.Stop() {
-		reg.mu.Unlock()
-		t.Fatal("stale timer callback did not start while the registry lock was held")
-	}
-
-	reg.writeDelay = time.Hour
 	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "latest"})
 	replacement := h.writeTimer
 	reg.mu.Unlock()
-	time.Sleep(10 * time.Millisecond)
+
+	// ponytail: invoke the timer body directly so this regression check does
+	// not depend on callback scheduling.
+	h.writeTimerExpired(reg, staleTimer, 1)
 
 	reg.mu.Lock()
 	if h.writeTimer != replacement {
