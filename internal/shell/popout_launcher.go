@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -116,24 +117,20 @@ const (
 // service hands to Rank or to a provider, which is how a callback proves it
 // belongs to the current generation.
 type launcherPlan struct {
-	kind           launcherKind
-	passed         string
-	provider       string
-	inlineProvider string
-	need           int
+	kind            launcherKind
+	passed          string
+	provider        string
+	inlineProviders []string
 }
 
-// launcherBatch accumulates the callbacks of one service run. Inline calc and
-// application rank publish as a single snapshot, matching the service.
-// ponytail: this shell has one Inline provider; if another is added, collect
-// rows by prefix and merge them in registry order.
+// launcherBatch accumulates inline provider and main result callbacks into the
+// single snapshot the panel applies for a query.
 type launcherBatch struct {
-	gen        uint64
-	haveInline bool
-	haveMain   bool
-	emitted    bool
-	inline     []launcher.Result
-	rows       []launcher.Result
+	gen      uint64
+	haveMain bool
+	emitted  bool
+	inline   map[string][]launcher.Result
+	rows     []launcher.Result
 }
 
 // relayLauncher applies result snapshots to the open launcher panel. Service
@@ -229,26 +226,30 @@ func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
 func classifyLauncherQuery(text string, providers []launcher.Provider) launcherPlan {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return launcherPlan{kind: launcherKindApps, provider: launcherAppsPrefix, need: 1}
+		return launcherPlan{kind: launcherKindApps, provider: launcherAppsPrefix}
 	}
 	if !strings.HasPrefix(text, "/") {
+		var inlineProviders []string
 		for _, provider := range providers {
 			if provider.Inline {
-				return launcherPlan{kind: launcherKindInline, passed: text,
-					provider: launcherAppsPrefix, inlineProvider: provider.Prefix, need: 2}
+				inlineProviders = append(inlineProviders, provider.Prefix)
 			}
 		}
-		return launcherPlan{kind: launcherKindApps, passed: text, provider: launcherAppsPrefix, need: 1}
+		if len(inlineProviders) > 0 {
+			return launcherPlan{kind: launcherKindInline, passed: text,
+				provider: launcherAppsPrefix, inlineProviders: inlineProviders}
+		}
+		return launcherPlan{kind: launcherKindApps, passed: text, provider: launcherAppsPrefix}
 	}
 	seg, rest, _ := strings.Cut(text[1:], " ")
 	prefix := "/" + seg
 	passed := strings.TrimSpace(rest)
 	if prefix == launcherAppsPrefix {
-		return launcherPlan{kind: launcherKindApps, passed: passed, provider: launcherAppsPrefix, need: 1}
+		return launcherPlan{kind: launcherKindApps, passed: passed, provider: launcherAppsPrefix}
 	}
 	for _, provider := range providers {
 		if prefix == provider.Prefix {
-			return launcherPlan{kind: launcherKindProvider, passed: passed, provider: provider.Prefix, need: 1}
+			return launcherPlan{kind: launcherKindProvider, passed: passed, provider: provider.Prefix}
 		}
 	}
 	return launcherPlan{kind: launcherKindOverview, passed: seg}
@@ -271,7 +272,7 @@ func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Resu
 			return
 		}
 	case launcherKindInline:
-		if provider != launcherAppsPrefix && provider != plan.inlineProvider {
+		if provider != launcherAppsPrefix && !slices.Contains(plan.inlineProviders, provider) {
 			return
 		}
 	case launcherKindProvider:
@@ -282,26 +283,33 @@ func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Resu
 		return
 	}
 	b := &r.launcherBatch
-	if b.gen != r.launcherGen || (b.emitted && (provider == plan.inlineProvider || plan.need == 1)) {
+	if b.gen != r.launcherGen || b.emitted {
 		*b = launcherBatch{gen: r.launcherGen}
 	}
 	cloned := append([]launcher.Result(nil), rows...)
-	if provider == plan.inlineProvider && plan.kind == launcherKindInline {
-		b.inline = cloned
-		b.haveInline = true
+	isInline := plan.kind == launcherKindInline && slices.Contains(plan.inlineProviders, provider)
+	if isInline {
+		if b.inline == nil {
+			b.inline = make(map[string][]launcher.Result, len(plan.inlineProviders))
+		}
+		b.inline[provider] = cloned
 	} else {
 		b.rows = cloned
 		b.haveMain = true
-	}
-	if plan.need == 2 && (!b.haveInline || !b.haveMain) {
-		return
 	}
 	if !b.haveMain {
 		return
 	}
 	out := b.rows
-	if plan.need == 2 {
-		out = append(append([]launcher.Result(nil), b.inline...), b.rows...)
+	if plan.kind == launcherKindInline {
+		if len(b.inline) != len(plan.inlineProviders) {
+			return
+		}
+		out = nil
+		for _, prefix := range plan.inlineProviders {
+			out = append(out, b.inline[prefix]...)
+		}
+		out = append(out, b.rows...)
 	}
 	b.emitted = true
 	r.emitLauncherSnapLocked(launcherSnap{gen: r.launcherGen, rows: out})
@@ -703,7 +711,10 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	}
 	// A Notes row closes the panel (or shows its error) from its own action.
 	notes := res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID
-	h.launcherSpawn(r, res.Entry.ID, res.Action, !notes)
+	// Session actions keep the launcher open until runSessionAction publishes
+	// its asynchronous success or error result.
+	session := sessionArgv(res.Entry.ID, "") != nil
+	h.launcherSpawn(r, res.Entry.ID, res.Action, !notes && !session)
 }
 
 const (

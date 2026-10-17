@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/calc"
 	"github.com/Nomadcxx/sysc-shell/internal/emoji"
+	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
@@ -15,7 +16,7 @@ import (
 // table. Provider functions run on the service goroutine while the caller
 // of Activate waits without holding Registry.mu, so they may take it.
 func (r *Registry) launcherProviders() []launcher.Provider {
-	providers := []launcher.Provider{r.calcProvider(), r.emojiProvider(), r.notesProvider()}
+	providers := []launcher.Provider{r.calcProvider(), r.emojiProvider(), r.notesProvider(), r.sessionProvider()}
 	for i := range providers {
 		prefix, query := providers[i].Prefix, providers[i].Query
 		providers[i].Query = func(q string) []launcher.Result {
@@ -107,6 +108,51 @@ func (r *Registry) launcherServiceConfig() launcher.ServiceConfig {
 		Rank:              r.rankLauncher,
 		Providers:         r.launcherProviders(),
 		ApplicationsGlyph: "glyph:apps",
+	}
+}
+
+func (r *Registry) sessionProvider() launcher.Provider {
+	const prefix = "/session"
+	return launcher.Provider{
+		Name: "Session", Prefix: prefix, Glyph: "glyph:power_settings_new",
+		Inline:      true,
+		Description: "Session and power actions",
+		Query: func(query string) []launcher.Result {
+			r.mu.Lock()
+			language := r.cfg.Session.Language
+			r.mu.Unlock()
+			locale := i18n.Resolve(language)
+			query = strings.ToLower(strings.TrimSpace(query))
+			actions := sessionActionOptions()
+			rows := make([]launcher.Result, 0, len(actions)-1)
+			for _, action := range actions {
+				if action.id == "session-lock" {
+					continue
+				}
+				name := i18n.T(locale, "session.action."+action.name, action.name)
+				if query != "" && !strings.Contains(strings.ToLower(name), query) &&
+					!strings.Contains(strings.ToLower(action.name), query) {
+					continue
+				}
+				rows = append(rows, launcher.Result{Entry: launcher.Entry{
+					ID: action.id, Name: name, IconName: "glyph:" + action.icon,
+				}})
+			}
+			return rows
+		},
+		Activate: func(_, id, _ string) error {
+			if id == "session-lock" || sessionArgv(id, "") == nil {
+				return errors.New("launcher: unsupported session action")
+			}
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			h := r.panelHosts[PanelLauncher]
+			if h == nil {
+				return errors.New("launcher closed")
+			}
+			r.runSessionAction(h, id)
+			return nil
+		},
 	}
 }
 

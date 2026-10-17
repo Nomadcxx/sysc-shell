@@ -4925,6 +4925,7 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 }
 
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
+	launcherAttempt := h.launcherAttempt
 	argv := sessionArgv(action, r.cfg.Session.Locker)
 	run := r.runArgv
 	if action == "session-lock" {
@@ -4943,6 +4944,9 @@ func (r *Registry) runSessionAction(h *PanelHost, action string) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if r.panelHosts[h.id] != h {
+			return
+		}
+		if h.id == PanelLauncher && h.launcherAttempt != launcherAttempt {
 			return
 		}
 		if err != nil {

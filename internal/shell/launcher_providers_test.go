@@ -2,7 +2,9 @@ package shell
 
 import (
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 
@@ -102,4 +104,101 @@ func TestNotesIsAProvider(t *testing.T) {
 	if len(rows) != 1 || rows[0].Entry.ID != notesLauncherActionID || rows[0].Entry.Name != "Capture note: buy milk" {
 		t.Fatalf("rows %+v", rows)
 	}
+}
+
+func TestLauncherSessionProviderSearchesNonLockActions(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.mu.Lock()
+	r.cfg.Session.Locker = "swaylock"
+	r.cfg.Session.Language = "en"
+	r.mu.Unlock()
+
+	p := r.sessionProvider()
+	rows := p.Query("reboot")
+	if len(rows) != 1 || rows[0].Entry.ID != "session-reboot" || rows[0].Entry.Name != "Reboot" {
+		t.Fatalf("reboot rows = %+v", rows)
+	}
+
+	rows = p.Query("")
+	want := []string{"session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff"}
+	if len(rows) != len(want) {
+		t.Fatalf("session rows = %+v, want %v", rows, want)
+	}
+	for i := range want {
+		if rows[i].Entry.ID != want[i] {
+			t.Fatalf("session row %d id = %q, want %q", i, rows[i].Entry.ID, want[i])
+		}
+	}
+	r.mu.Lock()
+	r.cfg.Session.Language = "es"
+	r.mu.Unlock()
+	rows = p.Query("reboot")
+	if len(rows) != 1 || rows[0].Entry.Name != "Reiniciar" {
+		t.Fatalf("localized reboot rows = %+v", rows)
+	}
+}
+
+func TestLauncherSearchFindsBareSessionAction(t *testing.T) {
+	r := newPanelRegistry(t)
+	cfg := r.launcherServiceConfig()
+	cfg.Scan = func() []launcher.Entry { return nil }
+	svc := launcher.NewService(cfg)
+	defer svc.Close()
+	<-svc.Results()
+
+	svc.Query("reboot")
+	select {
+	case rows := <-svc.Results():
+		for _, row := range rows {
+			if row.Entry.ID == "session-reboot" && row.Entry.Name == "Reboot" {
+				return
+			}
+		}
+		t.Fatalf("bare reboot search rows = %+v", rows)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for session search results")
+	}
+}
+
+func TestLauncherSessionActivationUsesExistingActionPath(t *testing.T) {
+	r := newPanelRegistry(t)
+	started := make(chan []string, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRun := func() { releaseOnce.Do(func() { close(release) }) }
+	r.runArgv = func(argv []string) error {
+		started <- argv
+		<-release
+		return nil
+	}
+	h := &PanelHost{id: PanelLauncher}
+	r.mu.Lock()
+	r.panelHosts[PanelLauncher] = h
+	r.mu.Unlock()
+	t.Cleanup(func() {
+		r.mu.Lock()
+		delete(r.panelHosts, PanelLauncher)
+		r.mu.Unlock()
+		releaseRun()
+	})
+
+	p := r.sessionProvider()
+	if p.Activate == nil {
+		t.Fatal("session provider has no activation handler")
+	}
+	if err := p.Activate("reboot", "session-reboot", ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case argv := <-started:
+		if strings.Join(argv, "\x00") != strings.Join([]string{"loginctl", "reboot"}, "\x00") {
+			t.Fatalf("session activation argv = %q", argv)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session action was not started")
+	}
+	r.mu.Lock()
+	delete(r.panelHosts, PanelLauncher)
+	r.mu.Unlock()
+	releaseRun()
 }
