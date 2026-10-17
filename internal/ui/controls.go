@@ -47,7 +47,7 @@ func Click(n *Node, x, y int) bool {
 
 // SliderSet clamps v to [Min, Max] and snaps to Step.
 func SliderSet(n *Node, v float64) {
-	if n == nil || n.Kind != KindSlider {
+	if n == nil || n.Kind != KindSlider || n.State&StateDisabled != 0 {
 		return
 	}
 	n.Value = snap(v, n.Min, n.Max, n.Step)
@@ -74,6 +74,9 @@ func ControlKey(n *Node, key uint32) bool {
 	if n.Kind != KindSlider {
 		return false
 	}
+	if n.State&StateDisabled != 0 {
+		return false
+	}
 	switch key {
 	case KeyLeft:
 		SliderSet(n, n.Value-n.Step)
@@ -93,11 +96,14 @@ func snap(v, minV, maxV, step float64) float64 {
 	if maxV < minV {
 		minV, maxV = maxV, minV
 	}
-	if v < minV {
+	if v <= minV {
 		v = minV
 	}
-	if v > maxV {
+	if v >= maxV {
 		v = maxV
+	}
+	if v == minV || v == maxV {
+		return v
 	}
 	if step <= 0 {
 		return v

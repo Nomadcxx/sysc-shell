@@ -618,6 +618,48 @@ func TestInitialRefreshIsQueuedAtStartup(t *testing.T) {
 	}
 }
 
+func TestRefreshRequestsCoalesceWhileDiscoveryRuns(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	service := newServiceWithDependencies(serviceDependencies{
+		run: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			if slices.Contains(args, "show") {
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+				return []byte("LoadState=not-found\nUnitFileState=not-found\nActiveState=inactive\nSubState=dead\n"), nil
+			}
+			return nil, nil
+		},
+	})
+	t.Cleanup(func() {
+		unblock()
+		_ = service.Close()
+	})
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial discovery did not start")
+	}
+	for range 10 {
+		service.Refresh()
+	}
+	if got := len(service.refresh); got != 1 {
+		t.Fatalf("pending refresh count = %d, want one", got)
+	}
+	if got := len(service.commands); got != 0 {
+		t.Fatalf("refreshes occupied %d action queue slots, want none", got)
+	}
+}
+
 func newActionService(t *testing.T, unitState, active, sub string, results map[string]commandResult) (*Service, *fakeCommand, map[string]string) {
 	t.Helper()
 	home := t.TempDir()
@@ -1270,12 +1312,52 @@ func TestConfigureIdleReturnsUnitFailure(t *testing.T) {
 	}
 }
 
+func TestConfigureIdleWaitsForQueueSpace(t *testing.T) {
+	service := &Service{
+		commands: make(chan serviceCommand, 1),
+		quit:     make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+	service.commands <- serviceCommand{op: opApply}
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	received := make(chan serviceCommand, 1)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		<-service.commands
+		select {
+		case command := <-service.commands:
+			received <- command
+			command.result <- nil
+		case <-release:
+		}
+	}()
+	if err := service.ConfigureIdle(false, ""); err != nil {
+		t.Fatalf("ConfigureIdle() error = %v", err)
+	}
+	if command := <-received; command.op != opIdle {
+		t.Fatalf("queued command = %v, want opIdle", command.op)
+	}
+}
+
 func TestConfigureIdleDisablesRuntimeEnabledUnit(t *testing.T) {
 	service, command, _ := newActionService(t, "enabled-runtime", "active", "running", nil)
 	if err := service.ConfigureIdle(false, ""); err != nil {
 		t.Fatalf("disable runtime-enabled unit: %v", err)
 	}
 	want := []string{"systemctl", "--user", "disable", "--now", unitName}
+	calls := command.callsCopy()
+	if len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint(want) {
+		t.Fatalf("commands = %q, want %q", calls, want)
+	}
+}
+
+func TestConfigureIdleStopsRunningStaticUnit(t *testing.T) {
+	service, command, _ := newActionService(t, "static", "active", "running", nil)
+	if err := service.ConfigureIdle(false, ""); err != nil {
+		t.Fatalf("stop running static unit for idle lock: %v", err)
+	}
+	want := []string{"systemctl", "--user", "stop", unitName}
 	calls := command.callsCopy()
 	if len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint(want) {
 		t.Fatalf("commands = %q, want %q", calls, want)

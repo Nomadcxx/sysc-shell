@@ -1,7 +1,9 @@
 package shell
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -79,6 +81,63 @@ func TestLauncherRankAppliesCappedBoost(t *testing.T) {
 	}
 }
 
+// Released usage history must lift a searched app without overtaking a
+// materially stronger text match.
+func TestLauncherRankKeepsBetterTextAboveUsageHistory(t *testing.T) {
+	entries := []launcher.Entry{
+		{ID: "fox.desktop", Name: "Fox", Argv: []string{"fox"}},
+		{ID: "firefox.desktop", Name: "Firefox", Argv: []string{"firefox"}},
+	}
+	query := "fox"
+	base := launcherRank(entries, query, nil)
+	if len(base) != 2 || base[0].Entry.ID != "fox.desktop" {
+		t.Fatalf("base text order = %+v, want exact Fox first", base)
+	}
+	baseScores := map[string]int{}
+	for _, result := range base {
+		baseScores[result.Entry.ID] = result.Score
+	}
+	if gap := baseScores["fox.desktop"] - baseScores["firefox.desktop"]; gap <= launcherUsageBoostCap {
+		t.Fatalf("fixture text score gap = %d, want more than usage cap %d", gap, launcherUsageBoostCap)
+	}
+
+	history := launcher.OpenHistory(filepath.Join(t.TempDir(), "history.gob"), nil)
+	svc := launcher.NewService(launcher.ServiceConfig{
+		Scan:    func() []launcher.Entry { return entries },
+		History: history,
+		Rank:    launcherRank,
+		Run:     func(context.Context, []string) error { return nil },
+	})
+	t.Cleanup(svc.Close)
+	svc.Query(query)
+	waitForRankServiceResults(t, svc)
+	for i := 0; i < 20; i++ {
+		if err := svc.Activate("firefox.desktop", ""); err != nil {
+			t.Fatalf("record usage %d: %v", i+1, err)
+		}
+	}
+	svc.Query(query)
+	got := waitForRankServiceResults(t, svc)
+	if len(got) != len(entries) {
+		t.Fatalf("usage-adjusted result count = %d, want %d", len(got), len(entries))
+	}
+	if got[0].Entry.ID != "fox.desktop" {
+		t.Fatalf("usage-adjusted order = %+v, materially stronger text match must remain first", got)
+	}
+	foundFirefox := false
+	for _, result := range got {
+		if result.Entry.ID == "firefox.desktop" {
+			foundFirefox = true
+			if result.Score <= baseScores[result.Entry.ID] {
+				t.Fatalf("history did not raise Firefox score: got %d, base %d", result.Score, baseScores[result.Entry.ID])
+			}
+		}
+	}
+	if !foundFirefox {
+		t.Fatal("usage-boosted Firefox result is missing")
+	}
+}
+
 // The tie-break chain is score desc, lowercase name, name, then ID. Equal
 // names must not order by scan order, or the browse list shuffles per rescan.
 func TestLauncherRankTieBreaksDeterministically(t *testing.T) {
@@ -141,9 +200,13 @@ func rankViaService(t *testing.T, entries []launcher.Entry, query string, rank f
 	})
 	t.Cleanup(svc.Close)
 	svc.Query(query)
+	return waitForRankServiceResults(t, svc)
+}
 
-	// The snapshot publish for the empty query can land before the query's
-	// own publish, so take the last set that arrives before the feed settles.
+// The snapshot publish for the empty query can land before the query's own
+// publish, so take the last set that arrives before the feed settles.
+func waitForRankServiceResults(t *testing.T, svc *launcher.Service) []launcher.Result {
+	t.Helper()
 	var last []launcher.Result
 	deadline := time.After(2 * time.Second)
 	for {
@@ -152,11 +215,11 @@ func rankViaService(t *testing.T, entries []launcher.Entry, query string, rank f
 			last = results
 		case <-time.After(150 * time.Millisecond):
 			if last == nil {
-				t.Fatalf("query %q produced no results", query)
+				t.Fatal("launcher service produced no results")
 			}
 			return last
 		case <-deadline:
-			t.Fatalf("query %q did not settle", query)
+			t.Fatal("launcher service results did not settle")
 		}
 	}
 }

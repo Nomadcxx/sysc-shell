@@ -160,7 +160,10 @@ type Registry struct {
 	gammaEvents chan wayland.GammaEvent
 	panels      PanelSet
 	panelHosts  map[PanelID]*PanelHost
-	files       *filesSession
+	// panelsPublish feeds the "panels" IPC topic while someone subscribes;
+	// it is nil otherwise (PanelsTopic).
+	panelsPublish func(any)
+	files         *filesSession
 	// panelShields records which panel host opened each output's shared shield,
 	// even if that host closes while another panel keeps the shield alive.
 	panelShields map[uint32]*PanelHost
@@ -1006,6 +1009,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 	}
 	network.State()
 	network.AccessPoints()
+	_ = network.RefreshVPNProfiles()
 	r.publishNetworkSnapshot(network)
 
 	for {
@@ -1017,6 +1021,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 				return
 			}
 			network.AccessPoints()
+			_ = network.RefreshVPNProfiles()
 			r.publishNetworkSnapshot(network)
 		case req, ok := <-network.SecretRequests():
 			if !ok {
@@ -2139,8 +2144,15 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// depend on another setting.
 				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
 					if h := r.panelHosts[id]; h != nil {
+						if id == PanelSettings {
+							h.invalidateSettingsBrowseIfChanged(cfg)
+						}
 						h.draft = cfg.Clone()
 						h.set = r.settingsForLocked(cfg)
+						if id == PanelSettings {
+							h.reseedSettingsFields()
+							h.reseedSettingsMenus()
+						}
 					}
 				}
 				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
@@ -2173,6 +2185,13 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.bindBarTrayLocked(global, bar.connector(), bar)
 					r.bindBarPluginLocked(bar)
 					r.bindBarPanelActionsLocked(global, bar)
+				}
+				if h := r.panelHosts[PanelSettings]; h != nil {
+					r.rebuildPanel(h)
+					h.closeUnrenderedSettingsMenu()
+					surfacePubs = append(surfacePubs, wayland.Invalidation{
+						Global: h.output, SurfaceID: panelSurfaceID(PanelSettings),
+					})
 				}
 				// Seeded only: every replacement bar is reconfigured and
 				// repainted by the owner as part of adopting the candidate.
@@ -2623,6 +2642,10 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.outputs = next
 	r.niriSnapshot = cloneNiriSnapshot(s)
 	r.focused = s.FocusedOutput
+	if r.toasts != nil && r.toasts.focusedWindowFillsOutput() != r.toasts.fullscreenFocused {
+		// Layout events can change the toast policy without changing bar text.
+		r.toasts.recompute()
+	}
 	r.tryOpenOnboardingLocked(0)
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)

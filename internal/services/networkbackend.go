@@ -2,9 +2,13 @@ package services
 
 import (
 	"fmt"
+	"time"
 
 	gnm "github.com/Wifx/gonetworkmanager/v2"
 )
+
+const networkActivationTimeout = 2 * time.Minute
+const networkActivationReasonGracePeriod = 100 * time.Millisecond
 
 // nmBackend is the only production implementation of backend. It wraps the
 // pinned gonetworkmanager binding; nothing above it knows that D-Bus exists.
@@ -202,6 +206,323 @@ func (b *nmBackend) Activate(ap AccessPoint) error {
 	}
 	_, err := b.nm.AddAndActivateConnection(settings, wifi)
 	return err
+}
+
+func manualNetworkSettings(req ManualNetworkRequest) (map[string]map[string]interface{}, error) {
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	settings := map[string]map[string]interface{}{
+		"connection": {
+			"id":   req.SSID,
+			"type": "802-11-wireless",
+		},
+		"802-11-wireless": {
+			"ssid":   []byte(req.SSID),
+			"mode":   "infrastructure",
+			"hidden": true,
+		},
+	}
+	if req.Security == ManualSecurityWPAPersonal {
+		settings["802-11-wireless-security"] = map[string]interface{}{
+			"key-mgmt": "wpa-psk",
+		}
+	}
+	return settings, nil
+}
+
+func (b *nmBackend) ConnectManual(req ManualNetworkRequest) error {
+	settings, err := manualNetworkSettings(req)
+	if err != nil {
+		return err
+	}
+	wifi, _ := b.devices()
+	if wifi == nil {
+		return fmt.Errorf("services: no wireless device")
+	}
+	connections, err := b.settings.ListConnections()
+	if err != nil {
+		return fmt.Errorf("services: list saved network profiles: %w", err)
+	}
+	connection, err := manualConnectionFor(connections, req)
+	if err != nil {
+		return err
+	}
+	if connection != nil {
+		active, err := b.nm.ActivateConnection(connection, wifi, nil)
+		if err != nil {
+			return fmt.Errorf("services: activate saved Wi-Fi profile: %w", err)
+		}
+		return waitForActivation(active, "wireless network", networkActivationTimeout)
+	}
+	active, err := b.nm.AddAndActivateConnection(settings, wifi)
+	if err != nil {
+		return fmt.Errorf("services: add and activate manually entered network: %w", err)
+	}
+	return waitForActivation(active, "wireless network", networkActivationTimeout)
+}
+
+func manualConnectionFor(connections []gnm.Connection, req ManualNetworkRequest) (gnm.Connection, error) {
+	for _, connection := range connections {
+		profile, err := connection.GetSettings()
+		if err != nil {
+			return nil, fmt.Errorf("services: read saved network profile: %w", err)
+		}
+		if manualProfileMatches(profile, req) {
+			return connection, nil
+		}
+	}
+	return nil, nil
+}
+
+func manualProfileMatches(profile gnm.ConnectionSettings, req ManualNetworkRequest) bool {
+	connection := profile["connection"]
+	profileType, _ := connection["type"].(string)
+	if profileType != "802-11-wireless" {
+		return false
+	}
+	if ssid, ok := settingsSSID(profile); !ok || ssid != req.SSID {
+		return false
+	}
+	wireless := profile["802-11-wireless"]
+	mode, _ := wireless["mode"].(string)
+	if mode != "" && mode != "infrastructure" {
+		return false
+	}
+	// A visible profile can skip the hidden-network probe requested by this path.
+	hidden, _ := wireless["hidden"].(bool)
+	if !hidden {
+		return false
+	}
+	security, hasSecurity := profile["802-11-wireless-security"]
+	switch req.Security {
+	case ManualSecurityOpen:
+		return !hasSecurity
+	case ManualSecurityWPAPersonal:
+		keyMgmt, _ := security["key-mgmt"].(string)
+		return hasSecurity && keyMgmt == "wpa-psk"
+	default:
+		return false
+	}
+}
+
+func (b *nmBackend) VPNProfiles() ([]VPNProfile, error) {
+	connections, err := b.settings.ListConnections()
+	if err != nil {
+		return nil, fmt.Errorf("services: list NetworkManager profiles: %w", err)
+	}
+	settings := make([]gnm.ConnectionSettings, 0, len(connections))
+	for _, connection := range connections {
+		profile, err := connection.GetSettings()
+		if err != nil {
+			return nil, fmt.Errorf("services: read NetworkManager profile settings: %w", err)
+		}
+		settings = append(settings, profile)
+	}
+	active, err := b.nm.GetPropertyActiveConnections()
+	if err != nil {
+		return nil, fmt.Errorf("services: list active NetworkManager connections: %w", err)
+	}
+	states := make(map[string]VPNStatus)
+	for _, connection := range active {
+		isVPN, err := connection.GetPropertyVPN()
+		if err != nil {
+			return nil, fmt.Errorf("services: read active NetworkManager connection type: %w", err)
+		}
+		if !isVPN {
+			continue
+		}
+		uuid, err := connection.GetPropertyUUID()
+		if err != nil {
+			return nil, fmt.Errorf("services: read active NetworkManager connection identity: %w", err)
+		}
+		state, err := connection.GetPropertyState()
+		if err != nil {
+			return nil, fmt.Errorf("services: read active NetworkManager connection state: %w", err)
+		}
+		switch state {
+		case gnm.NmActiveConnectionStateActivating:
+			states[uuid] = VPNConnecting
+		case gnm.NmActiveConnectionStateActivated:
+			states[uuid] = VPNConnected
+		case gnm.NmActiveConnectionStateDeactivating:
+			states[uuid] = VPNDisconnecting
+		}
+	}
+	return nmVPNProfilesFromSettings(settings, states), nil
+}
+
+func nmVPNProfilesFromSettings(settings []gnm.ConnectionSettings, states map[string]VPNStatus) []VPNProfile {
+	profiles := make([]VPNProfile, 0)
+	for _, setting := range settings {
+		connection := setting["connection"]
+		profileType, _ := connection["type"].(string)
+		uuid, _ := connection["uuid"].(string)
+		if profileType != "vpn" || !validVPNUUID(uuid) {
+			continue
+		}
+		name, _ := connection["id"].(string)
+		if name == "" {
+			name = uuid
+		}
+		status, ok := states[uuid]
+		if !ok {
+			status = VPNDisconnected
+		}
+		profiles = append(profiles, VPNProfile{UUID: uuid, Name: name, Status: status})
+	}
+	return profiles
+}
+
+func (b *nmBackend) ConnectVPN(uuid string) error {
+	connection, err := b.vpnConnection(uuid)
+	if err != nil {
+		return err
+	}
+	if connection == nil {
+		return fmt.Errorf("services: installed VPN profile not found")
+	}
+	active, err := b.nm.ActivateConnection(connection, nil, nil)
+	if err != nil {
+		return fmt.Errorf("services: activate VPN profile: %w", err)
+	}
+	return waitForActivation(active, "VPN", networkActivationTimeout)
+}
+
+func waitForActivation(active gnm.ActiveConnection, kind string, timeout time.Duration) error {
+	if active == nil {
+		return fmt.Errorf("services: NetworkManager returned no active %s connection", kind)
+	}
+	changes := make(chan gnm.StateChange, 16)
+	exit := make(chan struct{})
+	if err := active.SubscribeState(changes, exit); err != nil {
+		close(exit)
+		return fmt.Errorf("services: monitor %s activation: %w", kind, err)
+	}
+	defer close(exit)
+
+	// Subscribe first, then read state. This catches a fast activation or
+	// failure that completed before the StateChanged subscription was installed.
+	state, err := active.GetPropertyState()
+	if err != nil {
+		return fmt.Errorf("services: read %s activation state: %w", kind, err)
+	}
+	switch state {
+	case gnm.NmActiveConnectionStateActivated:
+		return nil
+	case gnm.NmActiveConnectionStateDeactivated:
+		// StateChanged may already be queued by the time this property read
+		// observes deactivation. The library forwards D-Bus signals on another
+		// goroutine, so give that signal a short window to reach our channel.
+		reasonTimer := time.NewTimer(networkActivationReasonGracePeriod)
+		defer reasonTimer.Stop()
+		for {
+			select {
+			case change, ok := <-changes:
+				if !ok {
+					return activationResult(kind, gnm.NmActiveConnectionStateReasonUnknown)
+				}
+				if change.Path == active.GetPath() && change.State == gnm.NmActiveConnectionStateDeactivated {
+					return activationResult(kind, change.Reason)
+				}
+			case <-reasonTimer.C:
+				return activationResult(kind, gnm.NmActiveConnectionStateReasonUnknown)
+			}
+		}
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case change := <-changes:
+			if change.Path != active.GetPath() {
+				continue
+			}
+			switch change.State {
+			case gnm.NmActiveConnectionStateActivated:
+				return nil
+			case gnm.NmActiveConnectionStateDeactivated:
+				return activationResult(kind, change.Reason)
+			}
+		case <-timer.C:
+			return fmt.Errorf("services: %s activation timed out", kind)
+		}
+	}
+}
+
+func activationResult(kind string, reason gnm.NmActiveConnectionStateReason) error {
+	switch reason {
+	case gnm.NmActiveConnectionStateReasonNoSecrets:
+		if kind == "VPN" {
+			return fmt.Errorf("services: VPN profile needs credentials; add them in NetworkManager")
+		}
+		return fmt.Errorf("services: wireless network needs credentials; retry with its passphrase")
+	case gnm.NmActiveConnectionStateReasonLoginFailed:
+		if kind == "VPN" {
+			return fmt.Errorf("services: VPN authentication failed; check the saved credentials")
+		}
+		return fmt.Errorf("services: wireless network authentication failed; check its passphrase")
+	case gnm.NmActiveConnectionStateReasonConnectTimeout:
+		return fmt.Errorf("services: %s connection timed out", kind)
+	case gnm.NmActiveConnectionStateReasonServiceStartFailed, gnm.NmActiveConnectionStateReasonServiceStartTimeout:
+		if kind == "VPN" {
+			return fmt.Errorf("services: VPN service could not start; check the installed NetworkManager VPN plugin")
+		}
+		return fmt.Errorf("services: wireless network activation failed; check NetworkManager and device logs")
+	case gnm.NmActiveConnectionStateReasonUserDisconnected:
+		return nil
+	case gnm.NmActiveConnectionStateReasonConnectionRemoved:
+		return fmt.Errorf("services: %s profile was removed while connecting", kind)
+	default:
+		return fmt.Errorf("services: %s activation failed; check its NetworkManager profile and logs", kind)
+	}
+}
+
+func (b *nmBackend) DisconnectVPN(uuid string) error {
+	active, err := b.nm.GetPropertyActiveConnections()
+	if err != nil {
+		return fmt.Errorf("services: list active NetworkManager connections: %w", err)
+	}
+	for _, connection := range active {
+		isVPN, err := connection.GetPropertyVPN()
+		if err != nil {
+			return fmt.Errorf("services: read active NetworkManager connection type: %w", err)
+		}
+		if !isVPN {
+			continue
+		}
+		activeUUID, err := connection.GetPropertyUUID()
+		if err != nil {
+			return fmt.Errorf("services: read active NetworkManager connection identity: %w", err)
+		}
+		if activeUUID != uuid {
+			continue
+		}
+		if err := b.nm.DeactivateConnection(connection); err != nil {
+			return fmt.Errorf("services: deactivate VPN profile: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("services: VPN profile is not connected")
+}
+
+func (b *nmBackend) vpnConnection(uuid string) (gnm.Connection, error) {
+	connections, err := b.settings.ListConnections()
+	if err != nil {
+		return nil, fmt.Errorf("services: list NetworkManager profiles: %w", err)
+	}
+	for _, connection := range connections {
+		settings, err := connection.GetSettings()
+		if err != nil {
+			return nil, fmt.Errorf("services: read NetworkManager profile settings: %w", err)
+		}
+		profile := nmVPNProfilesFromSettings([]gnm.ConnectionSettings{settings}, nil)
+		if len(profile) == 1 && profile[0].UUID == uuid {
+			return connection, nil
+		}
+	}
+	return nil, nil
 }
 
 func (b *nmBackend) Forget(ssid string) error {

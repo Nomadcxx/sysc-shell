@@ -304,9 +304,9 @@ func centreSectionLabel(text string) *ui.Node {
 		TextRole: theme.RoleCaption, Tone: ui.ToneAccent}
 }
 
-// linksAllowed reports the qualified opener capability. Task 10 wires the
-// real capability; the center builds with links off until then.
-func (r *Registry) linksAllowed() bool { return false }
+// linksAllowed reports whether notification bodies can launch a bounded web
+// URL through the desktop handler.
+func (r *Registry) linksAllowed() bool { return openNotificationURL != nil }
 
 func (r *Registry) clockNow() time.Time {
 	if r != nil && !r.now.IsZero() {

@@ -384,12 +384,19 @@ func (s *Store) SetPlayback(connector string, paused bool) {
 	s.runtime[connector] = rt
 }
 
-// SetRestored records that an output is back on the static fallback: our
-// engine is stopped, so there is no socket of ours left to talk to. engine is
-// the static binary now holding the output, empty when none is installed and
-// the output was simply left blank.
+// SetRestored records the static still as the assignment so startup does not
+// replay the stopped animation. With no still, the assignment is cleared.
+// engine is the static binary now holding the output, empty when none is
+// installed and the output was simply left blank.
 func (s *Store) SetRestored(connector, engine string) {
 	s.ensure()
+	if a, ok := s.assigned[connector]; ok {
+		if still := stillFor(a); still != "" {
+			s.assigned[connector] = Assignment{Kind: KindImage, Path: still, DesiredPlayback: StateStatic}
+		} else {
+			delete(s.assigned, connector)
+		}
+	}
 	s.gen[connector]++
 	s.runtime[connector] = Runtime{State: StateStatic, Engine: engine}
 }

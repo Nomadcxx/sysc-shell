@@ -41,6 +41,56 @@ func TestBrightnessZeroDevicesUnavailable(t *testing.T) {
 	}
 }
 
+func TestEnumerateBacklightsSymlink(t *testing.T) {
+	t.Parallel()
+	devicesRoot := t.TempDir()
+	fixtureSysfsIn(t, devicesRoot, "intel_backlight", 400, 1000)
+	partialDir := filepath.Join(devicesRoot, "partial")
+	if err := os.Mkdir(partialDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partialDir, "brightness"), []byte("400\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devicesRoot, "not-a-device"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	classRoot := t.TempDir()
+	if err := os.Symlink(filepath.Join(devicesRoot, "intel_backlight"), filepath.Join(classRoot, "intel_backlight")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(devicesRoot, "missing"), filepath.Join(classRoot, "missing_backlight")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(devicesRoot, "not-a-device"), filepath.Join(classRoot, "not_a_directory")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(partialDir, filepath.Join(classRoot, "missing_value")); err != nil {
+		t.Fatal(err)
+	}
+
+	direct := enumerateBacklights(devicesRoot, "/nonexistent/brightnessctl")
+	got := enumerateBacklights(classRoot, "/nonexistent/brightnessctl")
+	if len(direct) != 1 || len(got) != 1 {
+		t.Fatalf("enumerated direct=%d symlink=%d backlights, want one each", len(direct), len(got))
+	}
+	if direct[0].ID() != got[0].ID() || direct[0].Label() != got[0].Label() || direct[0].Kind() != got[0].Kind() {
+		t.Fatalf("direct identity %s/%s/%s differs from symlink %s/%s/%s", direct[0].ID(), direct[0].Label(), direct[0].Kind(), got[0].ID(), got[0].Label(), got[0].Kind())
+	}
+	directLevel, err := direct[0].Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	symlinkLevel, err := got[0].Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directLevel != 40 || symlinkLevel != directLevel {
+		t.Fatalf("direct level=%d, symlink level=%d, want both 40", directLevel, symlinkLevel)
+	}
+}
+
 func TestBrightnessCachedStateDoesNotReadSysfs(t *testing.T) {
 	root := fixtureSysfs(t, "intel_backlight", 400, 1000)
 	b := testBrightness(t, root, "/nonexistent/brightnessctl", 0)
@@ -332,6 +382,10 @@ func TestBrightnessStepShellsOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake.expect(t, "-d", "intel_backlight", "set", "+10%")
+	if err := b.Step(-10); err != nil {
+		t.Fatal(err)
+	}
+	fake.expect(t, "-d", "intel_backlight", "set", "10%-")
 }
 
 func TestBrightnessSetShellsOut(t *testing.T) {

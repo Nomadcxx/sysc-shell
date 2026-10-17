@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -75,6 +76,54 @@ func (m *Menu) Open() {
 }
 
 func (m *Menu) Opened() bool { return m != nil && m.open }
+
+// reseed updates the committed options and value while retaining an open
+// menu's pending cursor when that option still exists.
+func (m *Menu) reseed(options, values []string, index int) {
+	if m == nil {
+		return
+	}
+	if index < 0 || index >= len(options) {
+		index = 0
+	}
+	if index == m.index && slices.Equal(options, m.options) && slices.Equal(values, m.values) {
+		return
+	}
+	hasPending := m.cursor != m.index
+	pending := ""
+	if hasPending {
+		pending, hasPending = m.optionValue(m.cursor)
+	}
+	m.options, m.values = options, values
+	m.index = index
+	m.cursor = index
+	if hasPending {
+		for i := range options {
+			if value, ok := m.optionValue(i); ok && value == pending {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	if m.filter != nil {
+		m.refilter()
+	} else {
+		m.keepCursorVisible()
+	}
+}
+
+func (m *Menu) optionValue(index int) (string, bool) {
+	if m == nil || index < 0 || index >= len(m.options) {
+		return "", false
+	}
+	if len(m.values) == 0 {
+		return m.options[index], true
+	}
+	if index >= len(m.values) {
+		return "", false
+	}
+	return m.values[index], true
+}
 
 // Filtering reports whether this menu is a picker. The panel asks before
 // routing text at it, and before treating space as the accept key.

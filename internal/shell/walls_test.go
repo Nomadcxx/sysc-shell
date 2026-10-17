@@ -141,6 +141,13 @@ func (f *fakeWallsService) Publish(snapshot walls.Snapshot) {
 	}
 }
 
+func (f *fakeWallsService) PublishSystemdChange(snapshot walls.Snapshot) {
+	f.mu.Lock()
+	snapshot.SystemdRevision = f.snapshot.SystemdRevision + 1
+	f.mu.Unlock()
+	f.Publish(snapshot)
+}
+
 func (f *fakeWallsService) counts() (refreshes, previews, stops, closes int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -209,6 +216,220 @@ func TestSavedIdleLockDisablesWallsOnStartup(t *testing.T) {
 	if service.snapshot.Timeout != "5m" {
 		t.Fatalf("startup reconciliation changed the independent timeout to %q", service.snapshot.Timeout)
 	}
+}
+
+func TestSavedIdleLockDisablesWallsEnabledDuringSession(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	service := newFakeWallsService(readyWallsSnapshot())
+	firstApply := make(chan error, 1)
+	service.idleResult = firstApply
+	var releaseFirstApply sync.Once
+	release := func() { releaseFirstApply.Do(func() { firstApply <- nil }) }
+	defer release()
+	r.attachWallsService(service)
+
+	// Let relayWalls consume a disabled snapshot first, as it does before an
+	// out-of-band enable while sysc-shell is already running.
+	initial := readyWallsSnapshot()
+	initial.ActionMessage = "initial state observed"
+	service.Publish(initial)
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.wallsSnapshot.ActionMessage == initial.ActionMessage
+	})
+
+	enabled := readyWallsSnapshot()
+	enabled.UnitFileState, enabled.ActiveState, enabled.SubState = "enabled", "active", "running"
+	service.Publish(enabled)
+	waitFor(t, func() bool {
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		return len(service.enables) == 1
+	})
+	// Simulate a queued duplicate refresh that still carries the old state.
+	service.Publish(enabled)
+	service.mu.Lock()
+	service.idleResult = nil
+	service.mu.Unlock()
+	release()
+	waitFor(t, func() bool {
+		return service.Snapshot().UnitFileState == "disabled" && !service.Snapshot().Running()
+	})
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying && r.wallsSnapshot.UnitFileState == "disabled" && !r.wallsSnapshot.Running()
+	})
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return len(service.updates) == 0 && !r.idleApplying
+	})
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if !slices.Equal(service.enables, []bool{false}) {
+		t.Fatalf("mid-session enablement calls = %v, want one disable", service.enables)
+	}
+	if service.snapshot.Timeout != "5m" {
+		t.Fatalf("mid-session reconciliation changed Walls timeout to %q", service.snapshot.Timeout)
+	}
+}
+
+func TestSavedIdleLockRetriesAfterSystemdChangeFollowingFailure(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	service := newFakeWallsService(readyWallsSnapshot())
+	firstResult := make(chan error, 1)
+	firstResult <- errors.New("temporary systemd failure")
+	service.idleResult = firstResult
+	r.attachWallsService(service)
+
+	initial := readyWallsSnapshot()
+	initial.ActionMessage = "initial state observed"
+	service.Publish(initial)
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.wallsSnapshot.ActionMessage == initial.ActionMessage
+	})
+
+	enabled := readyWallsSnapshot()
+	enabled.UnitFileState, enabled.ActiveState, enabled.SubState = "enabled", "active", "running"
+	service.PublishSystemdChange(enabled)
+	waitFor(t, func() bool {
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		return len(service.enables) == 1 && service.snapshot.ActionError != ""
+	})
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying && r.wallsSnapshot.ActionError != "" && len(service.updates) == 0
+	})
+
+	service.mu.Lock()
+	service.idleResult = nil
+	service.mu.Unlock()
+	service.PublishSystemdChange(enabled)
+	waitFor(t, func() bool {
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		return len(service.enables) == 2 && service.snapshot.UnitFileState == "disabled" && !service.snapshot.Running()
+	})
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying && r.wallsSnapshot.UnitFileState == "disabled" && !r.wallsSnapshot.Running()
+	})
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if !slices.Equal(service.enables, []bool{false, false}) {
+		t.Fatalf("reconciliation calls = %v, want one failed attempt and one retry", service.enables)
+	}
+}
+
+func TestSavedIdleLockBoundsRetriesUntilWallsStops(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	snapshot := readyWallsSnapshot()
+	snapshot.UnitFileState, snapshot.ActiveState, snapshot.SubState = "enabled", "active", "running"
+	service := newFakeWallsService(snapshot)
+	results := make(chan error, 4)
+	for range 4 {
+		results <- errors.New("temporary systemd failure")
+	}
+	service.idleResult = results
+	r.attachWallsService(service)
+
+	settledFailure := func(attempts int) bool {
+		service.mu.Lock()
+		gotAttempts := len(service.enables)
+		failed := service.snapshot.ActionError != ""
+		service.mu.Unlock()
+		r.mu.Lock()
+		settled := !r.idleApplying && r.wallsSnapshot.ActionError != ""
+		r.mu.Unlock()
+		return gotAttempts == attempts && failed && settled
+	}
+	waitFor(t, func() bool { return settledFailure(1) })
+	active := snapshot
+	service.PublishSystemdChange(active)
+	waitFor(t, func() bool { return settledFailure(2) })
+	service.PublishSystemdChange(active)
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying && r.wallsSnapshot.SystemdRevision == 2
+	})
+
+	service.mu.Lock()
+	if got := len(service.enables); got != 2 {
+		service.mu.Unlock()
+		t.Fatalf("late systemd changes caused %d disable attempts, want two per active episode", got)
+	}
+	service.mu.Unlock()
+
+	service.PublishSystemdChange(readyWallsSnapshot())
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying && r.wallsSnapshot.SystemdRevision == 3
+	})
+	service.PublishSystemdChange(active)
+	waitFor(t, func() bool {
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		return len(service.enables) == 3 && service.snapshot.ActionError != ""
+	})
+}
+
+func TestSavedIdleLockResetsRetryBudgetAfterUnitRemoval(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.cfg.Idle.Lock = 90 * time.Minute
+	r.cfg.Session.Locker = "sysc-lock"
+	active := readyWallsSnapshot()
+	active.UnitFileState, active.ActiveState, active.SubState = "enabled", "active", "running"
+	service := newFakeWallsService(active)
+	results := make(chan error, 3)
+	for range 3 {
+		results <- errors.New("temporary systemd failure")
+	}
+	service.idleResult = results
+	r.attachWallsService(service)
+
+	settledFailure := func(attempts int) bool {
+		service.mu.Lock()
+		gotAttempts := len(service.enables)
+		failed := service.snapshot.ActionError != ""
+		service.mu.Unlock()
+		r.mu.Lock()
+		settled := !r.idleApplying && r.wallsSnapshot.ActionError != ""
+		r.mu.Unlock()
+		return gotAttempts == attempts && failed && settled
+	}
+	waitFor(t, func() bool { return settledFailure(1) })
+	service.PublishSystemdChange(active)
+	waitFor(t, func() bool { return settledFailure(2) })
+
+	missing := readyWallsSnapshot()
+	missing.LoadState, missing.UnitFileState = "not-found", "not-found"
+	missing.ServiceAvailable = false
+	service.PublishSystemdChange(missing)
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying && r.wallsSnapshot.SystemdRevision == 2
+	})
+
+	service.PublishSystemdChange(active)
+	waitFor(t, func() bool { return settledFailure(3) })
 }
 
 func TestSavedIdleLockDisablesRuntimeEnabledWallsOnStartup(t *testing.T) {

@@ -1103,7 +1103,7 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 			{Kind: ui.KindText, Text: strconv.Itoa(n) + e.Unit, Tabular: true, Width: valueW},
 		}}
 	case settings.KindFont:
-		options, values := settingsFontOptions(e)
+		options, values := settingsPickerOptions(e)
 		return settingsPickerControl(h, e, options, values, raw, width)
 	case settings.KindPath:
 		// The field gives up exactly what the browse button takes. This used
@@ -1136,7 +1136,8 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 			return settingsSwatchControl(h, e, raw, width)
 		}
 		if len(e.OptionLabels) > 0 && len(e.OptionLabels) == len(e.Options) {
-			return settingsPickerControl(h, e, e.OptionLabels, e.Options, raw, width)
+			options, values := settingsPickerOptions(e)
+			return settingsPickerControl(h, e, options, values, raw, width)
 		}
 		return settingsMenuControl(h, e, e.Options, raw, width)
 	default:
@@ -1229,11 +1230,8 @@ func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw s
 // not surface_variant). The dropdown still writes the role's stored name.
 func settingsSwatchControl(h *PanelHost, e settings.Entry, raw string, width int) *ui.Node {
 	size := h.metrics().CompactControl
-	labels := make([]string, len(e.Options))
-	for i, opt := range e.Options {
-		labels[i] = settingsOptionLabel(opt)
-	}
-	menu := settingsPickerControl(h, e, labels, e.Options, raw, max(width-size-theme.MarginS, 0))
+	options, values := settingsPickerOptions(e)
+	menu := settingsPickerControl(h, e, options, values, raw, max(width-size-theme.MarginS, 0))
 	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width}
 	if role, ok := ui.PaintRoleFor(raw); ok {
 		row.Children = append(row.Children, &ui.Node{
@@ -1282,6 +1280,64 @@ func settingsPickerControl(h *PanelHost, e settings.Entry, options, values []str
 	return n
 }
 
+func settingsPickerOptions(e settings.Entry) ([]string, []string) {
+	if e.Kind == settings.KindFont {
+		return settingsFontOptions(e)
+	}
+	if e.Present == settings.PresentSwatch {
+		options := make([]string, len(e.Options))
+		for i, option := range e.Options {
+			options[i] = settingsOptionLabel(option)
+		}
+		return options, e.Options
+	}
+	if len(e.OptionLabels) == len(e.Options) && len(e.OptionLabels) > 0 {
+		return e.OptionLabels, e.Options
+	}
+	return e.Options, nil
+}
+
+func (h *PanelHost) reseedSettingsMenus() {
+	if h == nil || h.set == nil {
+		return
+	}
+	for path, menu := range h.menus {
+		if menu == nil || !menu.Opened() {
+			continue
+		}
+		entry := h.set.ByPath(path)
+		if entry == nil || entry.Get == nil || (entry.Kind != settings.KindEnum && entry.Kind != settings.KindFont) {
+			continue
+		}
+		options, values := settingsPickerOptions(*entry)
+		menu.reseed(options, values, settingsOptionIndex(options, values, entry.Get(h.draft)))
+	}
+}
+
+func (h *PanelHost) closeUnrenderedSettingsMenu() {
+	if h == nil || h.id != PanelSettings || h.menu == nil || !h.menu.Opened() || h.menuPath == "" || h.set == nil {
+		return
+	}
+	entry := h.set.ByPath(h.menuPath)
+	if entry == nil || entry.Get == nil {
+		return
+	}
+	for _, n := range h.focus {
+		if n == nil {
+			continue
+		}
+		if n.Action == "set:"+h.menuPath && n.Kind == ui.KindMenu {
+			return
+		}
+		if entry.Kind == settings.KindPath && n.Action == "browse:"+h.menuPath {
+			return
+		}
+	}
+	h.menu.Cancel()
+	h.menu = nil
+	h.menuPath = ""
+}
+
 // settingsOptionIndex finds the row the stored value sits on. A font family
 // is compared normalized when nothing matches outright: a configuration
 // written before the picker offered descriptive names carries "dejavusans"
@@ -1328,6 +1384,21 @@ func settingsField(h *PanelHost, e settings.Entry, raw string, width int) *ui.No
 		n.Tone = ui.ToneError
 	}
 	return n
+}
+
+func (h *PanelHost) reseedSettingsFields() {
+	for path, field := range h.fields {
+		entry := h.set.ByPath(path)
+		// The Settings host also keeps fields for palettes and service forms.
+		// Reseed config entries without discarding fields owned by those views.
+		if field == nil || entry == nil || entry.Get == nil {
+			continue
+		}
+		value := entry.Get(h.draft)
+		if field.Text != value {
+			field.SyncFrom(&ui.Node{Text: value, Cursor: len(value)})
+		}
+	}
 }
 
 // settingsValidHex asks the loader's own rule rather than restating it. The
@@ -1504,6 +1575,25 @@ func (h *PanelHost) invalidateSettingsBrowse() {
 	h.settingsBrowsePending = false
 	h.settingsBrowseReady = false
 	h.settingsBrowseError = ""
+}
+
+func (h *PanelHost) invalidateSettingsBrowseIfChanged(cfg config.Config) {
+	if h == nil {
+		return
+	}
+	path := h.settingsBrowsePath
+	if path == "" {
+		return
+	}
+	if h.set == nil {
+		h.invalidateSettingsBrowse()
+		return
+	}
+	entry := h.set.ByPath(path)
+	if entry == nil || entry.Kind != settings.KindPath || entry.Get == nil ||
+		wallpaper.ExpandHome(entry.Get(cfg)) != h.settingsBrowseDir {
+		h.invalidateSettingsBrowse()
+	}
 }
 
 func (r *Registry) finishSettingsBrowse(h *PanelHost, path, current, dir string, generation uint64, readDir func(string) ([]os.DirEntry, error)) {

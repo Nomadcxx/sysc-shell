@@ -1,17 +1,19 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark.png">
-    <img src="assets/wordmark-light.png" alt="sysc-shell" height="64">
-  </picture>
+  <img src="assets/header.webp" height="64" alt="sysc-shell">
 </p>
 
 
 A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate daemons for
 notifications, clipboard history and the system tray.
 
+<details>
+<summary>Video tour</summary>
+
 https://github.com/user-attachments/assets/7cadf7b9-6fe5-4d53-b7d6-757e4082b68a
 
 <p align="center"><sub>Settings, Bar settings and the system monitor opening over a static wallpaper, bar included. <a href="assets/tour.mp4">Download the 1080p file</a> (19 s).</sub></p>
+
+</details>
 
 ## Quick Links
 
@@ -25,27 +27,27 @@ Captured from fixture data with invented names, so nothing here is a real accoun
 
 <table>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396"><br><sub>Control centre: Home</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-media.png" alt="Control centre: Media" width="396"><br><sub>Control centre: Media</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396" loading="lazy"><br><sub>Control centre: Home</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-media.png" alt="Control centre: Media" width="396" loading="lazy"><br><sub>Control centre: Media</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-settings.png" alt="Settings: Appearance" width="396"><br><sub>Settings: Appearance</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-monitor.png" alt="System monitor" width="396"><br><sub>System monitor</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-settings.png" alt="Settings: Appearance" width="396" loading="lazy"><br><sub>Settings: Appearance</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-monitor.png" alt="System monitor" width="396" loading="lazy"><br><sub>System monitor</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396"><br><sub>Launcher</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396"><br><sub>Weather</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396" loading="lazy"><br><sub>Launcher</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396" loading="lazy"><br><sub>Weather</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-wifi.png" alt="Wi-Fi" width="396"><br><sub>Wi-Fi</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-bluetooth.png" alt="Bluetooth" width="396"><br><sub>Bluetooth</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-wifi.png" alt="Wi-Fi" width="396" loading="lazy"><br><sub>Wi-Fi</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bluetooth.png" alt="Bluetooth" width="396" loading="lazy"><br><sub>Bluetooth</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396"><br><sub>Clipboard history</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396"><br><sub>Settings: Bar</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396" loading="lazy"><br><sub>Clipboard history</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396" loading="lazy"><br><sub>Settings: Bar</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396"><br><sub>Wallpaper picker</sub></td>
+    <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396" loading="lazy"><br><sub>Wallpaper picker</sub></td>
   </tr>
 </table>
 
@@ -171,6 +173,39 @@ From a terminal:
 sysc-shell ipc status
 sysc-shell ipc panel.toggle '{"panel":"control-center"}'
 ```
+
+### Scripting the socket
+
+The socket is `$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock`, readable only by your user. Each request is
+one JSON line, `{"id":…,"method":…,"params":{…}}`, and each reply is one line.
+
+`ipc.capabilities` reports the protocol version (`api`, currently 2), every method the running shell
+answers, the delegated method families, the topics you can subscribe to, and the limits below. A
+method or topic it does not list is unsupported.
+
+```bash
+sysc-shell ipc ipc.capabilities
+sysc-shell ipc subscribe panels --seconds 20
+```
+
+- **Replies.** The methods that existed before version 2 (`status`, `panel.*`, `osd.step`, …) keep
+  their flat reply shape; that shape is frozen. Newer methods (`ipc.*`) reply
+  `{"id":…,"ok":true,"result":{…}}`. Every error has an `error` message. Errors from the transport and
+  from newer methods also carry a `code`: `unsupported`, `invalid_params`, `limit_exceeded`, `timeout`,
+  `cancelled` or `busy`.
+- **Subscriptions.** `ipc.subscribe {"topics":["panels"]}` turns its connection into an event
+  connection, which then accepts only `ipc.subscribe` and `ipc.unsubscribe`; send commands on another
+  connection. Each topic starts with a `snapshot` event, then sends `state` events carrying the whole
+  new value with a rising `seq`. A reader that falls behind skips to the latest value, marked `resync`.
+  An `error` event ends one topic. Closing the connection ends every subscription.
+- **Topics.** `panels` is the sorted list of open panel ids.
+- **Limits.** A request line holds at most 65536 bytes. The shell serves at most 32 event
+  connections, 16 topics on each, and 2 MiB for one state. A reader that cannot take a write for five
+  seconds is disconnected.
+
+`sysc-shell ipc subscribe TOPIC... [--seconds N]` prints one event per line for N seconds (default
+30, at most 300). It exits 0 when the time runs out or on Ctrl+C, and nonzero if a topic is refused
+or ends.
 
 Settings are in the settings panel and saved to `$XDG_CONFIG_HOME/sysc-shell/config.json`
 (default: `~/.config/sysc-shell/config.json`). Logs go to

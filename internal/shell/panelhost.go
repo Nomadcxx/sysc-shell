@@ -258,6 +258,9 @@ type PanelHost struct {
 	mediaSeekPending   *int64
 	mediaSeekTrack     string
 	networkTab         string
+	manualEntry        bool
+	manualSSID         *ui.Field
+	manualSecurity     services.ManualSecurity
 	weatherView        string
 	pendingSSID        string
 	password           *ui.Field
@@ -1451,9 +1454,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.clipboardThumbnails = make(map[string]*ui.Image)
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
-	if id == PanelOnboarding {
-		// Its copy is wrapped while the tree is built, so load the real shaper
-		// first; Configure runs only after this initial tree has been created.
+	if id == PanelOnboarding || id == PanelLauncher {
+		// These trees derive geometry from text before Configure runs: onboarding
+		// wraps its copy, and the launcher sizes its result viewport. Use real
+		// metrics before either initial tree is built.
 		if err := h.ensureText(); err != nil {
 			return err
 		}
@@ -1538,6 +1542,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	// A recapture request has to name the output the surface was opened on, and
 	// the paint path is where one is sent from.
 	h.global = output
+	r.publishPanelsLocked()
 
 	if openShield {
 		if r.panelShields == nil {
@@ -1553,7 +1558,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	if id == PanelNetwork && r.network != nil && r.network.Available() && !r.network.CachedState().ReadOnly {
 		network := r.network
-		r.scheduleControl(h, network.Scan)
+		r.scheduleControl(h, func() error {
+			_ = network.RefreshVPNProfiles()
+			return network.Scan()
+		})
 	}
 	if id == PanelBluetooth {
 		r.startBluetoothDiscoveryLocked(h)
@@ -2837,17 +2845,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				ui.SliderAt(n, h.hoverX)
 				h.sliderDrag = nil
 				h.pressed = ""
-				if strings.HasPrefix(n.Action, "plugin-set:") {
-					return r.handlePluginManager(h, n)
-				}
-				if strings.HasPrefix(n.Action, "audio-") {
-					return h.applyAudioControl(r, n)
-				}
-				if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
-					return true
-				}
-				h.applySetting(r, n)
-				return true
+				return h.commitSlider(r, n)
 			}
 			if h.scrollDrag != nil {
 				h.scrollDrag = nil
@@ -3494,6 +3492,10 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 		r.rebuildPanel(h)
 		return true
 	}
+	if n.Action == "network-manual-ssid" {
+		r.rebuildPanel(h)
+		return true
+	}
 	if h.id == PanelFiles && n.Action == files.ActionRename {
 		if r.files != nil {
 			r.files.renameDraft = f.Text
@@ -3559,6 +3561,12 @@ func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
 		}
 		h.password.SyncFrom(n)
 		f = h.password
+	} else if h.id == PanelNetwork && n.Action == "network-manual-ssid" {
+		if h.manualSSID == nil {
+			h.manualSSID = ui.NewField("")
+		}
+		h.manualSSID.SyncFrom(n)
+		f = h.manualSSID
 	} else if n.Name == "Search" {
 		if h.search == nil {
 			h.search = ui.NewField("")
@@ -3709,11 +3717,18 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	if !ui.ControlKey(n, key) {
 		return false
 	}
+	return h.commitSlider(r, n)
+}
+
+func (h *PanelHost) commitSlider(r *Registry, n *ui.Node) bool {
 	if strings.HasPrefix(n.Action, "plugin-set:") {
 		return r.handlePluginManager(h, n)
 	}
 	if strings.HasPrefix(n.Action, "audio-") {
 		return h.applyAudioControl(r, n)
+	}
+	if _, ok := parsePluginAction(n.Action); ok {
+		return r.deliverPluginSlider(n.Action, n.Value)
 	}
 	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
 		return true
@@ -4155,11 +4170,10 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	focusedKey := ""
 	focusedName := ""
 	focusedKind := ui.Kind(0)
-	// Plugin panels rebuild on every view the plugin pushes. A restored
-	// roving index would then land on whatever node moved into the old
-	// position — focus must follow the node's identity, or keystrokes the
-	// user aims at a settings field get eaten as panel shortcuts.
-	if h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
+	// Settings rebuilds after config adoption, and plugin panels rebuild on
+	// pushed views. Restoring only the roving index can move focus to another
+	// control when the tree changes, so carry the focused node's identity.
+	if h.id == PanelSettings || h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
 		if focused := h.focused(); focused != nil {
 			focusedKey = focused.StableKey()
 			focusedName = focused.Name
@@ -4205,6 +4219,18 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 				break
 			}
 		}
+	}
+	if h.id == PanelSettings && !restoredFocus && focusedKey == "" && focusedName != "" {
+		for i, n := range h.focus {
+			if n != nil && n.Kind == focusedKind && n.Name == focusedName {
+				h.roving.Set(i)
+				restoredFocus = true
+				break
+			}
+		}
+	}
+	if h.id == PanelSettings && !restoredFocus {
+		h.roving.Set(0)
 	}
 	if h.id == PanelPluginStore && !restoredFocus {
 		h.focusPluginStoreSelection()
@@ -4846,6 +4872,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	h.drag.Cancel()
 	if id == PanelNetwork {
 		h.clearNetworkSecret()
+		h.clearManualEntry()
 	}
 	if id == PanelMonitor {
 		// Owners are resolved for the panel's lifetime (D10).
@@ -4866,6 +4893,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 		r.files = nil
 	}
 	delete(r.panelHosts, id)
+	r.publishPanelsLocked()
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})
 	if !r.hasPanelOnOutputLocked(h.output) {
 		r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelShieldSurfaceID(h.output)})

@@ -9,6 +9,9 @@ import (
 
 func TestMethodsListsEveryExactMethod(t *testing.T) {
 	want := []string{
+		"ipc.capabilities",
+		"ipc.subscribe",
+		"ipc.unsubscribe",
 		"osd.step",
 		"panel.close",
 		"panel.open",

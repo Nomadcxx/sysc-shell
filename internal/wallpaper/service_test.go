@@ -30,6 +30,7 @@ type fakeEngine struct {
 	restoreGate  map[string]chan struct{}
 	preview      map[string]string
 	fail         map[string]error
+	restoreErr   error
 	caps         Capabilities
 	refreshCaps  *Capabilities
 	refreshCalls int
@@ -91,8 +92,14 @@ func (f *fakeEngine) Restore(connector, still string) error {
 	defer f.mu.Unlock()
 	f.restored = append(f.restored, connector)
 	f.stills = append(f.stills, still)
-	return nil
+	return f.restoreErr
 }
+
+type testRestoreStoppedError struct{ cause error }
+
+func (e testRestoreStoppedError) Error() string { return e.cause.Error() }
+func (e testRestoreStoppedError) Unwrap() error { return e.cause }
+func (testRestoreStoppedError) restoreStopped() {}
 
 func (f *fakeEngine) SetPaused(connector string, paused bool) error {
 	f.mu.Lock()
@@ -769,6 +776,105 @@ func TestRestoreEffectReturnsToPriorStill(t *testing.T) {
 	defer engine.mu.Unlock()
 	if got := engine.stills[len(engine.stills)-1]; got != "/w/a.png" {
 		t.Fatalf("Restore got still %q, want the image the effect replaced", got)
+	}
+}
+
+func TestServiceRestoreEffectPersistsStillAndDoesNotReplayEffect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	newService := func(engine *fakeEngine) *Service {
+		return NewService(ServiceConfig{
+			Engine:      engine,
+			Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+			Connectors:  []string{"DP-1"},
+			PersistPath: path,
+		})
+	}
+
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newService(engine)
+	t.Cleanup(svc.Close)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/still.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/still.png" })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStatic })
+
+	want := Assignment{Kind: KindImage, Path: "/w/still.png", DesiredPlayback: StateStatic}
+	if got := snap.Assignments["DP-1"]; got != want {
+		t.Fatalf("restored assignment = %+v, want static still %+v", got, want)
+	}
+	saved, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatalf("load restored assignments: %v", err)
+	}
+	if got := saved["DP-1"]; got != want {
+		t.Fatalf("persisted assignment = %+v, want static still %+v", got, want)
+	}
+
+	svc.Close()
+	restartEngine := newFakeEngine()
+	restarted := newService(restartEngine)
+	t.Cleanup(restarted.Close)
+	awaitSnapshot(t, restarted, func(s Snapshot) bool {
+		return s.Assignments["DP-1"] == want &&
+			s.Runtime["DP-1"].State == StateStatic &&
+			slices.Equal(restartEngine.appliedPaths(), []string{"/w/still.png"})
+	})
+}
+
+func TestServiceRestoreFailureAfterStopPersistsStillAndDoesNotReplayEffect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	newService := func(engine *fakeEngine) *Service {
+		return NewService(ServiceConfig{
+			Engine:      engine,
+			Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+			Connectors:  []string{"DP-1"},
+			PersistPath: path,
+		})
+	}
+
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	engine.caps.Statics = nil
+	engine.restoreErr = testRestoreStoppedError{cause: ErrNoStaticEngine}
+	svc := newService(engine)
+	t.Cleanup(svc.Close)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/still.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/still.png" })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+
+	want := Assignment{Kind: KindImage, Path: "/w/still.png", DesiredPlayback: StateStatic}
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.Runtime["DP-1"].State == StateError && s.Assignments["DP-1"] == want
+	})
+	if snap.Runtime["DP-1"].Err == "" {
+		t.Fatal("fallback failure must remain visible after persisting the stopped assignment")
+	}
+	saved, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatalf("load stopped assignment: %v", err)
+	}
+	if got := saved["DP-1"]; got != want {
+		t.Fatalf("persisted assignment = %+v, want static still %+v", got, want)
+	}
+
+	svc.Close()
+	restartEngine := newFakeEngine()
+	restartEngine.caps.Terminal = true
+	restartEngine.caps.Statics = nil
+	restarted := newService(restartEngine)
+	t.Cleanup(restarted.Close)
+	awaitSnapshot(t, restarted, func(s Snapshot) bool { return s.Assignments["DP-1"] == want })
+	restartEngine.mu.Lock()
+	defer restartEngine.mu.Unlock()
+	for _, job := range restartEngine.applied {
+		if job.Kind == KindEffect {
+			t.Fatalf("restart replayed stopped effect: %+v", job)
+		}
 	}
 }
 

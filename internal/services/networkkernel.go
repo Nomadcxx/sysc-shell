@@ -46,13 +46,17 @@ func newKernelBackend(fsys fs.FS, ipv4 func(string) string) *kernelBackend {
 	return &kernelBackend{fsys: fsys, ipv4: ipv4, every: kernelPollInterval}
 }
 
-func (k *kernelBackend) State() (NetworkState, error)         { return readKernelState(k.fsys, k.ipv4) }
-func (k *kernelBackend) AccessPoints() ([]AccessPoint, error) { return nil, errKernelReadOnly }
-func (k *kernelBackend) Scan() error                          { return errKernelReadOnly }
-func (k *kernelBackend) SetWirelessEnabled(bool) error        { return errKernelReadOnly }
-func (k *kernelBackend) Activate(AccessPoint) error           { return errKernelReadOnly }
-func (k *kernelBackend) Forget(string) error                  { return errKernelReadOnly }
-func (k *kernelBackend) Close() error                         { return nil }
+func (k *kernelBackend) State() (NetworkState, error)             { return readKernelState(k.fsys, k.ipv4) }
+func (k *kernelBackend) AccessPoints() ([]AccessPoint, error)     { return nil, errKernelReadOnly }
+func (k *kernelBackend) Scan() error                              { return errKernelReadOnly }
+func (k *kernelBackend) SetWirelessEnabled(bool) error            { return errKernelReadOnly }
+func (k *kernelBackend) Activate(AccessPoint) error               { return errKernelReadOnly }
+func (k *kernelBackend) ConnectManual(ManualNetworkRequest) error { return errKernelReadOnly }
+func (k *kernelBackend) Forget(string) error                      { return errKernelReadOnly }
+func (k *kernelBackend) VPNProfiles() ([]VPNProfile, error)       { return nil, errKernelReadOnly }
+func (k *kernelBackend) ConnectVPN(string) error                  { return errKernelReadOnly }
+func (k *kernelBackend) DisconnectVPN(string) error               { return errKernelReadOnly }
+func (k *kernelBackend) Close() error                             { return nil }
 
 // Watch has nothing to subscribe to; PollInterval tells the service to read
 // on a timer instead.

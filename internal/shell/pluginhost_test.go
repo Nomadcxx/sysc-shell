@@ -758,6 +758,50 @@ func TestPluginPanelTextChangeSubmitAndClose(t *testing.T) {
 	t.Fatalf("inputs=%+v closed=%v", reg.plugins.lastInputs(), reg.plugins.closedViews())
 }
 
+func TestPluginSliderCommitSendsAnExplicitNumericValue(t *testing.T) {
+	host := &pluginHost{
+		views: map[string]*hostedView{"panel": {
+			ID: "panel", Plugin: "org.sysc.test", Kind: v1.ViewPanel, Revision: 4,
+			Events: map[string][]v1.EventKind{"level": {v1.EventChange}},
+		}},
+		slots: map[string]*pluginSlot{},
+	}
+	reg := &Registry{plugins: host}
+	host.r = reg
+	panel := &PanelHost{}
+	slider := &ui.Node{Kind: ui.KindSlider, Action: "plugin:panel:level", Value: 2}
+	panel.commitSlider(reg, slider)
+	host.settleTextFlush()
+
+	host.mu.Lock()
+	inputs := append([]v1.InputEvent(nil), host.inputs...)
+	inputs = append(inputs, host.textOut.Flush()...)
+	host.mu.Unlock()
+	if len(inputs) != 1 {
+		t.Fatalf("slider inputs = %+v, want one event", inputs)
+	}
+	got := inputs[0]
+	if got.Event != v1.EventChange || got.Node != "level" || got.Revision != 4 || got.Value == nil || *got.Value != 2 {
+		t.Fatalf("slider input = %+v, want numeric value 2", got)
+	}
+}
+
+func TestPluginBarSecondaryClickEmitsPointerEvent(t *testing.T) {
+	host := &pluginHost{
+		views: map[string]*hostedView{"bar": {
+			ID: "bar", Plugin: "org.sysc.test", Kind: v1.ViewBar,
+			Events: map[string][]v1.EventKind{"open": {v1.EventActivate, v1.EventPointer}},
+		}},
+		slots: map[string]*pluginSlot{},
+	}
+	reg := &Registry{plugins: host}
+	reg.handlePluginBar("plugin:bar:open", wayland.Event{Kind: wayland.EventPointerRelease, Button: 273}, ui.Rect{})
+
+	if got := host.inputs; len(got) != 1 || got[0].Event != v1.EventPointer || got[0].Button != v1.ButtonSecondary {
+		t.Fatalf("bar right-click input = %+v, want a secondary pointer event", got)
+	}
+}
+
 func TestOutputContextBarEventIncludesOutput(t *testing.T) {
 	reg := bindTestPlugin(t, "ok")
 	newHosts(t, reg, map[uint32]string{1: "DP-1"})

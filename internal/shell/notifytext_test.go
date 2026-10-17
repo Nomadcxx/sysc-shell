@@ -92,6 +92,50 @@ func TestNotifyTextCarriesLinksOnlyWhenAllowed(t *testing.T) {
 	}
 }
 
+func TestRegistryEnablesNotificationLinksForTheSafeOpener(t *testing.T) {
+	if !(&Registry{}).linksAllowed() {
+		t.Fatal("notification links remain disabled despite the safe opener")
+	}
+}
+
+func TestNotificationTextOnlyTurnsBoundedHTTPURLsIntoLinks(t *testing.T) {
+	cases := []struct {
+		name string
+		href string
+		want bool
+	}{
+		{name: "http", href: "http://example.test/a?q=1", want: true},
+		{name: "https", href: "https://example.test/a?q=1", want: true},
+		{name: "file scheme", href: "file:///etc/passwd"},
+		{name: "javascript scheme", href: "javascript:alert(1)"},
+		{name: "ftp scheme", href: "ftp://example.test/a"},
+		{name: "missing host", href: "https://"},
+		{name: "malformed escape", href: "https://example.test/%zz"},
+		{name: "userinfo", href: "https://user@example.test/a"},
+		{name: "oversized", href: "https://example.test/" + strings.Repeat("x", MaxLinkBytes)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runs := ParseBody(`<a href="`+tc.href+`">open this</a>`, true)
+			if text := joined(runs); text != "open this" {
+				t.Fatalf("link text = %q, want to preserve anchor text", text)
+			}
+			found := false
+			for _, run := range runs {
+				if run.Link {
+					found = true
+					if run.Href != tc.href {
+						t.Fatalf("link target = %q, want %q", run.Href, tc.href)
+					}
+				}
+			}
+			if found != tc.want {
+				t.Fatalf("link accepted = %v, want %v; runs=%+v", found, tc.want, runs)
+			}
+		})
+	}
+}
+
 func TestNotifyTextRefusesOversizedLinkTargets(t *testing.T) {
 	body := `<a href="` + strings.Repeat("x", MaxLinkBytes+1) + `">text</a>`
 	for _, run := range ParseBody(body, true) {

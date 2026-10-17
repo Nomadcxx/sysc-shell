@@ -151,6 +151,7 @@ func (f *Field) Clear() {
 		return
 	}
 	f.Text, f.PreeditText, f.Cursor, f.Anchor = "", "", 0, 0
+	f.goalCol, f.history = -1, undoHistory{}
 }
 
 func (f *Field) DeleteSurrounding(before, after int) {

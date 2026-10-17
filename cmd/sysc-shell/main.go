@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -428,6 +429,7 @@ func run(ctx context.Context) (err error) {
 			Theme:      registry.ThemeCall,
 			NightLight: registry.NightLightCall,
 			LockState:  registry.LockStateMap,
+			Topics:     map[string]ipc.Provider{ipc.TopicPanels: registry.PanelsTopic()},
 		})
 		if err := srv.Serve(ipcCtx); err != nil && ipcCtx.Err() == nil {
 			select {
@@ -493,7 +495,13 @@ func main() {
 
 func runIPC(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: sysc-shell ipc <method> [params-json]")
+		return fmt.Errorf("usage: sysc-shell ipc <method> [params-json]\n%s", ipc.SubscribeUsage)
+	}
+	if args[0] == "subscribe" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runIPCSubscribe(ctx, ipc.DefaultSocket(), args[1:], os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
 	}
 	method := args[0]
 	params := []byte("{}")
@@ -516,6 +524,35 @@ func runIPC(args []string) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// runIPCSubscribe streams `sysc-shell ipc subscribe TOPIC... [--seconds N]`:
+// one JSON line per event on stdout, diagnostics on stderr. It exits 0 when
+// the time runs out or the user interrupts it, and nonzero on a refused
+// subscribe, an error event or a lost connection.
+func runIPCSubscribe(ctx context.Context, sock string, args []string, stdout, stderr io.Writer) int {
+	topics, seconds, err := ipc.ParseSubscribeArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	defer cancel()
+	enc := json.NewEncoder(stdout)
+	err = ipc.Stream(ctx, sock, topics, func(ev ipc.Event) error {
+		if err := enc.Encode(ev); err != nil {
+			return err
+		}
+		if ev.Event == ipc.EventError {
+			return fmt.Errorf("topic %s ended: %s", ev.Topic, ev.Error)
+		}
+		return nil
+	})
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return 0
+	}
+	fmt.Fprintln(stderr, err)
+	return 1
 }
 
 // replyFailed reports whether an ipc reply is an error envelope. The server

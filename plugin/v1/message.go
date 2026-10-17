@@ -13,7 +13,8 @@ const (
 	// Minor 14 adds the moonbit icon, the Moonbit orb for its bar pill.
 	// Minor 15 adds masked text inputs, for a password the plugin needs.
 	// Minor 16 adds files.browse, the host-owned file browser.
-	ProtocolMinor = 16
+	// Minor 17 adds stepped sliders and compact images inside bar buttons.
+	ProtocolMinor = 17
 )
 
 // The version-one message names. Every line on the wire carries one of these
@@ -220,6 +221,9 @@ type InputEvent struct {
 	// Text is the committed value on change and submit events. The host owns
 	// the live buffer; this is what it has committed.
 	Text string `json:"text,omitempty"`
+	// Value is a slider's committed numeric value on a change event. A pointer
+	// distinguishes an explicit zero from an event with no numeric value.
+	Value *float64 `json:"value,omitempty"`
 	// Key and Modifiers identify a manifest-declared panel shortcut.
 	Key       string   `json:"key,omitempty"`
 	Modifiers []string `json:"modifiers,omitempty"`

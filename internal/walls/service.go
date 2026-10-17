@@ -42,14 +42,15 @@ const (
 // Config values remain strings so malformed saved values are not hidden from
 // the Settings UI.
 type Snapshot struct {
-	UnitKnown     bool
-	UnitStale     bool
-	StateError    string
-	LoadState     string
-	FragmentPath  string
-	UnitFileState string
-	ActiveState   string
-	SubState      string
+	UnitKnown       bool
+	UnitStale       bool
+	StateError      string
+	LoadState       string
+	FragmentPath    string
+	UnitFileState   string
+	ActiveState     string
+	SubState        string
+	SystemdRevision uint64 // advances on monitor reconnects and relevant manager signals
 
 	ServiceAvailable bool
 	ServiceError     string
@@ -105,15 +106,18 @@ func (s Snapshot) Running() bool {
 type Service struct {
 	deps serviceDependencies
 
-	commands chan serviceCommand
-	updates  chan Snapshot
-	quit     chan struct{}
-	done     chan struct{}
-	close    sync.Once
-	closeErr error
+	commands    chan serviceCommand
+	updates     chan Snapshot
+	refresh     chan struct{}
+	quit        chan struct{}
+	done        chan struct{}
+	monitorDone chan struct{}
+	close       sync.Once
+	closeErr    error
 
-	mu   sync.RWMutex
-	snap Snapshot
+	mu              sync.RWMutex
+	snap            Snapshot
+	systemdRevision uint64
 }
 
 // Setting is one persisted sysc-walls setting. Keys use the walls client
@@ -126,8 +130,7 @@ type Setting struct {
 type serviceOp uint8
 
 const (
-	opRefresh serviceOp = iota
-	opApply
+	opApply serviceOp = iota
 	opEnable
 	opRuntime
 	opPreview
@@ -185,7 +188,10 @@ type directExec struct {
 
 // NewService starts the discovery loop and queues its initial refresh.
 func NewService() *Service {
-	return newServiceWithDependencies(serviceDependencies{})
+	s := newServiceWithDependencies(serviceDependencies{})
+	s.monitorDone = make(chan struct{})
+	go s.watchSystemd(s.monitorDone)
+	return s
 }
 
 func newServiceWithDependencies(deps serviceDependencies) *Service {
@@ -254,6 +260,7 @@ func newServiceWithDependencies(deps serviceDependencies) *Service {
 		deps:     deps,
 		commands: make(chan serviceCommand, 32),
 		updates:  make(chan Snapshot, 1),
+		refresh:  make(chan struct{}, 1),
 		quit:     make(chan struct{}),
 		done:     make(chan struct{}),
 		snap:     defaultSnapshot(),
@@ -274,9 +281,24 @@ func (s *Service) Snapshot() Snapshot {
 // through Snapshot, so a slow receiver never blocks discovery.
 func (s *Service) Updates() <-chan Snapshot { return s.updates }
 
-// Refresh queues a serialized discovery pass.
+// Refresh queues one serialized discovery pass, coalescing redundant requests.
 func (s *Service) Refresh() {
-	s.enqueue(serviceCommand{op: opRefresh})
+	select {
+	case <-s.quit:
+		return
+	default:
+	}
+	select {
+	case s.refresh <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) systemdChanged() {
+	s.mu.Lock()
+	s.systemdRevision++
+	s.mu.Unlock()
+	s.Refresh()
 }
 
 // Apply submits a validated batch to the matching sysc-walls client.
@@ -307,8 +329,10 @@ func (s *Service) ConfigureIdle(enabled bool, timeout string) error {
 	if enabled {
 		command.patch = []Setting{{Key: "timeout", Value: timeout}}
 	}
-	if !s.enqueue(command) {
-		return errors.New("screensaver command could not be queued")
+	select {
+	case <-s.quit:
+		return errors.New("screensaver service closed before idle settings completed")
+	case s.commands <- command:
 	}
 	select {
 	case err := <-result:
@@ -364,6 +388,9 @@ func (s *Service) enqueue(command serviceCommand) bool {
 func (s *Service) Close() error {
 	s.close.Do(func() { close(s.quit) })
 	<-s.done
+	if s.monitorDone != nil {
+		<-s.monitorDone
+	}
 	return s.closeErr
 }
 
@@ -402,6 +429,8 @@ func (s *Service) run() {
 				}
 			}
 			return
+		case <-s.refresh:
+			s.refreshAndPublish("", "", preview)
 		case command := <-s.commands:
 			switch command.op {
 			case opPreview:
@@ -438,10 +467,6 @@ func (s *Service) run() {
 }
 
 func (s *Service) handle(command serviceCommand, preview *previewSession) {
-	if command.op == opRefresh {
-		s.refreshAndPublish("", "", preview)
-		return
-	}
 	current := s.Snapshot()
 	current.ActionPending = true
 	current.ActionError = ""
@@ -487,6 +512,12 @@ func (s *Service) perform(command serviceCommand) (string, error) {
 			if _, err := s.apply(snapshot, command.patch); err != nil {
 				return "", err
 			}
+		} else if snapshot.UnitKnown && !snapshot.UnitStale && snapshot.LoadState == "loaded" &&
+			snapshot.UnitFileState != "enabled" && snapshot.UnitFileState != "disabled" && snapshot.UnitFileState != "enabled-runtime" {
+			if snapshot.Running() {
+				return s.setRuntime(snapshot, false)
+			}
+			return "", nil
 		}
 		message, err := s.enable(snapshot, command.value)
 		if err != nil && command.value && !snapshot.EnabledAtLogin() {
@@ -759,6 +790,7 @@ func scanPreviewReadiness(output *os.File, ready chan<- struct{}) {
 
 func (s *Service) publish(snapshot Snapshot) {
 	s.mu.Lock()
+	snapshot.SystemdRevision = s.systemdRevision
 	s.snap = snapshot
 	s.mu.Unlock()
 	select {
