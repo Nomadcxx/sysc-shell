@@ -1005,6 +1005,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 	}
 	network.State()
 	network.AccessPoints()
+	_ = network.RefreshVPNProfiles()
 	r.publishNetworkSnapshot(network)
 
 	for {
@@ -1016,6 +1017,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 				return
 			}
 			network.AccessPoints()
+			_ = network.RefreshVPNProfiles()
 			r.publishNetworkSnapshot(network)
 		case req, ok := <-network.SecretRequests():
 			if !ok {

@@ -38,6 +38,7 @@ type iwdBus interface {
 	OrderedNetworks(station dbus.ObjectPath) ([]iwdOrdered, error)
 	// Call invokes a method that takes no arguments and returns nothing.
 	Call(path dbus.ObjectPath, method string) error
+	ConnectHiddenNetwork(station dbus.ObjectPath, ssid string) error
 	Set(path dbus.ObjectPath, iface, prop string, v any) error
 	Watch(wake chan<- struct{}, stop <-chan struct{}) error
 	ExportAgent(a *iwdAgent) (func(), error)
@@ -187,6 +188,17 @@ func (b *iwdBackend) Activate(ap AccessPoint) error {
 	return b.bus.Call(dbus.ObjectPath(ap.Path), iwdNetworkIface+".Connect")
 }
 
+func (b *iwdBackend) ConnectManual(req ManualNetworkRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	t, err := b.tree()
+	if err != nil {
+		return err
+	}
+	return b.bus.ConnectHiddenNetwork(t.station, req.SSID)
+}
+
 func (b *iwdBackend) Forget(ssid string) error {
 	t, err := b.tree()
 	if err != nil {
@@ -199,6 +211,10 @@ func (b *iwdBackend) Forget(ssid string) error {
 	}
 	return fmt.Errorf("services: iwd knows no network %q", ssid)
 }
+
+func (b *iwdBackend) VPNProfiles() ([]VPNProfile, error) { return nil, errVPNUnsupported }
+func (b *iwdBackend) ConnectVPN(string) error            { return errVPNUnsupported }
+func (b *iwdBackend) DisconnectVPN(string) error         { return errVPNUnsupported }
 
 func (b *iwdBackend) Watch(wake chan<- struct{}, stop <-chan struct{}) error {
 	return b.bus.Watch(wake, stop)
@@ -283,6 +299,10 @@ func (s systemIWD) OrderedNetworks(station dbus.ObjectPath) ([]iwdOrdered, error
 
 func (s systemIWD) Call(path dbus.ObjectPath, method string) error {
 	return s.conn.Object(iwdBusName, path).Call(method, 0).Err
+}
+
+func (s systemIWD) ConnectHiddenNetwork(station dbus.ObjectPath, ssid string) error {
+	return s.conn.Object(iwdBusName, station).Call(iwdStationIface+".ConnectHiddenNetwork", 0, ssid).Err
 }
 
 func (s systemIWD) Set(path dbus.ObjectPath, iface, prop string, v any) error {

@@ -204,6 +204,231 @@ func (b *nmBackend) Activate(ap AccessPoint) error {
 	return err
 }
 
+func manualNetworkSettings(req ManualNetworkRequest) (map[string]map[string]interface{}, error) {
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	settings := map[string]map[string]interface{}{
+		"connection": {
+			"id":   req.SSID,
+			"type": "802-11-wireless",
+		},
+		"802-11-wireless": {
+			"ssid":   []byte(req.SSID),
+			"mode":   "infrastructure",
+			"hidden": true,
+		},
+	}
+	if req.Security == ManualSecurityWPAPersonal {
+		settings["802-11-wireless-security"] = map[string]interface{}{
+			"key-mgmt":  "wpa-psk",
+			"psk-flags": uint32(1), // NetworkManager's agent-owned flag keeps the passphrase out of this settings map.
+		}
+	}
+	return settings, nil
+}
+
+func (b *nmBackend) ConnectManual(req ManualNetworkRequest) error {
+	settings, err := manualNetworkSettings(req)
+	if err != nil {
+		return err
+	}
+	wifi, _ := b.devices()
+	if wifi == nil {
+		return fmt.Errorf("services: no wireless device")
+	}
+	connections, err := b.settings.ListConnections()
+	if err != nil {
+		return fmt.Errorf("services: list saved network profiles: %w", err)
+	}
+	connection, err := manualConnectionFor(connections, req)
+	if err != nil {
+		return err
+	}
+	if connection != nil {
+		if _, err := b.nm.ActivateConnection(connection, wifi, nil); err != nil {
+			return fmt.Errorf("services: activate saved Wi-Fi profile: %w", err)
+		}
+		return nil
+	}
+	if _, err := b.nm.AddAndActivateConnection(settings, wifi); err != nil {
+		return fmt.Errorf("services: add and activate manually entered network: %w", err)
+	}
+	return nil
+}
+
+func manualConnectionFor(connections []gnm.Connection, req ManualNetworkRequest) (gnm.Connection, error) {
+	for _, connection := range connections {
+		profile, err := connection.GetSettings()
+		if err != nil {
+			return nil, fmt.Errorf("services: read saved network profile: %w", err)
+		}
+		if manualProfileMatches(profile, req) {
+			return connection, nil
+		}
+	}
+	return nil, nil
+}
+
+func manualProfileMatches(profile gnm.ConnectionSettings, req ManualNetworkRequest) bool {
+	connection := profile["connection"]
+	profileType, _ := connection["type"].(string)
+	if profileType != "802-11-wireless" {
+		return false
+	}
+	if ssid, ok := settingsSSID(profile); !ok || ssid != req.SSID {
+		return false
+	}
+	wireless := profile["802-11-wireless"]
+	mode, _ := wireless["mode"].(string)
+	if mode != "" && mode != "infrastructure" {
+		return false
+	}
+	// A visible profile can skip the hidden-network probe requested by this path.
+	hidden, _ := wireless["hidden"].(bool)
+	if !hidden {
+		return false
+	}
+	security, hasSecurity := profile["802-11-wireless-security"]
+	switch req.Security {
+	case ManualSecurityOpen:
+		return !hasSecurity
+	case ManualSecurityWPAPersonal:
+		keyMgmt, _ := security["key-mgmt"].(string)
+		return hasSecurity && keyMgmt == "wpa-psk"
+	default:
+		return false
+	}
+}
+
+func (b *nmBackend) VPNProfiles() ([]VPNProfile, error) {
+	connections, err := b.settings.ListConnections()
+	if err != nil {
+		return nil, fmt.Errorf("services: list NetworkManager profiles: %w", err)
+	}
+	settings := make([]gnm.ConnectionSettings, 0, len(connections))
+	for _, connection := range connections {
+		profile, err := connection.GetSettings()
+		if err != nil {
+			return nil, fmt.Errorf("services: read NetworkManager profile settings: %w", err)
+		}
+		settings = append(settings, profile)
+	}
+	active, err := b.nm.GetPropertyActiveConnections()
+	if err != nil {
+		return nil, fmt.Errorf("services: list active NetworkManager connections: %w", err)
+	}
+	states := make(map[string]VPNStatus)
+	for _, connection := range active {
+		isVPN, err := connection.GetPropertyVPN()
+		if err != nil {
+			return nil, fmt.Errorf("services: read active NetworkManager connection type: %w", err)
+		}
+		if !isVPN {
+			continue
+		}
+		uuid, err := connection.GetPropertyUUID()
+		if err != nil {
+			return nil, fmt.Errorf("services: read active NetworkManager connection identity: %w", err)
+		}
+		state, err := connection.GetPropertyState()
+		if err != nil {
+			return nil, fmt.Errorf("services: read active NetworkManager connection state: %w", err)
+		}
+		switch state {
+		case gnm.NmActiveConnectionStateActivating:
+			states[uuid] = VPNConnecting
+		case gnm.NmActiveConnectionStateActivated:
+			states[uuid] = VPNConnected
+		case gnm.NmActiveConnectionStateDeactivating:
+			states[uuid] = VPNDisconnecting
+		}
+	}
+	return nmVPNProfilesFromSettings(settings, states), nil
+}
+
+func nmVPNProfilesFromSettings(settings []gnm.ConnectionSettings, states map[string]VPNStatus) []VPNProfile {
+	profiles := make([]VPNProfile, 0)
+	for _, setting := range settings {
+		connection := setting["connection"]
+		profileType, _ := connection["type"].(string)
+		uuid, _ := connection["uuid"].(string)
+		if profileType != "vpn" || !validVPNUUID(uuid) {
+			continue
+		}
+		name, _ := connection["id"].(string)
+		if name == "" {
+			name = uuid
+		}
+		status, ok := states[uuid]
+		if !ok {
+			status = VPNDisconnected
+		}
+		profiles = append(profiles, VPNProfile{UUID: uuid, Name: name, Status: status})
+	}
+	return profiles
+}
+
+func (b *nmBackend) ConnectVPN(uuid string) error {
+	connection, err := b.vpnConnection(uuid)
+	if err != nil {
+		return err
+	}
+	if connection == nil {
+		return fmt.Errorf("services: installed VPN profile not found")
+	}
+	if _, err := b.nm.ActivateConnection(connection, nil, nil); err != nil {
+		return fmt.Errorf("services: activate VPN profile: %w", err)
+	}
+	return nil
+}
+
+func (b *nmBackend) DisconnectVPN(uuid string) error {
+	active, err := b.nm.GetPropertyActiveConnections()
+	if err != nil {
+		return fmt.Errorf("services: list active NetworkManager connections: %w", err)
+	}
+	for _, connection := range active {
+		isVPN, err := connection.GetPropertyVPN()
+		if err != nil {
+			return fmt.Errorf("services: read active NetworkManager connection type: %w", err)
+		}
+		if !isVPN {
+			continue
+		}
+		activeUUID, err := connection.GetPropertyUUID()
+		if err != nil {
+			return fmt.Errorf("services: read active NetworkManager connection identity: %w", err)
+		}
+		if activeUUID != uuid {
+			continue
+		}
+		if err := b.nm.DeactivateConnection(connection); err != nil {
+			return fmt.Errorf("services: deactivate VPN profile: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("services: VPN profile is not connected")
+}
+
+func (b *nmBackend) vpnConnection(uuid string) (gnm.Connection, error) {
+	connections, err := b.settings.ListConnections()
+	if err != nil {
+		return nil, fmt.Errorf("services: list NetworkManager profiles: %w", err)
+	}
+	for _, connection := range connections {
+		settings, err := connection.GetSettings()
+		if err != nil {
+			return nil, fmt.Errorf("services: read NetworkManager profile settings: %w", err)
+		}
+		profile := nmVPNProfilesFromSettings([]gnm.ConnectionSettings{settings}, nil)
+		if len(profile) == 1 && profile[0].UUID == uuid {
+			return connection, nil
+		}
+	}
+	return nil, nil
+}
+
 func (b *nmBackend) Forget(ssid string) error {
 	conn := b.connectionFor(ssid)
 	if conn == nil {

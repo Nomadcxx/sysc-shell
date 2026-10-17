@@ -75,11 +75,16 @@ func TestKernelStateReadsWhatTheKernelKnows(t *testing.T) {
 
 func TestTheKernelTierRefusesEveryWriteNamingItself(t *testing.T) {
 	be := newKernelBackend(kernelFixture(map[string]string{"eth0": "up"}, nil, defaultRoute("eth0"), ""), func(string) string { return "" })
+	_, vpnListErr := be.VPNProfiles()
 	for name, err := range map[string]error{
-		"scan":     be.Scan(),
-		"radio":    be.SetWirelessEnabled(true),
-		"activate": be.Activate(AccessPoint{SSID: "x"}),
-		"forget":   be.Forget("x"),
+		"scan":           be.Scan(),
+		"radio":          be.SetWirelessEnabled(true),
+		"activate":       be.Activate(AccessPoint{SSID: "x"}),
+		"manual join":    be.ConnectManual(ManualNetworkRequest{SSID: "hidden", Security: ManualSecurityOpen}),
+		"vpn list":       vpnListErr,
+		"vpn connect":    be.ConnectVPN("11111111-1111-4111-8111-111111111111"),
+		"vpn disconnect": be.DisconnectVPN("11111111-1111-4111-8111-111111111111"),
+		"forget":         be.Forget("x"),
 	} {
 		if !errors.Is(err, errKernelReadOnly) || !strings.Contains(err.Error(), "NetworkManager is not running") {
 			t.Errorf("%s: %v, want the read-only tier named", name, err)
