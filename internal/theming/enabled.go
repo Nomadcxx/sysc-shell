@@ -500,6 +500,20 @@ var templateTargets = map[string]templateTarget{
 			}}
 		},
 	},
+	"gtk3": {
+		block: func(h string) (string, string, string) {
+			return joined(h, ".config", "gtk-3.0", "gtk.css"),
+				"/* >>> sysc-shell gtk3 >>> */", "/* <<< sysc-shell gtk3 <<< */"
+		},
+		directives: func(string) []directive { return nil },
+	},
+	"gtk4": {
+		block: func(h string) (string, string, string) {
+			return joined(h, ".config", "gtk-4.0", "gtk.css"),
+				"/* >>> sysc-shell gtk4 >>> */", "/* <<< sysc-shell gtk4 <<< */"
+		},
+		directives: func(string) []directive { return nil },
+	},
 	"qt": {
 		sidecar: func(h string) []string {
 			return []string{

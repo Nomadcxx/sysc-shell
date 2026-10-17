@@ -1061,7 +1061,7 @@ func seedEntry(cfg config.Config, custom, names []string) Entry {
 func (r *Registry) addTemplateEntries() {
 	for _, name := range []string{
 		"alacritty", "foot", "ghostty", "kitty", "wezterm", "niri",
-		"qt", "kcolorscheme", "helix",
+		"gtk3", "gtk4", "qt", "kcolorscheme", "helix",
 		"btop", "cava", "starship",
 	} {
 		// GH #7: only complete templates get a toggle; a stub would brick the
@@ -1069,8 +1069,15 @@ func (r *Registry) addTemplateEntries() {
 		if !theming.Complete(name) {
 			continue
 		}
+		label := name
+		switch name {
+		case "gtk3":
+			label = "GTK 3"
+		case "gtk4":
+			label = "GTK 4"
+		}
 		r.entries = append(r.entries, Entry{
-			Path: "theme.templates." + name, Label: name, Section: "Templates", Group: "Applications", Kind: KindBool,
+			Path: "theme.templates." + name, Label: label, Section: "Templates", Group: "Applications", Kind: KindBool,
 			Describe: "Write this application's colours when the theme changes.",
 			Get:      getBool(func(c config.Config) bool { return c.TemplateEnabled(name) }),
 			Set: setBool("theme.templates."+name, func(c *config.Config, b bool) {
