@@ -772,6 +772,51 @@ func TestRestoreEffectReturnsToPriorStill(t *testing.T) {
 	}
 }
 
+func TestServiceRestoreEffectPersistsStillAndDoesNotReplayEffect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	newService := func(engine *fakeEngine) *Service {
+		return NewService(ServiceConfig{
+			Engine:      engine,
+			Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+			Connectors:  []string{"DP-1"},
+			PersistPath: path,
+		})
+	}
+
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newService(engine)
+	t.Cleanup(svc.Close)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/still.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/still.png" })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStatic })
+
+	want := Assignment{Kind: KindImage, Path: "/w/still.png", DesiredPlayback: StateStatic}
+	if got := snap.Assignments["DP-1"]; got != want {
+		t.Fatalf("restored assignment = %+v, want static still %+v", got, want)
+	}
+	saved, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatalf("load restored assignments: %v", err)
+	}
+	if got := saved["DP-1"]; got != want {
+		t.Fatalf("persisted assignment = %+v, want static still %+v", got, want)
+	}
+
+	svc.Close()
+	restartEngine := newFakeEngine()
+	restarted := newService(restartEngine)
+	t.Cleanup(restarted.Close)
+	awaitSnapshot(t, restarted, func(s Snapshot) bool {
+		return s.Assignments["DP-1"] == want &&
+			s.Runtime["DP-1"].State == StateStatic &&
+			slices.Equal(restartEngine.appliedPaths(), []string{"/w/still.png"})
+	})
+}
+
 func TestServicePauseAllReachesEachPlayer(t *testing.T) {
 	engine := newFakeEngine()
 	svc := newTestService(t, engine)

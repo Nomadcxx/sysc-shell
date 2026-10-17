@@ -172,6 +172,16 @@ func TestRuntimeRecordsTheEngineThatPainted(t *testing.T) {
 	}
 }
 
+func TestSetRestoredClearsAssignmentWithoutStill(t *testing.T) {
+	s := newTestStore()
+	commitAll(t, s, s.Apply("DP-1", "/w/without-still.mp4", KindVideo), "")
+
+	s.SetRestored("DP-1", "swaybg")
+	if _, ok := s.Assignment("DP-1"); ok {
+		t.Fatal("restored output without a still must have no persisted assignment")
+	}
+}
+
 // An effect has no image of its own, so committing one records the still the
 // output showed before it. Restore hands that to the static fallback instead
 // of leaving the output blank.
