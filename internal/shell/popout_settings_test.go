@@ -80,6 +80,211 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 	}
 }
 
+func TestSettingsExternalReloadRefreshesOpenControl(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	initial := findSettingsControl(h.root, "bar.edge")
+	if initial == nil || initial.Text != "Top" {
+		reg.mu.Unlock()
+		t.Fatalf("initial Edge control = %+v, want Top", initial)
+	}
+	reg.mu.Unlock()
+
+	for len(reg.invalidations) > 0 {
+		<-reg.invalidations
+	}
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	wantSurface := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelSettings)}
+	published := false
+	for len(reg.invalidations) > 0 {
+		if got := <-reg.invalidations; got == wantSurface {
+			published = true
+		}
+	}
+	if !published {
+		t.Fatalf("config adoption did not invalidate Settings surface %q", wantSurface.SurfaceID)
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil {
+		t.Fatal("reloaded Settings tree has no Edge control")
+	} else if edge.Text != "Right" {
+		t.Fatalf("reloaded Edge control = %q, want Right", edge.Text)
+	}
+}
+
+func TestSettingsRebuildFallsBackWhenFocusedControlDisappears(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.query = "edge"
+	h.search = ui.NewField("edge")
+	reg.rebuildPanel(h)
+	edge := findSettingsControl(h.root, "bar.edge")
+	if edge == nil {
+		reg.mu.Unlock()
+		t.Fatal("search did not render the Edge control")
+	}
+	h.setFocus(edge)
+	h.query = "city"
+	h.search = ui.NewField("city")
+	reg.rebuildPanel(h)
+	defer reg.mu.Unlock()
+
+	focused := h.focused()
+	if focused == nil || focused != h.focus[0] || focused.Name != "Search" {
+		t.Fatalf("focus after Edge disappeared = %+v, want the default Search field", focused)
+	}
+}
+
+func TestSettingsExternalReloadPreservesViewState(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	h.query = "edge"
+	h.search = ui.NewField("edge")
+	h.errLabel = "local write error"
+	reg.rebuildPanel(h)
+	edge := findSettingsControl(h.root, "bar.edge")
+	if edge == nil {
+		reg.mu.Unlock()
+		t.Fatal("search did not render the Edge control")
+	}
+	h.setFocus(edge)
+	for _, n := range walk(h.root) {
+		if n.Kind == ui.KindScroll && n.Key == settingsBodyKey {
+			n.ScrollOffset = 48
+			break
+		}
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	assertView := func() {
+		t.Helper()
+		if h.section != "Bar" || h.settingsPage != "Appearance" {
+			t.Fatalf("page changed to %q/%q", h.section, h.settingsPage)
+		}
+		if h.query != "edge" || h.search == nil || h.search.Text != "edge" {
+			t.Fatalf("search changed to query=%q field=%v", h.query, h.search)
+		}
+		if h.errLabel != "local write error" {
+			t.Fatalf("local write error changed to %q", h.errLabel)
+		}
+		foundError := false
+		for _, n := range walk(h.root) {
+			foundError = foundError || n.Text == "local write error"
+		}
+		if !foundError {
+			t.Fatal("local write error disappeared from the Settings tree")
+		}
+		if got := settingsScrollOffset(h.root); got != 48 {
+			t.Fatalf("scroll offset = %d, want 48", got)
+		}
+		if focused := h.focused(); focused == nil || focused.Action != "set:bar.edge" {
+			t.Fatalf("focused control = %+v, want Edge", focused)
+		}
+		if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Right" {
+			t.Fatalf("searched Edge control after reload = %+v, want Right", edge)
+		}
+	}
+	reg.mu.Lock()
+	assertView()
+	reg.mu.Unlock()
+
+	noop, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noop.Commit()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	assertView()
+}
+
+func TestSettingsExternalReloadRefreshesOpenTextField(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Weather"
+	reg.rebuildPanel(h)
+	initial := findSettingsControl(h.root, "weather.city")
+	if initial == nil || initial.Kind != ui.KindTextField {
+		reg.mu.Unlock()
+		t.Fatalf("initial City control = %+v, want text field", initial)
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Weather.City = "Melbourne"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if city := findSettingsControl(h.root, "weather.city"); city == nil || city.Text != "Melbourne" || city.Cursor != len("Melbourne") {
+		t.Fatalf("reloaded City control = %+v, want Melbourne", city)
+	}
+}
+
+func findSettingsControl(root *ui.Node, path string) *ui.Node {
+	for _, n := range walk(root) {
+		if n.Action == "set:"+path {
+			return n
+		}
+	}
+	return nil
+}
+
 func TestNightLightModeRendersAsSegmentedControl(t *testing.T) {
 	h := newSettingsHost()
 	h.section = "Night Light"

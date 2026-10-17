@@ -1324,6 +1324,20 @@ func settingsField(h *PanelHost, e settings.Entry, raw string, width int) *ui.No
 	return n
 }
 
+func (h *PanelHost) reseedSettingsFields() {
+	for path, field := range h.fields {
+		entry := h.set.ByPath(path)
+		if field == nil || entry == nil || entry.Get == nil {
+			delete(h.fields, path)
+			continue
+		}
+		value := entry.Get(h.draft)
+		if field.Text != value {
+			field.SyncFrom(&ui.Node{Text: value, Cursor: len(value)})
+		}
+	}
+}
+
 // settingsValidHex asks the loader's own rule rather than restating it. The
 // field marks a colour good as it is typed and the entry's setter decides
 // whether the write is accepted; if those were two patterns, a value could
