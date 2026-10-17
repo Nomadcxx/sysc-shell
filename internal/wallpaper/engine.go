@@ -373,7 +373,7 @@ func clearDeadSocketIfPresent(connector, path string) error {
 	if !dead {
 		return fmt.Errorf("wallpaper: %s socket is not owned by this shell", connector)
 	}
-	if err := removeSocketIfSame(path, info); err != nil {
+	if err := removeStoppedSocketIfSame(path, info); err != nil {
 		return fmt.Errorf("wallpaper: clear stale %s socket: %w", connector, err)
 	}
 	return nil
@@ -394,6 +394,27 @@ func removeSocketIfSame(path string, expected os.FileInfo) error {
 		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped", path)
 	}
 	return os.Remove(path)
+}
+
+// removeStoppedSocketIfSame protects cleanup after a process exit from a live
+// replacement that reused the original socket's inode.
+func removeStoppedSocketIfSame(path string, expected os.FileInfo) error {
+	current, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current.Mode()&os.ModeSocket == 0 {
+		return removeSocketIfSame(path, expected)
+	}
+	if _, err := socketPeerPID(path); err == nil {
+		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped: still live", path)
+	} else if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("wallpaper: cannot verify socket %s is stopped: %w", path, err)
+	}
+	return removeSocketIfSame(path, expected)
 }
 
 func (e *gslapperEngine) socketFile(connector string) os.FileInfo {
@@ -647,7 +668,7 @@ func (e *gslapperEngine) launch(connector, socket string, argv []string) error {
 		info, _ := socketFileIfOwned(socket, tracked)
 		_ = forceStop(tracked)
 		_ = waitProcess(tracked, stopWait)
-		_ = removeSocketIfSame(socket, info)
+		_ = removeStoppedSocketIfSame(socket, info)
 		return errEngineClosed
 	}
 	e.owned[connector] = tracked
@@ -677,7 +698,7 @@ func (e *gslapperEngine) abortLaunch(connector string, proc Process, socket stri
 	}
 	_ = forceStop(proc)
 	_ = waitProcess(proc, stopWait)
-	_ = removeSocketIfSame(socket, info)
+	_ = removeStoppedSocketIfSame(socket, info)
 	e.clearOwned(connector, proc)
 }
 
@@ -737,7 +758,7 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 			return nil
 		}
 		if info, dead := deadSocketFile(socket); dead {
-			return removeSocketIfSame(socket, info)
+			return removeStoppedSocketIfSame(socket, info)
 		}
 		return fmt.Errorf("wallpaper: %s still holds %s and is not ours to stop", connector, socket)
 	}
@@ -759,7 +780,7 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 			return fmt.Errorf("wallpaper: process on %s did not exit", connector)
 		}
 	}
-	if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
+	if err := removeStoppedSocketIfSame(socket, e.socketFile(connector)); err != nil {
 		e.clearOwned(connector, proc)
 		return restoreAfterStopError{cause: err}
 	}
@@ -1135,7 +1156,7 @@ func (e *gslapperEngine) Close() {
 			if info == nil {
 				info, _ = deadSocketFile(socket)
 			}
-			_ = removeSocketIfSame(socket, info)
+			_ = removeStoppedSocketIfSame(socket, info)
 		}(connector, proc)
 	}
 	for _, proc := range fallbacks {

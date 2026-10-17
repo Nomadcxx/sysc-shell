@@ -132,9 +132,7 @@ func peerCredentials(conn *net.UnixConn) (*unix.Ucred, error) {
 	return credential, nil
 }
 
-// socketPeerPID is used only while recording a socket that never reached the
-// ready protocol. It gives cleanup the same process identity proof as normal
-// IPC without sending a command.
+// socketPeerPID reads the listening process identity without sending a command.
 func socketPeerPID(socket string) (int, error) {
 	conn, err := net.DialTimeout("unix", socket, ipcTimeout)
 	if err != nil {

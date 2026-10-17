@@ -938,6 +938,27 @@ func TestRemoveSocketIfSameRefusesReplacedSocket(t *testing.T) {
 	}
 }
 
+func TestRemoveStoppedSocketIfSameRefusesLiveSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gslapper-DP-1.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+
+	err = removeStoppedSocketIfSame(path, info)
+	if err == nil || !strings.Contains(err.Error(), "still live") {
+		t.Fatalf("removeStoppedSocketIfSame on a live socket: got %v, want a refusal", err)
+	}
+	if _, err := socketPeerPID(path); err != nil {
+		t.Fatalf("live socket stopped answering after cleanup refusal: %v", err)
+	}
+}
+
 func TestEngineChildExitBeforeReady(t *testing.T) {
 	h := newEngineHarness(t)
 	h.mu.Lock()
