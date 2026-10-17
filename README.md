@@ -6,9 +6,14 @@
 A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate daemons for
 notifications, clipboard history and the system tray.
 
+<details>
+<summary>Video tour</summary>
+
 https://github.com/user-attachments/assets/7cadf7b9-6fe5-4d53-b7d6-757e4082b68a
 
 <p align="center"><sub>Settings, Bar settings and the system monitor opening over a static wallpaper, bar included. <a href="assets/tour.mp4">Download the 1080p file</a> (19 s).</sub></p>
+
+</details>
 
 ## Quick Links
 
@@ -20,31 +25,36 @@ https://github.com/user-attachments/assets/7cadf7b9-6fe5-4d53-b7d6-757e4082b68a
 
 Captured from fixture data with invented names, so nothing here is a real account, network or device. The wallpaper picker is the exception: it shows the author's own wallpaper library.
 
+<details>
+<summary>Screenshot gallery</summary>
+
 <table>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396"><br><sub>Control centre: Home</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-media.png" alt="Control centre: Media" width="396"><br><sub>Control centre: Media</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396" loading="lazy"><br><sub>Control centre: Home</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-media.png" alt="Control centre: Media" width="396" loading="lazy"><br><sub>Control centre: Media</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-settings.png" alt="Settings: Appearance" width="396"><br><sub>Settings: Appearance</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-monitor.png" alt="System monitor" width="396"><br><sub>System monitor</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-settings.png" alt="Settings: Appearance" width="396" loading="lazy"><br><sub>Settings: Appearance</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-monitor.png" alt="System monitor" width="396" loading="lazy"><br><sub>System monitor</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396"><br><sub>Launcher</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396"><br><sub>Weather</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396" loading="lazy"><br><sub>Launcher</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396" loading="lazy"><br><sub>Weather</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-wifi.png" alt="Wi-Fi" width="396"><br><sub>Wi-Fi</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-bluetooth.png" alt="Bluetooth" width="396"><br><sub>Bluetooth</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-wifi.png" alt="Wi-Fi" width="396" loading="lazy"><br><sub>Wi-Fi</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bluetooth.png" alt="Bluetooth" width="396" loading="lazy"><br><sub>Bluetooth</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396"><br><sub>Clipboard history</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396"><br><sub>Settings: Bar</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396" loading="lazy"><br><sub>Clipboard history</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396" loading="lazy"><br><sub>Settings: Bar</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396"><br><sub>Wallpaper picker</sub></td>
+    <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396" loading="lazy"><br><sub>Wallpaper picker</sub></td>
   </tr>
 </table>
+
+</details>
 
 ## Installation
 
