@@ -607,10 +607,11 @@ func enumerateBacklights(root, bin string) []brightnessDevice {
 	}
 	var out []brightnessDevice
 	for _, e := range ents {
-		if !e.IsDir() {
+		dir := filepath.Join(root, e.Name())
+		info, err := os.Stat(dir) // Follow the symlink used by /sys/class/backlight.
+		if err != nil || !info.IsDir() {
 			continue
 		}
-		dir := filepath.Join(root, e.Name())
 		if _, err := readIntFile(filepath.Join(dir, "brightness")); err != nil {
 			continue
 		}
@@ -656,7 +657,12 @@ func (d *sysfsDev) Step(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	_, err := runCmd(d.bin, "-d", d.name, "set", fmt.Sprintf("%+d%%", delta))
+	value := fmt.Sprintf("%+d%%", delta)
+	if delta < 0 {
+		// brightnessctl writes a downward percentage delta as N%-.
+		value = fmt.Sprintf("%d%%-", -delta)
+	}
+	_, err := runCmd(d.bin, "-d", d.name, "set", value)
 	return err
 }
 
