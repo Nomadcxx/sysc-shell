@@ -127,8 +127,8 @@ type Engine interface {
 	RefreshTerminalCatalog() Capabilities
 }
 
-// stoppedRestoreFailure marks a fallback error that happened after the
-// animated engine stopped, so the service can persist the static assignment.
+// stoppedRestoreFailure marks a Restore error returned after the animated
+// engine stopped, so the service can persist the static assignment.
 type stoppedRestoreFailure interface {
 	error
 	restoreStopped()

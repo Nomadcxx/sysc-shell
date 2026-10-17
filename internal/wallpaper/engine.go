@@ -31,8 +31,8 @@ type activeWallpaper struct {
 	engine     string
 }
 
-// restoreAfterStopError reports a fallback failure after the owned animated
-// engine stopped, allowing the service to persist the requested still.
+// restoreAfterStopError marks a failure after the owned animated engine
+// stopped, allowing the service to persist the requested still.
 type restoreAfterStopError struct{ cause error }
 
 func (e restoreAfterStopError) Error() string { return e.cause.Error() }
@@ -751,27 +751,21 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 		}
 	}
 
-	if waitProcess(proc, 100*time.Millisecond) {
-		if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
-			e.clearOwned(connector, proc)
-			return err
+	if !waitProcess(proc, 100*time.Millisecond) {
+		if err := forceStop(proc); err != nil {
+			return fmt.Errorf("wallpaper: stop process on %s: %w", connector, err)
 		}
-		e.clearOwned(connector, proc)
-		return nil
-	}
-	if err := forceStop(proc); err != nil {
-		return fmt.Errorf("wallpaper: stop process on %s: %w", connector, err)
-	}
-	if !waitProcess(proc, stopWait) {
-		if _, err := os.Stat(socket); os.IsNotExist(err) {
-			e.clearOwned(connector, proc)
-			return nil
+		if !waitProcess(proc, stopWait) {
+			if _, err := os.Stat(socket); os.IsNotExist(err) {
+				e.clearOwned(connector, proc)
+				return nil
+			}
+			return fmt.Errorf("wallpaper: process on %s did not exit", connector)
 		}
-		return fmt.Errorf("wallpaper: process on %s did not exit", connector)
 	}
 	if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
 		e.clearOwned(connector, proc)
-		return err
+		return restoreAfterStopError{cause: err}
 	}
 	e.clearOwned(connector, proc)
 	return nil

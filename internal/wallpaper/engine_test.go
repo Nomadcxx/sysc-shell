@@ -20,6 +20,18 @@ type fakeProcess struct {
 	err     error
 }
 
+type failedStopProcess struct {
+	exit chan struct{}
+	err  error
+}
+
+func (p *failedStopProcess) Wait() error {
+	<-p.exit
+	return nil
+}
+
+func (p *failedStopProcess) Stop() error { return p.err }
+
 func newFakeProcess() *fakeProcess { return &fakeProcess{exit: make(chan struct{})} }
 
 // exitedProcess is a one-shot client that has already finished with err.
@@ -800,18 +812,53 @@ func TestEngineRestoreClearsStaleSocket(t *testing.T) {
 	}
 }
 
-func TestEngineStopOwnedRefusesForeignLiveSocket(t *testing.T) {
+func TestEngineRestoreRefusesForeignLiveSocketWithoutStoppedMarker(t *testing.T) {
 	h := newEngineHarness(t)
 	l, err := net.Listen("unix", h.socket("DP-1"))
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	defer l.Close()
-	if err := h.eng.stopOwned("DP-1", h.socket("DP-1")); err == nil || !strings.Contains(err.Error(), "not ours to stop") {
-		t.Fatalf("stopOwned over a live foreign socket: got %v, want a refusal", err)
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "not ours to stop") {
+		t.Fatalf("restore over a live foreign socket: got %v, want a refusal", err)
+	}
+	var stopped stoppedRestoreFailure
+	if errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, must not mark an unowned live socket stopped", err)
 	}
 	if _, err := os.Lstat(h.socket("DP-1")); err != nil {
 		t.Fatalf("live foreign socket was removed: %v", err)
+	}
+}
+
+func TestEngineRestoreDoesNotMarkProcessStopFailure(t *testing.T) {
+	h := newEngineHarness(t)
+	socket := h.socket("DP-1")
+	deadSocketFileFor(t, socket)
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatalf("stat owned socket: %v", err)
+	}
+	proc := &failedStopProcess{exit: make(chan struct{}), err: errors.New("stop refused")}
+	owned := watchProcess(proc)
+	h.eng.owned["DP-1"] = owned
+	h.eng.socketFiles = map[string]os.FileInfo{"DP-1": info}
+	h.eng.request = func(string, string, time.Duration) (string, error) {
+		return "", errors.New("IPC stop failed")
+	}
+	defer close(proc.exit)
+
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "stop process on DP-1: stop refused") {
+		t.Fatalf("restore error = %v, want process stop failure", err)
+	}
+	var stopped stoppedRestoreFailure
+	if errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, must not mark a process that did not stop", err)
+	}
+	if _, err := os.Lstat(socket); err != nil {
+		t.Fatalf("socket was removed after failed process stop: %v", err)
 	}
 }
 
@@ -1366,6 +1413,51 @@ func TestEngineRestoreMarksFallbackFailureAfterStopping(t *testing.T) {
 	}
 	if _, err := os.Stat(h.socket("DP-1")); !os.IsNotExist(err) {
 		t.Fatalf("owned engine socket still exists after restore failure: %v", err)
+	}
+}
+
+func TestEngineRestoreMarksSocketCleanupFailureAfterStopping(t *testing.T) {
+	h := newEngineHarness(t)
+	socket := h.socket("DP-1")
+	deadSocketFileFor(t, socket)
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatalf("stat owned socket: %v", err)
+	}
+	proc := watchProcess(newFakeProcess())
+	h.eng.owned["DP-1"] = proc
+	h.eng.socketFiles = map[string]os.FileInfo{"DP-1": info}
+
+	var replacement net.Listener
+	h.eng.request = func(path, command string, _ time.Duration) (string, error) {
+		if command != "stop" {
+			return "OK", nil
+		}
+		if err := os.Remove(path); err != nil {
+			return "", err
+		}
+		replacement, err = net.Listen("unix", path)
+		if err != nil {
+			return "", err
+		}
+		return "OK", proc.Stop()
+	}
+	defer func() {
+		if replacement != nil {
+			_ = replacement.Close()
+		}
+	}()
+
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "changed while it was stopped") {
+		t.Fatalf("restore error = %v, want socket cleanup failure", err)
+	}
+	var stopped stoppedRestoreFailure
+	if !errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, want marker that the owned engine stopped", err)
+	}
+	if _, err := os.Lstat(socket); err != nil {
+		t.Fatalf("replacement socket was removed: %v", err)
 	}
 }
 
