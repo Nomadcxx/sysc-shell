@@ -326,7 +326,18 @@ func runArgvDefault(argv []string) error {
 		defer cancel()
 		return exec.CommandContext(ctx, path, argv[1:]...).Run()
 	}
-	return exec.Command(path, argv[1:]...).Start()
+	return startArgvDetached(path, argv[1:])
+}
+
+// startArgvDetached reaps a launched process after it exits without waiting on
+// the caller for the process lifetime.
+func startArgvDetached(path string, args []string) error {
+	cmd := exec.Command(path, args...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 func startInhibitDefault() (io.Closer, error) {

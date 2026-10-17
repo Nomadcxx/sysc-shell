@@ -2,13 +2,16 @@ package shell
 
 import (
 	"errors"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -934,6 +938,24 @@ func TestRunArgvDefaultRefusesToLaunchFromATestBinary(t *testing.T) {
 			t.Errorf("runArgvDefault(%v) launched from a test binary", argv)
 		}
 	}
+}
+
+func TestStartArgvDetachedReapsExitedChild(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	if err := startArgvDetached("/bin/sh", []string{"-c", `printf '%s' "$$" > "$1"`, "sh", pidFile}); err != nil {
+		t.Fatal(err)
+	}
+
+	pid := 0
+	waitFor(t, func() bool {
+		data, err := os.ReadFile(pidFile)
+		if err != nil {
+			return false
+		}
+		pid, err = strconv.Atoi(strings.TrimSpace(string(data)))
+		return err == nil && pid > 0
+	})
+	waitFor(t, func() bool { return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) })
 }
 
 // TestSessionPanelHoldsTheBatteryAndProfileCards: with a battery present, the
