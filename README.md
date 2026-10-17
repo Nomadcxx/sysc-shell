@@ -83,6 +83,31 @@ official plugin bundle.
 
 [Documentation](https://nomadcxx.github.io/sysc/docs/).
 
+### Nix
+
+The guided installer and the AUR package remain the primary paths. Nix is a third option for
+home-manager users:
+
+```nix
+{
+  inputs.sysc-shell.url = "github:Nomadcxx/sysc-shell";
+
+  # In home-manager: programs.sysc-shell.enable = true;
+  # In a standalone flake, or with the overlay instead:
+  # nixpkgs.overlays = [ inputs.sysc-shell.overlays.default ];
+  # programs.sysc-shell.package = pkgs.sysc-shell;
+}
+```
+
+The module reuses the repository's own `packaging/systemd/sysc-shell.service` with `ExecStart`
+pointed at the store, so there is one unit and one install story. No release is tagged yet, so
+`sysc-shell --version` reports `development (<source revision>)`. Nothing seeds or rewrites
+`config.json`, and `scripts/deploy` does not apply: a Nix install starts a store path, not the
+binary under `~/.local/bin`.
+
+Not covered, on purpose: no CI workflow builds the flake, no companion daemon is packaged, and
+the deploy-guard drop-in is not installed.
+
 ### Build from source
 
 ```bash
