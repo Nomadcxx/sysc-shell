@@ -212,7 +212,9 @@ func TestSurfaceTreesAskForNoSyntheticBold(t *testing.T) {
 	for _, id := range []PanelID{PanelMonitor, PanelSession, PanelClock, PanelLauncher, PanelNotifications} {
 		t.Run(id.String(), func(t *testing.T) {
 			t.Parallel()
-			_, h := panelAtDensity(t, id, theme.DensityDefault)
+			r, h := panelAtDensity(t, id, theme.DensityDefault)
+			r.mu.Lock()
+			defer r.mu.Unlock()
 			walkNodes(h.root, func(n *ui.Node) {
 				if n.Kind == ui.KindText && n.Bold {
 					t.Errorf("%q asks for synthetic bold; name a text role instead", n.Text)
