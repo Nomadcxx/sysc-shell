@@ -1668,6 +1668,58 @@ func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *test
 	}
 }
 
+func TestSettingsStaleTimerDoesNotHideReplacementFromFlush(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := NewRegistry(base)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = 10 * time.Millisecond
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
+	staleTimer := h.writeTimer
+	time.Sleep(50 * time.Millisecond)
+	if staleTimer.Stop() {
+		reg.mu.Unlock()
+		t.Fatal("stale timer callback did not start while the registry lock was held")
+	}
+
+	reg.writeDelay = time.Hour
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "latest"})
+	replacement := h.writeTimer
+	reg.mu.Unlock()
+	time.Sleep(10 * time.Millisecond)
+
+	reg.mu.Lock()
+	if h.writeTimer != replacement {
+		reg.mu.Unlock()
+		t.Fatal("stale callback cleared the replacement timer")
+	}
+	h.flushDraft(reg)
+	reg.mu.Unlock()
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "latest" {
+		t.Fatalf("flush wrote locker %q, want latest", got.Session.Locker)
+	}
+}
+
 // TestSettingsTogglesWriteAtOnce is the other half of D4: a decision the user
 // has finished making must not wait on a timer.
 func TestSettingsTogglesWriteAtOnce(t *testing.T) {

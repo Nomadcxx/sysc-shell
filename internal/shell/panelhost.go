@@ -4605,11 +4605,12 @@ func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 	if r != nil && r.writeDelay > 0 {
 		delay = r.writeDelay
 	}
-	h.writeTimer = time.AfterFunc(delay, func() {
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
 		r.mu.Lock()
-		if r.panelHosts[h.id] != h {
+		if r.panelHosts[h.id] != h || h.writeTimer != timer {
 			// The host was replaced while the edit was settling; its draft is
-			// no longer the one on screen.
+			// no longer the one on screen, or a newer timer replaced this one.
 			r.mu.Unlock()
 			return
 		}
@@ -4634,6 +4635,7 @@ func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 			return r.writeDebouncedSettingsChanges(h, changes, revision)
 		})
 	})
+	h.writeTimer = timer
 }
 
 func appendSettingsWriteChange(changes []settingsWriteChange, path, value string) []settingsWriteChange {
