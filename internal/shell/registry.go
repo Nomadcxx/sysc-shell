@@ -183,6 +183,8 @@ type Registry struct {
 	// transactions ordered. IPC setters read after taking it so concurrent
 	// edits preserve each other's config fields.
 	configWriteMu sync.Mutex
+	// settingsWriteMu guards pending Settings changes and invalidates them when a config reload replaces them.
+	settingsWriteMu sync.Mutex
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
 	writeDelay           time.Duration
@@ -2161,8 +2163,18 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					if h := r.panelHosts[id]; h != nil {
 						if id == PanelSettings {
 							h.invalidateSettingsBrowseIfChanged(cfg)
+							r.settingsWriteMu.Lock()
+							h.settingsWriteRevision++
+							h.settingsWriteChanges = nil
+							if h.writeTimer != nil {
+								h.writeTimer.Stop()
+								h.writeTimer = nil
+							}
+							h.draft = cfg.Clone()
+							r.settingsWriteMu.Unlock()
+						} else {
+							h.draft = cfg.Clone()
 						}
-						h.draft = cfg.Clone()
 						h.set = r.settingsForLocked(cfg)
 						if id == PanelSettings {
 							h.reseedSettingsFields()

@@ -1495,6 +1495,179 @@ func TestSettingsDebouncesFieldWrites(t *testing.T) {
 	}
 }
 
+func TestSettingsDebouncedWriteDoesNotOverwriteReloadedConfig(t *testing.T) {
+	base := config.Default()
+	base.Accessibility.ReducedMotion = true
+	base.Session.Locker = "old-locker"
+	reg := NewRegistry(base)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = 5 * time.Millisecond
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	// Hold the file writer after the debounce snapshots the draft. A successful
+	// external reload must invalidate that snapshot before it can write.
+	reg.configWriteMu.Lock()
+	reg.mu.Lock()
+	h.errLabel = "previous write failure"
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "stale locker"})
+	reg.mu.Unlock()
+
+	snapshotDeadline := time.NewTimer(time.Second)
+	defer snapshotDeadline.Stop()
+	for {
+		reg.mu.Lock()
+		snapshotPending := h.writeTimer != nil
+		reg.mu.Unlock()
+		if !snapshotPending {
+			break
+		}
+		select {
+		case <-snapshotDeadline.C:
+			reg.configWriteMu.Unlock()
+			t.Fatal("debounced write did not snapshot the draft")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	external := base.Clone()
+	external.Bar.Edge = "right"
+	if err := config.Write(path, external); err != nil {
+		reg.configWriteMu.Unlock()
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfig(external, nil)
+	if err != nil {
+		reg.configWriteMu.Unlock()
+		t.Fatal(err)
+	}
+	prepared.Commit()
+	for len(reg.invalidations) > 0 {
+		<-reg.invalidations
+	}
+	reg.configWriteMu.Unlock()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	wantSurface := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelSettings)}
+	for {
+		select {
+		case got := <-reg.invalidations:
+			if got == wantSurface {
+				goto written
+			}
+		case <-deadline.C:
+			t.Fatal("debounced write did not finish")
+		}
+	}
+
+written:
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bar.Edge != "right" || got.Session.Locker != base.Session.Locker {
+		t.Fatalf("stale Settings draft replaced external config: edge=%q locker=%q", got.Bar.Edge, got.Session.Locker)
+	}
+	if len(reloads) != 0 {
+		t.Fatal("discarded Settings draft queued a reload")
+	}
+	reg.mu.Lock()
+	errLabel := h.errLabel
+	reg.mu.Unlock()
+	if errLabel != "previous write failure" {
+		t.Fatalf("discarded Settings draft changed the local error to %q", errLabel)
+	}
+}
+
+func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := NewRegistry(base)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = 5 * time.Millisecond
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	// Keep the delayed worker behind its file-write lock while the external
+	// config is loaded. Letting the worker write before Commit reproduces the
+	// gap where a whole-draft write used to replace the external edit.
+	reg.configWriteMu.Lock()
+	writerLocked := true
+	t.Cleanup(func() {
+		if writerLocked {
+			reg.configWriteMu.Unlock()
+		}
+	})
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "settings-locker"})
+	reg.mu.Unlock()
+
+	snapshotDeadline := time.NewTimer(time.Second)
+	defer snapshotDeadline.Stop()
+	for {
+		reg.mu.Lock()
+		snapshotPending := h.writeTimer != nil
+		reg.mu.Unlock()
+		if !snapshotPending {
+			break
+		}
+		select {
+		case <-snapshotDeadline.C:
+			t.Fatal("debounced write did not snapshot the draft")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	external := base.Clone()
+	external.Bar.Edge = "right"
+	if err := config.Write(path, external); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfig(external, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.configWriteMu.Unlock()
+	writerLocked = false
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("debounced write did not finish")
+	}
+	prepared.Commit()
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bar.Edge != "right" || got.Session.Locker != "settings-locker" {
+		t.Fatalf("debounced write lost an external config edit: edge=%q locker=%q", got.Bar.Edge, got.Session.Locker)
+	}
+}
+
 // TestSettingsTogglesWriteAtOnce is the other half of D4: a decision the user
 // has finished making must not wait on a timer.
 func TestSettingsTogglesWriteAtOnce(t *testing.T) {
