@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -934,6 +935,39 @@ func TestRemoveSocketIfSameRefusesReplacedSocket(t *testing.T) {
 		t.Fatalf("removeSocketIfSame over a replaced socket: got %v, want a refusal", err)
 	}
 	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("live replacement socket was removed: %v", err)
+	}
+}
+
+func TestRemoveSocketIfSameRefusesReplacementAfterProbe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gslapper-DP-1.sock")
+	deadSocketFileFor(t, path)
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat dead socket: %v", err)
+	}
+
+	replacement := filepath.Join(dir, "replacement.sock")
+	listener, err := net.Listen("unix", replacement)
+	if err != nil {
+		t.Fatalf("listen replacement: %v", err)
+	}
+	defer listener.Close()
+
+	err = removeSocketIfSameWithPeerProbe(path, info, func(path string) (int, error) {
+		if err := os.Remove(path); err != nil {
+			return 0, err
+		}
+		if err := os.Rename(replacement, path); err != nil {
+			return 0, err
+		}
+		return 0, syscall.ECONNREFUSED
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed while it was stopped") {
+		t.Fatalf("removeSocketIfSame after replacement during probe: got %v, want a refusal", err)
+	}
+	if _, err := socketPeerPID(path); err != nil {
 		t.Fatalf("live replacement socket was removed: %v", err)
 	}
 }

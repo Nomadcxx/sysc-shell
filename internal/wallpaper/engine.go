@@ -380,6 +380,10 @@ func clearDeadSocketIfPresent(connector, path string) error {
 }
 
 func removeSocketIfSame(path string, expected os.FileInfo) error {
+	return removeSocketIfSameWithPeerProbe(path, expected, socketPeerPID)
+}
+
+func removeSocketIfSameWithPeerProbe(path string, expected os.FileInfo, peerProbe func(string) (int, error)) error {
 	current, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -397,13 +401,26 @@ func removeSocketIfSame(path string, expected os.FileInfo) error {
 		return fmt.Errorf("wallpaper: socket path %s changed type while it was stopped", path)
 	}
 	if current.Mode()&os.ModeSocket != 0 {
-		if _, err := socketPeerPID(path); err == nil {
+		if _, err := peerProbe(path); err == nil {
 			return fmt.Errorf("wallpaper: socket path %s changed while it was stopped: still live", path)
 		} else if errors.Is(err, os.ErrNotExist) {
 			return nil
 		} else if !errors.Is(err, syscall.ECONNREFUSED) {
 			return fmt.Errorf("wallpaper: cannot verify socket %s is stopped: %w", path, err)
 		}
+	}
+	current, err = os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(expected, current) {
+		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped", path)
+	}
+	if expected.Mode()&os.ModeSocket != 0 && current.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("wallpaper: socket path %s changed type while it was stopped", path)
 	}
 	return os.Remove(path)
 }
@@ -575,9 +592,9 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 		// A socket file with no listener is garbage from a killed run: no
 		// process owns it, so unlinking disturbs nobody. A live socket we do
 		// not own is still refused (D17/D18).
-		// ponytail: a noncooperating binder can still race the final probe-to-
-		// unlink window; eliminating it needs a protocol shared by every socket
-		// creator. Launch re-checks before binding.
+		// ponytail: a noncooperating binder can still race the final identity-
+		// check-to-unlink window; eliminating it needs a protocol shared by every
+		// socket creator. Launch re-checks before binding.
 		if err := clearDeadSocketIfPresent(job.Connector, socket); err != nil {
 			return "", err
 		}
