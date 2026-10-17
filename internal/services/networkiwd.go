@@ -196,7 +196,31 @@ func (b *iwdBackend) ConnectManual(req ManualNetworkRequest) error {
 	if err != nil {
 		return err
 	}
+	if path := t.manualNetwork(req); path != "" {
+		return b.bus.Call(path, iwdNetworkIface+".Connect")
+	}
 	return b.bus.ConnectHiddenNetwork(t.station, req.SSID)
+}
+
+func (t iwdTree) manualNetwork(req ManualNetworkRequest) dbus.ObjectPath {
+	wantType := ""
+	switch req.Security {
+	case ManualSecurityOpen:
+		wantType = "open"
+	case ManualSecurityWPAPersonal:
+		wantType = "psk"
+	default:
+		return ""
+	}
+	for path, ifaces := range t.objects {
+		if _, ok := ifaces[iwdNetworkIface]; !ok {
+			continue
+		}
+		if t.str(path, iwdNetworkIface, "Name") == req.SSID && t.str(path, iwdNetworkIface, "Type") == wantType {
+			return path
+		}
+	}
+	return ""
 }
 
 func (b *iwdBackend) Forget(ssid string) error {

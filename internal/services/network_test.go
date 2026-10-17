@@ -205,6 +205,81 @@ func TestNetworkSerializesDuplicateVPNControls(t *testing.T) {
 	}
 }
 
+type blockingVPNBackend struct {
+	*fakeBackend
+	connectStarted    chan struct{}
+	releaseConnect    <-chan struct{}
+	disconnectStarted chan struct{}
+}
+
+func (b *blockingVPNBackend) ConnectVPN(string) error {
+	close(b.connectStarted)
+	<-b.releaseConnect
+	return nil
+}
+
+func (b *blockingVPNBackend) DisconnectVPN(string) error {
+	close(b.disconnectStarted)
+	return nil
+}
+
+func TestNetworkDisconnectVPNCanCancelPendingConnect(t *testing.T) {
+	profile := VPNProfile{UUID: "11111111-1111-4111-8111-111111111111", Name: "Office", Status: VPNDisconnected}
+	releaseConnect := make(chan struct{})
+	var releaseOnce sync.Once
+	cleanup := func() { releaseOnce.Do(func() { close(releaseConnect) }) }
+	t.Cleanup(cleanup)
+	backend := &blockingVPNBackend{
+		fakeBackend:       &fakeBackend{vpns: []VPNProfile{profile}},
+		connectStarted:    make(chan struct{}),
+		releaseConnect:    releaseConnect,
+		disconnectStarted: make(chan struct{}),
+	}
+	network := NewNetwork(backend)
+	if err := network.RefreshVPNProfiles(); err != nil {
+		t.Fatal(err)
+	}
+
+	connectDone := make(chan error, 1)
+	go func() { connectDone <- network.ConnectVPN(profile.UUID) }()
+	select {
+	case <-backend.connectStarted:
+	case <-time.After(time.Second):
+		t.Fatal("VPN connect never started")
+	}
+
+	backend.fakeBackend.vpns[0].Status = VPNConnecting
+	if err := network.RefreshVPNProfiles(); err != nil {
+		t.Fatal(err)
+	}
+	disconnectDone := make(chan error, 1)
+	go func() { disconnectDone <- network.DisconnectVPN(profile.UUID) }()
+	select {
+	case err := <-disconnectDone:
+		if err != nil {
+			t.Fatalf("cancel pending VPN connect: %v", err)
+		}
+	case <-time.After(time.Second):
+		cleanup()
+		t.Fatal("VPN disconnect waited for the pending connect instead of cancelling it")
+	}
+	select {
+	case <-backend.disconnectStarted:
+	default:
+		t.Fatal("VPN disconnect did not reach the backend")
+	}
+
+	cleanup()
+	select {
+	case err := <-connectDone:
+		if err != nil {
+			t.Fatalf("finish VPN connect: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("VPN connect did not finish after release")
+	}
+}
+
 type orderedVPNRefreshBackend struct {
 	*fakeBackend
 	mu           sync.Mutex

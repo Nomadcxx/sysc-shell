@@ -173,19 +173,21 @@ type poller interface {
 // starts and stops. A backend with nothing to push names its own cadence
 // through poller; that is a property of the tier, not of any lease.
 type Network struct {
-	mu           sync.Mutex
-	vpnControlMu sync.Mutex
-	vpnRefreshMu sync.Mutex
-	leases       leaseSet
-	be           backend
-	last         NetworkState
-	aps          []AccessPoint
-	vpns         []VPNProfile
-	vpnErr       error
-	ok           bool
-	stop         chan struct{}
-	wake         chan struct{}
-	changes      chan NetworkState
+	mu sync.Mutex
+	// Separate locks let DisconnectVPN cancel a ConnectVPN waiting for activation.
+	vpnConnectMu    sync.Mutex
+	vpnDisconnectMu sync.Mutex
+	vpnRefreshMu    sync.Mutex
+	leases          leaseSet
+	be              backend
+	last            NetworkState
+	aps             []AccessPoint
+	vpns            []VPNProfile
+	vpnErr          error
+	ok              bool
+	stop            chan struct{}
+	wake            chan struct{}
+	changes         chan NetworkState
 
 	// secrets holds the one in-flight passphrase prompt. It is always
 	// non-nil: the panel calls CancelSecret on close whether or not a prompt
@@ -517,8 +519,8 @@ func (n *Network) ConnectVPN(uuid string) error {
 	if !validVPNUUID(uuid) {
 		return errors.New("services: invalid VPN profile identity")
 	}
-	n.vpnControlMu.Lock()
-	defer n.vpnControlMu.Unlock()
+	n.vpnConnectMu.Lock()
+	defer n.vpnConnectMu.Unlock()
 	if status, ok := n.cachedVPNStatus(uuid); ok && (status == VPNConnecting || status == VPNConnected) {
 		return nil
 	}
@@ -532,8 +534,8 @@ func (n *Network) DisconnectVPN(uuid string) error {
 	if !validVPNUUID(uuid) {
 		return errors.New("services: invalid VPN profile identity")
 	}
-	n.vpnControlMu.Lock()
-	defer n.vpnControlMu.Unlock()
+	n.vpnDisconnectMu.Lock()
+	defer n.vpnDisconnectMu.Unlock()
 	if status, ok := n.cachedVPNStatus(uuid); ok && (status == VPNDisconnected || status == VPNDisconnecting) {
 		return nil
 	}

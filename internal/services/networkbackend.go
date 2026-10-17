@@ -2,9 +2,13 @@ package services
 
 import (
 	"fmt"
+	"time"
 
 	gnm "github.com/Wifx/gonetworkmanager/v2"
 )
+
+const networkActivationTimeout = 2 * time.Minute
+const networkActivationReasonGracePeriod = 100 * time.Millisecond
 
 // nmBackend is the only production implementation of backend. It wraps the
 // pinned gonetworkmanager binding; nothing above it knows that D-Bus exists.
@@ -221,8 +225,7 @@ func manualNetworkSettings(req ManualNetworkRequest) (map[string]map[string]inte
 	}
 	if req.Security == ManualSecurityWPAPersonal {
 		settings["802-11-wireless-security"] = map[string]interface{}{
-			"key-mgmt":  "wpa-psk",
-			"psk-flags": uint32(1), // NetworkManager's agent-owned flag keeps the passphrase out of this settings map.
+			"key-mgmt": "wpa-psk",
 		}
 	}
 	return settings, nil
@@ -246,15 +249,17 @@ func (b *nmBackend) ConnectManual(req ManualNetworkRequest) error {
 		return err
 	}
 	if connection != nil {
-		if _, err := b.nm.ActivateConnection(connection, wifi, nil); err != nil {
+		active, err := b.nm.ActivateConnection(connection, wifi, nil)
+		if err != nil {
 			return fmt.Errorf("services: activate saved Wi-Fi profile: %w", err)
 		}
-		return nil
+		return waitForActivation(active, "wireless network", networkActivationTimeout)
 	}
-	if _, err := b.nm.AddAndActivateConnection(settings, wifi); err != nil {
+	active, err := b.nm.AddAndActivateConnection(settings, wifi)
+	if err != nil {
 		return fmt.Errorf("services: add and activate manually entered network: %w", err)
 	}
-	return nil
+	return waitForActivation(active, "wireless network", networkActivationTimeout)
 }
 
 func manualConnectionFor(connections []gnm.Connection, req ManualNetworkRequest) (gnm.Connection, error) {
@@ -377,10 +382,101 @@ func (b *nmBackend) ConnectVPN(uuid string) error {
 	if connection == nil {
 		return fmt.Errorf("services: installed VPN profile not found")
 	}
-	if _, err := b.nm.ActivateConnection(connection, nil, nil); err != nil {
+	active, err := b.nm.ActivateConnection(connection, nil, nil)
+	if err != nil {
 		return fmt.Errorf("services: activate VPN profile: %w", err)
 	}
-	return nil
+	return waitForActivation(active, "VPN", networkActivationTimeout)
+}
+
+func waitForActivation(active gnm.ActiveConnection, kind string, timeout time.Duration) error {
+	if active == nil {
+		return fmt.Errorf("services: NetworkManager returned no active %s connection", kind)
+	}
+	changes := make(chan gnm.StateChange, 16)
+	exit := make(chan struct{})
+	if err := active.SubscribeState(changes, exit); err != nil {
+		close(exit)
+		return fmt.Errorf("services: monitor %s activation: %w", kind, err)
+	}
+	defer close(exit)
+
+	// Subscribe first, then read state. This catches a fast activation or
+	// failure that completed before the StateChanged subscription was installed.
+	state, err := active.GetPropertyState()
+	if err != nil {
+		return fmt.Errorf("services: read %s activation state: %w", kind, err)
+	}
+	switch state {
+	case gnm.NmActiveConnectionStateActivated:
+		return nil
+	case gnm.NmActiveConnectionStateDeactivated:
+		// StateChanged may already be queued by the time this property read
+		// observes deactivation. The library forwards D-Bus signals on another
+		// goroutine, so give that signal a short window to reach our channel.
+		reasonTimer := time.NewTimer(networkActivationReasonGracePeriod)
+		defer reasonTimer.Stop()
+		for {
+			select {
+			case change, ok := <-changes:
+				if !ok {
+					return activationResult(kind, gnm.NmActiveConnectionStateReasonUnknown)
+				}
+				if change.Path == active.GetPath() && change.State == gnm.NmActiveConnectionStateDeactivated {
+					return activationResult(kind, change.Reason)
+				}
+			case <-reasonTimer.C:
+				return activationResult(kind, gnm.NmActiveConnectionStateReasonUnknown)
+			}
+		}
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case change := <-changes:
+			if change.Path != active.GetPath() {
+				continue
+			}
+			switch change.State {
+			case gnm.NmActiveConnectionStateActivated:
+				return nil
+			case gnm.NmActiveConnectionStateDeactivated:
+				return activationResult(kind, change.Reason)
+			}
+		case <-timer.C:
+			return fmt.Errorf("services: %s activation timed out", kind)
+		}
+	}
+}
+
+func activationResult(kind string, reason gnm.NmActiveConnectionStateReason) error {
+	switch reason {
+	case gnm.NmActiveConnectionStateReasonNoSecrets:
+		if kind == "VPN" {
+			return fmt.Errorf("services: VPN profile needs credentials; add them in NetworkManager")
+		}
+		return fmt.Errorf("services: wireless network needs credentials; retry with its passphrase")
+	case gnm.NmActiveConnectionStateReasonLoginFailed:
+		if kind == "VPN" {
+			return fmt.Errorf("services: VPN authentication failed; check the saved credentials")
+		}
+		return fmt.Errorf("services: wireless network authentication failed; check its passphrase")
+	case gnm.NmActiveConnectionStateReasonConnectTimeout:
+		return fmt.Errorf("services: %s connection timed out", kind)
+	case gnm.NmActiveConnectionStateReasonServiceStartFailed, gnm.NmActiveConnectionStateReasonServiceStartTimeout:
+		if kind == "VPN" {
+			return fmt.Errorf("services: VPN service could not start; check the installed NetworkManager VPN plugin")
+		}
+		return fmt.Errorf("services: wireless network activation failed; check NetworkManager and device logs")
+	case gnm.NmActiveConnectionStateReasonUserDisconnected:
+		return nil
+	case gnm.NmActiveConnectionStateReasonConnectionRemoved:
+		return fmt.Errorf("services: %s profile was removed while connecting", kind)
+	default:
+		return fmt.Errorf("services: %s activation failed; check its NetworkManager profile and logs", kind)
+	}
 }
 
 func (b *nmBackend) DisconnectVPN(uuid string) error {

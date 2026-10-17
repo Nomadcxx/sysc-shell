@@ -401,18 +401,20 @@ func networkVPNTree(profiles []services.VPNProfile, loadError string, st service
 
 func networkVPNRow(profile services.VPNProfile, m theme.Metrics, tr translateFunc) *ui.Node {
 	state := cardT(tr, "net.vpn.disconnected", "Disconnected")
-	status := ""
+	disabled := false
 	action := "network-vpn-connect:"
 	button := cardT(tr, "net.vpn.connect", "Connect")
 	switch profile.Status {
 	case services.VPNConnecting:
-		state, status = cardT(tr, "net.vpn.connecting", "Connecting"), "connecting"
+		state = cardT(tr, "net.vpn.connecting", "Connecting")
+		action = "network-vpn-disconnect:"
+		button = cardT(tr, "common.cancel", "Cancel")
 	case services.VPNConnected:
-		state, status = cardT(tr, "net.vpn.connected", "Connected"), "connected"
+		state = cardT(tr, "net.vpn.connected", "Connected")
 		action = "network-vpn-disconnect:"
 		button = cardT(tr, "net.vpn.disconnect", "Disconnect")
 	case services.VPNDisconnecting:
-		state, status = cardT(tr, "net.vpn.disconnecting", "Disconnecting"), "disconnecting"
+		state, disabled = cardT(tr, "net.vpn.disconnecting", "Disconnecting"), true
 		action = "network-vpn-disconnect:"
 		button = cardT(tr, "net.vpn.disconnect", "Disconnect")
 	}
@@ -425,7 +427,7 @@ func networkVPNRow(profile services.VPNProfile, m theme.Metrics, tr translateFun
 	control := &ui.Node{Kind: ui.KindButton, Action: action + profile.UUID, Name: label, Role: "button",
 		Focusable: true, Height: m.CompactControl, Padding: m.ButtonPadding,
 		Children: []*ui.Node{{Kind: ui.KindText, Text: button}}}
-	if status == "connecting" || status == "disconnecting" {
+	if disabled {
 		control.State |= ui.StateDisabled
 		control.AriaDisabled = true
 	}
@@ -490,6 +492,7 @@ func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 		}
 		psk = ""
 		h.clearNetworkSecret()
+		h.errLabel = ""
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "network-password-cancel":

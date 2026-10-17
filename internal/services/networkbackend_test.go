@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	gnm "github.com/Wifx/gonetworkmanager/v2"
 	"github.com/godbus/dbus/v5"
@@ -75,8 +76,11 @@ func TestManualNetworkSettingsMarkHiddenAndOmitPassphrase(t *testing.T) {
 				}
 				return
 			}
-			if !ok || security["key-mgmt"] != "wpa-psk" || security["psk-flags"] != uint32(1) {
+			if !ok || security["key-mgmt"] != "wpa-psk" {
 				t.Fatalf("WPA-Personal settings = %v", security)
+			}
+			if _, ok := security["psk-flags"]; ok {
+				t.Fatalf("WPA-Personal profile must let NetworkManager retain its secret: %v", security)
 			}
 			if _, ok := security["psk"]; ok {
 				t.Fatal("profile settings embedded a passphrase")
@@ -113,9 +117,10 @@ func (manualTestDevice) GetPropertyDeviceType() (gnm.NmDeviceType, error) {
 
 type manualTestNetworkManager struct {
 	gnm.NetworkManager
-	devices   []gnm.Device
-	activated []gnm.Connection
-	addCalls  int
+	devices          []gnm.Device
+	activated        []gnm.Connection
+	activeConnection gnm.ActiveConnection
+	addCalls         int
 }
 
 func (n *manualTestNetworkManager) GetDevices() ([]gnm.Device, error) {
@@ -124,12 +129,19 @@ func (n *manualTestNetworkManager) GetDevices() ([]gnm.Device, error) {
 
 func (n *manualTestNetworkManager) ActivateConnection(connection gnm.Connection, _ gnm.Device, _ *dbus.Object) (gnm.ActiveConnection, error) {
 	n.activated = append(n.activated, connection)
-	return nil, nil
+	return n.active(), nil
 }
 
 func (n *manualTestNetworkManager) AddAndActivateConnection(map[string]map[string]interface{}, gnm.Device) (gnm.ActiveConnection, error) {
 	n.addCalls++
-	return nil, nil
+	return n.active(), nil
+}
+
+func (n *manualTestNetworkManager) active() gnm.ActiveConnection {
+	if n.activeConnection != nil {
+		return n.activeConnection
+	}
+	return &manualTestActiveConnection{state: gnm.NmActiveConnectionStateActivated}
 }
 
 func manualTestProfile(ssid string, security ManualSecurity, hidden bool) gnm.ConnectionSettings {
@@ -144,6 +156,118 @@ func manualTestProfile(ssid string, security ManualSecurity, hidden bool) gnm.Co
 		}
 	}
 	return settings
+}
+
+type manualTestActiveConnection struct {
+	gnm.ActiveConnection
+	path             dbus.ObjectPath
+	state            gnm.NmActiveConnectionState
+	stateChanges     []gnm.StateChange
+	stateChangeDelay time.Duration
+}
+
+func (a *manualTestActiveConnection) GetPath() dbus.ObjectPath { return a.path }
+func (a *manualTestActiveConnection) GetPropertyState() (gnm.NmActiveConnectionState, error) {
+	return a.state, nil
+}
+func (a *manualTestActiveConnection) SubscribeState(receiver chan gnm.StateChange, exit chan struct{}) error {
+	if a.stateChangeDelay > 0 {
+		go func() {
+			timer := time.NewTimer(a.stateChangeDelay)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-exit:
+				return
+			}
+			for _, change := range a.stateChanges {
+				select {
+				case receiver <- change:
+				case <-exit:
+					return
+				}
+			}
+		}()
+		return nil
+	}
+	for _, change := range a.stateChanges {
+		select {
+		case receiver <- change:
+		case <-exit:
+			return nil
+		}
+	}
+	return nil
+}
+
+func TestNMConnectVPNReportsAsynchronousActivationFailure(t *testing.T) {
+	const uuid = "11111111-1111-4111-8111-111111111111"
+	path := dbus.ObjectPath("/org/freedesktop/NetworkManager/ActiveConnection/17")
+	active := &manualTestActiveConnection{
+		path:             path,
+		state:            gnm.NmActiveConnectionStateDeactivated,
+		stateChangeDelay: time.Millisecond,
+		stateChanges: []gnm.StateChange{{
+			Path: path, State: gnm.NmActiveConnectionStateDeactivated,
+			Reason: gnm.NmActiveConnectionStateReasonNoSecrets,
+		}},
+	}
+	nm := &manualTestNetworkManager{activeConnection: active}
+	settings := &manualTestSettings{connections: []gnm.Connection{
+		&manualTestConnection{settings: gnm.ConnectionSettings{
+			"connection": {"id": "Office", "uuid": uuid, "type": "vpn"},
+		}},
+	}}
+	backend := &nmBackend{nm: nm, settings: settings}
+
+	err := backend.ConnectVPN(uuid)
+	if err == nil || !strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("ConnectVPN error = %v, want an actionable missing-credentials error", err)
+	}
+}
+
+func TestNMConnectVPNTreatsUserDisconnectAsCancellation(t *testing.T) {
+	const uuid = "11111111-1111-4111-8111-111111111111"
+	path := dbus.ObjectPath("/org/freedesktop/NetworkManager/ActiveConnection/19")
+	active := &manualTestActiveConnection{
+		path:             path,
+		state:            gnm.NmActiveConnectionStateDeactivated,
+		stateChangeDelay: time.Millisecond,
+		stateChanges: []gnm.StateChange{{
+			Path: path, State: gnm.NmActiveConnectionStateDeactivated,
+			Reason: gnm.NmActiveConnectionStateReasonUserDisconnected,
+		}},
+	}
+	nm := &manualTestNetworkManager{activeConnection: active}
+	settings := &manualTestSettings{connections: []gnm.Connection{
+		&manualTestConnection{settings: gnm.ConnectionSettings{
+			"connection": {"id": "Office", "uuid": uuid, "type": "vpn"},
+		}},
+	}}
+	backend := &nmBackend{nm: nm, settings: settings}
+
+	if err := backend.ConnectVPN(uuid); err != nil {
+		t.Fatalf("ConnectVPN after user cancellation = %v, want no error", err)
+	}
+}
+
+func TestNMConnectManualReportsAsynchronousActivationFailure(t *testing.T) {
+	path := dbus.ObjectPath("/org/freedesktop/NetworkManager/ActiveConnection/18")
+	active := &manualTestActiveConnection{
+		path:  path,
+		state: gnm.NmActiveConnectionStateActivating,
+		stateChanges: []gnm.StateChange{{
+			Path: path, State: gnm.NmActiveConnectionStateDeactivated,
+			Reason: gnm.NmActiveConnectionStateReasonNoSecrets,
+		}},
+	}
+	nm := &manualTestNetworkManager{devices: []gnm.Device{manualTestDevice{}}, activeConnection: active}
+	backend := &nmBackend{nm: nm, settings: &manualTestSettings{}}
+
+	err := backend.ConnectManual(ManualNetworkRequest{SSID: "Hidden", Security: ManualSecurityWPAPersonal})
+	if err == nil || !strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("ConnectManual error = %v, want an actionable missing-credentials error", err)
+	}
 }
 
 func TestNMConnectManualReusesOnlyMatchingSavedProfile(t *testing.T) {

@@ -519,7 +519,7 @@ func TestNetworkManualEntryWorksWithoutScannedAccessPoints(t *testing.T) {
 
 func TestNetworkPasswordSubmitRejectsInvalidPassphrase(t *testing.T) {
 	h := &PanelHost{id: PanelNetwork, pendingSSID: "Hidden", password: ui.NewField("short")}
-	r := &Registry{}
+	r := &Registry{network: services.NewNetwork(&shellNetworkBackend{})}
 	if !h.applyNetworkControl(r, &ui.Node{Action: "network-password-submit"}) {
 		t.Fatal("password submit action was not handled")
 	}
@@ -528,6 +528,13 @@ func TestNetworkPasswordSubmitRejectsInvalidPassphrase(t *testing.T) {
 	}
 	if h.errLabel == "" {
 		t.Fatal("invalid passphrase did not show a validation message")
+	}
+	h.password.Text = "hunter22"
+	if !h.applyNetworkControl(r, &ui.Node{Action: "network-password-submit"}) {
+		t.Fatal("corrected password submit action was not handled")
+	}
+	if h.errLabel != "" {
+		t.Fatalf("corrected passphrase retained old error label %q", h.errLabel)
 	}
 }
 
@@ -886,6 +893,21 @@ func TestNetworkVPNRowsUseUUIDActionsAndShowState(t *testing.T) {
 	}
 	if !slices.Contains(collectText(tree), "Office") {
 		t.Fatal("VPN profile names are missing from the panel")
+	}
+}
+
+func TestNetworkVPNConnectingRowOffersEnabledCancel(t *testing.T) {
+	profile := services.VPNProfile{UUID: "11111111-1111-4111-8111-111111111111", Name: "Office", Status: services.VPNConnecting}
+	tree := networkVPNTree([]services.VPNProfile{profile}, "", services.NetworkState{Tier: services.TierNM}, &PanelHost{}, standardMetrics())
+	control := findActionNode(tree, "network-vpn-disconnect:"+profile.UUID)
+	if control == nil {
+		t.Fatal("connecting VPN row must offer cancellation through disconnect")
+	}
+	if control.State&ui.StateDisabled != 0 || control.AriaDisabled {
+		t.Fatal("connecting VPN cancel control must remain enabled")
+	}
+	if !slices.Contains(collectText(control), "Cancel") {
+		t.Fatalf("connecting VPN action = %v, want Cancel", collectText(control))
 	}
 }
 

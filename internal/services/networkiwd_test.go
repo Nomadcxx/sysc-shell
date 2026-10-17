@@ -159,6 +159,29 @@ func TestIWDConnectsToManuallyEnteredHiddenSSID(t *testing.T) {
 	}
 }
 
+func TestIWDReusesKnownNetworkForRepeatedManualJoin(t *testing.T) {
+	f := fakeIWDTree("disconnected", true)
+	be := newTestIWD(f)
+	if err := be.ConnectManual(ManualNetworkRequest{SSID: "Home", Security: ManualSecurityWPAPersonal}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{string(homePath) + " " + iwdNetworkIface + ".Connect"}
+	if !slices.Equal(f.calls, want) || f.hiddenStation != "" || f.hiddenSSID != "" {
+		t.Fatalf("repeat manual join calls=%v hidden=(%q,%q), want %v", f.calls, f.hiddenStation, f.hiddenSSID, want)
+	}
+}
+
+func TestIWDDoesNotReuseSameSSIDWithDifferentSecurity(t *testing.T) {
+	f := fakeIWDTree("disconnected", true)
+	be := newTestIWD(f)
+	if err := be.ConnectManual(ManualNetworkRequest{SSID: "Home", Security: ManualSecurityOpen}); err != nil {
+		t.Fatal(err)
+	}
+	if f.hiddenStation != stationPath || f.hiddenSSID != "Home" || len(f.calls) != 0 {
+		t.Fatalf("wrong-security network reused: calls=%v hidden=(%q,%q)", f.calls, f.hiddenStation, f.hiddenSSID)
+	}
+}
+
 func TestIWDAsksForAPassphraseThroughTheSharedSlot(t *testing.T) {
 	f := fakeIWDTree("disconnected", true)
 	n := NewNetwork(newTestIWD(f))
