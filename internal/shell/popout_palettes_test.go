@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -98,6 +99,40 @@ func TestPalettesPageStartsEmptyWithSaveAndImport(t *testing.T) {
 	// R6: the import field starts in the folder Export writes to.
 	if f := h.fields["palette-import-path"]; f == nil || !strings.HasSuffix(f.Text, "/") {
 		t.Errorf("import field = %+v, want a directory ending in /", f)
+	}
+}
+
+func TestConfigReloadKeepsPaletteFormFields(t *testing.T) {
+	reg, h := openPalettesPage(t)
+	want := map[string]string{
+		"palette-name":        "My palette draft",
+		"palette-import-path": "/tmp/palette-draft.json",
+	}
+	reg.mu.Lock()
+	for key, value := range want {
+		h.fields[key] = ui.NewField(value)
+	}
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	for key, value := range want {
+		if field := h.fields[key]; field == nil || field.Text != value {
+			t.Errorf("%s after reload = %+v, want %q", key, field, value)
+		}
+		node := findAction(h.root, key)
+		if node == nil || node.Text != value {
+			t.Errorf("rendered %s after reload = %+v, want %q", key, node, value)
+		}
 	}
 }
 
