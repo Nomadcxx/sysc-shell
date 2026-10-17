@@ -24,6 +24,7 @@ func enabledAtLoginSnapshot() walls.Snapshot {
 func newOpenIdleSettings(t *testing.T, snapshot walls.Snapshot, locker string) (*Registry, *PanelHost, *fakeWallsService) {
 	t.Helper()
 	r := newPanelRegistry(t)
+	keepInvalidationsDrained(t, r)
 	r.cfg.Session.Locker = locker
 	service := newFakeWallsService(snapshot)
 	r.attachWallsService(service)
@@ -38,6 +39,22 @@ func newOpenIdleSettings(t *testing.T, snapshot walls.Snapshot, locker string) (
 	h := r.panelHosts[PanelSettings]
 	r.mu.Unlock()
 	return r, h, service
+}
+
+func TestIdleSettingsFixtureDrainsInvalidations(t *testing.T) {
+	r, _, _ := newOpenIdleSettings(t, readyWallsSnapshot(), "sysc-lock")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i <= cap(r.invalidations); i++ {
+			r.publishSurface(7, "probe")
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(asyncTestWait):
+		t.Fatal("publishSurface blocked: nothing drains the fixture's invalidations")
+	}
 }
 
 func pickIdleAfter(t *testing.T, r *Registry, h *PanelHost, mode string) {
