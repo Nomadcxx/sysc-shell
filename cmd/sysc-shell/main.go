@@ -196,6 +196,43 @@ func run(ctx context.Context) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// File saves and SIGHUP share the owner's existing reload path. The watcher
+	// only signals; it never reads or validates configuration itself.
+	reloads := make(chan struct{}, 1)
+	registry.BindPersist(cfgPath, reloads)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	reloadRelay := newReloadRelay(ctx, registry.RecordConfigReload)
+	watcherDone := make(chan struct{})
+	hupDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		if err := config.Watch(ctx, cfgPath, func() { queueReload(reloads) }); err != nil {
+			log.Printf("sysc-shell: %v; saves need SIGHUP to apply", err)
+		}
+	}()
+	go func() {
+		defer close(hupDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-hup:
+				if !ok {
+					return
+				}
+				queueReload(reloads)
+			}
+		}
+	}()
+	defer func() {
+		signal.Stop(hup)
+		cancel()
+		<-watcherDone
+		<-hupDone
+		reloadRelay.stop()
+	}()
+
 	nightLight := registry.NightLight()
 	go nightLight.Run(ctx)
 	go func() {
@@ -369,20 +406,6 @@ func run(ctx context.Context) (err error) {
 
 	// SIGHUP reloads. The handler only signals; the owner goroutine re-reads
 	// and validates the file itself, so no proxy is touched from here.
-	reloads := make(chan struct{}, 1)
-	hup := make(chan os.Signal, 1)
-	signal.Notify(hup, syscall.SIGHUP)
-	defer signal.Stop(hup)
-	go func() {
-		for range hup {
-			select {
-			case reloads <- struct{}{}:
-			default:
-			}
-		}
-	}()
-	registry.BindPersist(cfgPath, reloads)
-
 	// The IPC server gets its own cancel so it stops on any exit from run, not
 	// only a signal, and run waits for it before the deferred registry.Close:
 	// no request may still be inside a handler when the registry is torn down.
@@ -432,6 +455,7 @@ func run(ctx context.Context) (err error) {
 		GammaEvents:   registry.GammaEventSink(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
+		ReloadResult:  reloadRelay.submit,
 	})
 	if runErr != nil {
 		return runErr

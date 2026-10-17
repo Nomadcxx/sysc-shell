@@ -253,8 +253,8 @@ func TestUnknownConfigurationFieldsAreRejected(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Parse(%s) accepted an unknown field", tc.doc)
 			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error %q does not name %q", err, tc.want)
+			if !strings.Contains(err.Error(), "unknown field") || strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q should safely report an unknown field without echoing %q", err, tc.want)
 			}
 		})
 	}
@@ -1184,7 +1184,7 @@ func TestThemeRejectsEveryInvalidAxisWithItsPath(t *testing.T) {
 		{"overlay opacity", `{"theme":{"overlay-opacity":0}}`, "theme.overlay-opacity"},
 		{"empty family", `{"theme":{"font-family":""}}`, "theme.font-family"},
 		{"empty mono family", `{"theme":{"mono-font-family":""}}`, "theme.mono-font-family"},
-		{"unknown key", `{"theme":{"corner":4}}`, "corner"},
+		{"unknown key", `{"theme":{"corner":4}}`, "unknown field"},
 	} {
 		_, err := Parse([]byte(tc.doc))
 		if err == nil {

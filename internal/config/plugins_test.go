@@ -175,8 +175,8 @@ func TestParseRejectsADuplicateInstanceID(t *testing.T) {
 	if err == nil {
 		t.Fatal("Parse accepted a duplicate instance id")
 	}
-	if !strings.Contains(err.Error(), "t1") {
-		t.Fatalf("err = %v, want it to name the instance", err)
+	if !strings.Contains(err.Error(), "instance") || strings.Contains(err.Error(), "t1") {
+		t.Fatalf("err = %v, want a safe instance diagnostic", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package shell
 import (
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -21,6 +22,7 @@ func TestOSDIconAndLabelPerKind(t *testing.T) {
 		{OSDView{Kind: osdCapsLock, On: true}, "keyboard", "Caps Lock on"},
 		{OSDView{Kind: osdNumLock}, "keyboard", "Num Lock off"},
 		{OSDView{Kind: osdLayout, Text: "German"}, "", "German"},
+		{OSDView{Kind: osdConfigError, Text: "Config not applied"}, "notifications", "Config not applied"},
 		{OSDView{Kind: osdDND, On: true}, "do_not_disturb_on", "Do not disturb on"},
 		{OSDView{Kind: osdDND}, "notifications", "Do not disturb off"},
 	}
@@ -68,6 +70,39 @@ func TestOSDTreeShapePerKind(t *testing.T) {
 	}
 }
 
+func TestConfigErrorOSDHasSafeTextAndNoMeter(t *testing.T) {
+	view := OSDView{Kind: osdConfigError}
+	if got := osdLabel(view); got != "Config not applied" {
+		t.Fatalf("label = %q, want fixed safe summary", got)
+	}
+	if got := osdIcon(view); got != "notifications" {
+		t.Fatalf("icon = %q, want an existing notification glyph", got)
+	}
+	if _, ok := render.IconByName(osdIcon(view)); !ok && !render.ValidMaterialIcon(osdIcon(view)) {
+		t.Fatalf("icon %q is not in the shipped subset", osdIcon(view))
+	}
+
+	root := osdTree(view)
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindMeter || n.Focusable {
+			t.Fatalf("config-error OSD acquired meter or focus: %+v", n)
+		}
+		if n.Kind == ui.KindIcon || n.Kind == ui.KindText {
+			if n.Tone != ui.ToneError {
+				t.Errorf("config-error %v tone = %v, want error", n.Kind, n.Tone)
+			}
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
 // Every kind lays out inside the 220x64 OSD body with real layout rules.
 func TestOSDTreesFitTheBody(t *testing.T) {
 	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 7, 16 }
@@ -75,7 +110,8 @@ func TestOSDTreesFitTheBody(t *testing.T) {
 	for _, v := range []OSDView{
 		{Kind: osdAudio, Level: 100}, {Kind: osdBrightness}, {Kind: osdCapsLock, On: true},
 		{Kind: osdMedia, Text: "A very long track title that must be clipped not overflow", Level: 30, On: true},
-		{Kind: osdLayout, Text: "English (US, intl., with dead keys)"}, {Kind: osdDND, On: true},
+		{Kind: osdLayout, Text: "English (US, intl., with dead keys)"},
+		{Kind: osdConfigError}, {Kind: osdDND, On: true},
 	} {
 		root := osdTree(v)
 		if err := ui.LayoutColumn(root, body, measure); err != nil {

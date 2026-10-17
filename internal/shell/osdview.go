@@ -8,13 +8,14 @@ import (
 )
 
 const (
-	osdAudio      = "audio"
-	osdBrightness = "brightness"
-	osdMedia      = "media"
-	osdCapsLock   = "caps lock"
-	osdNumLock    = "num lock"
-	osdLayout     = "layout"
-	osdDND        = "do not disturb"
+	osdAudio       = "audio"
+	osdBrightness  = "brightness"
+	osdMedia       = "media"
+	osdCapsLock    = "caps lock"
+	osdNumLock     = "num lock"
+	osdLayout      = "layout"
+	osdDND         = "do not disturb"
+	osdConfigError = "config error"
 
 	osdPad         = 12
 	osdInnerW      = osdWidth - 16 - 2*osdPad
@@ -68,6 +69,8 @@ func osdIcon(v OSDView) string {
 			return "do_not_disturb_on"
 		}
 		return "notifications"
+	case osdConfigError:
+		return "notifications"
 	}
 	return ""
 }
@@ -104,6 +107,11 @@ func osdLabel(v OSDView) string {
 		return "Do not disturb " + onOff(v.On)
 	case osdLayout:
 		return v.Text
+	case osdConfigError:
+		if v.Text != "" {
+			return v.Text
+		}
+		return "Config not applied"
 	}
 	return v.Kind
 }
@@ -113,8 +121,12 @@ func osdLabel(v OSDView) string {
 // media leads with its title; toggles are icon and label; layout is a
 // centred name.
 func osdTree(v OSDView) *ui.Node {
-	label := &ui.Node{Kind: ui.KindText, Text: osdLabel(v), MaxWidth: osdInnerW - osdIconSz - osdGap}
-	icon := &ui.Node{Kind: ui.KindIcon, Icon: osdIcon(v), IconSize: osdIconSz}
+	tone := ui.ToneNormal
+	if v.Kind == osdConfigError {
+		tone = ui.ToneError
+	}
+	label := &ui.Node{Kind: ui.KindText, Text: osdLabel(v), MaxWidth: osdInnerW - osdIconSz - osdGap, Tone: tone}
+	icon := &ui.Node{Kind: ui.KindIcon, Icon: osdIcon(v), IconSize: osdIconSz, Tone: tone}
 	meter := func(w int) *ui.Node {
 		tone := ui.ToneNormal
 		if v.Muted {

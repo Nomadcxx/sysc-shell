@@ -65,12 +65,13 @@ const (
 
 // Trigger is the placement hint for opening a panel on one output.
 type Trigger struct {
-	BarEdge    string
-	BarZone    int
-	Align      string
-	OutW, OutH int
-	AnchorX    int
-	AnchorY    int
+	BarEdge      string
+	BarZone      int
+	Align        string
+	OutW, OutH   int
+	AnchorX      int
+	AnchorY      int
+	AnchorAction string
 }
 
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
@@ -1103,11 +1104,12 @@ func (r *Registry) openPanelHostsLocked(output uint32, except *PanelID) []*Panel
 	return hosts
 }
 
-func (r *Registry) restorePanelPositionsLocked(output uint32) {
+func (r *Registry) restorePanelPositionsLocked(output uint32) map[*PanelHost]bool {
 	hosts := r.openPanelHostsLocked(output, nil)
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].openOrder < hosts[j].openOrder })
 	placedHosts := make([]*PanelHost, 0, len(hosts))
 	placedRects := make([]ui.Rect, 0, len(hosts))
+	updated := make(map[*PanelHost]bool, len(hosts))
 	for _, h := range hosts {
 		anchor := h.rect
 		if h.place.sideAxis() {
@@ -1119,12 +1121,13 @@ func (r *Registry) restorePanelPositionsLocked(output uint32) {
 		rect, nextRects := panelArrangement(anchor, work, placedRects,
 			ui.Size{W: h.rect.W, H: h.rect.H}, h.place.sideAxis())
 		for i, placed := range placedHosts {
-			r.updatePanelPlacementLocked(placed, nextRects[i])
+			updated[placed] = r.updatePanelPlacementLocked(placed, nextRects[i]) || updated[placed]
 		}
-		r.updatePanelPlacementLocked(h, rect)
+		updated[h] = r.updatePanelPlacementLocked(h, rect) || updated[h]
 		placedHosts = append(placedHosts, h)
 		placedRects = append(nextRects, rect)
 	}
+	return updated
 }
 
 func panelWorkArea(base ui.Rect, place Placement, open []*PanelHost) ui.Rect {
@@ -1155,43 +1158,83 @@ func barGeometryChanged(a, b config.Bar) bool {
 	return (!a.Attached() || !b.Attached()) && a.Gap != b.Gap
 }
 
-func (r *Registry) repositionSettingsLocked(h *PanelHost) {
-	if h == nil {
+// repositionPanelsLocked adopts the current bar geometry while retaining each
+// open panel host. Caller holds Registry.mu.
+func (r *Registry) repositionPanelsLocked(output uint32) {
+	hosts := r.openPanelHostsLocked(output, nil)
+	sort.Slice(hosts, func(i, j int) bool { return hosts[i].openOrder < hosts[j].openOrder })
+	if len(hosts) == 0 {
 		return
 	}
+	bar := r.bars[output]
 	connector := ""
-	if bar := r.bars[h.output]; bar != nil {
+	if bar != nil {
 		connector = bar.connector()
 	}
-	trigger := r.triggerLocked(h.output, connector)
-	if trigger.OutW <= 0 {
-		trigger.OutW = h.place.Output.W
+	oldPlaces := make(map[*PanelHost]Placement, len(hosts))
+	oldRects := make(map[*PanelHost]ui.Rect, len(hosts))
+	for _, h := range hosts {
+		oldPlaces[h], oldRects[h] = h.place, h.rect
+		trigger := r.triggerLocked(output, connector)
+		if trigger.OutW <= 0 {
+			trigger.OutW = h.place.Output.W
+		}
+		if trigger.OutH <= 0 {
+			trigger.OutH = h.place.Output.H
+		}
+		trigger.Align = h.place.Align
+		trigger.AnchorAction = h.place.AnchorAction
+		if h.id == PanelSettings {
+			trigger.Align = "center"
+			trigger.AnchorX, trigger.AnchorY = 0, 0
+		} else if h.place.AnchorAction != "" {
+			bounds := ui.Rect{}
+			if bar != nil {
+				bounds = bar.actionBounds(h.place.AnchorAction)
+			}
+			if bounds.W > 0 && bounds.H > 0 {
+				trigger = triggerAtAction(bar, trigger, h.place.AnchorAction)
+			} else {
+				trigger.Align = "center"
+				trigger.AnchorX, trigger.AnchorY = 0, 0
+			}
+		} else if h.place.CenterY {
+			trigger.AnchorX, trigger.AnchorY = 0, 0
+		} else if h.place.sideAxis() {
+			trigger.AnchorY = h.preferredMain
+		} else {
+			trigger.AnchorX = h.preferredMain
+		}
+		size := h.place.Panel
+		switch h.id {
+		case PanelSettings:
+			size = settingsPanelSize(trigger.OutW, trigger.OutH)
+		case PanelAudio:
+			size = audioPanelSize(trigger.OutW, trigger.OutH)
+		case PanelOnboarding:
+			size = onboardingPanelSize(trigger.OutW, trigger.OutH)
+		}
+		place := r.panelPlacementLocked(h.id, output, trigger, size)
+		r.panelOverlapLocked(output, &place)
+		place.Panel.W, place.Panel.H = place.FittedSize()
+		h.place, h.rect = place, place.Rect()
+		h.preferredMain = place.mainStart(h.rect)
 	}
-	if trigger.OutH <= 0 {
-		trigger.OutH = h.place.Output.H
+	updated := r.restorePanelPositionsLocked(output)
+	for _, h := range hosts {
+		if (oldPlaces[h] != h.place || oldRects[h] != h.rect) && !updated[h] {
+			r.sendPanelPlacementLocked(h)
+		}
 	}
-	trigger.Align = "center"
-	place := r.panelPlacementLocked(PanelSettings, h.output, trigger,
-		settingsPanelSize(trigger.OutW, trigger.OutH))
-	place.Panel.W, place.Panel.H = place.FittedSize()
-	rect := place.Rect()
-	if place == h.place && rect == h.rect {
-		return
-	}
-	h.place, h.rect = place, rect
-	h.preferredMain = place.mainStart(rect)
-	r.sendPanelPlacementLocked(h)
 }
 
-func (r *Registry) refreshSettingsPlacement(global uint32, bar *Bar) {
+func (r *Registry) refreshPanelPlacements(global uint32, bar *Bar) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.bars[global] != bar {
 		return
 	}
-	if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
-		r.repositionSettingsLocked(h)
-	}
+	r.repositionPanelsLocked(global)
 }
 
 func panelWorkAreaRects(base ui.Rect, place Placement, openRects []ui.Rect, safeEdge int) ui.Rect {
@@ -1220,9 +1263,9 @@ func panelWorkAreaRects(base ui.Rect, place Placement, openRects []ui.Rect, safe
 
 // updatePanelPlacementLocked moves an existing panel without replacing its
 // Wayland surface, which keeps its focus and event callbacks attached.
-func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
+func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) bool {
 	if h == nil || h.rect == rect {
-		return
+		return false
 	}
 	h.rect = rect
 	center := rect.X + rect.W/2
@@ -1231,6 +1274,7 @@ func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
 	}
 	h.place.setMainAnchor(center)
 	r.sendPanelPlacementLocked(h)
+	return true
 }
 
 func (r *Registry) sendPanelPlacementLocked(h *PanelHost) {
@@ -1546,6 +1590,7 @@ func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger,
 		BarEdge: trig.BarEdge, Output: ui.Rect{W: outW, H: outH}, BarZone: trig.BarZone,
 		Gap: gap, Padding: r.cfg.Panels.Padding, Panel: size,
 		Align: trig.Align, AnchorX: trig.AnchorX, AnchorY: trig.AnchorY,
+		AnchorAction: trig.AnchorAction,
 	}
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"

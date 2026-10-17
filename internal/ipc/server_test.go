@@ -39,6 +39,17 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStatusEnvelopeIncludesConfigReloadState(t *testing.T) {
+	srv := NewServer("", Handlers{Status: func() map[string]any {
+		return map[string]any{"config_error": "config: bar.height: invalid", "config_error_at": "2026-10-15T10:00:00Z"}
+	}})
+	got := string(srv.handleLine(`{"id":1,"method":"status"}`))
+	if !strings.Contains(got, `"config_error":"config: bar.height: invalid"`) ||
+		!strings.Contains(got, `"config_error_at":"2026-10-15T10:00:00Z"`) {
+		t.Fatalf("status envelope omitted reload state: %s", got)
+	}
+}
+
 func TestNightLightNamespaceUsesItsHandler(t *testing.T) {
 	out := string(NewServer("", Handlers{}).handleLine(`{"id":1,"method":"nightlight.status"}`))
 	if !strings.Contains(out, "night light handler unset") {
