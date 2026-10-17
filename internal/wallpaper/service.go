@@ -127,6 +127,13 @@ type Engine interface {
 	RefreshTerminalCatalog() Capabilities
 }
 
+// stoppedRestoreFailure marks a Restore error returned after the animated
+// engine stopped, so the service can persist the static assignment.
+type stoppedRestoreFailure interface {
+	error
+	restoreStopped()
+}
+
 // Snapshot is an immutable view of everything the picker draws.
 type Snapshot struct {
 	Library     *Library
@@ -721,6 +728,10 @@ func (s *Service) restore(token string) {
 		s.engine.AdvanceGeneration(connector, generation)
 		a, _ := s.store.Assignment(connector)
 		if err := s.engine.Restore(connector, stillFor(a)); err != nil {
+			var stopped stoppedRestoreFailure
+			if errors.As(err, &stopped) {
+				s.store.SetRestored(connector, s.caps.Static())
+			}
 			s.store.noteRuntimeErr(connector, err)
 			continue
 		}

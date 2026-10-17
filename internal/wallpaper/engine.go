@@ -31,6 +31,14 @@ type activeWallpaper struct {
 	engine     string
 }
 
+// restoreAfterStopError marks a failure after the owned animated engine
+// stopped, allowing the service to persist the requested still.
+type restoreAfterStopError struct{ cause error }
+
+func (e restoreAfterStopError) Error() string { return e.cause.Error() }
+func (e restoreAfterStopError) Unwrap() error { return e.cause }
+func (restoreAfterStopError) restoreStopped() {}
+
 // processWatch owns the one Wait call for a process. The engine needs to reap
 // children during shutdown, while waitForQuery also needs to notice a child
 // that exits before its socket becomes ready.
@@ -372,6 +380,10 @@ func clearDeadSocketIfPresent(connector, path string) error {
 }
 
 func removeSocketIfSame(path string, expected os.FileInfo) error {
+	return removeSocketIfSameWithPeerProbe(path, expected, socketPeerPID)
+}
+
+func removeSocketIfSameWithPeerProbe(path string, expected os.FileInfo, peerProbe func(string) (int, error)) error {
 	current, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -384,6 +396,31 @@ func removeSocketIfSame(path string, expected os.FileInfo) error {
 	}
 	if !os.SameFile(expected, current) {
 		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped", path)
+	}
+	if expected.Mode()&os.ModeSocket != 0 && current.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("wallpaper: socket path %s changed type while it was stopped", path)
+	}
+	if current.Mode()&os.ModeSocket != 0 {
+		if _, err := peerProbe(path); err == nil {
+			return fmt.Errorf("wallpaper: socket path %s changed while it was stopped: still live", path)
+		} else if errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if !errors.Is(err, syscall.ECONNREFUSED) {
+			return fmt.Errorf("wallpaper: cannot verify socket %s is stopped: %w", path, err)
+		}
+	}
+	current, err = os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(expected, current) {
+		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped", path)
+	}
+	if expected.Mode()&os.ModeSocket != 0 && current.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("wallpaper: socket path %s changed type while it was stopped", path)
 	}
 	return os.Remove(path)
 }
@@ -555,9 +592,9 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 		// A socket file with no listener is garbage from a killed run: no
 		// process owns it, so unlinking disturbs nobody. A live socket we do
 		// not own is still refused (D17/D18).
-		// ponytail: probe-then-remove races a binder arriving in between;
-		// removeSocketIfSame narrows it to its own Lstat-to-Remove window and
-		// launch re-checks.
+		// ponytail: a noncooperating binder can still race the final identity-
+		// check-to-unlink window; eliminating it needs a protocol shared by every
+		// socket creator. Launch re-checks before binding.
 		if err := clearDeadSocketIfPresent(job.Connector, socket); err != nil {
 			return "", err
 		}
@@ -714,7 +751,7 @@ func (e *gslapperEngine) liveSocket(proc Process, socket string) bool {
 }
 
 // stopOwned ends the wallpaper process on one output: IPC first, then the
-// handle we hold, then a bounded wait for the socket to disappear.
+// handle we hold, then a bounded wait for the owned process to exit.
 //
 // There is deliberately no match-by-name step. If the socket outlives both and
 // we hold no handle for it, that is reported rather than resolved by killing
@@ -743,27 +780,17 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 		}
 	}
 
-	if waitProcess(proc, 100*time.Millisecond) {
-		if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
-			e.clearOwned(connector, proc)
-			return err
+	if !waitProcess(proc, 100*time.Millisecond) {
+		if err := forceStop(proc); err != nil {
+			return fmt.Errorf("wallpaper: stop process on %s: %w", connector, err)
 		}
-		e.clearOwned(connector, proc)
-		return nil
-	}
-	if err := forceStop(proc); err != nil {
-		return fmt.Errorf("wallpaper: stop process on %s: %w", connector, err)
-	}
-	if !waitProcess(proc, stopWait) {
-		if _, err := os.Stat(socket); os.IsNotExist(err) {
-			e.clearOwned(connector, proc)
-			return nil
+		if !waitProcess(proc, stopWait) {
+			return fmt.Errorf("wallpaper: process on %s did not exit", connector)
 		}
-		return fmt.Errorf("wallpaper: process on %s did not exit", connector)
 	}
 	if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
 		e.clearOwned(connector, proc)
-		return err
+		return restoreAfterStopError{cause: err}
 	}
 	e.clearOwned(connector, proc)
 	return nil
@@ -884,16 +911,23 @@ func (e *gslapperEngine) Restore(connector, still string) error {
 	}
 	socket := e.currentSocket(connector)
 	if err := e.stopOwned(connector, socket); err != nil {
-		return err
-	}
-	if err := e.stopFallback(connector); err != nil {
+		var stopped stoppedRestoreFailure
+		if errors.As(err, &stopped) {
+			e.clearActive(connector)
+		}
 		return err
 	}
 	e.clearActive(connector)
+	if err := e.stopFallback(connector); err != nil {
+		return restoreAfterStopError{cause: err}
+	}
 	if still == "" {
 		return nil
 	}
-	return e.startFallback(connector, still)
+	if err := e.startFallback(connector, still); err != nil {
+		return restoreAfterStopError{cause: err}
+	}
+	return nil
 }
 
 // startFallback puts one still on one output through awww or swaybg.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -159,6 +160,9 @@ type Callbacks struct {
 	Capabilities func(Capabilities)
 	// ConfigPath is the file a reload re-reads. Empty disables reloading.
 	ConfigPath string
+	// ReloadResult reports a safe precommit refusal, or nil after an accepted
+	// reload. It runs on the Wayland owner goroutine and must not block.
+	ReloadResult func(error)
 }
 
 func (c Callbacks) validate() error {
@@ -1126,26 +1130,41 @@ func (o *owner) invalidate(inv Invalidation) {
 	}
 }
 
-// reloadConfig re-reads and applies the configuration file. A failure at any
-// stage leaves the previous configuration live and applies nothing.
+// reloadConfig re-reads and applies the configuration file. Precommit
+// refusals leave the current configuration live; transport failures during
+// application propagate to Run and stop the owner.
 func (o *owner) reloadConfig() error {
 	if o.cb.ConfigPath == "" {
 		return nil
 	}
-	cfg, err := config.Load(o.cb.ConfigPath)
+	cfg, err := config.LoadRequired(o.cb.ConfigPath)
 	if err != nil {
+		o.reportReloadResult(err)
 		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
+		return nil
+	}
+	if o.cfg != nil && reflect.DeepEqual(*o.cfg, cfg) {
+		o.reportReloadResult(nil)
 		return nil
 	}
 	prepared, err := o.prepareConfig(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
+		safeErr := errors.New("configuration could not be prepared")
+		o.reportReloadResult(safeErr)
+		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", safeErr)
 		return nil
 	}
 	if err := o.applyPreparedConfig(prepared); err != nil {
 		return fmt.Errorf("wayland: apply reloaded config: %w", err)
 	}
+	o.reportReloadResult(nil)
 	return nil
+}
+
+func (o *owner) reportReloadResult(err error) {
+	if o.cb.ReloadResult != nil {
+		o.cb.ReloadResult(err)
+	}
 }
 
 type preparedHostConfig struct {

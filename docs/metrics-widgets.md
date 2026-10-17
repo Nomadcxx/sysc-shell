@@ -18,7 +18,9 @@ use the grouped gauges:
 ]
 ```
 
-Back up `~/.config/sysc-shell/config.json` before editing it, then restart the user service.
+Back up `~/.config/sysc-shell/config.json` before editing it. The shell applies the file when you
+save it. If it refuses the file, the running bar stays as it was, a `Config not applied` notice
+appears, and Settings and `sysc-shell ipc status` show the reason, with the line and column where they are known.
 
 ## Intel i915 GPU usage
 

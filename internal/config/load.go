@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -332,33 +333,73 @@ func DefaultPath() string {
 // Load reads and validates a configuration file. A missing file is not an
 // error: the built-in defaults apply.
 func Load(path string) (Config, error) {
+	return load(path, false)
+}
+
+// LoadRequired reads and validates an existing configuration file. Reloads use
+// this entry point so a temporarily absent file cannot replace live settings
+// with startup defaults.
+func LoadRequired(path string) (Config, error) {
+	return load(path, true)
+}
+
+func load(path string, required bool) (Config, error) {
 	if path == "" {
-		return Default(), nil
+		if !required {
+			return Default(), nil
+		}
+		return Config{}, &Diagnostic{Message: "configuration path is empty"}
 	}
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) && !required {
 		return Default(), nil
 	}
 	if err != nil {
-		return Config{}, fmt.Errorf("config: read %s: %w", path, err)
+		return Config{}, readDiagnostic(path, err)
 	}
-	return Parse(data)
+	cfg, err := parseCandidate(data)
+	if err != nil {
+		return Config{}, diagnosticAt(path, data, decoderOffset(err), err)
+	}
+	return cfg, nil
 }
 
 // Parse decodes and validates a complete candidate, returning a resolved
 // Config only when every field passes.
 func Parse(data []byte) (Config, error) {
+	cfg, err := parseCandidate(data)
+	if err != nil {
+		return Config{}, diagnosticAt("<config>", data, decoderOffset(err), err)
+	}
+	return cfg, nil
+}
+
+// parseCandidate contains the strict decode and validation path shared by
+// startup, public Parse calls and reloads. Callers bind failures to a filename
+// and the bytes from that exact read.
+func parseCandidate(data []byte) (Config, error) {
 	var wire wireConfig
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return Config{}, fmt.Errorf("config: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			err = fmt.Errorf("more than one JSON value")
+		offset := decoderOffset(err)
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			offset = int64(len(data)) + 1
 		}
-		return Config{}, fmt.Errorf("config: %w", err)
+		return Config{}, parseIssueFor(err, offset)
+	}
+	firstEnd := decoder.InputOffset()
+	// The trailing value decodes as raw JSON: the strict field check applies to
+	// the configuration, and a second object carrying fields is still just a
+	// second value. Malformed trailing bytes stay a syntax error.
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		offset := decoderOffset(err)
+		if err == nil {
+			err = extraJSONValueError{}
+			offset = offsetAfterFirstValue(data, firstEnd)
+		}
+		return Config{}, parseIssueFor(err, offset)
 	}
 
 	cfg := Default()
@@ -1149,13 +1190,13 @@ func applyBar(base Bar, w wireBar, path string) (Bar, error) {
 	}
 	if w.Style != nil {
 		if !slices.Contains(BarStyles, *w.Style) {
-			return Bar{}, pathErr(path+".style", "%q is not one of %s", *w.Style, strings.Join(BarStyles, ", "))
+			return Bar{}, pathErr(path+".style", "%q is not one of frosted, solid, islands", *w.Style)
 		}
 		out.Style = *w.Style
 	}
 	if w.Shape != nil {
 		if !slices.Contains(BarShapes, *w.Shape) {
-			return Bar{}, pathErr(path+".shape", "%q is not one of %s", *w.Shape, strings.Join(BarShapes, ", "))
+			return Bar{}, pathErr(path+".shape", "%q is not one of attached, floating", *w.Shape)
 		}
 		out.Shape = *w.Shape
 	}
@@ -1803,7 +1844,7 @@ func applySession(base Session, w wireSession) (Session, error) {
 		base.Language = *w.Language
 	}
 	if base.Language != "" && !slices.Contains(i18n.Codes, base.Language) {
-		return base, pathErr("session.language", "%q is not one of %s", base.Language, strings.Join(i18n.Codes, ", "))
+		return base, pathErr("session.language", "%q is not a supported language code", base.Language)
 	}
 	return base, nil
 }

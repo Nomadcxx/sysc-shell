@@ -377,6 +377,12 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.errLabel != "" {
 		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
+	if r != nil && r.configReloadError != "" {
+		head = append(head, &ui.Node{
+			Kind: ui.KindText, Text: r.configReloadError, Name: "Configuration reload error",
+			Role: "status", Tone: ui.ToneError,
+		})
+	}
 	// The section name is always visible over the content, which is what lets
 	// the group titles inside the column stay unsticky.
 	head = append(head, settingsSectionHeading(h, section))

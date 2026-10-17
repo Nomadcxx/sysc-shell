@@ -191,6 +191,32 @@ func TestOsdRenderReflectsMeterLevel(t *testing.T) {
 	t.Fatal("meter rendered identically at zero and full level")
 }
 
+func TestConfigErrorOSDLayoutsAtUnitAndFractionalScale(t *testing.T) {
+	reg := newPanelRegistry(t)
+	m := newOSDManager(reg, 0)
+	reg.mu.Lock()
+	m.theme = reg.panelTheme()
+	reg.mu.Unlock()
+	for _, scale120 := range []int{120, 150} {
+		w, h := osdWidth*scale120/120, osdHeight*scale120/120
+		pixels := make([]byte, w*h*4)
+		m.view = OSDView{Kind: osdConfigError}
+		if err := m.render(pixels, w, h, w*4); err != nil {
+			t.Fatalf("scale %d render: %v", scale120, err)
+		}
+		painted := false
+		for i := 3; i < len(pixels); i += 4 {
+			if pixels[i] != 0 {
+				painted = true
+				break
+			}
+		}
+		if !painted {
+			t.Fatalf("scale %d config-error OSD painted no content", scale120)
+		}
+	}
+}
+
 func TestOsdRevealPublishesMultipleFrames(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()

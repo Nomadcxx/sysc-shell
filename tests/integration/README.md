@@ -112,6 +112,46 @@ pkill -HUP sysc-shell
 Each bar must adopt the candidate together. Then write `{"bar": {"height": 4, "gap": 4}}`, send
 `SIGHUP`, and confirm that each bar retains its prior state and the error names `bar.height`.
 
+## Config save, refusal and panel retention
+
+The shell watches the directory holding its config file and reloads after a save settles. A refused
+file leaves the running config in place. Settings, the message OSD and `sysc-shell ipc status` report
+it until a later save succeeds.
+
+Never run these steps against the owner's config without their approval and a backup. Before
+starting, copy the exact bytes with their mode, record whether the path is a symlink and where it
+points, and take a SHA-256. Do not print the file's contents. Restore by writing the backup to a
+temporary file in the same directory and renaming it over the config. `config.Write` re-encodes the
+file sparsely and changes unrelated content, so never restore through it.
+
+After each step, record `sysc-shell ipc status` (`config_error`, `config_error_at`) and
+`niri msg -j layers`.
+
+| # | Action | Passing observation |
+|---|---|---|
+| 1 | Open Clock, Monitor and Settings; save a harmless spacing edit in place | Spacing updates; the panels stay mapped with their focus and scroll; `config_error` is empty |
+| 2 | Write an editor temp file and rename it over the config | Same as 1, with no restart and no duplicate notice |
+| 3 | Save malformed JSON, then an out-of-range `bar.height` | One `Config not applied` notice per distinct error; Settings shows the redacted diagnostic; bar and panel geometry unchanged |
+| 4 | Save the identical bad bytes again | `config_error_at` unchanged; no new notice |
+| 5 | Restore bytes equal to the last good config | Error fields clear; no panel closes or reopens |
+| 6 | Move the bar top → right → bottom with panels open, then restore the original edge | Panel surfaces stay mapped and follow the edge without overlapping; the keyboard stays on the same control |
+| 7 | With a local Settings write error showing, save an invalid file externally, then a valid one | Both errors readable together; the valid save removes only the reload error |
+| 8 | Delete the config after a good apply, then rename a valid file into place | The delete is refused and does not load defaults; the rename recovers |
+| 9 | Start with the watcher failing, then send SIGHUP | A warning names the manual fallback; SIGHUP still reloads and refuses |
+| 10 | Point the config symlink at a target outside its directory and edit the target | No automatic reload; SIGHUP applies it. Replacing the symlink itself is watched |
+| 11 | Enable reduced motion and high contrast, then save an invalid file | The notice appears without sliding, in the error tone |
+| 12 | Save an invalid file while a lock is running or pending, then unlock | No notice during the lock and none after; status keeps the error |
+| 13 | Leave the shell idle, then stop it | No periodic file reads or frames while idle; descriptor count unchanged after the watcher and relay exit |
+
+Send SIGHUP to the shell process only, with
+`systemctl --user kill --kill-whom=main --signal=HUP sysc-shell.service`. The whole-unit form also
+signals the wallpaper process and restarts it. Check `pgrep -c gslapper` after the run.
+Record the Niri version, outputs and scale, idle wakeups and CPU before and after, descriptor counts,
+and the observed save-to-apply time. Do not set a latency or CPU budget before measuring one.
+Two-output and fractional-scale cases need a machine that has them; record them as unrun otherwise.
+Diagnostic positions for validation errors, as opposed to JSON syntax errors, wait on `sysc-734`'s
+config origin index.
+
 ## Tranche 3A: built-in widget foundation
 
 Run only after Milestone 2 passes its own live matrix. Record connector names,
