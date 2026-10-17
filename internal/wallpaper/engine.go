@@ -31,6 +31,14 @@ type activeWallpaper struct {
 	engine     string
 }
 
+// restoreAfterStopError reports a fallback failure after the owned animated
+// engine stopped, allowing the service to persist the requested still.
+type restoreAfterStopError struct{ cause error }
+
+func (e restoreAfterStopError) Error() string { return e.cause.Error() }
+func (e restoreAfterStopError) Unwrap() error { return e.cause }
+func (restoreAfterStopError) restoreStopped() {}
+
 // processWatch owns the one Wait call for a process. The engine needs to reap
 // children during shutdown, while waitForQuery also needs to notice a child
 // that exits before its socket becomes ready.
@@ -887,13 +895,16 @@ func (e *gslapperEngine) Restore(connector, still string) error {
 		return err
 	}
 	if err := e.stopFallback(connector); err != nil {
-		return err
+		return restoreAfterStopError{cause: err}
 	}
 	e.clearActive(connector)
 	if still == "" {
 		return nil
 	}
-	return e.startFallback(connector, still)
+	if err := e.startFallback(connector, still); err != nil {
+		return restoreAfterStopError{cause: err}
+	}
+	return nil
 }
 
 // startFallback puts one still on one output through awww or swaybg.

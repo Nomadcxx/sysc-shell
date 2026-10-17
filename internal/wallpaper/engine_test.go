@@ -1347,6 +1347,28 @@ func TestEngineRestoreStopsThenFallsBack(t *testing.T) {
 	}
 }
 
+func TestEngineRestoreMarksFallbackFailureAfterStopping(t *testing.T) {
+	h := newEngineHarness(t)
+	h.eng.caps = Capabilities{GSlapper: true}
+	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	h.ownSocket("DP-1")
+	h.replies["stop"] = "OK"
+
+	err := h.eng.Restore("DP-1", "/c/still.jpg")
+	if !errors.Is(err, ErrNoStaticEngine) {
+		t.Fatalf("restore error = %v, want missing static engine", err)
+	}
+	var stopped stoppedRestoreFailure
+	if !errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, want marker that the animated engine stopped", err)
+	}
+	if _, err := os.Stat(h.socket("DP-1")); !os.IsNotExist(err) {
+		t.Fatalf("owned engine socket still exists after restore failure: %v", err)
+	}
+}
+
 func TestEngineRestoreWithNoStillLeavesEmpty(t *testing.T) {
 	h := newEngineHarness(t)
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
