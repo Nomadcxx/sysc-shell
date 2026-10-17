@@ -119,13 +119,14 @@ type Session struct {
 	// Granted is what the host offered and the plugin accepted.
 	Granted []Capability
 
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	enc     *v1.Encoder
-	dec     *v1.Decoder
-	stderr  *tail
-	grace   time.Duration
-	inbound *Inbound
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	enc        *v1.Encoder
+	dec        *v1.Decoder
+	stderr     *tail
+	stderrDone chan struct{}
+	grace      time.Duration
+	inbound    *Inbound
 
 	sendMu sync.Mutex
 	recvMu sync.Mutex
@@ -183,16 +184,20 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	}
 
 	sess := &Session{
-		cmd:     cmd,
-		stdin:   stdin,
-		enc:     v1.NewEncoder(stdin),
-		dec:     v1.NewDecoder(stdout, v1.ToHost),
-		stderr:  newTail(MaxStderrBytes),
-		grace:   s.ShutdownGrace,
-		inbound: NewInbound(nil, s.Limits),
-		started: time.Now(),
+		cmd:        cmd,
+		stdin:      stdin,
+		enc:        v1.NewEncoder(stdin),
+		dec:        v1.NewDecoder(stdout, v1.ToHost),
+		stderr:     newTail(MaxStderrBytes),
+		stderrDone: make(chan struct{}),
+		grace:      s.ShutdownGrace,
+		inbound:    NewInbound(nil, s.Limits),
+		started:    time.Now(),
 	}
-	go sess.stderr.drain(stderrPipe)
+	go func() {
+		defer close(sess.stderrDone)
+		sess.stderr.drain(stderrPipe)
+	}()
 
 	if err := s.handshake(ctx, sess); err != nil {
 		s.reap(sess)
@@ -428,10 +433,16 @@ func (s *Session) shutdown() ExitReason {
 
 	select {
 	case err := <-done:
+		if s.stderrDone != nil {
+			<-s.stderrDone
+		}
 		return classify(err)
 	case <-timer.C:
 		_ = s.cmd.Process.Kill()
 		<-done
+		if s.stderrDone != nil {
+			<-s.stderrDone
+		}
 		return ExitReason{Kind: ExitKilled}
 	}
 }
