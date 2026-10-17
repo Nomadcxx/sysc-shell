@@ -85,6 +85,9 @@ type PanelHost struct {
 	// writeTimer is the pending settings write, if a field or slider has been
 	// moved and has not settled yet.
 	writeTimer *time.Timer
+	// writeTimerGeneration invalidates callbacks from replaced or flushed timers.
+	// Registry.mu guards it along with writeTimer.
+	writeTimerGeneration uint64
 	// settingsWriteRevision and settingsWriteChanges are guarded by
 	// Registry.settingsWriteMu.
 	settingsWriteRevision uint64
@@ -4593,6 +4596,8 @@ func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 	if h.writeTimer != nil {
 		h.writeTimer.Stop()
 	}
+	h.writeTimerGeneration++
+	generation := h.writeTimerGeneration
 	var revision uint64
 	if h.id == PanelSettings {
 		r.settingsWriteMu.Lock()
@@ -4605,16 +4610,14 @@ func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 	if r != nil && r.writeDelay > 0 {
 		delay = r.writeDelay
 	}
-	var timer *time.Timer
-	timer = time.AfterFunc(delay, func() {
-		h.writeTimerExpired(r, timer, revision)
+	h.writeTimer = time.AfterFunc(delay, func() {
+		h.writeTimerExpired(r, generation, revision)
 	})
-	h.writeTimer = timer
 }
 
-func (h *PanelHost) writeTimerExpired(r *Registry, timer *time.Timer, revision uint64) {
+func (h *PanelHost) writeTimerExpired(r *Registry, generation, revision uint64) {
 	r.mu.Lock()
-	if r.panelHosts[h.id] != h || h.writeTimer != timer {
+	if r.panelHosts[h.id] != h || h.writeTimer == nil || h.writeTimerGeneration != generation {
 		// The host was replaced while the edit was settling; its draft is
 		// no longer the one on screen, or a newer timer replaced this one.
 		r.mu.Unlock()
@@ -4658,6 +4661,7 @@ func (h *PanelHost) flushDraft(r *Registry) {
 	if h.writeTimer == nil {
 		return
 	}
+	h.writeTimerGeneration++
 	h.writeTimer.Stop()
 	h.writeTimer = nil
 	if h.id == PanelSettings {

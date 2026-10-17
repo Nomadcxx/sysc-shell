@@ -1690,14 +1690,14 @@ func TestSettingsStaleTimerDoesNotHideReplacementFromFlush(t *testing.T) {
 
 	reg.mu.Lock()
 	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
-	staleTimer := h.writeTimer
+	staleGeneration := h.writeTimerGeneration
 	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "latest"})
 	replacement := h.writeTimer
 	reg.mu.Unlock()
 
 	// ponytail: invoke the timer body directly so this regression check does
 	// not depend on callback scheduling.
-	h.writeTimerExpired(reg, staleTimer, 1)
+	h.writeTimerExpired(reg, staleGeneration, 1)
 
 	reg.mu.Lock()
 	if h.writeTimer != replacement {
