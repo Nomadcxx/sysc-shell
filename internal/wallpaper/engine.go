@@ -722,7 +722,7 @@ func (e *gslapperEngine) liveSocket(proc Process, socket string) bool {
 }
 
 // stopOwned ends the wallpaper process on one output: IPC first, then the
-// handle we hold, then a bounded wait for the socket to disappear.
+// handle we hold, then a bounded wait for the owned process to exit.
 //
 // There is deliberately no match-by-name step. If the socket outlives both and
 // we hold no handle for it, that is reported rather than resolved by killing
@@ -756,10 +756,6 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 			return fmt.Errorf("wallpaper: stop process on %s: %w", connector, err)
 		}
 		if !waitProcess(proc, stopWait) {
-			if _, err := os.Stat(socket); os.IsNotExist(err) {
-				e.clearOwned(connector, proc)
-				return nil
-			}
 			return fmt.Errorf("wallpaper: process on %s did not exit", connector)
 		}
 	}
@@ -886,12 +882,16 @@ func (e *gslapperEngine) Restore(connector, still string) error {
 	}
 	socket := e.currentSocket(connector)
 	if err := e.stopOwned(connector, socket); err != nil {
+		var stopped stoppedRestoreFailure
+		if errors.As(err, &stopped) {
+			e.clearActive(connector)
+		}
 		return err
 	}
+	e.clearActive(connector)
 	if err := e.stopFallback(connector); err != nil {
 		return restoreAfterStopError{cause: err}
 	}
-	e.clearActive(connector)
 	if still == "" {
 		return nil
 	}
