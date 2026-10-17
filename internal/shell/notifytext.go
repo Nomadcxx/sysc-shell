@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"net/url"
 	"strings"
 	"unicode/utf8"
 )
@@ -116,8 +117,10 @@ func parseMarkup(body string, allowLinks bool) ([]Run, bool) {
 					current.underline++
 				case "a":
 					href := attributeValue(attributes, "href")
-					if allowLinks && href != "" && len(href) <= MaxLinkBytes && utf8.ValidString(href) {
-						current.href = href
+					if allowLinks {
+						if _, ok := notificationURL(href); ok {
+							current.href = href
+						}
 					}
 				}
 			case "br":
@@ -167,6 +170,25 @@ func parseMarkup(body string, allowLinks bool) ([]Run, bool) {
 		return nil, false
 	}
 	return runs, true
+}
+
+// notificationURL validates and bounds an href before either the card makes
+// it actionable or the desktop opener receives it.
+func notificationURL(raw string) (string, bool) {
+	if raw == "" || len(raw) > MaxLinkBytes || !utf8.ValidString(raw) {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Opaque != "" || parsed.User != nil || parsed.Hostname() == "" {
+		return "", false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return "", false
+	}
+	target := parsed.String()
+	return target, len(target) <= MaxLinkBytes
 }
 
 // plainRuns is the fallback: the body shown exactly as it arrived, split only

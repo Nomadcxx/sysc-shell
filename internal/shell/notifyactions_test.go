@@ -2,6 +2,7 @@ package shell
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -225,6 +226,43 @@ func TestResolverOpensALinkThroughTheQualifiedOpener(t *testing.T) {
 	}
 	if len(hh.commands) != 0 {
 		t.Fatalf("link click issued a protocol command: %+v", hh.commands)
+	}
+}
+
+func TestToastHostStartsLinkOpenerAfterRegistryUnlock(t *testing.T) {
+	r := &Registry{}
+	host := &toastHost{r: r}
+	started := make(chan bool, 1)
+	previous := openNotificationURL
+	openNotificationURL = func(href string) error {
+		if href != "https://example.test" {
+			t.Errorf("opened %q, want the notification URL", href)
+		}
+		acquired := r.mu.TryLock()
+		if acquired {
+			r.mu.Unlock()
+		}
+		started <- acquired
+		return nil
+	}
+	defer func() { openNotificationURL = previous }()
+
+	r.mu.Lock()
+	host.openLink("https://example.test")
+	select {
+	case <-started:
+		t.Fatal("desktop opener started while the notification handler held Registry.mu")
+	default:
+	}
+	r.mu.Unlock()
+
+	select {
+	case acquired := <-started:
+		if !acquired {
+			t.Fatal("desktop opener started before Registry.mu was released")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("desktop opener did not start")
 	}
 }
 

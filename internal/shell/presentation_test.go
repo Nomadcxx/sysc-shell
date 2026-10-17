@@ -55,3 +55,43 @@ func TestPresentationZeroOutputsSuppresses(t *testing.T) {
 		t.Fatalf("zero outputs: aggregate = %q, want suppressed", got)
 	}
 }
+
+func TestPresentationSuppressionUsesDNDAndUrgency(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		urgency protocol.Urgency
+		dnd     bool
+		center  bool
+		outputs []string
+		want    protocol.PresentationState
+	}{
+		{name: "ordinary without DND", urgency: protocol.UrgencyNormal, outputs: []string{"eDP-1"}, want: protocol.PresentationVisible},
+		{name: "critical without DND", urgency: protocol.UrgencyCritical, outputs: []string{"eDP-1"}, want: protocol.PresentationVisible},
+		{name: "ordinary during DND", urgency: protocol.UrgencyNormal, dnd: true, outputs: []string{"eDP-1"}, want: protocol.PresentationSuppressed},
+		{name: "critical during DND", urgency: protocol.UrgencyCritical, dnd: true, outputs: []string{"eDP-1"}, want: protocol.PresentationVisible},
+		{name: "ordinary while centre open", urgency: protocol.UrgencyNormal, center: true, outputs: []string{"eDP-1"}, want: protocol.PresentationSuppressed},
+		{name: "critical while centre open", urgency: protocol.UrgencyCritical, dnd: true, center: true, outputs: []string{"eDP-1"}, want: protocol.PresentationSuppressed},
+		{name: "ordinary with no outputs", urgency: protocol.UrgencyNormal, outputs: nil, want: protocol.PresentationSuppressed},
+		{name: "critical with no outputs", urgency: protocol.UrgencyCritical, dnd: true, outputs: nil, want: protocol.PresentationSuppressed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRegistry(config.Default())
+			t.Cleanup(r.Close)
+			n := note(1, "notice")
+			n.Urgency = tc.urgency
+			r.applyNotify(snap(1, n))
+			r.outputsForTest(tc.outputs)
+			if tc.dnd {
+				r.setDNDForTest(true)
+			}
+			if tc.center {
+				r.setCenterOpenForTest(true)
+			}
+
+			got := r.aggregatePresentation(n.ID, presentationView{visible: []string{"eDP-1"}})
+			if got != tc.want {
+				t.Fatalf("aggregate = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
