@@ -72,11 +72,38 @@ const (
 // launcher from paying for an XDG scan; the first open scans, and later opens
 // hit the service's rescan-if-stale path (D12). Caller holds r.mu.
 func (r *Registry) launcherServiceLocked() *launcher.Service {
+	if r.launcherSvc != nil && (!sameLauncherCommandProviders(r.launcherServiceProviders, r.cfg.Launcher.Providers) ||
+		!sameLauncherActions(r.launcherServiceActions, r.cfg.Launcher.Actions)) {
+		stale := r.launcherSvc
+		r.launcherSvc = nil
+		r.launcherServiceProviders = nil
+		r.launcherServiceActions = nil
+		r.launcherMu.Lock()
+		r.launcherProviderGeneration++
+		r.launcherMu.Unlock()
+		if r.launcherServiceCloseDone == nil {
+			r.launcherServiceCloseDone = make(map[*launcher.Service]chan struct{})
+		}
+		closed := make(chan struct{})
+		r.launcherServiceCloseDone[stale] = closed
+		go func() {
+			stale.Close()
+			close(closed)
+			r.mu.Lock()
+			delete(r.launcherServiceCloseDone, stale)
+			r.mu.Unlock()
+		}()
+	}
 	if r.launcherSvc == nil {
 		cfg := r.launcherServiceConfig()
 		cfg.History = launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil)
 		r.launcherSvc = launcher.NewService(cfg)
-		go r.relayLauncher(r.launcherSvc)
+		r.launcherServiceProviders = cloneLauncherCommandProviders(r.cfg.Launcher.Providers)
+		r.launcherServiceActions = cloneLauncherActions(r.cfg.Launcher.Actions)
+		if !r.launcherRelayStarted {
+			r.launcherRelayStarted = true
+			go r.relayLauncher(r.launcherSvc)
+		}
 	}
 	return r.launcherSvc
 }
@@ -187,10 +214,10 @@ func (r *Registry) ensureLauncherSnaps() {
 	}
 }
 
-// rankLauncher is the service rank hook. It stamps the rows with the query
-// generation after an optional test wait, so a publish can be held until a
-// newer query has been issued.
-func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost func(query, identifier string) int) []launcher.Result {
+// rankLauncher is the service rank hook. It stamps rows with the service
+// generation after an optional test wait, so a replaced service cannot add
+// stale rows to a newer batch.
+func (r *Registry) rankLauncher(providerGeneration uint64, entries []launcher.Entry, query string, boost func(query, identifier string) int) []launcher.Result {
 	rows := launcherRank(entries, query, boost)
 	r.launcherMu.Lock()
 	wait := r.launcherRankWait
@@ -198,7 +225,7 @@ func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost fu
 	if wait != nil {
 		wait(query)
 	}
-	r.noteLauncherRows(launcherAppsPrefix, query, rows)
+	r.noteLauncherRowsForGeneration(providerGeneration, launcherAppsPrefix, query, rows)
 	return rows
 }
 
@@ -206,6 +233,7 @@ func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost fu
 // holds r.mu. A snapshot from an earlier generation no longer matches, so it
 // cannot clear launcherAwaiting.
 func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
+	svc := r.launcherServiceLocked()
 	plan := classifyLauncherQuery(text, r.launcherProviders())
 	r.launcherMu.Lock()
 	r.launcherGen++
@@ -220,7 +248,7 @@ func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
 		h.launcherSel = 0
 		h.launcherAwaiting = false
 	}
-	r.launcherServiceLocked().Query(text)
+	svc.Query(text)
 }
 
 func classifyLauncherQuery(text string, providers []launcher.Provider) launcherPlan {
@@ -259,9 +287,12 @@ func classifyLauncherQuery(text string, providers []launcher.Provider) launcherP
 // match the plan for the current generation; a rank that started for the
 // previous text is ignored, and so is a snapshot emitted before the new
 // generation was issued.
-func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Result) {
+func (r *Registry) noteLauncherRowsForGeneration(generation uint64, provider, query string, rows []launcher.Result) {
 	r.launcherMu.Lock()
 	defer r.launcherMu.Unlock()
+	if generation != r.launcherProviderGeneration {
+		return
+	}
 	plan := r.launcherPlan
 	if r.launcherGen == 0 || query != plan.passed {
 		return
@@ -338,7 +369,7 @@ func (r *Registry) emitLauncherSnapLocked(snap launcherSnap) {
 func (r *Registry) launcherOverviewRows(filter string) []launcher.Result {
 	filter = strings.ToLower(filter)
 	type item struct{ id, name, comment, icon string }
-	items := []item{{"/apps", "Applications", "Installed desktop applications", "glyph:apps"}}
+	items := []item{{launcherAppsPrefix, "Applications", "Installed desktop applications", "glyph:apps"}}
 	for _, p := range r.launcherProviders() {
 		items = append(items, item{p.Prefix, p.Name, p.Description, p.Glyph})
 	}
@@ -354,6 +385,18 @@ func (r *Registry) launcherOverviewRows(filter string) []launcher.Result {
 		}})
 	}
 	return out
+}
+
+func (r *Registry) launcherOverviewPrefix(id string) bool {
+	if id == launcherAppsPrefix {
+		return true
+	}
+	for _, provider := range r.launcherProviders() {
+		if provider.Prefix == id {
+			return true
+		}
+	}
+	return false
 }
 
 // launcherHeader is the SYSC rail: six slashes, the brand mark, six slashes.
@@ -699,7 +742,7 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	if res.Entry.ID == "" {
 		return // a hint row explains; it does not act
 	}
-	if len(res.Entry.Argv) == 0 && strings.HasPrefix(res.Entry.ID, "/") {
+	if len(res.Entry.Argv) == 0 && r.launcherOverviewPrefix(res.Entry.ID) {
 		h.errLabel = ""
 		h.launcherAttempt++
 		h.query = res.Entry.ID
@@ -798,10 +841,9 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 	h.errLabel = ""
 	h.launcherAttempt++
 	attempt := h.launcherAttempt
-	h.launcherPendingAttempt = attempt
 	svc := r.launcherServiceLocked()
 	go func() {
-		err := svc.Activate(id, action)
+		err := r.activateLauncherService(h, svc, attempt, id, action)
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		host := r.panelHosts[PanelLauncher]
@@ -821,6 +863,25 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 		}
 		r.closePanelLocked(PanelLauncher)
 	}()
+}
+
+func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, attempt uint64, id, action string) error {
+	r.launcherActivationMu.Lock()
+	defer r.launcherActivationMu.Unlock()
+	r.mu.Lock()
+	h.launcherPendingAttempt = attempt
+	r.mu.Unlock()
+
+	err := svc.Activate(id, action)
+	if errors.Is(err, launcher.ErrServiceClosed) {
+		r.mu.Lock()
+		closed := r.launcherServiceCloseDone[svc]
+		r.mu.Unlock()
+		if closed != nil {
+			<-closed
+		}
+	}
+	return err
 }
 
 // launcherPointerPress handles row clicks. A left press launches immediately

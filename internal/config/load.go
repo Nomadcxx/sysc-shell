@@ -135,6 +135,29 @@ type wireSession struct {
 	Language    *string `json:"language,omitempty"`
 }
 
+type wireLauncher struct {
+	Providers []wireLauncherCommandProvider `json:"providers,omitempty"`
+	Actions   []wireLauncherAction          `json:"actions,omitempty"`
+}
+
+type wireLauncherCommandProvider struct {
+	Name        string   `json:"name"`
+	Prefix      string   `json:"prefix"`
+	Glyph       string   `json:"glyph,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Command     []string `json:"command"`
+	OnSelect    []string `json:"on_select"`
+}
+
+type wireLauncherAction struct {
+	ID             string   `json:"id"`
+	Label          string   `json:"label"`
+	Comment        string   `json:"comment,omitempty"`
+	Argv           []string `json:"argv"`
+	Dangerous      bool     `json:"dangerous,omitempty"`
+	AllowDangerous bool     `json:"allow_dangerous,omitempty"`
+}
+
 type wireIdle struct {
 	BlankAc        *string `json:"blank_ac,omitempty"`
 	BlankBattery   *string `json:"blank_battery,omitempty"`
@@ -227,6 +250,7 @@ type wireConfig struct {
 	ThemeGen      *wireThemeGen        `json:"theme-gen,omitempty"`
 	Accessibility *wireAccessibility   `json:"accessibility,omitempty"`
 	Session       *wireSession         `json:"session,omitempty"`
+	Launcher      *wireLauncher        `json:"launcher,omitempty"`
 	Idle          *wireIdle            `json:"idle,omitempty"`
 	Panels        *wirePanels          `json:"panels,omitempty"`
 	Tray          *wireTrayPreferences `json:"tray,omitempty"`
@@ -365,6 +389,13 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Session = session
 	}
+	if wire.Launcher != nil {
+		launcher, err := applyLauncher(*wire.Launcher, "launcher")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Launcher = launcher
+	}
 	if wire.Idle != nil {
 		idle, err := applyIdle(cfg.Idle, *wire.Idle)
 		if err != nil {
@@ -499,6 +530,108 @@ func Parse(data []byte) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+const (
+	launcherActionMaxIDBytes    = 64
+	launcherActionMaxLabelBytes = 128
+	launcherActionMaxArgvCount  = 32
+	launcherActionMaxArgBytes   = 4096
+)
+
+func applyLauncher(w wireLauncher, path string) (Launcher, error) {
+	out := Launcher{
+		Providers: make([]LauncherCommandProvider, 0, len(w.Providers)),
+		Actions:   make([]LauncherAction, 0, len(w.Actions)),
+	}
+	reservedPrefixes := map[string]struct{}{
+		LauncherAppsPrefix: {}, LauncherCalcPrefix: {}, LauncherEmojiPrefix: {},
+		LauncherNotesPrefix: {}, LauncherSessionPrefix: {}, LauncherActionsPrefix: {},
+	}
+	seenPrefixes := make(map[string]struct{}, len(w.Providers))
+	for i, provider := range w.Providers {
+		field := fmt.Sprintf("%s.providers[%d]", path, i)
+		if strings.TrimSpace(provider.Name) == "" || len(provider.Name) > launcherActionMaxLabelBytes {
+			return Launcher{}, pathErr(field+".name", "must be non-empty and at most %d bytes", launcherActionMaxLabelBytes)
+		}
+		if len(provider.Prefix) < 2 || len(provider.Prefix) > launcherActionMaxIDBytes ||
+			provider.Prefix[0] != '/' || strings.TrimSpace(provider.Prefix) != provider.Prefix ||
+			strings.IndexFunc(provider.Prefix, unicode.IsSpace) >= 0 {
+			return Launcher{}, pathErr(field+".prefix", "must be a slash prefix without whitespace and at most %d bytes", launcherActionMaxIDBytes)
+		}
+		if _, exists := reservedPrefixes[provider.Prefix]; exists {
+			return Launcher{}, pathErr(field+".prefix", "%q is reserved", provider.Prefix)
+		}
+		if _, exists := seenPrefixes[provider.Prefix]; exists {
+			return Launcher{}, pathErr(field+".prefix", "%q appears more than once", provider.Prefix)
+		}
+		seenPrefixes[provider.Prefix] = struct{}{}
+		if err := validateLauncherArgv(provider.Command, field+".command", "{query}"); err != nil {
+			return Launcher{}, err
+		}
+		if err := validateLauncherArgv(provider.OnSelect, field+".on_select", "{query}", "{selection}"); err != nil {
+			return Launcher{}, err
+		}
+		if len(provider.Glyph) > launcherActionMaxLabelBytes {
+			return Launcher{}, pathErr(field+".glyph", "must be at most %d bytes", launcherActionMaxLabelBytes)
+		}
+		if len(provider.Description) > 512 {
+			return Launcher{}, pathErr(field+".description", "must be at most 512 bytes")
+		}
+		out.Providers = append(out.Providers, LauncherCommandProvider{
+			Name: provider.Name, Prefix: provider.Prefix, Glyph: provider.Glyph,
+			Description: provider.Description, Command: slices.Clone(provider.Command),
+			OnSelect: slices.Clone(provider.OnSelect),
+		})
+	}
+	seen := make(map[string]struct{}, len(w.Actions))
+	for i, action := range w.Actions {
+		field := fmt.Sprintf("%s.actions[%d]", path, i)
+		if strings.TrimSpace(action.ID) == "" || len(action.ID) > launcherActionMaxIDBytes {
+			return Launcher{}, pathErr(field+".id", "must be non-empty and at most %d bytes", launcherActionMaxIDBytes)
+		}
+		if _, exists := seen[action.ID]; exists {
+			return Launcher{}, pathErr(field+".id", "%q appears more than once", action.ID)
+		}
+		seen[action.ID] = struct{}{}
+		if strings.TrimSpace(action.Label) == "" || len(action.Label) > launcherActionMaxLabelBytes {
+			return Launcher{}, pathErr(field+".label", "must be non-empty and at most %d bytes", launcherActionMaxLabelBytes)
+		}
+		if action.AllowDangerous && !action.Dangerous {
+			return Launcher{}, pathErr(field+".allow_dangerous", "requires dangerous to be true")
+		}
+		if len(action.Argv) == 0 || len(action.Argv) > launcherActionMaxArgvCount || strings.TrimSpace(action.Argv[0]) == "" {
+			return Launcher{}, pathErr(field+".argv", "must contain 1..%d arguments and a non-empty executable", launcherActionMaxArgvCount)
+		}
+		for j, arg := range action.Argv {
+			if len(arg) > launcherActionMaxArgBytes {
+				return Launcher{}, pathErr(fmt.Sprintf("%s.argv[%d]", field, j), "exceeds %d bytes", launcherActionMaxArgBytes)
+			}
+		}
+		out.Actions = append(out.Actions, LauncherAction{
+			ID: action.ID, Label: action.Label, Comment: action.Comment,
+			Argv: slices.Clone(action.Argv), Dangerous: action.Dangerous,
+			AllowDangerous: action.AllowDangerous,
+		})
+	}
+	return out, nil
+}
+
+func validateLauncherArgv(argv []string, field string, forbiddenExecutableTemplates ...string) error {
+	if len(argv) == 0 || len(argv) > launcherActionMaxArgvCount || strings.TrimSpace(argv[0]) == "" {
+		return pathErr(field, "must contain 1..%d arguments and a non-empty executable", launcherActionMaxArgvCount)
+	}
+	for _, template := range forbiddenExecutableTemplates {
+		if strings.Contains(argv[0], template) {
+			return pathErr(field, "executable cannot contain %s", template)
+		}
+	}
+	for i, arg := range argv {
+		if len(arg) > launcherActionMaxArgBytes {
+			return pathErr(fmt.Sprintf("%s[%d]", field, i), "exceeds %d bytes", launcherActionMaxArgBytes)
+		}
+	}
+	return nil
 }
 
 // applyPlugins validates the plugin section.

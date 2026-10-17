@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -89,6 +91,9 @@ func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *reco
 	svc := launcher.NewService(cfg)
 	reg.mu.Lock()
 	reg.launcherSvc = svc
+	reg.launcherServiceProviders = cloneLauncherCommandProviders(reg.cfg.Launcher.Providers)
+	reg.launcherServiceActions = cloneLauncherActions(reg.cfg.Launcher.Actions)
+	reg.launcherRelayStarted = true
 	reg.mu.Unlock()
 	go reg.relayLauncher(svc)
 
@@ -727,6 +732,366 @@ func TestLauncherSessionFailureRemainsVisible(t *testing.T) {
 	waitForLauncherState(t, reg, func(h *PanelHost) bool {
 		return h != nil && h.errLabel == "loginctl refused"
 	})
+}
+
+func TestLauncherConfiguredActionFailureRemainsVisible(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	started := make(chan []string, 1)
+	reg.mu.Lock()
+	reg.cfg.Launcher.Actions = []config.LauncherAction{{
+		ID: "open-search", Label: "Open search", Argv: []string{"browser", "search terms"},
+	}}
+	reg.runArgv = func(argv []string) error {
+		started <- append([]string(nil), argv...)
+		return errors.New("browser refused")
+	}
+	reg.mu.Unlock()
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "open search"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(row launcher.Result) bool {
+			return row.Entry.ID == "launcher-action:open-search"
+		})
+	})
+	pressLauncherKey(reqs, keyEnter)
+	select {
+	case argv := <-started:
+		if !slices.Equal(argv, []string{"browser", "search terms"}) {
+			t.Fatalf("configured action argv = %v", argv)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("configured action did not start")
+	}
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.errLabel == "browser refused"
+	})
+}
+
+func TestLauncherCommandProviderConfigReloadRefreshesOpenLauncher(t *testing.T) {
+	printf, err := exec.LookPath("printf")
+	if err != nil {
+		t.Skip("printf is unavailable")
+	}
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reg.mu.Lock()
+	cfg := reg.cfg.Clone()
+	reg.mu.Unlock()
+	cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Files", Prefix: "/files", Glyph: "glyph:description",
+		Command:  []string{printf, "%s\\t%s\\n", "{query}", "Document"},
+		OnSelect: []string{"file-open", "{selection}"},
+	}}
+	prepared, err := reg.PrepareConfig(cfg, nil)
+	if err != nil {
+		t.Fatalf("prepare launcher provider config: %v", err)
+	}
+	prepared.Commit()
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/files milk"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(row launcher.Result) bool {
+			return row.Entry.ID == "/files:row:milk\tDocument"
+		})
+	})
+}
+
+func TestLauncherActionConfigReloadRefreshesOpenLauncher(t *testing.T) {
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reg.mu.Lock()
+	cfg := reg.cfg.Clone()
+	cfg.Launcher.Actions = []config.LauncherAction{{
+		ID: "docs", Label: "Open docs", Argv: []string{"browser", "https://example.test/docs"},
+	}}
+	reg.mu.Unlock()
+	prepared, err := reg.PrepareConfig(cfg, nil)
+	if err != nil {
+		t.Fatalf("prepare initial launcher action config: %v", err)
+	}
+	prepared.Commit()
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/action"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(row launcher.Result) bool {
+			return row.Entry.ID == "launcher-action:docs" && row.Entry.Name == "Open docs"
+		})
+	})
+
+	reg.mu.Lock()
+	cfg = reg.cfg.Clone()
+	cfg.Launcher.Actions[0].Label = "Browse docs"
+	reg.mu.Unlock()
+	prepared, err = reg.PrepareConfig(cfg, nil)
+	if err != nil {
+		t.Fatalf("prepare changed launcher action config: %v", err)
+	}
+	prepared.Commit()
+
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(row launcher.Result) bool {
+			return row.Entry.ID == "launcher-action:docs" && row.Entry.Name == "Browse docs"
+		})
+	})
+}
+
+func TestLauncherRankFromReplacedServiceCannotEmitIntoCurrentBatch(t *testing.T) {
+	reg := newPanelRegistry(t)
+	reg.mu.Lock()
+	oldConfig := reg.launcherServiceConfig()
+	oldConfig.Scan = func() []launcher.Entry { return nil }
+	reg.launcherSvc = launcher.NewService(oldConfig)
+	reg.launcherServiceProviders = cloneLauncherCommandProviders(reg.cfg.Launcher.Providers)
+	reg.launcherServiceActions = cloneLauncherActions(reg.cfg.Launcher.Actions)
+	reg.launcherRelayStarted = true
+	reg.mu.Unlock()
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	reg.launcherMu.Lock()
+	reg.launcherGen = 1
+	reg.launcherPlan = launcherPlan{kind: launcherKindApps, passed: "same"}
+	reg.launcherBatch = launcherBatch{gen: 1}
+	reg.launcherRankWait = func(string) {
+		started <- struct{}{}
+		<-release
+	}
+	reg.launcherMu.Unlock()
+
+	oldDone := make(chan struct{})
+	go func() {
+		oldConfig.Rank([]launcher.Entry{{ID: "stale", Name: "same stale"}}, "same", nil)
+		close(oldDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old service rank did not reach its hold")
+	}
+
+	reg.mu.Lock()
+	reg.cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Files", Prefix: "/files", Command: []string{"list"}, OnSelect: []string{"open"},
+	}}
+	reg.launcherServiceLocked()
+	newConfig := reg.launcherServiceConfig()
+	reg.mu.Unlock()
+
+	reg.launcherMu.Lock()
+	reg.launcherRankWait = nil
+	reg.launcherMu.Unlock()
+	newConfig.Rank([]launcher.Entry{{ID: "fresh", Name: "same fresh"}}, "same", nil)
+	select {
+	case snap := <-reg.launcherSnaps:
+		if len(snap.rows) != 1 || snap.rows[0].Entry.ID != "fresh" {
+			t.Fatalf("current batch rows = %+v, want fresh row", snap.rows)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("current service rank did not emit its rows")
+	}
+
+	unblock()
+	<-oldDone
+	select {
+	case snap := <-reg.launcherSnaps:
+		t.Fatalf("replaced service emitted stale rows into the current batch: %+v", snap.rows)
+	default:
+	}
+}
+
+func TestLauncherActionConfigReplacementRejectsSameQueryRank(t *testing.T) {
+	reg := newPanelRegistry(t)
+	reg.mu.Lock()
+	oldConfig := reg.launcherServiceConfig()
+	oldConfig.Scan = func() []launcher.Entry { return nil }
+	reg.launcherSvc = launcher.NewService(oldConfig)
+	reg.launcherServiceProviders = cloneLauncherCommandProviders(reg.cfg.Launcher.Providers)
+	reg.launcherServiceActions = cloneLauncherActions(reg.cfg.Launcher.Actions)
+	reg.launcherRelayStarted = true
+	reg.mu.Unlock()
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	reg.launcherMu.Lock()
+	reg.launcherGen = 1
+	reg.launcherPlan = launcherPlan{kind: launcherKindApps, passed: "same"}
+	reg.launcherBatch = launcherBatch{gen: 1}
+	reg.launcherRankWait = func(string) {
+		started <- struct{}{}
+		<-release
+	}
+	reg.launcherMu.Unlock()
+
+	oldDone := make(chan struct{})
+	go func() {
+		oldConfig.Rank([]launcher.Entry{{ID: "stale", Name: "same stale"}}, "same", nil)
+		close(oldDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old action-config rank did not reach its hold")
+	}
+
+	reg.mu.Lock()
+	reg.cfg.Launcher.Actions = []config.LauncherAction{{
+		ID: "docs", Label: "Browse docs", Argv: []string{"browser", "https://example.test/docs"},
+	}}
+	reg.launcherServiceLocked()
+	newConfig := reg.launcherServiceConfig()
+	reg.mu.Unlock()
+
+	reg.launcherMu.Lock()
+	reg.launcherRankWait = nil
+	reg.launcherMu.Unlock()
+	newConfig.Rank([]launcher.Entry{{ID: "fresh", Name: "same fresh"}}, "same", nil)
+	select {
+	case snap := <-reg.launcherSnaps:
+		if len(snap.rows) != 1 || snap.rows[0].Entry.ID != "fresh" {
+			t.Fatalf("current batch rows = %+v, want fresh row", snap.rows)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("current service rank did not emit its rows")
+	}
+
+	unblock()
+	<-oldDone
+	select {
+	case snap := <-reg.launcherSnaps:
+		t.Fatalf("replaced action-config service emitted stale rows into the current batch: %+v", snap.rows)
+	default:
+	}
+}
+
+func TestClosedLauncherServiceWaitsForItsActivationCallback(t *testing.T) {
+	printf, err := exec.LookPath("printf")
+	if err != nil {
+		t.Skip("printf is unavailable")
+	}
+	reg := newPanelRegistry(t)
+	oldCallbackStarted := make(chan struct{})
+	oldCallbackDone := make(chan struct{})
+	releaseOldCallback := make(chan struct{})
+	var releaseOnce sync.Once
+	unblockOldCallback := func() { releaseOnce.Do(func() { close(releaseOldCallback) }) }
+	defer unblockOldCallback()
+	run := make(chan []string, 4)
+	reg.mu.Lock()
+	reg.cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Files", Prefix: "/files", Glyph: "glyph:description",
+		Command: []string{printf, "%s\\t%s\\n", "item", "Item"}, OnSelect: []string{"old-open", "{selection}"},
+	}}
+	reg.runArgv = func(argv []string) error {
+		run <- slices.Clone(argv)
+		return nil
+	}
+	h := &PanelHost{id: PanelLauncher, query: "/files"}
+	reg.panelHosts[PanelLauncher] = h
+	t.Cleanup(func() {
+		reg.mu.Lock()
+		delete(reg.panelHosts, PanelLauncher)
+		reg.mu.Unlock()
+	})
+	oldConfig := reg.launcherServiceConfig()
+	for i := range oldConfig.Providers {
+		if oldConfig.Providers[i].Prefix != "/files" {
+			continue
+		}
+		activate := oldConfig.Providers[i].Activate
+		oldConfig.Providers[i].Activate = func(query, id, action string) error {
+			close(oldCallbackStarted)
+			<-releaseOldCallback
+			defer close(oldCallbackDone)
+			return activate(query, id, action)
+		}
+	}
+	oldConfig.Scan = func() []launcher.Entry { return nil }
+	oldService := launcher.NewService(oldConfig)
+	reg.launcherSvc = oldService
+	reg.launcherServiceProviders = cloneLauncherCommandProviders(reg.cfg.Launcher.Providers)
+	reg.launcherServiceActions = cloneLauncherActions(reg.cfg.Launcher.Actions)
+	reg.launcherRelayStarted = true
+	reg.mu.Unlock()
+
+	const rowID = "/files:row:item\tItem"
+	waitForLauncherServiceRow := func(svc *launcher.Service) {
+		t.Helper()
+		deadline := time.After(2 * time.Second)
+		for {
+			select {
+			case rows := <-svc.Results():
+				if slices.ContainsFunc(rows, func(row launcher.Result) bool { return row.Entry.ID == rowID }) {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("launcher service did not publish %q", rowID)
+			}
+		}
+	}
+	oldService.Query("/files")
+	waitForLauncherServiceRow(oldService)
+	reg.mu.Lock()
+	h.launcherSpawn(reg, rowID, "", false)
+	reg.mu.Unlock()
+	select {
+	case <-oldCallbackStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old provider callback did not start")
+	}
+
+	reg.mu.Lock()
+	cfg := reg.cfg.Clone()
+	cfg.Launcher.Providers[0].OnSelect = []string{"new-open", "{selection}"}
+	reg.mu.Unlock()
+	prepared, err := reg.PrepareConfig(cfg, nil)
+	if err != nil {
+		t.Fatalf("prepare changed launcher provider config: %v", err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	h.launcherSpawn(reg, rowID, "", false)
+	reg.mu.Unlock()
+
+	deadlineBeforeRelease := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadlineBeforeRelease) {
+		if reg.launcherActivationMu.TryLock() {
+			reg.launcherActivationMu.Unlock()
+			t.Fatal("launcher released activation serialization while the retired callback was still running")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	unblockOldCallback()
+	var got [][]string
+	oldDone, newDone := false, false
+	deadline := time.After(2 * time.Second)
+	for !oldDone || !newDone {
+		select {
+		case argv := <-run:
+			got = append(got, argv)
+			if len(argv) > 0 && argv[0] == "new-open" {
+				newDone = true
+			}
+		case <-oldCallbackDone:
+			oldDone = true
+			oldCallbackDone = nil
+		case <-deadline:
+			t.Fatalf("activation callbacks did not settle: old done %v, new run %v, argv %v", oldDone, newDone, got)
+		}
+	}
+	select {
+	case argv := <-run:
+		got = append(got, argv)
+	default:
+	}
+	if len(got) != 1 || !slices.Equal(got[0], []string{"new-open", "item\tItem"}) {
+		t.Fatalf("configured provider launches = %v, want only the current action", got)
+	}
 }
 
 func TestLauncherLateSessionFailureDoesNotReplaceNewSearch(t *testing.T) {
@@ -1421,7 +1786,7 @@ func TestLauncherOverviewListsProvidersWithGlyphs(t *testing.T) {
 		for _, r := range h.launcherResults {
 			got = append(got, r.Entry.Name+"|"+r.Entry.IconName)
 		}
-		return strings.Join(got, ",") == "Applications|glyph:apps,Calculator|glyph:calculate,Emoji|glyph:mood,Notes|glyph:description,Session|glyph:power_settings_new"
+		return strings.Join(got, ",") == "Applications|glyph:apps,Calculator|glyph:calculate,Emoji|glyph:mood,Notes|glyph:description,Session|glyph:power_settings_new,Actions|glyph:terminal"
 	})
 }
 

@@ -280,8 +280,8 @@ type PanelHost struct {
 	launcherActions []launcher.Action
 	// launcherAttempt stamps the user's current launcher interaction; an
 	// activation completion applies only while its stamp is still current.
-	// launcherPendingAttempt is the stamp an in-flight activation captured,
-	// so a Notes capture superseded before its provider ran is dropped.
+	// launcherPendingAttempt is handed to the serialized service activation,
+	// so a provider can drop a request superseded before its callback runs.
 	launcherAttempt        uint64
 	launcherPendingAttempt uint64
 	// launcherAwaiting is set when a query is sent and cleared only by a
@@ -4925,7 +4925,10 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 }
 
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
-	launcherAttempt := h.launcherAttempt
+	r.runSessionActionAtAttempt(h, action, h.launcherAttempt)
+}
+
+func (r *Registry) runSessionActionAtAttempt(h *PanelHost, action string, launcherAttempt uint64) {
 	argv := sessionArgv(action, r.cfg.Session.Locker)
 	run := r.runArgv
 	if action == "session-lock" {

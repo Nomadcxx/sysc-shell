@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1551,5 +1553,201 @@ func TestTerminalArtBlurRoundTrip(t *testing.T) {
 		if _, err := Parse([]byte(fmt.Sprintf(`{"terminal-art":{"blur":%d}}`, value))); err == nil {
 			t.Fatalf("blur %d accepted", value)
 		}
+	}
+}
+
+func TestLauncherActionConfigRoundTripsExactArgvAndDangerousOptIn(t *testing.T) {
+	const document = `{"launcher":{"actions":[
+		{"id":"open-search","label":"Open search","comment":"Search the web","argv":["browser","https://example.test/?q=a b",""]},
+		{"id":"cleanup","label":"Clean temporary files","argv":["cleaner","--temp"],"dangerous":true},
+		{"id":"wipe-cache","label":"Wipe cache","argv":["cleaner","--cache"],"dangerous":true,"allow_dangerous":true}
+	]}}`
+	cfg, err := Parse([]byte(document))
+	if err != nil {
+		t.Fatalf("parse launcher actions: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write launcher actions: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Launcher struct {
+			Actions []struct {
+				ID             string   `json:"id"`
+				Label          string   `json:"label"`
+				Comment        string   `json:"comment"`
+				Argv           []string `json:"argv"`
+				Dangerous      bool     `json:"dangerous"`
+				AllowDangerous bool     `json:"allow_dangerous"`
+			} `json:"actions"`
+		} `json:"launcher"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode written launcher actions: %v", err)
+	}
+	if len(got.Launcher.Actions) != 3 {
+		t.Fatalf("written actions = %+v", got.Launcher.Actions)
+	}
+	open := got.Launcher.Actions[0]
+	if open.ID != "open-search" || open.Label != "Open search" || open.Comment != "Search the web" ||
+		!reflect.DeepEqual(open.Argv, []string{"browser", "https://example.test/?q=a b", ""}) {
+		t.Fatalf("written safe action = %+v", open)
+	}
+	if !got.Launcher.Actions[1].Dangerous || got.Launcher.Actions[1].AllowDangerous {
+		t.Fatalf("dangerous action without opt-in = %+v", got.Launcher.Actions[1])
+	}
+	if !got.Launcher.Actions[2].Dangerous || !got.Launcher.Actions[2].AllowDangerous {
+		t.Fatalf("dangerous action with opt-in = %+v", got.Launcher.Actions[2])
+	}
+}
+
+func TestLauncherActionRejectsEmptyOrDuplicateIDs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"empty", `{"launcher":{"actions":[{"id":"","label":"Run","argv":["run"]}]}}`, "launcher.actions[0].id"},
+		{"duplicate", `{"launcher":{"actions":[{"id":"one","label":"One","argv":["one"]},{"id":"one","label":"Again","argv":["again"]}]}}`, "launcher.actions[1].id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse error = %v, want context %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLauncherActionRejectsOptInForSafeAction(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"launcher":{"actions":[{"id":"run","label":"Run","argv":["run"],"allow_dangerous":true}]}}`))
+	if err == nil || !strings.Contains(err.Error(), "launcher.actions[0].allow_dangerous") {
+		t.Fatalf("Parse error = %v, want allow_dangerous validation", err)
+	}
+}
+
+func TestLauncherActionRejectsEmptyArgv(t *testing.T) {
+	t.Parallel()
+	for _, argv := range []string{"[]", `[""]`, `[" "]`} {
+		doc := `{"launcher":{"actions":[{"id":"run","label":"Run","argv":` + argv + `}]}}`
+		if _, err := Parse([]byte(doc)); err == nil || !strings.Contains(err.Error(), "launcher.actions[0].argv") {
+			t.Fatalf("Parse error for argv %s = %v, want argv validation", argv, err)
+		}
+	}
+}
+
+func TestLauncherActionRejectsInvalidBounds(t *testing.T) {
+	t.Parallel()
+	tooManyArgs := make([]string, 33)
+	for i := range tooManyArgs {
+		tooManyArgs[i] = "x"
+	}
+	for _, tc := range []struct {
+		name   string
+		action map[string]any
+		want   string
+	}{
+		{"too many arguments", map[string]any{"id": "many", "label": "Many", "argv": tooManyArgs}, "launcher.actions[0].argv"},
+		{"argument too long", map[string]any{"id": "long", "label": "Long", "argv": []string{"run", strings.Repeat("x", 4097)}}, "launcher.actions[0].argv"},
+		{"label too long", map[string]any{"id": "label", "label": strings.Repeat("x", 129), "argv": []string{"run"}}, "launcher.actions[0].label"},
+		{"id too long", map[string]any{"id": strings.Repeat("x", 65), "label": "Long ID", "argv": []string{"run"}}, "launcher.actions[0].id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := json.Marshal(map[string]any{"launcher": map[string]any{"actions": []any{tc.action}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Parse(doc); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse error = %v, want context %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLauncherCommandProviderConfigRoundTripsArgvTemplates(t *testing.T) {
+	const document = `{"launcher":{"providers":[{"name":"Files","prefix":"/files","glyph":"glyph:description","description":"Search files","command":["file-list","--query={query}"],"on_select":["file-open","--query={query}","{selection}"]}]}}`
+	cfg, err := Parse([]byte(document))
+	if err != nil {
+		t.Fatalf("parse launcher provider: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write launcher provider: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Launcher struct {
+			Providers []struct {
+				Name        string   `json:"name"`
+				Prefix      string   `json:"prefix"`
+				Glyph       string   `json:"glyph"`
+				Description string   `json:"description"`
+				Command     []string `json:"command"`
+				OnSelect    []string `json:"on_select"`
+			} `json:"providers"`
+		} `json:"launcher"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode written launcher provider: %v", err)
+	}
+	wantCommand := []string{"file-list", "--query={query}"}
+	wantSelect := []string{"file-open", "--query={query}", "{selection}"}
+	if len(got.Launcher.Providers) != 1 {
+		t.Fatalf("written providers = %+v", got.Launcher.Providers)
+	}
+	provider := got.Launcher.Providers[0]
+	if provider.Name != "Files" || provider.Prefix != "/files" || provider.Glyph != "glyph:description" ||
+		provider.Description != "Search files" || !reflect.DeepEqual(provider.Command, wantCommand) ||
+		!reflect.DeepEqual(provider.OnSelect, wantSelect) {
+		t.Fatalf("written provider = %+v", provider)
+	}
+}
+
+func TestConfigCloneDeepCopiesLauncherArgv(t *testing.T) {
+	cfg := Config{Launcher: Launcher{
+		Providers: []LauncherCommandProvider{{
+			Command: []string{"file-list", "{query}"}, OnSelect: []string{"file-open", "{selection}"},
+		}},
+		Actions: []LauncherAction{{Argv: []string{"browser", "https://example.test"}}},
+	}}
+	clone := cfg.Clone()
+	clone.Launcher.Providers[0].Command[0] = "changed-list"
+	clone.Launcher.Providers[0].OnSelect[0] = "changed-open"
+	clone.Launcher.Actions[0].Argv[0] = "changed-browser"
+	if cfg.Launcher.Providers[0].Command[0] != "file-list" ||
+		cfg.Launcher.Providers[0].OnSelect[0] != "file-open" ||
+		cfg.Launcher.Actions[0].Argv[0] != "browser" {
+		t.Fatalf("launcher clone aliases original config: %+v", cfg.Launcher)
+	}
+}
+
+func TestLauncherCommandProviderRejectsInvalidRoutesAndCommands(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"missing prefix", `{"launcher":{"providers":[{"name":"Files","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[0].prefix"},
+		{"duplicate prefix", `{"launcher":{"providers":[{"name":"A","prefix":"/same","command":["list"],"on_select":["open"]},{"name":"B","prefix":"/same","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[1].prefix"},
+		{"built in prefix", `{"launcher":{"providers":[{"name":"Calculator","prefix":"/calc","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[0].prefix"},
+		{"query in executable", `{"launcher":{"providers":[{"name":"Files","prefix":"/files","command":["{query}"],"on_select":["open"]}]}}`, "launcher.providers[0].command"},
+		{"selection in executable", `{"launcher":{"providers":[{"name":"Files","prefix":"/files","command":["list"],"on_select":["{selection}"]}]}}`, "launcher.providers[0].on_select"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse error = %v, want context %q", err, tc.want)
+			}
+		})
 	}
 }
