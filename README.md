@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark.png">
-    <img src="assets/wordmark-light.png" alt="sysc-shell" height="64">
-  </picture>
+  <img src="assets/header.webp" height="64" alt="sysc-shell">
 </p>
 
 
