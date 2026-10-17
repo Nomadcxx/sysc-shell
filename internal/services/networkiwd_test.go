@@ -11,12 +11,14 @@ import (
 
 // fakeIWD is iwd's object tree and its calls, with no bus.
 type fakeIWD struct {
-	objects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
-	ordered []iwdOrdered
-	calls   []string
-	sets    []string
-	callErr error
-	agent   *iwdAgent
+	objects       map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+	ordered       []iwdOrdered
+	calls         []string
+	sets          []string
+	hiddenStation dbus.ObjectPath
+	hiddenSSID    string
+	callErr       error
+	agent         *iwdAgent
 }
 
 func (f *fakeIWD) ManagedObjects() (map[dbus.ObjectPath]map[string]map[string]dbus.Variant, error) {
@@ -25,6 +27,10 @@ func (f *fakeIWD) ManagedObjects() (map[dbus.ObjectPath]map[string]map[string]db
 func (f *fakeIWD) OrderedNetworks(dbus.ObjectPath) ([]iwdOrdered, error) { return f.ordered, nil }
 func (f *fakeIWD) Call(path dbus.ObjectPath, method string) error {
 	f.calls = append(f.calls, string(path)+" "+method)
+	return f.callErr
+}
+func (f *fakeIWD) ConnectHiddenNetwork(station dbus.ObjectPath, ssid string) error {
+	f.hiddenStation, f.hiddenSSID = station, ssid
 	return f.callErr
 }
 func (f *fakeIWD) Set(path dbus.ObjectPath, iface, prop string, v any) error {
@@ -142,6 +148,40 @@ func TestIWDWritesGoToTheRightObjects(t *testing.T) {
 	}
 }
 
+func TestIWDConnectsToManuallyEnteredHiddenSSID(t *testing.T) {
+	f := fakeIWDTree("disconnected", true)
+	be := newTestIWD(f)
+	if err := be.ConnectManual(ManualNetworkRequest{SSID: "Not scanned", Security: ManualSecurityWPAPersonal}); err != nil {
+		t.Fatal(err)
+	}
+	if f.hiddenStation != stationPath || f.hiddenSSID != "Not scanned" {
+		t.Fatalf("ConnectHiddenNetwork station=%q ssid=%q", f.hiddenStation, f.hiddenSSID)
+	}
+}
+
+func TestIWDReusesKnownNetworkForRepeatedManualJoin(t *testing.T) {
+	f := fakeIWDTree("disconnected", true)
+	be := newTestIWD(f)
+	if err := be.ConnectManual(ManualNetworkRequest{SSID: "Home", Security: ManualSecurityWPAPersonal}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{string(homePath) + " " + iwdNetworkIface + ".Connect"}
+	if !slices.Equal(f.calls, want) || f.hiddenStation != "" || f.hiddenSSID != "" {
+		t.Fatalf("repeat manual join calls=%v hidden=(%q,%q), want %v", f.calls, f.hiddenStation, f.hiddenSSID, want)
+	}
+}
+
+func TestIWDDoesNotReuseSameSSIDWithDifferentSecurity(t *testing.T) {
+	f := fakeIWDTree("disconnected", true)
+	be := newTestIWD(f)
+	if err := be.ConnectManual(ManualNetworkRequest{SSID: "Home", Security: ManualSecurityOpen}); err != nil {
+		t.Fatal(err)
+	}
+	if f.hiddenStation != stationPath || f.hiddenSSID != "Home" || len(f.calls) != 0 {
+		t.Fatalf("wrong-security network reused: calls=%v hidden=(%q,%q)", f.calls, f.hiddenStation, f.hiddenSSID)
+	}
+}
+
 func TestIWDAsksForAPassphraseThroughTheSharedSlot(t *testing.T) {
 	f := fakeIWDTree("disconnected", true)
 	n := NewNetwork(newTestIWD(f))
@@ -165,7 +205,9 @@ func TestIWDAsksForAPassphraseThroughTheSharedSlot(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("iwd's request never reached the panel")
 	}
-	n.SubmitSecret("hunter22")
+	if err := n.SubmitSecret("hunter22"); err != nil {
+		t.Fatal(err)
+	}
 	if got := <-done; got.err != nil || got.psk != "hunter22" {
 		t.Fatalf("agent answered %+v", got)
 	}
