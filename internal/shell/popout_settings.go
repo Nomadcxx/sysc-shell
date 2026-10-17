@@ -1300,7 +1300,7 @@ func (h *PanelHost) reseedSettingsMenus() {
 			continue
 		}
 		entry := h.set.ByPath(path)
-		if entry == nil || entry.Get == nil {
+		if entry == nil || entry.Get == nil || (entry.Kind != settings.KindEnum && entry.Kind != settings.KindFont) {
 			continue
 		}
 		options, values := settingsPickerOptions(*entry)

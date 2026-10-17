@@ -182,6 +182,69 @@ func TestSettingsExternalReloadRefreshesOpenPicker(t *testing.T) {
 	}
 }
 
+func TestSettingsExternalReloadPreservesOpenPathBrowser(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	root := t.TempDir()
+	child := filepath.Join(root, "wallpapers")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const path = "wallpaper.image-directory"
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Wallpaper"
+	h.draft.Wallpaper.ImageDirectory = root
+	reg.rebuildPanel(h)
+	browse := byAction(h.root, "browse:"+path)
+	if browse == nil {
+		reg.mu.Unlock()
+		t.Fatal("wallpaper browse control is missing")
+	}
+	h.setFocus(browse)
+	h.settingsBrowseGeneration = 1
+	h.settingsBrowsePath, h.settingsBrowseDir = path, root
+	h.settingsBrowseFocus = browse.StableKey()
+	h.settingsBrowsePending = true
+	reg.mu.Unlock()
+
+	reg.finishSettingsBrowse(h, path, root, root, 1, os.ReadDir)
+	reg.mu.Lock()
+	menu := h.menus[path]
+	if menu == nil || !menu.Opened() {
+		reg.mu.Unlock()
+		t.Fatal("directory browser did not open")
+	}
+	if !slices.Contains(menu.options, child) {
+		reg.mu.Unlock()
+		t.Fatalf("directory browser options %v omit %q before reload", menu.options, child)
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	next.Wallpaper.ImageDirectory = root
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.menu != menu || h.menus[path] != menu || !menu.Opened() {
+		t.Fatal("reload replaced or closed the open directory browser")
+	}
+	if !slices.Contains(menu.options, child) {
+		t.Fatalf("reload erased directory browser options %v", menu.options)
+	}
+}
+
 func TestSettingsRebuildFallsBackWhenFocusedControlDisappears(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)

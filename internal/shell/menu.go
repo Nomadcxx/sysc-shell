@@ -89,7 +89,11 @@ func (m *Menu) reseed(options, values []string, index int) {
 	if index == m.index && slices.Equal(options, m.options) && slices.Equal(values, m.values) {
 		return
 	}
-	pending, hasPending := m.optionValue(m.cursor)
+	hasPending := m.cursor != m.index
+	pending := ""
+	if hasPending {
+		pending, hasPending = m.optionValue(m.cursor)
+	}
 	m.options, m.values = options, values
 	m.index = index
 	m.cursor = index

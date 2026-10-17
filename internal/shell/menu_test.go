@@ -123,6 +123,32 @@ func TestMenuReseedUpdatesOptionsAndKeepsPendingChoice(t *testing.T) {
 	}
 }
 
+func TestMenuReseedMovesUnchangedCursorToCommittedChoice(t *testing.T) {
+	t.Parallel()
+	m := newMenu(
+		[]string{"Top", "Bottom", "Left", "Right"},
+		[]string{"top", "bottom", "left", "right"},
+		0,
+		false,
+	)
+	m.Open()
+	m.reseed(
+		[]string{"Bottom", "Right", "Top", "Left"},
+		[]string{"bottom", "right", "top", "left"},
+		1,
+	)
+
+	if got := m.options[m.cursor]; got != "Right" {
+		t.Fatalf("unmoved cursor = %q, want the newly committed Right option", got)
+	}
+	if got := m.Select(); got != 1 {
+		t.Fatalf("Enter selected index %d, want the newly committed index 1", got)
+	}
+	if got := m.Value(); got != "right" {
+		t.Fatalf("Enter restored %q, want the newly committed right value", got)
+	}
+}
+
 func TestMenuRowAtFindsTheOptionUnderAPoint(t *testing.T) {
 	n := &ui.Node{Kind: ui.KindMenu, Children: []*ui.Node{
 		{Kind: ui.KindText, Bounds: ui.Rect{Y: 0, W: 10, H: 10}},
