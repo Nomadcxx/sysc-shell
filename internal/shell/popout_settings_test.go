@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -182,6 +183,58 @@ func TestSettingsExternalReloadRefreshesOpenPicker(t *testing.T) {
 	}
 }
 
+func TestSettingsExternalReloadClosesPickerWhenItBecomesAField(t *testing.T) {
+	t.Parallel()
+	previous := config.Default()
+	previous.ThemeGen.Source = "stock"
+	previous.ThemeGen.Seed = theme.StockNames()[0]
+	reg := NewRegistry(previous)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Appearance"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	seed := findSettingsControl(h.root, "appearance.seed")
+	menu := h.menus["appearance.seed"]
+	if seed == nil || seed.Kind != ui.KindMenu || menu == nil {
+		reg.mu.Unlock()
+		t.Fatalf("initial Appearance seed = %+v, menu = %+v, want an openable picker", seed, menu)
+	}
+	menu.Open()
+	h.menu, h.menuPath = menu, "appearance.seed"
+	h.setFocus(seed)
+	reg.mu.Unlock()
+
+	next := previous.Clone()
+	next.ThemeGen.Source = "hex"
+	next.ThemeGen.Seed = "#123456"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	seed = findSettingsControl(h.root, "appearance.seed")
+	if seed == nil || seed.Kind != ui.KindTextField || seed.Text != "#123456" {
+		t.Fatalf("reloaded Appearance seed = %+v, want the hex text field", seed)
+	}
+	if menu.Opened() || h.menu != nil || h.menuPath != "" {
+		t.Fatalf("picker remained active after its control became a field: opened=%v active=%p path=%q", menu.Opened(), h.menu, h.menuPath)
+	}
+	if focused := h.focused(); focused == nil || focused.Action != "set:appearance.seed" || focused.Kind != ui.KindTextField {
+		t.Fatalf("focused control after reload = %+v, want Appearance seed field", focused)
+	}
+}
+
 func TestSettingsExternalReloadPreservesOpenPathBrowser(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -273,6 +326,72 @@ func TestSettingsRebuildFallsBackWhenFocusedControlDisappears(t *testing.T) {
 	focused := h.focused()
 	if focused == nil || focused != h.focus[0] || focused.Name != "Search" {
 		t.Fatalf("focus after Edge disappeared = %+v, want the default Search field", focused)
+	}
+}
+
+func TestSettingsExternalReloadClosesPathBrowserWhenDirectoryChanges(t *testing.T) {
+	t.Parallel()
+	oldRoot := t.TempDir()
+	oldChild := filepath.Join(oldRoot, "old-library")
+	if err := os.Mkdir(oldChild, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newRoot := t.TempDir()
+	newChild := filepath.Join(newRoot, "new-library")
+	if err := os.Mkdir(newChild, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const path = "wallpaper.image-directory"
+	previous := config.Default()
+	previous.Wallpaper.ImageDirectory = oldRoot
+	reg := NewRegistry(previous)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Wallpaper"
+	reg.rebuildPanel(h)
+	browse := byAction(h.root, "browse:"+path)
+	if browse == nil {
+		reg.mu.Unlock()
+		t.Fatal("wallpaper browse control is missing")
+	}
+	h.setFocus(browse)
+	h.settingsBrowseGeneration = 1
+	h.settingsBrowsePath, h.settingsBrowseDir = path, oldRoot
+	h.settingsBrowseFocus = browse.StableKey()
+	h.settingsBrowsePending = true
+	reg.mu.Unlock()
+
+	reg.finishSettingsBrowse(h, path, oldRoot, oldRoot, 1, os.ReadDir)
+	reg.mu.Lock()
+	menu := h.menus[path]
+	if menu == nil || !menu.Opened() || !slices.Contains(menu.options, oldChild) {
+		reg.mu.Unlock()
+		t.Fatalf("old directory browser = %+v, want open options containing %q", menu, oldChild)
+	}
+	reg.mu.Unlock()
+
+	next := previous.Clone()
+	next.Wallpaper.ImageDirectory = newRoot
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if menu.Opened() || h.menu != nil || h.menuPath != "" || h.settingsBrowsePath != "" {
+		t.Fatalf("old directory browser remained active after reload: opened=%v menu=%p menuPath=%q browsePath=%q", menu.Opened(), h.menu, h.menuPath, h.settingsBrowsePath)
+	}
+	if field := h.fields[path]; field == nil || field.Text != newRoot {
+		t.Fatalf("reloaded image directory field = %+v, want %q", field, newRoot)
 	}
 }
 

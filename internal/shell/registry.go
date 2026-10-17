@@ -2131,6 +2131,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// depend on another setting.
 				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
 					if h := r.panelHosts[id]; h != nil {
+						if id == PanelSettings {
+							h.invalidateSettingsBrowseIfChanged(cfg)
+						}
 						h.draft = cfg.Clone()
 						h.set = r.settingsForLocked(cfg)
 						if id == PanelSettings {
@@ -2168,6 +2171,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				if h := r.panelHosts[PanelSettings]; h != nil {
 					r.rebuildPanel(h)
+					h.closeUnrenderedSettingsMenu()
 					surfacePubs = append(surfacePubs, wayland.Invalidation{
 						Global: h.output, SurfaceID: panelSurfaceID(PanelSettings),
 					})

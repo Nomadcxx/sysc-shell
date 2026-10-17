@@ -1308,6 +1308,30 @@ func (h *PanelHost) reseedSettingsMenus() {
 	}
 }
 
+func (h *PanelHost) closeUnrenderedSettingsMenu() {
+	if h == nil || h.id != PanelSettings || h.menu == nil || !h.menu.Opened() || h.menuPath == "" || h.set == nil {
+		return
+	}
+	entry := h.set.ByPath(h.menuPath)
+	if entry == nil || entry.Get == nil {
+		return
+	}
+	for _, n := range h.focus {
+		if n == nil {
+			continue
+		}
+		if n.Action == "set:"+h.menuPath && n.Kind == ui.KindMenu {
+			return
+		}
+		if entry.Kind == settings.KindPath && n.Action == "browse:"+h.menuPath {
+			return
+		}
+	}
+	h.menu.Cancel()
+	h.menu = nil
+	h.menuPath = ""
+}
+
 // settingsOptionIndex finds the row the stored value sits on. A font family
 // is compared normalized when nothing matches outright: a configuration
 // written before the picker offered descriptive names carries "dejavusans"
@@ -1359,8 +1383,9 @@ func settingsField(h *PanelHost, e settings.Entry, raw string, width int) *ui.No
 func (h *PanelHost) reseedSettingsFields() {
 	for path, field := range h.fields {
 		entry := h.set.ByPath(path)
+		// The Settings host also keeps fields for palettes and service forms.
+		// Reseed config entries without discarding fields owned by those views.
 		if field == nil || entry == nil || entry.Get == nil {
-			delete(h.fields, path)
 			continue
 		}
 		value := entry.Get(h.draft)
@@ -1544,6 +1569,25 @@ func (h *PanelHost) invalidateSettingsBrowse() {
 	h.settingsBrowsePending = false
 	h.settingsBrowseReady = false
 	h.settingsBrowseError = ""
+}
+
+func (h *PanelHost) invalidateSettingsBrowseIfChanged(cfg config.Config) {
+	if h == nil {
+		return
+	}
+	path := h.settingsBrowsePath
+	if path == "" {
+		return
+	}
+	if h.set == nil {
+		h.invalidateSettingsBrowse()
+		return
+	}
+	entry := h.set.ByPath(path)
+	if entry == nil || entry.Kind != settings.KindPath || entry.Get == nil ||
+		wallpaper.ExpandHome(entry.Get(cfg)) != h.settingsBrowseDir {
+		h.invalidateSettingsBrowse()
+	}
 }
 
 func (r *Registry) finishSettingsBrowse(h *PanelHost, path, current, dir string, generation uint64, readDir func(string) ([]os.DirEntry, error)) {
