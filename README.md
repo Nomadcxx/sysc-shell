@@ -25,9 +25,6 @@ https://github.com/user-attachments/assets/7cadf7b9-6fe5-4d53-b7d6-757e4082b68a
 
 Captured from fixture data with invented names, so nothing here is a real account, network or device. The wallpaper picker is the exception: it shows the author's own wallpaper library.
 
-<details>
-<summary>Screenshot gallery</summary>
-
 <table>
   <tr>
     <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396" loading="lazy"><br><sub>Control centre: Home</sub></td>
@@ -53,8 +50,6 @@ Captured from fixture data with invented names, so nothing here is a real accoun
     <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396" loading="lazy"><br><sub>Wallpaper picker</sub></td>
   </tr>
 </table>
-
-</details>
 
 ## Installation
 
