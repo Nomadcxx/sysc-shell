@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os/exec"
 	"slices"
@@ -63,11 +64,31 @@ func openURLDefault(raw string) error {
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
 		return fmt.Errorf("only https URLs can be opened")
 	}
-	cmd := exec.Command("xdg-open", parsed.String())
+	return launchURL(parsed.String(), nil)
+}
+
+var openNotificationURL = openNotificationURLDefault
+
+func openNotificationURLDefault(raw string) error {
+	target, ok := notificationURL(raw)
+	if !ok {
+		return fmt.Errorf("only bounded HTTP(S) notification links can be opened")
+	}
+	return launchURL(target, func(err error) {
+		log.Printf("shell: notification link opener: %v", err)
+	})
+}
+
+func launchURL(raw string, reportExitError func(error)) error {
+	cmd := exec.Command("xdg-open", raw)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		if err := cmd.Wait(); err != nil && reportExitError != nil {
+			reportExitError(err)
+		}
+	}()
 	return nil
 }
 

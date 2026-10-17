@@ -12,6 +12,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -604,6 +605,80 @@ func TestToastReportsVisiblePresentation(t *testing.T) {
 	if len(last.Presentations) != 1 || last.Presentations[0].ID != 1 ||
 		last.Presentations[0].State != protocol.PresentationVisible {
 		t.Fatalf("renew = %+v, want id 1 visible", last)
+	}
+}
+
+func TestCriticalToastBypassesDNDButOrdinaryToastDoesNot(t *testing.T) {
+	r, h, sender := wiredToast(t)
+	ordinary := note(1, "ordinary")
+	critical := note(2, "critical")
+	critical.Urgency = protocol.UrgencyCritical
+	r.applyNotify(snap(1, ordinary, critical))
+
+	r.setDNDForTest(true)
+	h.recompute()
+
+	if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{critical.ID}) {
+		t.Fatalf("visible during DND = %v, want only critical notification %d", got, critical.ID)
+	}
+	renewals := sender.ofKind(protocol.CommandPresentationRenew)
+	if len(renewals) == 0 {
+		t.Fatal("toast host did not publish presentation during DND")
+	}
+	states := make(map[uint32]protocol.PresentationState)
+	for _, p := range renewals[len(renewals)-1].Presentations {
+		states[p.ID] = p.State
+	}
+	if states[ordinary.ID] != protocol.PresentationSuppressed || states[critical.ID] != protocol.PresentationVisible {
+		t.Fatalf("presentation states during DND = %v, want ordinary suppressed and critical visible", states)
+	}
+}
+
+func TestFullscreenFocusedWindowHoldsToastsUntilFocusLeaves(t *testing.T) {
+	r, h, sender := wiredToast(t)
+	t.Cleanup(r.Close)
+	ordinary := note(1, "ordinary")
+	critical := note(2, "critical")
+	critical.Urgency = protocol.UrgencyCritical
+	r.applyNotify(snap(1, ordinary, critical))
+
+	fullscreen := niri.Snapshot{
+		FocusedOutput: "eDP-1",
+		Windows: []niri.Window{{
+			ID: 10, Focused: true, HasLayout: true, TileW: 1920, TileH: 1080,
+		}},
+	}
+	r.UpdateNiri(fullscreen)
+	if got := h.visible["eDP-1"]; len(got) != 0 {
+		t.Fatalf("visible with fullscreen focused = %v, want no toasts", got)
+	}
+	renewals := sender.ofKind(protocol.CommandPresentationRenew)
+	states := make(map[uint32]protocol.PresentationState)
+	for _, p := range renewals[len(renewals)-1].Presentations {
+		states[p.ID] = p.State
+	}
+	if states[ordinary.ID] != protocol.PresentationSuppressed || states[critical.ID] != protocol.PresentationSuppressed {
+		t.Fatalf("presentation with fullscreen focused = %v, want both suppressed", states)
+	}
+
+	r.UpdateNiri(niri.Snapshot{
+		FocusedOutput: "eDP-1",
+		Windows: []niri.Window{{
+			ID: 10, Focused: true, HasLayout: true, TileW: 960, TileH: 540,
+		}},
+	})
+	if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{critical.ID, ordinary.ID}) {
+		t.Fatalf("visible after focus leaves fullscreen = %v, want both notifications", got)
+	}
+
+	r.UpdateNiri(niri.Snapshot{
+		FocusedOutput: "eDP-1",
+		Windows: []niri.Window{{
+			ID: 10, Focused: false, HasLayout: true, TileW: 1920, TileH: 1080,
+		}},
+	})
+	if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{critical.ID, ordinary.ID}) {
+		t.Fatalf("visible without a focused window = %v, want both notifications", got)
 	}
 }
 

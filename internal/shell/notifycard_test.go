@@ -323,6 +323,47 @@ func TestNotifyCardGatesLinksOnTheOpenerCapability(t *testing.T) {
 	}
 }
 
+func TestActiveAndHistoryNotificationCardsOnlyActivateHTTPLinks(t *testing.T) {
+	cases := []struct {
+		name string
+		href string
+		want bool
+	}{
+		{name: "http", href: "http://example.test/a", want: true},
+		{name: "https", href: "https://example.test/a", want: true},
+		{name: "unsupported", href: "file:///etc/passwd"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `read <a href="` + tc.href + `">the page</a>`
+			active := baseNotification()
+			active.Body = body
+			history := protocol.HistoryEntry{
+				ID: 8, AppName: "Mail", Summary: "Old", Body: body,
+				Timestamp: time.Unix(1_756_000_000, 0), Urgency: protocol.UrgencyNormal,
+			}
+			cards := []struct {
+				name   string
+				card   *ui.Node
+				action string
+			}{
+				{name: "active", card: NotificationCard(active, nil, true, nil), action: "notify:7:link:" + tc.href},
+				{name: "history", card: HistoryCard(history, history.Timestamp, nil, true, nil), action: "notify:8:link:" + tc.href},
+			}
+			for _, card := range cards {
+				t.Run(card.name, func(t *testing.T) {
+					if got := findAction(card.card, card.action) != nil; got != tc.want {
+						t.Fatalf("link action present = %v, want %v", got, tc.want)
+					}
+					if !strings.Contains(strings.Join(texts(card.card), "\n"), "the page") {
+						t.Fatal("link label was not preserved")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestNotifyCardOmitsCriticalBang(t *testing.T) {
 	n := baseNotification()
 	n.Urgency = protocol.UrgencyCritical
