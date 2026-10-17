@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -78,6 +79,479 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 			t.Fatalf("Bar section missing kind %d", k)
 		}
 	}
+}
+
+func TestSettingsExternalReloadRefreshesOpenControl(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	initial := findSettingsControl(h.root, "bar.edge")
+	if initial == nil || initial.Text != "Top" {
+		reg.mu.Unlock()
+		t.Fatalf("initial Edge control = %+v, want Top", initial)
+	}
+	reg.mu.Unlock()
+
+	for len(reg.invalidations) > 0 {
+		<-reg.invalidations
+	}
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	wantSurface := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelSettings)}
+	published := false
+	for len(reg.invalidations) > 0 {
+		if got := <-reg.invalidations; got == wantSurface {
+			published = true
+		}
+	}
+	if !published {
+		t.Fatalf("config adoption did not invalidate Settings surface %q", wantSurface.SurfaceID)
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil {
+		t.Fatal("reloaded Settings tree has no Edge control")
+	} else if edge.Text != "Right" {
+		t.Fatalf("reloaded Edge control = %q, want Right", edge.Text)
+	}
+}
+
+func TestSettingsExternalReloadRefreshesOpenPicker(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	menu := h.menus["bar.edge"]
+	if menu == nil {
+		reg.mu.Unlock()
+		t.Fatal("Settings has no Edge menu")
+	}
+	menu.Open()
+	menu.Next()
+	pending := menu.options[menu.cursor]
+	h.menu, h.menuPath = menu, "bar.edge"
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.menus["bar.edge"] != menu || h.menu != menu || h.menuPath != "bar.edge" {
+		t.Fatal("reload replaced or detached the open Edge menu")
+	}
+	if !menu.Opened() {
+		t.Fatal("reload closed the Edge menu")
+	}
+	if got := menu.Value(); got != "right" {
+		t.Fatalf("open Edge menu committed value = %q, want right", got)
+	}
+	if got := menu.options[menu.cursor]; got != pending {
+		t.Fatalf("pending Edge option = %q, want preserved %q", got, pending)
+	}
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Right" {
+		t.Fatalf("open Edge control after reload = %+v, want Right", edge)
+	}
+}
+
+func TestSettingsExternalReloadClosesPickerWhenItBecomesAField(t *testing.T) {
+	t.Parallel()
+	previous := config.Default()
+	previous.ThemeGen.Source = "stock"
+	previous.ThemeGen.Seed = theme.StockNames()[0]
+	reg := NewRegistry(previous)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Appearance"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	seed := findSettingsControl(h.root, "appearance.seed")
+	menu := h.menus["appearance.seed"]
+	if seed == nil || seed.Kind != ui.KindMenu || menu == nil {
+		reg.mu.Unlock()
+		t.Fatalf("initial Appearance seed = %+v, menu = %+v, want an openable picker", seed, menu)
+	}
+	menu.Open()
+	h.menu, h.menuPath = menu, "appearance.seed"
+	h.setFocus(seed)
+	reg.mu.Unlock()
+
+	next := previous.Clone()
+	next.ThemeGen.Source = "hex"
+	next.ThemeGen.Seed = "#123456"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	seed = findSettingsControl(h.root, "appearance.seed")
+	if seed == nil || seed.Kind != ui.KindTextField || seed.Text != "#123456" {
+		t.Fatalf("reloaded Appearance seed = %+v, want the hex text field", seed)
+	}
+	if menu.Opened() || h.menu != nil || h.menuPath != "" {
+		t.Fatalf("picker remained active after its control became a field: opened=%v active=%p path=%q", menu.Opened(), h.menu, h.menuPath)
+	}
+	if focused := h.focused(); focused == nil || focused.Action != "set:appearance.seed" || focused.Kind != ui.KindTextField {
+		t.Fatalf("focused control after reload = %+v, want Appearance seed field", focused)
+	}
+}
+
+func TestSettingsExternalReloadPreservesOpenPathBrowser(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	root := t.TempDir()
+	child := filepath.Join(root, "wallpapers")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const path = "wallpaper.image-directory"
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Wallpaper"
+	h.draft.Wallpaper.ImageDirectory = root
+	reg.rebuildPanel(h)
+	browse := byAction(h.root, "browse:"+path)
+	if browse == nil {
+		reg.mu.Unlock()
+		t.Fatal("wallpaper browse control is missing")
+	}
+	h.setFocus(browse)
+	h.settingsBrowseGeneration = 1
+	h.settingsBrowsePath, h.settingsBrowseDir = path, root
+	h.settingsBrowseFocus = browse.StableKey()
+	h.settingsBrowsePending = true
+	reg.mu.Unlock()
+
+	reg.finishSettingsBrowse(h, path, root, root, 1, os.ReadDir)
+	reg.mu.Lock()
+	menu := h.menus[path]
+	if menu == nil || !menu.Opened() {
+		reg.mu.Unlock()
+		t.Fatal("directory browser did not open")
+	}
+	if !slices.Contains(menu.options, child) {
+		reg.mu.Unlock()
+		t.Fatalf("directory browser options %v omit %q before reload", menu.options, child)
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	next.Wallpaper.ImageDirectory = root
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.menu != menu || h.menus[path] != menu || !menu.Opened() {
+		t.Fatal("reload replaced or closed the open directory browser")
+	}
+	if !slices.Contains(menu.options, child) {
+		t.Fatalf("reload erased directory browser options %v", menu.options)
+	}
+}
+
+func TestSettingsRebuildFallsBackWhenFocusedControlDisappears(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.query = "edge"
+	h.search = ui.NewField("edge")
+	reg.rebuildPanel(h)
+	edge := findSettingsControl(h.root, "bar.edge")
+	if edge == nil {
+		reg.mu.Unlock()
+		t.Fatal("search did not render the Edge control")
+	}
+	h.setFocus(edge)
+	h.query = "city"
+	h.search = ui.NewField("city")
+	reg.rebuildPanel(h)
+	defer reg.mu.Unlock()
+
+	focused := h.focused()
+	if focused == nil || focused != h.focus[0] || focused.Name != "Search" {
+		t.Fatalf("focus after Edge disappeared = %+v, want the default Search field", focused)
+	}
+}
+
+func TestSettingsExternalReloadClosesPathBrowserWhenDirectoryChanges(t *testing.T) {
+	t.Parallel()
+	oldRoot := t.TempDir()
+	oldChild := filepath.Join(oldRoot, "old-library")
+	if err := os.Mkdir(oldChild, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newRoot := t.TempDir()
+	newChild := filepath.Join(newRoot, "new-library")
+	if err := os.Mkdir(newChild, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const path = "wallpaper.image-directory"
+	previous := config.Default()
+	previous.Wallpaper.ImageDirectory = oldRoot
+	reg := NewRegistry(previous)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Wallpaper"
+	reg.rebuildPanel(h)
+	browse := byAction(h.root, "browse:"+path)
+	if browse == nil {
+		reg.mu.Unlock()
+		t.Fatal("wallpaper browse control is missing")
+	}
+	h.setFocus(browse)
+	h.settingsBrowseGeneration = 1
+	h.settingsBrowsePath, h.settingsBrowseDir = path, oldRoot
+	h.settingsBrowseFocus = browse.StableKey()
+	h.settingsBrowsePending = true
+	reg.mu.Unlock()
+
+	reg.finishSettingsBrowse(h, path, oldRoot, oldRoot, 1, os.ReadDir)
+	reg.mu.Lock()
+	menu := h.menus[path]
+	if menu == nil || !menu.Opened() || !slices.Contains(menu.options, oldChild) {
+		reg.mu.Unlock()
+		t.Fatalf("old directory browser = %+v, want open options containing %q", menu, oldChild)
+	}
+	reg.mu.Unlock()
+
+	next := previous.Clone()
+	next.Wallpaper.ImageDirectory = newRoot
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if menu.Opened() || h.menu != nil || h.menuPath != "" || h.settingsBrowsePath != "" {
+		t.Fatalf("old directory browser remained active after reload: opened=%v menu=%p menuPath=%q browsePath=%q", menu.Opened(), h.menu, h.menuPath, h.settingsBrowsePath)
+	}
+	if field := h.fields[path]; field == nil || field.Text != newRoot {
+		t.Fatalf("reloaded image directory field = %+v, want %q", field, newRoot)
+	}
+}
+
+func TestSettingsExternalReloadPreservesViewState(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	h.query = "edge"
+	h.search = ui.NewField("edge")
+	h.errLabel = "local write error"
+	reg.rebuildPanel(h)
+	edge := findSettingsControl(h.root, "bar.edge")
+	if edge == nil {
+		reg.mu.Unlock()
+		t.Fatal("search did not render the Edge control")
+	}
+	h.setFocus(edge)
+	for _, n := range walk(h.root) {
+		if n.Kind == ui.KindScroll && n.Key == settingsBodyKey {
+			n.ScrollOffset = 48
+			break
+		}
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	assertView := func() {
+		t.Helper()
+		if h.section != "Bar" || h.settingsPage != "Appearance" {
+			t.Fatalf("page changed to %q/%q", h.section, h.settingsPage)
+		}
+		if h.query != "edge" || h.search == nil || h.search.Text != "edge" {
+			t.Fatalf("search changed to query=%q field=%v", h.query, h.search)
+		}
+		if h.errLabel != "local write error" {
+			t.Fatalf("local write error changed to %q", h.errLabel)
+		}
+		foundError := false
+		for _, n := range walk(h.root) {
+			foundError = foundError || n.Text == "local write error"
+		}
+		if !foundError {
+			t.Fatal("local write error disappeared from the Settings tree")
+		}
+		if got := settingsScrollOffset(h.root); got != 48 {
+			t.Fatalf("scroll offset = %d, want 48", got)
+		}
+		if focused := h.focused(); focused == nil || focused.Action != "set:bar.edge" {
+			t.Fatalf("focused control = %+v, want Edge", focused)
+		}
+		if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Right" {
+			t.Fatalf("searched Edge control after reload = %+v, want Right", edge)
+		}
+	}
+	reg.mu.Lock()
+	assertView()
+	reg.mu.Unlock()
+
+	noop, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noop.Commit()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	assertView()
+}
+
+func TestSettingsExternalReloadRefreshesOpenTextField(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Weather"
+	reg.rebuildPanel(h)
+	initial := findSettingsControl(h.root, "weather.city")
+	if initial == nil || initial.Kind != ui.KindTextField {
+		reg.mu.Unlock()
+		t.Fatalf("initial City control = %+v, want text field", initial)
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Weather.City = "Melbourne"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if city := findSettingsControl(h.root, "weather.city"); city == nil || city.Text != "Melbourne" || city.Cursor != len("Melbourne") {
+		t.Fatalf("reloaded City control = %+v, want Melbourne", city)
+	}
+}
+
+func TestRejectedSettingsReloadKeepsOpenControlAndError(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.errLabel = "local write error"
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+
+	broken := config.Default()
+	broken.Bar.Edge = "right"
+	broken.Bar.Height = 4
+	broken.Bar.Gap = 4
+	if _, err := reg.PrepareConfig(broken, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}}); err == nil {
+		t.Fatal("invalid config candidate was prepared")
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := h.draft.Bar.Edge; got != "top" {
+		t.Fatalf("rejected candidate changed draft Edge to %q", got)
+	}
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Top" {
+		t.Fatalf("rejected candidate changed Edge control to %+v", edge)
+	}
+	if h.errLabel != "local write error" {
+		t.Fatalf("rejected candidate cleared or changed local error to %q", h.errLabel)
+	}
+}
+
+func findSettingsControl(root *ui.Node, path string) *ui.Node {
+	for _, n := range walk(root) {
+		if n.Action == "set:"+path {
+			return n
+		}
+	}
+	return nil
 }
 
 func TestNightLightModeRendersAsSegmentedControl(t *testing.T) {

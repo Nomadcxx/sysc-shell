@@ -4108,11 +4108,10 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	focusedKey := ""
 	focusedName := ""
 	focusedKind := ui.Kind(0)
-	// Plugin panels rebuild on every view the plugin pushes. A restored
-	// roving index would then land on whatever node moved into the old
-	// position — focus must follow the node's identity, or keystrokes the
-	// user aims at a settings field get eaten as panel shortcuts.
-	if h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
+	// Settings rebuilds after config adoption, and plugin panels rebuild on
+	// pushed views. Restoring only the roving index can move focus to another
+	// control when the tree changes, so carry the focused node's identity.
+	if h.id == PanelSettings || h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
 		if focused := h.focused(); focused != nil {
 			focusedKey = focused.StableKey()
 			focusedName = focused.Name
@@ -4158,6 +4157,18 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 				break
 			}
 		}
+	}
+	if h.id == PanelSettings && !restoredFocus && focusedKey == "" && focusedName != "" {
+		for i, n := range h.focus {
+			if n != nil && n.Kind == focusedKind && n.Name == focusedName {
+				h.roving.Set(i)
+				restoredFocus = true
+				break
+			}
+		}
+	}
+	if h.id == PanelSettings && !restoredFocus {
+		h.roving.Set(0)
 	}
 	if h.id == PanelPluginStore && !restoredFocus {
 		h.focusPluginStoreSelection()
