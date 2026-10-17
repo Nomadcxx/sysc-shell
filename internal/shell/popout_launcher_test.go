@@ -306,6 +306,41 @@ func TestLauncherListFillsThePanel(t *testing.T) {
 	}
 }
 
+func TestLauncherListFitsWhenResultsArriveBeforeConfigure(t *testing.T) {
+	reg := newPanelRegistry(t)
+	keepInvalidationsDrained(t, reg)
+	entries := launcherTestEntries()
+	run := &recordedSpawn{}
+	cfg := reg.launcherServiceConfig()
+	cfg.Scan = func() []launcher.Entry { return entries }
+	cfg.Run = run.run
+	svc := launcher.NewService(cfg)
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.mu.Unlock()
+	go reg.relayLauncher(svc)
+
+	if err := reg.OpenPanel(PanelLauncher, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	// A scan result can be relayed before the compositor sends Configure. The
+	// first result rebuilds the tree, so its viewport must already use the
+	// renderer's metrics rather than the measurement fallback.
+	waitForLauncherResults(t, reg, len(entries))
+	if err := reqs[1].Open.Callbacks.Configure(560, 500, 120); err != nil {
+		t.Fatal(err)
+	}
+
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	list := launcherListNode(t, h)
+	if list.Bounds.H != h.launcherListHeight() {
+		t.Fatalf("list height = %d, want %d", list.Bounds.H, h.launcherListHeight())
+	}
+}
+
 // The list is meant to end part way through a row. There is no scrollbar, so
 // that clipped row is the only thing saying the list runs on past the panel
 // floor -- and if the viewport ever divides evenly by the slot, the affordance

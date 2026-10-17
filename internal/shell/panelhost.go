@@ -1410,9 +1410,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.clipboardThumbnails = make(map[string]*ui.Image)
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
-	if id == PanelOnboarding {
-		// Its copy is wrapped while the tree is built, so load the real shaper
-		// first; Configure runs only after this initial tree has been created.
+	if id == PanelOnboarding || id == PanelLauncher {
+		// These trees derive geometry from text before Configure runs: onboarding
+		// wraps its copy, and the launcher sizes its result viewport. Use real
+		// metrics before either initial tree is built.
 		if err := h.ensureText(); err != nil {
 			return err
 		}
