@@ -966,6 +966,12 @@ func (r *Registry) sendNiriResultLocked(body any, complete func(error)) {
 	}()
 }
 
+func (r *Registry) queryNiriWindows() ([]niri.Window, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return niri.GetWindows(ctx, os.Getenv("NIRI_SOCKET"))
+}
+
 func (r *Registry) spawnDesktopExecLocked(execLine string) {
 	argv, err := desktopentry.ExpandExec(&desktopentry.Entry{Exec: execLine}, nil, "")
 	if err != nil {

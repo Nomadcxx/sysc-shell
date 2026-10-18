@@ -42,6 +42,65 @@ func Stream(ctx context.Context, socketPath string) (<-chan Snapshot, <-chan err
 	return snapshots, errs
 }
 
+// GetWindows requests an authoritative one-shot window list. It is used to
+// resolve an action whose reply was lost after the request may have reached
+// the compositor.
+func GetWindows(ctx context.Context, socketPath string) ([]Window, error) {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("niri: connect to %s: %w", socketPath, err)
+	}
+	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
+
+	request := []byte("\"Windows\"\n")
+	written, err := conn.Write(request)
+	if err != nil {
+		return nil, fmt.Errorf("niri: send windows request: %w", err)
+	}
+	if written != len(request) {
+		return nil, fmt.Errorf("niri: short windows request: %d of %d bytes", written, len(request))
+	}
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("niri: read windows reply: %w", err)
+		}
+		return nil, fmt.Errorf("niri: no windows reply")
+	}
+	var reply struct {
+		Ok  json.RawMessage `json:"Ok"`
+		Err *string         `json:"Err"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &reply); err != nil {
+		return nil, fmt.Errorf("niri: decode windows reply: %w", err)
+	}
+	if reply.Err != nil {
+		return nil, fmt.Errorf("niri: windows: %s", *reply.Err)
+	}
+	var result struct {
+		Windows *[]wireWindow `json:"Windows"`
+	}
+	if err := json.Unmarshal(reply.Ok, &result); err != nil {
+		return nil, fmt.Errorf("niri: decode windows result: %w", err)
+	}
+	if result.Windows == nil {
+		return nil, fmt.Errorf("niri: windows reply carried no result")
+	}
+	windows := make([]Window, 0, len(*result.Windows))
+	for _, wire := range *result.Windows {
+		window, err := wire.project()
+		if err != nil {
+			return nil, err
+		}
+		windows = append(windows, window)
+	}
+	return windows, nil
+}
+
 // handshake dials the socket, sends the request, and validates the reply.
 func handshake(ctx context.Context, socketPath string) (net.Conn, *bufio.Scanner, error) {
 	var dialer net.Dialer

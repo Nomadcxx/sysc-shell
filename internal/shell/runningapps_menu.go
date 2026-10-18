@@ -909,6 +909,7 @@ func (h *runningAppMenuHost) finishFloatingToggle(windowID, generation uint64, e
 		h.r.mu.Unlock()
 		return
 	}
+	recoverAmbiguous := false
 	var refusal *niri.ActionRefusalError
 	if errors.As(err, &refusal) {
 		delete(h.floatPending, windowID)
@@ -921,6 +922,8 @@ func (h *runningAppMenuHost) finishFloatingToggle(windowID, generation uint64, e
 		var notSent *niri.ActionNotSentError
 		if errors.As(err, &notSent) {
 			delete(h.floatPending, windowID)
+		} else {
+			recoverAmbiguous = true
 		}
 	}
 	updated := false
@@ -933,6 +936,46 @@ func (h *runningAppMenuHost) finishFloatingToggle(windowID, generation uint64, e
 	h.r.mu.Unlock()
 	if updated {
 		h.r.publishSurface(output, runningAppMenuSurfaceID)
+	}
+	if !recoverAmbiguous {
+		return
+	}
+	windows, queryErr := h.r.queryNiriWindows()
+	if queryErr != nil {
+		log.Printf("running-app floating toggle %d: refresh window state: %v", windowID, queryErr)
+		return
+	}
+	for _, window := range windows {
+		if window.ID == windowID {
+			h.reconcileAmbiguousFloatingToggle(windowID, generation, window)
+			return
+		}
+	}
+}
+
+func (h *runningAppMenuHost) reconcileAmbiguousFloatingToggle(windowID, generation uint64, window niri.Window) {
+	r := h.r
+	r.mu.Lock()
+	request, pending := h.floatPending[windowID]
+	if !pending || request.generation != generation {
+		r.mu.Unlock()
+		return
+	}
+	if window.Floating == request.target {
+		r.mu.Unlock()
+		return
+	}
+	delete(h.floatPending, windowID)
+	updated := false
+	output := h.output
+	if h.open_ {
+		if slot, ok := runningSlotByKey(r.running, h.slot.Key); ok {
+			updated = h.refreshLocked(slot, r.niriSnapshot)
+		}
+	}
+	r.mu.Unlock()
+	if updated {
+		r.publishSurface(output, runningAppMenuSurfaceID)
 	}
 }
 

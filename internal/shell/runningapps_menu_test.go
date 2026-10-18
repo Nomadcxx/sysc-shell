@@ -1,9 +1,12 @@
 package shell
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -169,6 +172,7 @@ func TestRunningAppsFloatingToggleIgnoresClosedWindow(t *testing.T) {
 }
 
 func TestRunningAppsFloatingToggleUnknownOutcomeWaitsForSnapshot(t *testing.T) {
+	t.Setenv("NIRI_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
 	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
 		{ID: 80, AppID: "steam", Title: "Older", FocusTimestamp: 10},
 		{ID: 81, AppID: "steam", Title: "Newest", Focused: true, FocusTimestamp: 20},
@@ -215,6 +219,70 @@ func TestRunningAppsFloatingToggleUnknownOutcomeWaitsForSnapshot(t *testing.T) {
 	reg.mu.Unlock()
 	if pending || name != "Move Older to tiling" {
 		t.Fatalf("confirmed placement did not resolve the toggle: pending=%t action=%q", pending, name)
+	}
+}
+
+func TestRunningAppsFloatingToggleAmbiguousFailureRefreshesWindowState(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "niri.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	t.Setenv("NIRI_SOCKET", socket)
+	request := make(chan string, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		line, err := bufio.NewReader(conn).ReadString('\n')
+		if err != nil {
+			request <- "read error: " + err.Error()
+			return
+		}
+		request <- strings.TrimSpace(line)
+		_, _ = fmt.Fprintln(conn, `{"Ok":{"Windows":[{"id":80,"title":"Older","app_id":"steam","is_floating":false}]}}`)
+	}()
+
+	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Older", FocusTimestamp: 10},
+		{ID: 81, AppID: "steam", Title: "Newest", Focused: true, FocusTimestamp: 20},
+	})
+	reg.niriSend = func(any) error {
+		return errors.New("connection reset after send")
+	}
+	toggle := findAction(host.root, "running-app-floating:80")
+	if toggle == nil {
+		t.Fatal("floating action is missing")
+	}
+	host.choose(host.hitRows[toggle.Action])
+
+	select {
+	case got := <-request:
+		if got != `"Windows"` {
+			t.Fatalf("recovery request = %q, want %q", got, `"Windows"`)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ambiguous toggle did not request fresh Niri window state")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		_, pending := host.floatPending[80]
+		reg.mu.Unlock()
+		if !pending {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	reg.mu.Lock()
+	_, pending := host.floatPending[80]
+	toggle = findAction(host.root, "running-app-floating:80")
+	reg.mu.Unlock()
+	if pending || toggle == nil || toggle.Name != "Move Older to floating" {
+		t.Fatalf("fresh unchanged state did not restore the action: pending=%t toggle=%+v", pending, toggle)
 	}
 }
 
