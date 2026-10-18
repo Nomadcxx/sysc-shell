@@ -54,6 +54,7 @@ const (
 	runningAppMenuHeader runningAppMenuRowKind = iota
 	runningAppMenuSection
 	runningAppMenuWindow
+	runningAppMenuFloating
 	runningAppMenuAction
 	runningAppMenuWorkspace
 	runningAppMenuForceQuit
@@ -265,11 +266,18 @@ func runningAppMenu(slot runningAppSlot, workspaces []niri.Workspace) []runningA
 	var gameRows []runningAppMenuRow
 	for _, window := range members {
 		row := runningAppWindowRow(window, workspaces)
+		floating := runningAppFloatingRow(window)
 		if foldedSteamGameWindow(slot, window) {
 			gameRows = append(gameRows, row)
+			if floating.WindowID != 0 {
+				gameRows = append(gameRows, floating)
+			}
 			continue
 		}
 		rows = append(rows, row)
+		if floating.WindowID != 0 {
+			rows = append(rows, floating)
+		}
 	}
 	if len(gameRows) > 0 {
 		rows = append(rows, runningAppMenuRow{Kind: runningAppMenuSection, Label: "Games"})
@@ -363,6 +371,20 @@ func runningAppWindowRow(window niri.Window, workspaces []niri.Workspace) runnin
 	return runningAppMenuRow{
 		Kind: runningAppMenuWindow, Label: label, Title: runningAppWindowTitle(window),
 		WindowID: window.ID, Focused: window.Focused,
+	}
+}
+
+func runningAppFloatingRow(window niri.Window) runningAppMenuRow {
+	if window.ID == 0 {
+		return runningAppMenuRow{}
+	}
+	placement := "floating"
+	if window.Floating {
+		placement = "tiling"
+	}
+	return runningAppMenuRow{
+		Kind: runningAppMenuFloating, Label: "Move " + runningAppWindowTitle(window) + " to " + placement,
+		WindowID: window.ID,
 	}
 }
 
@@ -927,6 +949,20 @@ func (r *Registry) sendNiriLocked(body any) {
 		if err := niri.Action(ctx, socket, body); err != nil {
 			log.Print("niri action: ", err)
 		}
+	}()
+}
+
+func (r *Registry) sendNiriResultLocked(body any, complete func(error)) {
+	if r.niriSend != nil {
+		err := r.niriSend(body)
+		go complete(err)
+		return
+	}
+	socket := os.Getenv("NIRI_SOCKET")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		complete(niri.Action(ctx, socket, body))
 	}()
 }
 

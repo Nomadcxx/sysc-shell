@@ -119,3 +119,15 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 		})
 	}
 }
+
+func TestMarshalToggleWindowFloatingTargetsStableWindowID(t *testing.T) {
+	t.Parallel()
+	got, err := marshalAction(ToggleWindowFloating{ID: 81})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"Action":{"ToggleWindowFloating":{"id":81}}}`
+	if string(got) != want {
+		t.Fatalf("action = %s, want %s", got, want)
+	}
+}

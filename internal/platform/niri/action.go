@@ -37,6 +37,9 @@ type CloseWindow struct {
 	ID uint64 `json:"id"`
 }
 
+// ToggleWindowFloating toggles one exact window ID between floating and tiling.
+type ToggleWindowFloating struct{ ID uint64 }
+
 // FocusWorkspace asks the compositor to focus one workspace by id. Niri's
 // reference is an id, an index or a name; the id is the only one that is
 // stable while workspaces are created and destroyed, so it is the only one
@@ -117,6 +120,8 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"FocusWindow": v}
 	case CloseWindow:
 		inner = map[string]any{"CloseWindow": v}
+	case ToggleWindowFloating:
+		inner = map[string]any{"ToggleWindowFloating": map[string]any{"id": v.ID}}
 	case ScreenshotScreen:
 		inner = map[string]any{"ScreenshotScreen": v}
 	case ScreenshotWindow:

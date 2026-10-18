@@ -53,6 +53,131 @@ func TestRunningAppsMenuWindowRowsExposeAccessibleNames(t *testing.T) {
 	}
 }
 
+func TestRunningAppsMenuTogglesSelectedWindowAndWaitsForSnapshot(t *testing.T) {
+	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Older", FocusTimestamp: 10},
+		{ID: 81, AppID: "steam", Title: "Newest", Focused: true, FocusTimestamp: 20},
+	})
+	var sent []any
+	reg.niriSend = func(action any) error { sent = append(sent, action); return nil }
+
+	toggle := findAction(host.root, "running-app-floating:80")
+	if toggle == nil || toggle.Name != "Move Older to floating" {
+		t.Fatalf("tiled window action = %+v", toggle)
+	}
+	host.choose(host.hitRows[toggle.Action])
+	if len(sent) != 1 {
+		t.Fatalf("Niri actions = %v, want one toggle", sent)
+	}
+	if got, ok := sent[0].(niri.ToggleWindowFloating); !ok || got.ID != 80 {
+		t.Fatalf("floating action = %#v, want ToggleWindowFloating{ID: 80}", sent[0])
+	}
+	if !host.open_ || findAction(host.root, "running-app-floating:80") != nil {
+		t.Fatal("pending toggle closed the menu or left the same toggle available")
+	}
+	reg.mu.Lock()
+	host.toggleFloatingLocked(80)
+	reg.mu.Unlock()
+	if len(sent) != 1 {
+		t.Fatalf("duplicate pending toggle sent %d Niri actions, want one", len(sent))
+	}
+	if reg.niriSnapshot.Windows[0].Floating || !reg.niriSnapshot.Windows[1].Focused {
+		t.Fatalf("shell reported state before confirmation or changed focus: %+v", reg.niriSnapshot.Windows)
+	}
+
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Older", FocusTimestamp: 10, Floating: true},
+		{ID: 81, AppID: "steam", Title: "Newest", Focused: true, FocusTimestamp: 20},
+	}})
+	toggle = findAction(host.root, "running-app-floating:80")
+	if toggle == nil || toggle.Name != "Move Older to tiling" {
+		t.Fatalf("confirmed floating state action = %+v", toggle)
+	}
+	host.choose(host.hitRows[toggle.Action])
+	if len(sent) != 2 {
+		t.Fatalf("Niri actions = %v, want a second toggle after confirmation", sent)
+	}
+	if got, ok := sent[1].(niri.ToggleWindowFloating); !ok || got.ID != 80 {
+		t.Fatalf("tiling action = %#v, want ToggleWindowFloating{ID: 80}", sent[1])
+	}
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Older", FocusTimestamp: 10},
+		{ID: 81, AppID: "steam", Title: "Newest", Focused: true, FocusTimestamp: 20},
+	}})
+	toggle = findAction(host.root, "running-app-floating:80")
+	if toggle == nil || toggle.Name != "Move Older to floating" || !host.open_ {
+		t.Fatalf("confirmed tiled state action = %+v, menu open = %t", toggle, host.open_)
+	}
+
+	focused := findAction(host.root, "running-app-floating:81")
+	if focused == nil {
+		t.Fatal("focused window placement action missing")
+	}
+	host.choose(host.hitRows[focused.Action])
+	if len(sent) != 3 {
+		t.Fatalf("Niri actions = %v, want focused window toggle", sent)
+	}
+	if got, ok := sent[2].(niri.ToggleWindowFloating); !ok || got.ID != 81 {
+		t.Fatalf("focused action = %#v, want ToggleWindowFloating{ID: 81}", sent[2])
+	}
+}
+
+func TestRunningAppsFloatingToggleIgnoresClosedWindow(t *testing.T) {
+	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Closed"},
+		{ID: 81, AppID: "steam", Title: "Still open", Focused: true},
+	})
+	var sent []any
+	reg.niriSend = func(action any) error { sent = append(sent, action); return nil }
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
+		{ID: 81, AppID: "steam", Title: "Still open", Focused: true},
+	}})
+
+	reg.mu.Lock()
+	host.toggleFloatingLocked(80)
+	_, pending := host.floatPending[80]
+	reg.mu.Unlock()
+	if len(sent) != 0 || pending {
+		t.Fatalf("closed window toggle sent %v and left pending=%t", sent, pending)
+	}
+}
+
+func TestRunningAppsFloatingToggleRefusalDisablesOnlyThatControl(t *testing.T) {
+	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Older", FocusTimestamp: 10},
+		{ID: 81, AppID: "steam", Title: "Newest", Focused: true, FocusTimestamp: 20},
+	})
+	reg.niriSend = func(any) error { return errors.New("unsupported action") }
+	toggle := findAction(host.root, "running-app-floating:80")
+	if toggle == nil {
+		t.Fatal("floating control missing before request")
+	}
+	host.choose(host.hitRows[toggle.Action])
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		_, unavailable := host.floatUnavailable[80]
+		reg.mu.Unlock()
+		if unavailable {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	_, unavailable := host.floatUnavailable[80]
+	if !host.open_ || !unavailable {
+		t.Fatal("refused toggle did not leave isolated unavailable feedback in the open menu")
+	}
+	if findAction(host.root, "running-app-floating:80") != nil {
+		t.Fatal("refused floating control remained available")
+	}
+	if findAction(host.root, "running-app-floating:81") == nil || findAction(host.root, "running-app-window:80") == nil {
+		t.Fatal("one unavailable toggle disabled unrelated menu controls")
+	}
+}
+
 func TestRunningAppsMenuForceQuitVisibleBeforeLongActionLists(t *testing.T) {
 	t.Parallel()
 	reg, bar := steamMenuReg(t)

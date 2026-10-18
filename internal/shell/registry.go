@@ -279,8 +279,8 @@ type Registry struct {
 	usernames      *usernameCache
 	runningMenu    *runningAppMenuHost
 	windowSwitcher *windowSwitcherHost
-	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
-	// sends niri.Action on $NIRI_SOCKET off this goroutine.
+	// niriSend is the Niri action seam. Tests replace it; nil sends niri.Action
+	// on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
 	// signalProcess validates PID identity and delivers TERM/KILL off Registry.mu.
 	signalProcess func(services.ProcessIdentity, syscall.Signal) error
@@ -2829,13 +2829,16 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
 	var runningMenuUpdated bool
 	var runningMenuOutput uint32
-	if h := r.runningMenu; h != nil && h.open_ {
-		// A scope can outlive its Niri window; keep pending or failure feedback until dismissed.
-		if slot, ok := runningSlotByKey(r.running, h.slot.Key); ok {
-			runningMenuUpdated = h.refreshLocked(slot, r.niriSnapshot)
-			runningMenuOutput = h.output
-		} else if h.forceQuitState != runningAppForceQuitPending && h.forceQuitState != runningAppForceQuitFailed {
-			h.closeLocked()
+	if h := r.runningMenu; h != nil {
+		h.confirmFloatingTogglesLocked(r.niriSnapshot)
+		if h.open_ {
+			// A scope can outlive its Niri window; keep pending or failure feedback until dismissed.
+			if slot, ok := runningSlotByKey(r.running, h.slot.Key); ok {
+				runningMenuUpdated = h.refreshLocked(slot, r.niriSnapshot)
+				runningMenuOutput = h.output
+			} else if h.forceQuitState != runningAppForceQuitPending && h.forceQuitState != runningAppForceQuitFailed {
+				h.closeLocked()
+			}
 		}
 	}
 	changed := r.applyRunningIconsLocked()
