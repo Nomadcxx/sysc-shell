@@ -296,6 +296,47 @@ func TestDensitySettingDoesNotPersistAStaleDerivedBar(t *testing.T) {
 	}
 }
 
+func TestWallpaperCycleSettingsExposeAndValidatePolicy(t *testing.T) {
+	cfg := config.Default()
+	settings := DefaultFor(cfg)
+	for _, tc := range []struct {
+		path  string
+		value string
+		want  string
+	}{
+		{"wallpaper.cycle-enabled", "true", "true"},
+		{"wallpaper.cycle-mode", "time", "time"},
+		{"wallpaper.cycle-interval", "30m", "30m0s"},
+		{"wallpaper.cycle-time", "08:30", "08:30"},
+	} {
+		e := settings.ByPath(tc.path)
+		if e == nil {
+			t.Fatalf("missing setting %q", tc.path)
+		}
+		if err := e.Set(&cfg, tc.value); err != nil {
+			t.Fatalf("set %s: %v", tc.path, err)
+		}
+		if got := e.Get(cfg); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+
+	for _, tc := range []struct{ path, value string }{
+		{"wallpaper.cycle-mode", "random"},
+		{"wallpaper.cycle-interval", "30s"},
+		{"wallpaper.cycle-time", "25:00"},
+		{"wallpaper.cycle-time", "8:30"},
+	} {
+		e := settings.ByPath(tc.path)
+		if e == nil {
+			t.Fatalf("missing setting %q", tc.path)
+		}
+		if err := e.Set(&cfg, tc.value); err == nil {
+			t.Errorf("setting %s accepted %q", tc.path, tc.value)
+		}
+	}
+}
+
 // TestEntryUsesItsOwnAccessors is the whole point of D1: an entry carries the
 // code that reads and writes its field, so a new setting cannot be declared
 // without one and no switch can fall through to an empty string.

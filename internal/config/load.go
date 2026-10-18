@@ -233,6 +233,10 @@ type wireWallpaper struct {
 	Fade           *bool    `json:"fade,omitempty"`
 	FadeDuration   *float64 `json:"fade_duration,omitempty"`
 	Hidden         *string  `json:"hidden,omitempty"`
+	CycleEnabled   *bool    `json:"cycle_enabled,omitempty"`
+	CycleMode      *string  `json:"cycle_mode,omitempty"`
+	CycleInterval  *string  `json:"cycle_interval,omitempty"`
+	CycleTime      *string  `json:"cycle_time,omitempty"`
 
 	PauseCovered    *bool   `json:"pause_covered,omitempty"`
 	PauseLocked     *bool   `json:"pause_locked,omitempty"`
@@ -1903,6 +1907,22 @@ func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, er
 	if w.Hidden != nil {
 		out.Hidden = *w.Hidden
 	}
+	if w.CycleEnabled != nil {
+		out.CycleEnabled = *w.CycleEnabled
+	}
+	if w.CycleMode != nil {
+		out.CycleMode = *w.CycleMode
+	}
+	if w.CycleInterval != nil {
+		interval, err := time.ParseDuration(*w.CycleInterval)
+		if err != nil {
+			return Wallpaper{}, pathErr(path+".cycle_interval", "%q is not a duration such as 30m", *w.CycleInterval)
+		}
+		out.CycleInterval = interval
+	}
+	if w.CycleTime != nil {
+		out.CycleTime = *w.CycleTime
+	}
 	if w.PauseCovered != nil {
 		out.PauseCovered = *w.PauseCovered
 	}
@@ -1924,6 +1944,16 @@ func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, er
 	}
 	if !wallpaperHidden[out.Hidden] {
 		return Wallpaper{}, pathErr(path+".hidden", "%q is not a known hidden policy", out.Hidden)
+	}
+	if !wallpaperCycleModes[out.CycleMode] {
+		return Wallpaper{}, pathErr(path+".cycle_mode", "%q is not interval or time", out.CycleMode)
+	}
+	if out.CycleInterval < time.Minute {
+		return Wallpaper{}, pathErr(path+".cycle_interval", "%s is shorter than one minute", out.CycleInterval)
+	}
+	parsedCycleTime, err := time.Parse("15:04", out.CycleTime)
+	if err != nil || parsedCycleTime.Format("15:04") != out.CycleTime {
+		return Wallpaper{}, pathErr(path+".cycle_time", "%q is not a local time in HH:MM form", out.CycleTime)
 	}
 	if !wallpaperOnBattery[out.OnBattery] {
 		return Wallpaper{}, pathErr(path+".on_battery", "%q is not a known battery policy", out.OnBattery)

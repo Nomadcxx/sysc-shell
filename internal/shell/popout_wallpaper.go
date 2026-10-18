@@ -1654,6 +1654,7 @@ func (r *Registry) wallpaperStartLocked() *wallpaper.Service {
 	r.wallpaperSvc = wallpaper.NewService(wallpaper.ServiceConfig{
 		Engine:      wallpaper.NewEngine(wallpaperRuntimeDir(), nil),
 		Settings:    wallpaperSettings(cfg),
+		CyclePolicy: wallpaperCyclePolicy(cfg),
 		Connectors:  r.connectorsLocked(),
 		Roots:       []string{cfg.ImageDirectory, cfg.VideoDirectory},
 		PersistPath: wallpaper.AssignmentsPath(),
@@ -1677,6 +1678,15 @@ func wallpaperSettings(cfg config.Wallpaper) wallpaper.Settings {
 		Fade:         cfg.Fade,
 		FadeDuration: cfg.FadeDuration,
 		Hidden:       cfg.Hidden,
+	}
+}
+
+func wallpaperCyclePolicy(cfg config.Wallpaper) wallpaper.CyclePolicy {
+	return wallpaper.CyclePolicy{
+		Enabled:  cfg.CycleEnabled,
+		Mode:     cfg.CycleMode,
+		Interval: cfg.CycleInterval,
+		Time:     cfg.CycleTime,
 	}
 }
 
