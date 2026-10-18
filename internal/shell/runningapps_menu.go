@@ -47,7 +47,7 @@ type runningAppMenuHost struct {
 	forceQuitMessage    string
 	forceQuitGeneration uint64
 	floatPending        map[uint64]runningAppFloatingRequest
-	floatUnavailable    map[uint64]struct{}
+	floatUnavailable    map[uint64]bool
 	floatGeneration     uint64
 	text                *render.TextRenderer
 	style               render.Style
@@ -319,7 +319,8 @@ func (h *runningAppMenuHost) refreshLocked(slot runningAppSlot, snapshot niri.Sn
 		return false
 	}
 	var selectedWindow uint64
-	if row, ok := h.optionRow(h.menu.cursor); ok && h.rows[row].Kind == runningAppMenuWindow {
+	if row, ok := h.optionRow(h.menu.cursor); ok &&
+		(h.rows[row].Kind == runningAppMenuWindow || h.rows[row].Kind == runningAppMenuFloating) {
 		selectedWindow = h.rows[row].WindowID
 	}
 	h.slot = slot
@@ -847,6 +848,9 @@ func (h *runningAppMenuHost) menuRowsLocked(slot runningAppSlot, snapshot niri.S
 }
 
 func (h *runningAppMenuHost) confirmFloatingTogglesLocked(snapshot niri.Snapshot) {
+	if len(h.floatPending) == 0 && len(h.floatUnavailable) == 0 {
+		return
+	}
 	windows := make(map[uint64]niri.Window, len(snapshot.Windows))
 	for _, window := range snapshot.Windows {
 		windows[window.ID] = window
@@ -857,8 +861,9 @@ func (h *runningAppMenuHost) confirmFloatingTogglesLocked(snapshot niri.Snapshot
 			delete(h.floatPending, id)
 		}
 	}
-	for id := range h.floatUnavailable {
-		if _, exists := windows[id]; !exists {
+	for id, wasFloating := range h.floatUnavailable {
+		window, exists := windows[id]
+		if !exists || window.Floating != wasFloating {
 			delete(h.floatUnavailable, id)
 		}
 	}
@@ -904,11 +909,20 @@ func (h *runningAppMenuHost) finishFloatingToggle(windowID, generation uint64, e
 		h.r.mu.Unlock()
 		return
 	}
-	delete(h.floatPending, windowID)
-	if h.floatUnavailable == nil {
-		h.floatUnavailable = make(map[uint64]struct{})
+	var refusal *niri.ActionRefusalError
+	if errors.As(err, &refusal) {
+		delete(h.floatPending, windowID)
+		if h.floatUnavailable == nil {
+			h.floatUnavailable = make(map[uint64]bool)
+		}
+		h.floatUnavailable[windowID] = !request.target
+		h.confirmFloatingTogglesLocked(h.r.niriSnapshot)
+	} else {
+		var notSent *niri.ActionNotSentError
+		if errors.As(err, &notSent) {
+			delete(h.floatPending, windowID)
+		}
 	}
-	h.floatUnavailable[windowID] = struct{}{}
 	updated := false
 	output := h.output
 	if h.open_ {
