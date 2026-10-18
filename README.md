@@ -85,6 +85,41 @@ official plugin bundle.
 
 [Documentation](https://nomadcxx.github.io/sysc/docs/).
 
+### Nix
+
+The guided installer and the AUR package remain the primary paths. Nix is a third option for
+home-manager users:
+
+```nix
+{
+  inputs.sysc-shell.url = "github:Nomadcxx/sysc-shell";
+
+  # In a home-manager flake configuration:
+  #   modules = [ inputs.sysc-shell.homeModules.forAllSystems.${pkgs.system}.default ];
+  #   programs.sysc-shell.enable = true;
+  #
+  #   # Optional: the weather plugin, linked into the user plugin root
+  #   # under its manifest id.
+  #   programs.sysc-shell.plugins = [
+  #     inputs.sysc-shell.packages.${pkgs.system}.sysc-shell-plugin-weather
+  #   ];
+  #
+  # Without the module, use the overlay and set the package yourself:
+  #   nixpkgs.overlays = [ inputs.sysc-shell.overlays.default ];
+  #   programs.sysc-shell.package = pkgs.sysc-shell;
+}
+```
+
+The module reuses the repository's own `packaging/systemd/sysc-shell.service` with `ExecStart`
+pointed at the store, so there is one unit and one install story. No release is tagged yet, so
+`sysc-shell --version` reports `development (<source revision>)`. Nothing seeds or rewrites
+`config.json`, and `scripts/deploy` does not apply: a Nix install starts a store path, not the
+binary under `~/.local/bin`. Enabling refuses to activate while `~/.local/bin/sysc-shell`
+exists, because two shells would fight over the bar.
+
+Not covered, on purpose: no CI workflow builds the flake, no companion daemon is packaged, and
+the deploy-guard drop-in is not installed.
+
 ### Build from source
 
 ```bash
