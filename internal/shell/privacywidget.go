@@ -12,6 +12,7 @@ type privacyWidgetIcon struct {
 	label       string
 	tone        ui.Tone
 	projectIcon bool
+	active      bool
 }
 
 func buildPrivacyWidget(pad int, m theme.Metrics) textWidget {
@@ -50,10 +51,14 @@ func buildPrivacyWidget(pad int, m theme.Metrics) textWidget {
 func privacyIconNodes(icons []privacyWidgetIcon, m theme.Metrics) []*ui.Node {
 	nodes := make([]*ui.Node, 0, len(icons))
 	for _, icon := range icons {
-		nodes = append(nodes, &ui.Node{
+		node := &ui.Node{
 			Kind: ui.KindIcon, Icon: icon.name, IconSize: m.IconNormal,
 			IconProjectFirst: icon.projectIcon, Name: icon.label, Role: "img", Tone: icon.tone,
-		})
+		}
+		if icon.active {
+			node.Fill = ui.FillError
+		}
+		nodes = append(nodes, node)
 	}
 	return nodes
 }
@@ -70,13 +75,13 @@ func privacyWidgetIcons(state privacyState) []privacyWidgetIcon {
 		})
 	}
 	if state.microphone == privacyActive {
-		icons = append(icons, privacyWidgetIcon{name: "mic", label: "Microphone in use", tone: ui.ToneNormal})
+		icons = append(icons, privacyWidgetIcon{name: "mic", label: "Microphone in use", tone: ui.ToneNormal, active: true})
 	}
 	if state.camera == privacyActive {
-		icons = append(icons, privacyWidgetIcon{name: "camera", label: "Camera in use", tone: ui.ToneNormal, projectIcon: true})
+		icons = append(icons, privacyWidgetIcon{name: "camera", label: "Camera in use", tone: ui.ToneNormal, projectIcon: true, active: true})
 	}
 	if state.screenShare == privacyActive {
-		icons = append(icons, privacyWidgetIcon{name: "desktop_windows", label: "Screen sharing in use", tone: ui.ToneNormal})
+		icons = append(icons, privacyWidgetIcon{name: "desktop_windows", label: "Screen sharing in use", tone: ui.ToneNormal, active: true})
 	}
 	return icons
 }
