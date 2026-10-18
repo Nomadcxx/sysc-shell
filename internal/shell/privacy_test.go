@@ -10,6 +10,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestPrivacyStateKeepsAmbiguousCaptureUnknownAndCorrelatesCasts(t *testing.T) {
@@ -299,6 +300,65 @@ func TestPrivacyWidgetHidesKnownInactiveAndShowsUnknownOnce(t *testing.T) {
 	}
 	if len(w.node.Children[0].Children) != 0 {
 		t.Fatalf("known inactive widget retained icons: %+v", w.node.Children)
+	}
+}
+
+func TestPrivacyWidgetActiveCaptureBadgesClearPerSource(t *testing.T) {
+	t.Parallel()
+	metrics := DefaultTheme().Metrics
+	w := buildPrivacyWidget(metrics.CapsulePadding, metrics)
+	active := privacyState{
+		microphone:  privacyActive,
+		camera:      privacyActive,
+		screenShare: privacyActive,
+	}
+	w.refresh(barView{Privacy: active})
+
+	icons := w.node.Children[0].Children
+	wantLabels := map[string]string{
+		"mic":             "Microphone in use",
+		"camera":          "Camera in use",
+		"desktop_windows": "Screen sharing in use",
+	}
+	if len(icons) != len(wantLabels) {
+		t.Fatalf("active privacy icons = %+v, want one glyph per source", icons)
+	}
+	for _, icon := range icons {
+		if icon.Fill != ui.FillError {
+			t.Errorf("%s fill = %v, want the red active badge", icon.Icon, icon.Fill)
+		}
+		if want := wantLabels[icon.Icon]; icon.Name != want {
+			t.Errorf("%s accessible name = %q, want %q", icon.Icon, icon.Name, want)
+		}
+	}
+
+	active.camera = privacyInactive
+	w.refresh(barView{Privacy: active})
+	icons = w.node.Children[0].Children
+	if len(icons) != 2 || icons[0].Icon != "mic" || icons[1].Icon != "desktop_windows" {
+		t.Fatalf("after camera stops, privacy icons = %+v, want mic and screen share", icons)
+	}
+	for _, icon := range icons {
+		if icon.Fill != ui.FillError {
+			t.Errorf("remaining %s fill = %v, want its red active badge", icon.Icon, icon.Fill)
+		}
+	}
+
+	active.screenShare = privacyUnknown
+	w.refresh(barView{Privacy: active})
+	icons = w.node.Children[0].Children
+	if len(icons) != 2 || icons[0].Icon != "gpp_bad" || icons[1].Icon != "mic" {
+		t.Fatalf("unknown screen share with active mic = %+v, want warning and mic", icons)
+	}
+	if icons[0].Fill != ui.FillNone || icons[1].Fill != ui.FillError {
+		t.Fatalf("warning/mic fills = %v/%v, want none/error", icons[0].Fill, icons[1].Fill)
+	}
+
+	active.microphone = privacyInactive
+	active.screenShare = privacyInactive
+	w.refresh(barView{Privacy: active})
+	if !w.node.Absent || len(w.node.Children[0].Children) != 0 {
+		t.Fatalf("known inactive widget absent=%v icons=%+v, want hidden with no badge", w.node.Absent, w.node.Children[0].Children)
 	}
 }
 
