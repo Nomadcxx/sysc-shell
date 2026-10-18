@@ -61,11 +61,12 @@ type Registry struct {
 	// onboardingPending keeps the first-start offer until an interactive,
 	// focused output can host it. Output loss restores the offer and its small
 	// view state for the next usable output.
-	onboardingPending bool
-	onboardingResume  bool
-	onboardingPage    onboardingPage
-	onboardingDraft   config.Config
-	onboardingError   string
+	onboardingPending          bool
+	onboardingResume           bool
+	onboardingPage             onboardingPage
+	onboardingDraft            config.Config
+	onboardingPluginSelections map[string]bool
+	onboardingError            string
 	// effectOutputs names the connectors whose wallpaper is a playing or
 	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
 	effectOutputs map[string]bool
@@ -1828,6 +1829,7 @@ func (r *Registry) tryOpenOnboardingLocked(first uint32) {
 // in-memory resume state. Reopening setup from Settings must not turn a
 // completed install back into a dismissed one.
 func (r *Registry) markOnboardingOutcomeLocked(outcome onboarding.Outcome) error {
+	r.onboardingPluginSelections = nil
 	path := onboarding.StatePath()
 	if outcome == onboarding.OutcomeDismissed {
 		state, err := onboarding.Load(path)
@@ -1853,6 +1855,7 @@ func (r *Registry) preserveOnboardingLocked(h *PanelHost) {
 	r.onboardingResume = true
 	r.onboardingPage = h.onbPage
 	r.onboardingDraft = h.draft
+	r.onboardingPluginSelections = cloneOnboardingPluginSelections(h.onbPluginSelections)
 	r.onboardingError = h.errLabel
 }
 

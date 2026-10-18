@@ -396,14 +396,15 @@ type PanelHost struct {
 	clipboardThumbnails       map[string]*ui.Image
 	clipboardThumbnailRequest map[string]struct{}
 	// onbPage and onbScroll are the wizard's step and retained body scroll.
-	onbPage       onboardingPage
-	onbScroll     int
-	onbFontLocale string
-	onbFontState  onboardingFontState
-	onbMoving     bool
-	onbMoveMode   bool
-	onbGrabX      int
-	onbGrabY      int
+	onbPage             onboardingPage
+	onbScroll           int
+	onbPluginSelections map[string]bool
+	onbFontLocale       string
+	onbFontState        onboardingFontState
+	onbMoving           bool
+	onbMoveMode         bool
+	onbGrabX            int
+	onbGrabY            int
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -1413,6 +1414,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		if r.onboardingResume {
 			h.onbPage = r.onboardingPage
 			h.draft = r.onboardingDraft.Clone()
+			h.onbPluginSelections = cloneOnboardingPluginSelections(r.onboardingPluginSelections)
 			h.set = r.settingsForLocked(h.draft)
 			h.errLabel = r.onboardingError
 		}
