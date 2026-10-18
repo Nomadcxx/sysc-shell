@@ -20,12 +20,17 @@ const (
 )
 
 type privacyState struct {
-	microphone     privacyActivity
-	camera         privacyActivity
-	screenShare    privacyActivity
-	microphoneApps string
-	cameraApps     string
-	screenTargets  string
+	microphone               privacyActivity
+	camera                   privacyActivity
+	screenShare              privacyActivity
+	microphoneIncomplete     bool
+	cameraIncomplete         bool
+	screenShareIncomplete    bool
+	microphoneDetailsMissing bool
+	cameraDetailsMissing     bool
+	microphoneApps           string
+	cameraApps               string
+	screenTargets            string
 }
 
 const (
@@ -48,14 +53,17 @@ func privacyStateFrom(pipe services.PrivacySnapshot, snapshot niri.Snapshot) pri
 	state := privacyState{
 		microphone:    privacyUnknown,
 		camera:        privacyUnknown,
-		screenShare:   screenShareState(snapshot),
+		screenShare:   privacyUnknown,
 		screenTargets: privacyCastTargets(snapshot),
 	}
+	state.screenShare, state.screenShareIncomplete = screenShareState(snapshot)
 	if !pipe.Known {
 		return state
 	}
 	if pipe.MicrophoneActive {
 		state.microphone = privacyActive
+		state.microphoneIncomplete = pipe.MicrophoneUnknown
+		state.microphoneDetailsMissing = pipe.MicrophoneDetailsMissing
 		state.microphoneApps = strings.Join(pipe.MicrophoneApps, ", ")
 	} else if pipe.MicrophoneUnknown {
 		state.microphone = privacyUnknown
@@ -69,7 +77,7 @@ func privacyStateFrom(pipe services.PrivacySnapshot, snapshot niri.Snapshot) pri
 			castNodes[cast.PWNodeID] = struct{}{}
 		}
 	}
-	cameraActive, cameraUnknown := false, false
+	cameraActive, cameraUnknown, cameraDetailsMissing := false, false, false
 	var cameraApps []string
 	for _, path := range pipe.VideoPaths {
 		if _, isCast := castNodes[path.SourceNodeID]; isCast {
@@ -77,7 +85,9 @@ func privacyStateFrom(pipe services.PrivacySnapshot, snapshot niri.Snapshot) pri
 		}
 		if path.Camera {
 			cameraActive = true
-			if path.ApplicationName != "" && !slices.Contains(cameraApps, path.ApplicationName) {
+			if path.ApplicationName == "" {
+				cameraDetailsMissing = true
+			} else if !slices.Contains(cameraApps, path.ApplicationName) {
 				cameraApps = append(cameraApps, path.ApplicationName)
 			}
 		} else {
@@ -89,6 +99,8 @@ func privacyStateFrom(pipe services.PrivacySnapshot, snapshot niri.Snapshot) pri
 	switch {
 	case cameraActive:
 		state.camera = privacyActive
+		state.cameraIncomplete = cameraUnknown
+		state.cameraDetailsMissing = cameraDetailsMissing
 	case cameraUnknown:
 		state.camera = privacyUnknown
 	default:
@@ -133,7 +145,7 @@ func privacyTargetName(name string) string {
 	return name
 }
 
-func screenShareState(snapshot niri.Snapshot) privacyActivity {
+func screenShareState(snapshot niri.Snapshot) (privacyActivity, bool) {
 	active, unknown := false, !snapshot.CastsKnown
 	for _, cast := range snapshot.Casts {
 		if !cast.Active {
@@ -147,11 +159,11 @@ func screenShareState(snapshot niri.Snapshot) privacyActivity {
 	}
 	switch {
 	case active:
-		return privacyActive
+		return privacyActive, unknown
 	case unknown:
-		return privacyUnknown
+		return privacyUnknown, false
 	default:
-		return privacyInactive
+		return privacyInactive, false
 	}
 }
 
@@ -314,23 +326,77 @@ func privacyStatus(activity privacyActivity) string {
 	}
 }
 
+func privacyIncompleteDetail(source string) string {
+	switch source {
+	case privacyMicrophone:
+		return "Some microphone sources could not be classified"
+	case privacyCamera:
+		return "Some camera sources could not be classified"
+	case privacyScreenShare:
+		return "Some screen-share targets could not be identified"
+	default:
+		return "Some sources could not be classified"
+	}
+}
+
+func privacyHasWarning(state privacyState) bool {
+	return state.microphone == privacyUnknown || state.camera == privacyUnknown || state.screenShare == privacyUnknown ||
+		state.microphoneIncomplete || state.cameraIncomplete || state.screenShareIncomplete
+}
+
 func privacyAccessibleName(state privacyState) string {
-	return "Privacy activity. Microphone " + strings.ToLower(privacyStatus(state.microphone)) +
+	name := "Privacy activity. Microphone " + strings.ToLower(privacyStatus(state.microphone)) +
 		". Camera " + strings.ToLower(privacyStatus(state.camera)) +
 		". Screen sharing " + strings.ToLower(privacyStatus(state.screenShare))
+	if state.microphoneIncomplete || state.cameraIncomplete || state.screenShareIncomplete {
+		name += ". Privacy monitoring is incomplete"
+	}
+	if state.microphoneDetailsMissing || state.cameraDetailsMissing {
+		name += ". Some application details are unavailable"
+	}
+	return name
 }
 
 func privacyTooltip(state privacyState) string {
-	return "Microphone: " + privacyDetail(state.microphone, state.microphoneApps) +
-		"\nCamera: " + privacyDetail(state.camera, state.cameraApps) +
-		"\nScreen sharing: " + privacyDetail(state.screenShare, state.screenTargets)
+	return "Microphone: " + privacySignalDetail(state, privacyMicrophone) +
+		"\nCamera: " + privacySignalDetail(state, privacyCamera) +
+		"\nScreen sharing: " + privacySignalDetail(state, privacyScreenShare)
 }
 
-func privacyDetail(activity privacyActivity, detail string) string {
-	if activity == privacyActive && detail != "" {
-		return detail
+func privacySignalDetail(state privacyState, source string) string {
+	switch source {
+	case privacyMicrophone:
+		return privacyDetail(state.microphone, state.microphoneApps, state.microphoneIncomplete, state.microphoneDetailsMissing,
+			privacyIncompleteDetail(source), "Application details unavailable")
+	case privacyCamera:
+		return privacyDetail(state.camera, state.cameraApps, state.cameraIncomplete, state.cameraDetailsMissing,
+			privacyIncompleteDetail(source), "Application details unavailable")
+	case privacyScreenShare:
+		return privacyDetail(state.screenShare, state.screenTargets, state.screenShareIncomplete, false,
+			privacyIncompleteDetail(source), "Target unavailable")
+	default:
+		return "Unavailable"
 	}
-	return privacyStatus(activity)
+}
+
+func privacyDetail(activity privacyActivity, detail string, incomplete, detailsMissing bool, incompleteLabel, fallback string) string {
+	if activity != privacyActive {
+		return privacyStatus(activity)
+	}
+	var parts []string
+	if detail != "" {
+		parts = append(parts, detail)
+	}
+	if detailsMissing || len(parts) == 0 {
+		parts = append(parts, fallback)
+	}
+	if incomplete {
+		parts = append(parts, incompleteLabel)
+	}
+	if len(parts) == 0 {
+		return privacyStatus(activity)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (r *Registry) setPrivacyService(p *services.Privacy) {

@@ -395,21 +395,18 @@ func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
 	}
 	rows := []*ui.Node{
 		monitorCardTitle("Capture activity", 0),
-		privacyStatusSection("Microphone", state.microphone, state.microphoneApps, "Application details unavailable"),
-		privacyStatusSection("Camera", state.camera, state.cameraApps, "Application details unavailable"),
-		privacyStatusSection("Screen sharing", state.screenShare, state.screenTargets, "Target unavailable"),
+		privacyStatusSection("Microphone", state.microphone, privacySignalDetail(state, privacyMicrophone)),
+		privacyStatusSection("Camera", state.camera, privacySignalDetail(state, privacyCamera)),
+		privacyStatusSection("Screen sharing", state.screenShare, privacySignalDetail(state, privacyScreenShare)),
 	}
 	card := monitorCard(h.metrics(), rows)
 	card.Height = ccPageH
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
 }
 
-func privacyStatusSection(label string, activity privacyActivity, detail, activeFallback string) *ui.Node {
+func privacyStatusSection(label string, activity privacyActivity, detail string) *ui.Node {
 	children := []*ui.Node{privacyStatusRow(label, activity)}
-	if activity == privacyActive {
-		if detail == "" {
-			detail = activeFallback
-		}
+	if activity == privacyActive && detail != "" {
 		children = append(children, &ui.Node{
 			Kind: ui.KindText, Text: detail, Name: label + " details", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})

@@ -60,9 +60,13 @@ func privacyIconNodes(icons []privacyWidgetIcon, m theme.Metrics) []*ui.Node {
 
 func privacyWidgetIcons(state privacyState) []privacyWidgetIcon {
 	var icons []privacyWidgetIcon
-	if state.microphone == privacyUnknown || state.camera == privacyUnknown || state.screenShare == privacyUnknown {
+	if privacyHasWarning(state) {
+		label := "Privacy monitoring unavailable"
+		if state.microphoneIncomplete || state.cameraIncomplete || state.screenShareIncomplete {
+			label = "Privacy monitoring incomplete"
+		}
 		icons = append(icons, privacyWidgetIcon{
-			name: "gpp_bad", label: "Privacy monitoring unavailable", tone: ui.ToneError,
+			name: "gpp_bad", label: label, tone: ui.ToneError,
 		})
 	}
 	if state.microphone == privacyActive {

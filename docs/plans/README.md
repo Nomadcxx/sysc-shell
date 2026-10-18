@@ -617,12 +617,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 | [2026-10-14-running-apps-menu-safety-design.md](2026-10-14-running-apps-menu-safety-design.md) | design | Complete Niri app menu: exact per-window actions, explicit force quit through validated systemd app scopes, and a measured six-row popup. |
 | [2026-10-14-running-apps-menu-safety.md](2026-10-14-running-apps-menu-safety.md) | plan | Test-first implementation and gate for the #235 window menu and systemd-scoped app force quit. |
 
-## Privacy activity (`sysc-1307`, `sysc-781`)
+## Privacy indicators (`sysc-1307`, `sysc-781`)
 
 | Document | Kind | Purpose |
 |---|---|---|
-| `2026-10-18-privacy-activity-design.md` | design | PipeWire and Niri activity evidence, unknown-state rules, and the persistent bar/Control Centre path. |
-| `2026-10-18-privacy-activity.md` | plan | Test-first implementation and laptop Niri gate. |
+| [2026-10-18-privacy-indicators-design.md](2026-10-18-privacy-indicators-design.md) | design | Reliable PipeWire capture links, Niri cast events, visible unknown state, grouped bar symbols, Control Centre details, and transition OSDs. |
+| [2026-10-18-privacy-indicators.md](2026-10-18-privacy-indicators.md) | plan | Test-first implementation covering Niri casts, bounded PipeWire snapshots, registry lifecycle, bar and OSD behavior, and the laptop live gate. |
 
 ## Sibling repositories
 

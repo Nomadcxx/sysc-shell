@@ -96,6 +96,15 @@ func TestParsePrivacyDumpRejectsMalformedOrNullSnapshot(t *testing.T) {
 	}
 }
 
+func TestSamePrivacySnapshotTracksMissingMicrophoneDetails(t *testing.T) {
+	current := PrivacySnapshot{Known: true, MicrophoneActive: true}
+	updated := current
+	updated.MicrophoneDetailsMissing = true
+	if samePrivacySnapshot(current, updated) {
+		t.Fatal("missing application details did not invalidate the snapshot")
+	}
+}
+
 func TestParsePrivacyDumpUnknownConsumerClassesStayUnknown(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

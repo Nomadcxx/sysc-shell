@@ -45,14 +45,14 @@ func TestPrivacyStateKeepsAmbiguousCaptureUnknownAndCorrelatesCasts(t *testing.T
 				{SourceNodeID: 30}, {SourceNodeID: 31, Camera: true},
 			}},
 			niri: niri.Snapshot{CastsKnown: true},
-			want: privacyState{microphone: privacyInactive, camera: privacyActive, screenShare: privacyInactive},
+			want: privacyState{microphone: privacyInactive, camera: privacyActive, cameraIncomplete: true, cameraDetailsMissing: true, screenShare: privacyInactive},
 		},
 		{
 			name: "cast node is not a camera",
 			pipe: services.PrivacySnapshot{Known: true,
 				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 40, Camera: true}}},
 			niri: niri.Snapshot{Casts: []niri.Cast{{StreamID: 1, Active: true, Target: niri.CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true, PWNodeID: 40, HasPWNodeID: true}}},
-			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive, screenTargets: "Output DP-1"},
+			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive, screenShareIncomplete: true, screenTargets: "Output DP-1"},
 		},
 		{
 			name: "paused cast node does not mask camera activity",
@@ -74,7 +74,7 @@ func TestPrivacyStateKeepsAmbiguousCaptureUnknownAndCorrelatesCasts(t *testing.T
 			pipe: services.PrivacySnapshot{Known: true},
 			niri: niri.Snapshot{Casts: []niri.Cast{{StreamID: 3, Active: true,
 				Target: niri.CastTarget{Kind: "window", WindowID: 70}, TargetSet: true, TargetKnown: true}}},
-			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive, screenTargets: "Window 70"},
+			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive, screenShareIncomplete: true, screenTargets: "Window 70"},
 		},
 		{
 			name: "cast baseline absence is unknown",
@@ -125,6 +125,140 @@ func TestPrivacyStateCarriesSafeApplicationAndCastTargetDetails(t *testing.T) {
 	}
 	if strings.Contains(tooltip, "private title") {
 		t.Fatalf("privacy tooltip exposed a captured window title: %q", tooltip)
+	}
+}
+
+func TestPrivacySurfacesKeepPartialActivityUncertaintyVisible(t *testing.T) {
+	t.Parallel()
+	validCast := niri.Cast{
+		StreamID: 1, Active: true,
+		Target: niri.CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true,
+	}
+	tests := []struct {
+		name     string
+		pipe     services.PrivacySnapshot
+		niri     niri.Snapshot
+		activity privacyActivity
+		label    string
+	}{
+		{
+			name:     "microphone active with an unclassified source",
+			pipe:     services.PrivacySnapshot{Known: true, MicrophoneActive: true, MicrophoneUnknown: true, MicrophoneApps: []string{"Jitsi Meet"}},
+			niri:     niri.Snapshot{CastsKnown: true},
+			activity: privacyActive, label: "Some microphone sources could not be classified",
+		},
+		{
+			name: "camera active with an unclassified source",
+			pipe: services.PrivacySnapshot{Known: true, VideoPaths: []services.PrivacyVideoPath{
+				{SourceNodeID: 20, Camera: true, ApplicationName: "Cheese"}, {SourceNodeID: 21},
+			}},
+			niri:     niri.Snapshot{CastsKnown: true},
+			activity: privacyActive, label: "Some camera sources could not be classified",
+		},
+		{
+			name: "screen share active with an unknown target",
+			pipe: services.PrivacySnapshot{Known: true},
+			niri: niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{
+				validCast, {StreamID: 2, Active: true},
+			}},
+			activity: privacyActive, label: "Some screen-share targets could not be identified",
+		},
+		{
+			name:     "screen share observed before its baseline",
+			pipe:     services.PrivacySnapshot{Known: true},
+			niri:     niri.Snapshot{Casts: []niri.Cast{validCast}},
+			activity: privacyActive, label: "Some screen-share targets could not be identified",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			state := privacyStateFrom(tc.pipe, tc.niri)
+			var got privacyActivity
+			switch {
+			case tc.pipe.MicrophoneActive:
+				got = state.microphone
+			case len(tc.pipe.VideoPaths) != 0:
+				got = state.camera
+			default:
+				got = state.screenShare
+			}
+			if got != tc.activity {
+				t.Fatalf("activity = %v, want active evidence preserved", got)
+			}
+			warnings := 0
+			for _, icon := range privacyWidgetIcons(state) {
+				if icon.name == "gpp_bad" {
+					warnings++
+				}
+			}
+			if warnings != 1 {
+				t.Fatalf("warning icons = %d, want one when activity is partly unknown", warnings)
+			}
+			if tooltip := privacyTooltip(state); !strings.Contains(tooltip, tc.label) {
+				t.Errorf("privacy tooltip %q is missing %q", tooltip, tc.label)
+			}
+			page := renderText(ccPrivacy(&Registry{privacy: state}, &PanelHost{theme: DefaultTheme()}))
+			if !strings.Contains(page, tc.label) {
+				t.Errorf("Privacy page %q is missing %q", page, tc.label)
+			}
+		})
+	}
+}
+
+func TestPrivacyDetailsShowUnattributedApplicationsAlongsideKnownNames(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dump := filepath.Join(dir, "dump.json")
+	bin := filepath.Join(dir, "pw-dump")
+	data := `[
+		{"id":100,"type":"PipeWire:Interface:Device","info":{"props":{"device.form-factor":"microphone"}}},
+		{"id":101,"type":"PipeWire:Interface:Device","info":{"props":{"device.api":"v4l2"}}},
+		{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source","device.id":100}},"props":{}},
+		{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio","application.name":"Jitsi Meet"}}},
+		{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio"}}},
+		{"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.id":101}}},
+		{"id":5,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video","application.name":"Cheese"}}},
+		{"id":6,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video"}}},
+		{"id":7,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+		{"id":8,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":3}},
+		{"id":9,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":4,"input-node-id":5}},
+		{"id":10,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":4,"input-node-id":6}}
+	]`
+	if err := os.WriteFile(dump, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat '"+dump+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	service := services.NewPrivacy(10*time.Millisecond, bin)
+	defer service.Close()
+	deadline := time.Now().Add(time.Second)
+	var snapshot services.PrivacySnapshot
+	for time.Now().Before(deadline) {
+		snapshot = service.Snapshot()
+		if snapshot.Known {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !snapshot.Known {
+		t.Fatal("PipeWire snapshot did not become known")
+	}
+	state := privacyStateFrom(snapshot, niri.Snapshot{CastsKnown: true})
+	tooltip := privacyTooltip(state)
+	for _, want := range []string{
+		"Jitsi Meet; Application details unavailable",
+		"Cheese; Application details unavailable",
+	} {
+		if !strings.Contains(tooltip, want) {
+			t.Errorf("privacy tooltip %q is missing %q", tooltip, want)
+		}
+	}
+	page := renderText(ccPrivacy(&Registry{privacy: state}, &PanelHost{theme: DefaultTheme()}))
+	for _, want := range []string{"Jitsi Meet", "Cheese", "Application details unavailable"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("Privacy page %q is missing %q", page, want)
+		}
 	}
 }
 

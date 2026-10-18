@@ -29,15 +29,18 @@ type PrivacyVideoPath struct {
 }
 
 // PrivacySnapshot is the PipeWire portion of privacy state. Known is false
-// until a complete graph snapshot has been parsed successfully. Unclassified
-// audio capture is kept separate from positive microphone evidence so shell
-// state can prefer an active proof while still reporting ambiguity otherwise.
+// until a complete graph snapshot has been parsed successfully. Unclassified audio
+// capture stays separate from positive microphone evidence. Missing application
+// names stay separate because they affect details, not activity confidence.
 type PrivacySnapshot struct {
-	Known             bool
-	MicrophoneActive  bool
+	Known            bool
+	MicrophoneActive bool
+	// MicrophoneUnknown signals an active audio path that cannot be safely classified.
 	MicrophoneUnknown bool
-	MicrophoneApps    []string
-	VideoPaths        []PrivacyVideoPath
+	// MicrophoneDetailsMissing signals a proven microphone path without application.name.
+	MicrophoneDetailsMissing bool
+	MicrophoneApps           []string
+	VideoPaths               []PrivacyVideoPath
 }
 
 // Clone returns an immutable copy suitable for crossing the services/shell
@@ -185,7 +188,11 @@ func parsePrivacyDump(data []byte) (PrivacySnapshot, error) {
 			switch audioSourceKind(formFactor) {
 			case privacyMicrophone:
 				snapshot.MicrophoneActive = true
-				snapshot.MicrophoneApps = appendPrivacyApplication(snapshot.MicrophoneApps, consumer.applicationName)
+				if consumer.applicationName == "" {
+					snapshot.MicrophoneDetailsMissing = true
+				} else {
+					snapshot.MicrophoneApps = appendPrivacyApplication(snapshot.MicrophoneApps, consumer.applicationName)
+				}
 			case privacyNotMicrophone:
 			default:
 				snapshot.MicrophoneUnknown = true
@@ -503,6 +510,7 @@ func (p *Privacy) publish(next PrivacySnapshot) {
 
 func samePrivacySnapshot(a, b PrivacySnapshot) bool {
 	return a.Known == b.Known && a.MicrophoneActive == b.MicrophoneActive &&
-		a.MicrophoneUnknown == b.MicrophoneUnknown && slices.Equal(a.MicrophoneApps, b.MicrophoneApps) &&
+		a.MicrophoneUnknown == b.MicrophoneUnknown && a.MicrophoneDetailsMissing == b.MicrophoneDetailsMissing &&
+		slices.Equal(a.MicrophoneApps, b.MicrophoneApps) &&
 		slices.Equal(a.VideoPaths, b.VideoPaths)
 }
