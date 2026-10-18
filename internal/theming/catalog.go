@@ -36,6 +36,9 @@ var completeTemplates = map[string]bool{
 	// helix, kcolorscheme and qt are test-only (binaries absent).
 	"btop": true, "cava": true, "helix": true,
 	"kcolorscheme": true, "qt": true,
+	// GTK CSS overlays use the existing GTK theme and only supply readable
+	// semantic colors in the user's per-version stylesheet.
+	"gtk3": true, "gtk4": true,
 }
 
 func Complete(name string) bool { return completeTemplates[name] }
@@ -139,7 +142,7 @@ func Render(tpl string, tok theme.Tokens) string {
 // shape, opacity, elevation and motion are the shell's composition and mean
 // nothing in another application's colour file.
 func RenderWith(tpl string, tok theme.Tokens, mode, source string) string {
-	t, err := template.New("t").Funcs(template.FuncMap{"darken": darken, "rgb": rgb}).Option("missingkey=zero").Parse(tpl)
+	t, err := template.New("t").Funcs(template.FuncMap{"darken": darken, "rgb": rgb, "contrast": contrasting}).Option("missingkey=zero").Parse(tpl)
 	if err != nil {
 		return ""
 	}
@@ -181,4 +184,18 @@ func darken(hex string, amt float64) string {
 		B: uint8(float64(c.B) * f),
 		A: c.A,
 	}.Hex()
+}
+
+// contrasting keeps a foreground palette colour while raising it to the text
+// contrast floor against the supplied background.
+func contrasting(foreground, background string) string {
+	fg, err := theme.ParseColor(foreground)
+	if err != nil {
+		return foreground
+	}
+	bg, err := theme.ParseColor(background)
+	if err != nil {
+		return foreground
+	}
+	return theme.EnsureContrast(fg, bg, theme.TextContrast).Hex()
 }

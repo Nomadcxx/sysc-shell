@@ -998,6 +998,14 @@ func TestOnlyCompleteTemplatesGetToggles(t *testing.T) {
 	if !seen["niri"] {
 		t.Errorf("complete template niri has no toggle: %v", seen)
 	}
+	for _, name := range []string{"gtk3", "gtk4"} {
+		if !seen[name] {
+			t.Errorf("GTK template %s has no opt-in toggle", name)
+		}
+		if (config.Config{}).TemplateEnabled(name) {
+			t.Errorf("GTK template %s is enabled by default", name)
+		}
+	}
 }
 
 func TestConciseDurationDropsZeroUnits(t *testing.T) {
