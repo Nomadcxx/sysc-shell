@@ -1,5 +1,5 @@
 {
-  description = "sysc-shell for Nix: two binaries, one overlay, one home-manager module";
+  description = "sysc-shell for Nix: two binaries, one overlay, a home-manager module and a NixOS module";
 
   # One input, pinned by revision in flake.lock. The pin is what makes a build
   # reproducible; moving it is its own commit with its own reason.
@@ -31,25 +31,32 @@
         }
       );
 
-      # The module harness runs as a check so it is not a file nothing runs.
+      # The module harnesses run as checks so they are not files nothing runs.
       # The plugin fixture is a derivation, so evaluation reads its manifest
       # through import-from-derivation, which is on by default.
       checks = forAllSystems (
         system:
         let
           pkgs = pkgsFor system;
-          results = import ./nix/tests/module.nix { inherit pkgs; };
-          failed = builtins.filter (n: results.${n} != true) (builtins.attrNames results);
+
+          harness =
+            name: path: message:
+            let
+              results = import path { inherit pkgs; };
+              failed = builtins.filter (n: results.${n} != true) (builtins.attrNames results);
+            in
+            {
+              ${name} = pkgs.runCommand "sysc-shell-${name}" { } ''
+                ${lib.optionalString (failed != [ ]) ''
+                  echo "failed assertions: ${lib.concatStringsSep ", " failed}"
+                  exit 1
+                ''}
+                echo "${message}" > $out
+              '';
+            };
         in
-        {
-          module-harness = pkgs.runCommand "sysc-shell-module-harness" { } ''
-            ${lib.optionalString (failed != [ ]) ''
-              echo "failed assertions: ${lib.concatStringsSep ", " failed}"
-              exit 1
-            ''}
-            echo "all module harness assertions hold" > $out
-          '';
-        }
+        harness "module-harness" ./nix/tests/module.nix "all module harness assertions hold"
+        // harness "nixos-module-harness" ./nix/tests/nixos-module.nix "all NixOS module harness assertions hold"
       );
 
       # The same two derivations, reachable from a plain nixpkgs without the
@@ -60,10 +67,9 @@
         sysc-shell-plugin-weather = final.callPackage ./nix/plugin-weather.nix { };
       };
 
-      # home-manager only, and one module rather than one per system. The module
+      # The user-level module, and one module rather than one per system. It
       # writes home-manager options (xdg.configFile, home.activation,
-      # home.packages), so exporting it as a NixOS module would promise a
-      # configuration that cannot evaluate.
+      # home.packages), so it is not the system module; nixosModules is that.
       #
       # The package default is looked up from the evaluating side's pkgs, so a
       # configuration never has to name a system, and a user on either system
@@ -74,6 +80,18 @@
           imports = [ ./nix/module.nix ];
           # mkDefault, not a plain value: a user pointing the option at their
           # own build wins over this flake's.
+          programs.sysc-shell.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
+
+      # The machine-level module, for a system without home-manager: the package
+      # in environment.systemPackages and the same substituted unit under
+      # /etc/systemd/user, which every user's service manager reads. Plugin
+      # directories, shell settings and the guard against an installer copy are
+      # per user, so those stay with homeModules.
+      nixosModules.default =
+        { pkgs, lib, ... }:
+        {
+          imports = [ ./nix/nixos-module.nix ];
           programs.sysc-shell.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
         };
     };
