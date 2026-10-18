@@ -15,20 +15,25 @@ buildGoModule {
   # Refresh after any go.mod or go.sum change:
   #   nix build .#default   # then copy the `got:` hash Nix prints here
   # A go.mod change without this refresh fails the build loudly, which is the
-  # point of a fixed-output derivation.
-  vendorHash = lib.fakeHash;
+  # point of a fixed-output derivation. The weather plugin shares this go.mod,
+  # so nix/plugin-weather.nix carries the same hash.
+  vendorHash = "sha256-zYnmJxcuCxY39ypoOg4jCOG/U6T1krb9Pw0cez7RaN8=";
 
   # Only the shell binary. The weather plugin has its own output because a
   # plugin is a directory with a manifest, not a bare binary; building it here
   # as well would compile the same source twice under a second derivation.
   subPackages = [ "cmd/sysc-shell" ];
-  CGO_ENABLED = 0;
+
+  # CGO_ENABLED goes in env: as a plain derivation attribute it collides with
+  # the value the Go builder already puts there.
+  env.CGO_ENABLED = 0;
   buildVcsInfo = false;
 
+  # -s -w only. -trimpath is a build flag, not a linker flag: the builder
+  # already puts it in GOFLAGS, and here it makes the linker reject the link.
   ldflags = [
     "-s"
     "-w"
-    "-trimpath"
     "-X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Version=${version}"
     "-X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Commit=${commit}"
   ];
