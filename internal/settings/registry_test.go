@@ -1301,3 +1301,41 @@ func TestTerminalArtBlurEntry(t *testing.T) {
 		}
 	}
 }
+
+func TestFrameCapSettingsContract(t *testing.T) {
+	t.Parallel()
+	e := Default().ByPath("appearance.frame-cap")
+	if e == nil || e.Kind != KindEnum || e.Section != "Appearance" || e.Group != "Animation" {
+		t.Fatal("missing Appearance/Animation frame-cap enum")
+	}
+	if e.Label != "Maximum repaint rate" {
+		t.Fatalf("label = %q", e.Label)
+	}
+	cfg := config.Default()
+	for _, value := range []string{"display", "60", "90", "120"} {
+		if err := e.Set(&cfg, value); err != nil {
+			t.Fatal(err)
+		}
+		if e.Get(cfg) != value {
+			t.Fatalf("set %s did not roundtrip", value)
+		}
+	}
+	before := e.Get(cfg)
+	if err := e.Set(&cfg, "30"); err == nil || e.Get(cfg) != before {
+		t.Fatal("bad cap accepted or mutated config")
+	}
+	if e.Default(cfg) != "display" {
+		t.Fatal("reset must use display")
+	}
+	paths := []string{}
+	for _, entry := range Default().All() {
+		paths = append(paths, entry.Path)
+	}
+	speed := slices.Index(paths, "appearance.motion-speed")
+	if speed < 0 || speed+1 >= len(paths) || paths[speed+1] != "appearance.frame-cap" {
+		t.Fatal("frame cap must follow Animation speed")
+	}
+	if !slices.Contains(presetAxisPaths(), "appearance.frame-cap") {
+		t.Fatal("frame cap is not a preset axis")
+	}
+}

@@ -453,3 +453,37 @@ func TestThemeRebasePreservesAnExplicitDeviation(t *testing.T) {
 		t.Errorf("radius was recorded as a deviation from its own preset")
 	}
 }
+
+func TestFrameCapWriteRoundTrip(t *testing.T) {
+	t.Parallel()
+	for _, p := range theme.Presets() {
+		for _, cap := range []theme.RepaintCap{theme.RepaintDisplay, theme.Repaint60, theme.Repaint90, theme.Repaint120} {
+			c, err := Parse([]byte(`{"theme":{"preset":"` + string(p) + `"}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Theme.FrameCap = cap
+			path := filepath.Join(t.TempDir(), "config.json")
+			for pass := 0; pass < 2; pass++ {
+				if err := Write(path, c); err != nil {
+					t.Fatalf("%s/%s write %d: %v", p, cap, pass, err)
+				}
+				got, err := Load(path)
+				if err != nil {
+					t.Fatalf("%s/%s load %d: %v", p, cap, pass, err)
+				}
+				if got.Theme.FrameCap != cap {
+					t.Fatalf("%s/%s pass %d: frame cap = %q", p, cap, pass, got.Theme.FrameCap)
+				}
+				c = got
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if has := strings.Contains(string(data), "frame-cap"); has != (cap != theme.RepaintDisplay) {
+				t.Fatalf("%s/%s: frame-cap written = %v in %s", p, cap, has, data)
+			}
+		}
+	}
+}

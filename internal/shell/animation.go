@@ -1060,9 +1060,9 @@ func animateSurfaceResting(stop, wake <-chan struct{}, settled func() bool, publ
 		// The settling frame always publishes, even inside the cap window, or
 		// a settled value is left unpainted and the surface keeps a stale
 		// pixel.
-		if done || last.IsZero() || now.Sub(last) >= minInterval() {
+		if due, next := publishDue(last, now, minInterval()); done || due {
 			publish()
-			last = now
+			last = next
 		}
 		if done {
 			return
@@ -1080,6 +1080,30 @@ func animateSurfaceResting(stop, wake <-chan struct{}, settled func() bool, publ
 		}
 		timer.Reset(time.Until(deadline))
 	}
+}
+
+// publishDue reports whether a tick at now publishes, and the schedule point
+// to compare the next tick against.
+//
+// The schedule advances by whole intervals from where it was, not to the
+// tick that published. Ticks land on an 8 ms grid, so measuring from the
+// actual publish rounds every cap up to the next grid multiple: a 60 Hz cap
+// would publish every 24 ms and a 120 Hz one every 16. Advancing the ideal
+// point instead keeps the long-run rate on the cap with grid-sized gaps. A
+// point more than one interval behind -- a stall, or a cap below the tick --
+// restarts from now rather than bursting to repay the missed frames.
+func publishDue(last, now time.Time, interval time.Duration) (bool, time.Time) {
+	if last.IsZero() {
+		return true, now
+	}
+	next := last.Add(interval)
+	if now.Before(next) {
+		return false, last
+	}
+	if now.Sub(next) >= interval {
+		next = now
+	}
+	return true, next
 }
 
 // interaction is a surface's resolved pointer state, stored as stable node keys

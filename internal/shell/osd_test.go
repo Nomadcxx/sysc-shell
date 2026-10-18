@@ -404,3 +404,47 @@ func TestOSDRethemeAppliesMotion(t *testing.T) {
 		t.Fatalf("OSD fade = %v, want the reduced cap", v.dur)
 	}
 }
+
+// The reveal loop asks for the cap on every tick, so a theme reload that
+// changes it reaches a reveal already in flight. The animator clock is frozen,
+// so the reveal can neither settle nor publish a terminal frame: a second
+// publish can only come from the reloaded cap.
+func TestOSDRevealUsesReloadedCap(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = false
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
+	m := reg.OSD()
+	frozen := time.Unix(500, 0)
+	reg.mu.Lock()
+	m.hideFor = time.Hour // the hide timer must not supply a frame of its own
+	_, _, _ = m.prepareShow(OSDView{Kind: osdAudio, Level: 20})
+	m.anim.now = func() time.Time { return frozen }
+	m.anim.Target(osdAnimKey, animVisible, 0)
+	m.anim.Target(osdAnimKey, animVisible, 1)
+	m.anim.motion.FrameCap = time.Hour
+	stop := m.stopAnim
+	reg.mu.Unlock()
+	drainAuxQueue(reg)
+	drainInvalidations(reg)
+
+	done := make(chan struct{})
+	go func() { defer close(done); m.revealLoop() }()
+	t.Cleanup(func() {
+		m.stopOnce.Do(func() { close(stop) })
+		<-done
+	})
+	if got := awaitSurfaceInvalidations(reg, 1, 2*time.Second); got != 1 {
+		t.Fatalf("opening frame: %d invalidations", got)
+	}
+	reg.mu.Lock()
+	next := reg.panelTheme()
+	next.Motion.Durations.FrameCap = time.Second / 120
+	_ = m.retheme(next)
+	reg.mu.Unlock()
+	if got := awaitSurfaceInvalidations(reg, 1, 2*time.Second); got != 1 {
+		t.Fatal("a reveal in flight kept the cap it started with")
+	}
+}

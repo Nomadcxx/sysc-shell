@@ -616,10 +616,12 @@ func TestAnimateSurfaceAlwaysPublishesTheSettlingFrame(t *testing.T) {
 	// settled value is left unpainted and the surface keeps a stale pixel.
 	stop := make(chan struct{})
 	defer close(stop)
-	var published int
+	var published, checks int
 	done := make(chan struct{})
 	go func() {
-		animateSurface(stop, func() bool { return true }, func() { published++ }, func() time.Duration { return time.Hour })
+		// The first tick is unsettled and publishes as the opening frame; the
+		// second settles inside the hour-long cap window and must still paint.
+		animateSurface(stop, func() bool { checks++; return checks > 1 }, func() { published++ }, func() time.Duration { return time.Hour })
 		close(done)
 	}()
 	select {
@@ -627,8 +629,8 @@ func TestAnimateSurfaceAlwaysPublishesTheSettlingFrame(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("animateSurface did not return after settling")
 	}
-	if published != 1 {
-		t.Errorf("published %d times, want exactly 1 settling frame despite the hour-long cap", published)
+	if published != 2 {
+		t.Errorf("published %d times, want the opening frame and the settling frame despite the hour-long cap", published)
 	}
 }
 
@@ -1465,5 +1467,94 @@ func TestSpringSchedulerPublishesFinalFrameAndStops(t *testing.T) {
 	case <-early:
 	case <-time.After(2 * time.Second):
 		t.Fatal("animateSurface ignored an immediate stop")
+	}
+}
+
+// The gate keeps an ideal schedule rather than measuring from the last actual
+// publish, so a cap that does not divide the 8 ms tick still averages its own
+// rate instead of rounding up to the next tick multiple.
+func TestPublishDueHonoursCapOnTickGrid(t *testing.T) {
+	t.Parallel()
+	start := time.Unix(1000, 0)
+	for _, tc := range []struct {
+		name     string
+		interval time.Duration
+		min, max int
+	}{
+		{"display", theme.BaseMotion.FrameCap, 125, 125},
+		{"60", time.Second / 60, 60, 61},
+		{"90", time.Second / 90, 90, 91},
+		{"120", time.Second / 120, 120, 121},
+		{"effect floor", effectFrameCap, 15, 16},
+	} {
+		var last, prev time.Time
+		published := 0
+		for tick := 0; tick < int(time.Second/animTick); tick++ {
+			now := start.Add(time.Duration(tick) * animTick)
+			ok, next := publishDue(last, now, tc.interval)
+			last = next
+			if !ok {
+				continue
+			}
+			if published > 0 {
+				gap := now.Sub(prev)
+				if gap <= 0 || gap%animTick != 0 || gap > tc.interval+animTick {
+					t.Fatalf("%s: gap %v between publishes", tc.name, gap)
+				}
+			}
+			published++
+			prev = now
+		}
+		if published < tc.min || published > tc.max {
+			t.Errorf("%s: %d publishes in one second, want %d..%d", tc.name, published, tc.min, tc.max)
+		}
+	}
+
+	// A stall publishes once and resets the schedule rather than bursting to
+	// repay the frames it missed.
+	interval := time.Second / 60
+	_, last := publishDue(time.Time{}, start, interval)
+	ok, last := publishDue(last, start.Add(200*time.Millisecond), interval)
+	if !ok {
+		t.Fatal("the tick after a stall did not publish")
+	}
+	if ok, _ := publishDue(last, start.Add(200*time.Millisecond+animTick), interval); ok {
+		t.Fatal("the schedule burst after a stall")
+	}
+}
+
+// A skipped publish still lets the clock advance, so the frame that does
+// publish shows where the animation has reached, and the settling frame
+// paints the exact target despite a cap that would otherwise hold it back.
+func TestFrameCapSkippedTicksStillAdvanceAndSettle(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("k", animVisible, 1)
+	steps := []time.Duration{0, 25 * time.Millisecond, 50 * time.Millisecond, time.Second}
+	var values []float64
+	step := 0
+	stop := make(chan struct{})
+	defer close(stop)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		animateSurface(stop, func() bool {
+			if step < len(steps) {
+				clock.add(steps[step])
+				step++
+			}
+			return a.Settled()
+		}, func() { values = append(values, a.Value("k", animVisible)) }, func() time.Duration { return time.Hour })
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the loop did not settle")
+	}
+	if len(values) != 2 {
+		t.Fatalf("published %d frames, want the first and the settling one: %v", len(values), values)
+	}
+	if values[1] != 1 {
+		t.Fatalf("settling frame painted %v, want the exact target", values[1])
 	}
 }
