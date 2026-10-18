@@ -164,6 +164,14 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	// find the compositor and its own config, not the whole session
 	// environment (which can carry tokens, proxy credentials, search paths).
 	cmd.Env = pluginEnvironment()
+	grace := s.ShutdownGrace
+	if grace <= 0 {
+		grace = time.Second
+	}
+	stderr := newTail(MaxStderrBytes)
+	// Cmd.Wait owns the pipe copy and does not close stderr until it finishes.
+	cmd.Stderr = stderr
+	cmd.WaitDelay = grace
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -173,11 +181,6 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("plugin: %s: stdout: %w", s.Manifest.ID, err)
 	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("plugin: %s: stderr: %w", s.Manifest.ID, err)
-	}
-
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("plugin: start %s: %w", s.Manifest.ID, err)
 	}
@@ -187,12 +190,11 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 		stdin:   stdin,
 		enc:     v1.NewEncoder(stdin),
 		dec:     v1.NewDecoder(stdout, v1.ToHost),
-		stderr:  newTail(MaxStderrBytes),
-		grace:   s.ShutdownGrace,
+		stderr:  stderr,
+		grace:   grace,
 		inbound: NewInbound(nil, s.Limits),
 		started: time.Now(),
 	}
-	go sess.stderr.drain(stderrPipe)
 
 	if err := s.handshake(ctx, sess); err != nil {
 		s.reap(sess)
@@ -478,20 +480,6 @@ func (t *tail) bytes() []byte {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]byte(nil), t.data...)
-}
-
-// drain copies a stream into the window until it ends.
-func (t *tail) drain(r io.Reader) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			_, _ = t.Write(buf[:n])
-		}
-		if err != nil {
-			return
-		}
-	}
 }
 
 // pluginEnvironment is the allowlisted view of the host environment a plugin

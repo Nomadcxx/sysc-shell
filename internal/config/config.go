@@ -201,6 +201,15 @@ func (c Config) Clone() Config {
 	out.Tray.Pinned = slices.Clone(c.Tray.Pinned)
 	out.Tray.Order = slices.Clone(c.Tray.Order)
 	out.Media.Blacklist = slices.Clone(c.Media.Blacklist)
+	out.Launcher.Actions = slices.Clone(c.Launcher.Actions)
+	for i := range out.Launcher.Actions {
+		out.Launcher.Actions[i].Argv = slices.Clone(out.Launcher.Actions[i].Argv)
+	}
+	out.Launcher.Providers = slices.Clone(c.Launcher.Providers)
+	for i := range out.Launcher.Providers {
+		out.Launcher.Providers[i].Command = slices.Clone(out.Launcher.Providers[i].Command)
+		out.Launcher.Providers[i].OnSelect = slices.Clone(out.Launcher.Providers[i].OnSelect)
+	}
 	out.Templates = maps.Clone(c.Templates)
 	out.Plugins = c.Plugins.Clone()
 	return out
@@ -349,6 +358,42 @@ type Session struct {
 	Locker      string // external locker command; empty hides the lock action
 	PolkitAgent string // auto stands down for an existing agent; on retries while one holds the session; off disables
 	Language    string // UI language code ("es", "ja"...); empty follows the session locale
+}
+
+const (
+	LauncherAppsPrefix    = "/apps"
+	LauncherCalcPrefix    = "/calc"
+	LauncherEmojiPrefix   = "/emo"
+	LauncherNotesPrefix   = "/nt"
+	LauncherSessionPrefix = "/session"
+	LauncherActionsPrefix = "/action"
+)
+
+// Launcher holds user-defined launcher providers and fixed actions.
+type Launcher struct {
+	Providers []LauncherCommandProvider
+	Actions   []LauncherAction
+}
+
+// LauncherCommandProvider runs an argv listing command and activates a row
+// through a second argv command. Templates are replaced within argv tokens.
+type LauncherCommandProvider struct {
+	Name        string
+	Prefix      string
+	Glyph       string
+	Description string
+	Command     []string
+	OnSelect    []string
+}
+
+// LauncherAction is an argv command and its display metadata.
+type LauncherAction struct {
+	ID             string
+	Label          string
+	Comment        string
+	Argv           []string
+	Dangerous      bool
+	AllowDangerous bool
 }
 
 // Idle are the display-power timeouts, resolved to durations. A zero timeout
@@ -548,6 +593,7 @@ type Config struct {
 	ThemeGen      ThemeConfig
 	Accessibility Accessibility
 	Session       Session
+	Launcher      Launcher
 	Idle          Idle
 	Panels        Panels
 	Tray          TrayPreferences

@@ -25,6 +25,12 @@ func Write(path string, c Config) error {
 	if c.TerminalArt.Blur < 0 || c.TerminalArt.Blur > 64 {
 		return fmt.Errorf("config: terminal-art.blur must be in 0..64")
 	}
+	if _, err := applyLauncher(wireLauncher{
+		Providers: launcherCommandProvidersWire(c.Launcher.Providers),
+		Actions:   launcherActionsWire(c.Launcher.Actions),
+	}, "launcher"); err != nil {
+		return err
+	}
 	if path == "" {
 		return fmt.Errorf("config: empty write path")
 	}
@@ -112,6 +118,12 @@ func toWire(c Config) wireConfig {
 		locker, language := c.Session.Locker, c.Session.Language
 		w.Session = &wireSession{Locker: &locker, Language: &language}
 	}
+	if len(c.Launcher.Providers) > 0 || len(c.Launcher.Actions) > 0 {
+		w.Launcher = &wireLauncher{
+			Providers: launcherCommandProvidersWire(c.Launcher.Providers),
+			Actions:   launcherActionsWire(c.Launcher.Actions),
+		}
+	}
 	if c.Session.PolkitAgent != "" && c.Session.PolkitAgent != d.Session.PolkitAgent {
 		v := c.Session.PolkitAgent
 		if w.Session == nil {
@@ -177,6 +189,30 @@ func toWire(c Config) wireConfig {
 	}
 	w.Plugins = pluginsDiff(c.Plugins)
 	return w
+}
+
+func launcherActionsWire(actions []LauncherAction) []wireLauncherAction {
+	wire := make([]wireLauncherAction, 0, len(actions))
+	for _, action := range actions {
+		wire = append(wire, wireLauncherAction{
+			ID: action.ID, Label: action.Label, Comment: action.Comment,
+			Argv: append([]string(nil), action.Argv...), Dangerous: action.Dangerous,
+			AllowDangerous: action.AllowDangerous,
+		})
+	}
+	return wire
+}
+
+func launcherCommandProvidersWire(providers []LauncherCommandProvider) []wireLauncherCommandProvider {
+	wire := make([]wireLauncherCommandProvider, 0, len(providers))
+	for _, provider := range providers {
+		wire = append(wire, wireLauncherCommandProvider{
+			Name: provider.Name, Prefix: provider.Prefix, Glyph: provider.Glyph,
+			Description: provider.Description, Command: append([]string(nil), provider.Command...),
+			OnSelect: append([]string(nil), provider.OnSelect...),
+		})
+	}
+	return wire
 }
 
 func nightLightDiff(got, base NightLight) *wireNightLight {

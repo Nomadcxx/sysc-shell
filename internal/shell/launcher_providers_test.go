@@ -1,11 +1,16 @@
 package shell
 
 import (
+	"os/exec"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
@@ -101,5 +106,360 @@ func TestNotesIsAProvider(t *testing.T) {
 	rows := notes.Query("buy milk")
 	if len(rows) != 1 || rows[0].Entry.ID != notesLauncherActionID || rows[0].Entry.Name != "Capture note: buy milk" {
 		t.Fatalf("rows %+v", rows)
+	}
+}
+
+func TestLauncherActionProviderSearchesLabelsAndHidesDangerousActions(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.cfg.Launcher.Actions = []config.LauncherAction{
+		{ID: "open-search", Label: "Open search", Comment: "Search the web", Argv: []string{"browser"}},
+		{ID: "clean", Label: "Clean temporary files", Argv: []string{"cleaner"}, Dangerous: true},
+		{ID: "wipe-cache", Label: "Wipe cache", Argv: []string{"cleaner", "--cache"}, Dangerous: true, AllowDangerous: true},
+	}
+	p := r.launcherActionProvider()
+	if !p.Inline || p.Prefix != "/action" {
+		t.Fatalf("action provider = %+v, want inline /action provider", p)
+	}
+	rows := p.Query("open search")
+	if len(rows) != 1 || rows[0].Entry.ID != "launcher-action:open-search" ||
+		rows[0].Entry.Name != "Open search" || rows[0].Entry.Comment != "Search the web" {
+		t.Fatalf("search rows = %+v", rows)
+	}
+	if repeated := p.Query("open search"); len(repeated) != 1 || repeated[0].Entry.ID != rows[0].Entry.ID {
+		t.Fatalf("result ID changed across queries: first=%+v repeated=%+v", rows, repeated)
+	}
+	rows = p.Query("wipe")
+	if len(rows) != 1 || rows[0].Entry.ID != "launcher-action:wipe-cache" {
+		t.Fatalf("dangerous search rows = %+v, want opted-in action only", rows)
+	}
+}
+
+func TestLauncherActionActivationUsesExactArgvAndRequiresDangerousOptIn(t *testing.T) {
+	r := newPanelRegistry(t)
+	started := make(chan []string, 1)
+	r.mu.Lock()
+	r.cfg.Launcher.Actions = []config.LauncherAction{
+		{ID: "open-search", Label: "Open search", Argv: []string{"browser", "--query=two words; touch /tmp/no", "", "$(not a shell)"}},
+		{ID: "wipe-cache", Label: "Wipe cache", Argv: []string{"cleaner", "--cache"}, Dangerous: true},
+	}
+	r.runArgv = func(argv []string) error {
+		started <- append([]string(nil), argv...)
+		return nil
+	}
+	r.panelHosts[PanelLauncher] = &PanelHost{id: PanelLauncher, launcherAttempt: 1, launcherPendingAttempt: 1}
+	r.mu.Unlock()
+	t.Cleanup(func() {
+		r.mu.Lock()
+		delete(r.panelHosts, PanelLauncher)
+		r.mu.Unlock()
+	})
+	p := r.launcherActionProvider()
+	if err := p.Activate("open search", "launcher-action:open-search", ""); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"browser", "--query=two words; touch /tmp/no", "", "$(not a shell)"}
+	select {
+	case got := <-started:
+		if !slices.Equal(got, want) {
+			t.Fatalf("argv = %#v, want %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("configured action did not start")
+	}
+	if err := p.Activate("wipe cache", "launcher-action:wipe-cache", ""); err == nil {
+		t.Fatal("dangerous action activated without explicit opt-in")
+	}
+	select {
+	case got := <-started:
+		t.Fatalf("dangerous action unexpectedly started with argv %v", got)
+	default:
+	}
+}
+
+func TestLauncherCommandProviderRunsConfiguredArgvAndActivatesSelection(t *testing.T) {
+	printf, err := exec.LookPath("printf")
+	if err != nil {
+		t.Skip("printf is unavailable")
+	}
+	r := newPanelRegistry(t)
+	query := "milk; printf should stay data"
+	wantArgv := []string{"file-open", "--query=" + query, "--selection=" + query + "\tDocument"}
+	started := make(chan []string, 1)
+	r.mu.Lock()
+	r.cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Files", Prefix: "/files", Glyph: "glyph:description", Description: "Search files",
+		Command:  []string{printf, "%s\\t%s\\n", "{query}", "Document"},
+		OnSelect: []string{"file-open", "--query={query}", "--selection={selection}"},
+	}}
+	r.runArgv = func(argv []string) error {
+		started <- slices.Clone(argv)
+		return nil
+	}
+	r.panelHosts[PanelLauncher] = &PanelHost{id: PanelLauncher, launcherAttempt: 1, launcherPendingAttempt: 1}
+	r.mu.Unlock()
+	t.Cleanup(func() {
+		r.mu.Lock()
+		delete(r.panelHosts, PanelLauncher)
+		r.mu.Unlock()
+	})
+
+	var provider *launcher.Provider
+	for _, candidate := range r.launcherProviders() {
+		if candidate.Prefix == "/files" {
+			candidate := candidate
+			provider = &candidate
+			break
+		}
+	}
+	if provider == nil {
+		t.Fatal("configured command provider was not registered")
+	}
+	rows := provider.Query(query)
+	if len(rows) != 1 || rows[0].Entry.ID != "/files:row:"+query+"\tDocument" ||
+		rows[0].Entry.Name != query || rows[0].Entry.Comment != "Document" {
+		t.Fatalf("provider rows = %+v", rows)
+	}
+	if err := provider.Activate(query, rows[0].Entry.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-started:
+		if !slices.Equal(got, wantArgv) {
+			t.Fatalf("selection argv = %#v, want %#v", got, wantArgv)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provider selection did not start")
+	}
+}
+
+func TestLauncherOnlyTreatsExactProviderPrefixesAsOverviewRows(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Files", Prefix: "/files", Command: []string{"list"}, OnSelect: []string{"open"},
+	}}
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{
+		{config.LauncherAppsPrefix, true},
+		{config.LauncherNotesPrefix, true},
+		{"/files", true},
+		{"/files:row:item\tFile", false},
+		{"/files:error", false},
+	} {
+		if got := r.launcherOverviewPrefix(tc.id); got != tc.want {
+			t.Errorf("launcherOverviewPrefix(%q) = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+}
+
+func TestLauncherSelectionArgvDoesNotReprocessQueryData(t *testing.T) {
+	query := "literal {selection} marker"
+	selection := "literal {query} marker\tFile"
+	got := launcherSelectionArgv([]string{"open", "--query={query}", "--selection={selection}", "{query}/{selection}"}, query, selection)
+	want := []string{
+		"open", "--query=" + query, "--selection=" + selection, query + "/" + selection,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("expanded argv = %#v, want %#v", got, want)
+	}
+}
+
+func TestLauncherServiceRebuildsWhenCommandProviderConfigChanges(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.mu.Lock()
+	first := r.launcherServiceLocked()
+	r.mu.Unlock()
+	r.mu.Lock()
+	r.cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Files", Prefix: "/files", Command: []string{"list"}, OnSelect: []string{"open"},
+	}}
+	second := r.launcherServiceLocked()
+	r.mu.Unlock()
+	if second == first {
+		t.Fatal("launcher service kept the old provider registry after config changed")
+	}
+}
+
+func TestLauncherSessionProviderSearchesNonLockActions(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.mu.Lock()
+	r.cfg.Session.Locker = "swaylock"
+	r.cfg.Session.Language = "en"
+	r.mu.Unlock()
+
+	p := r.sessionProvider()
+	rows := p.Query("reboot")
+	if len(rows) != 1 || rows[0].Entry.ID != "session-reboot" || rows[0].Entry.Name != "Reboot" {
+		t.Fatalf("reboot rows = %+v", rows)
+	}
+
+	rows = p.Query("")
+	want := []string{"session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff"}
+	if len(rows) != len(want) {
+		t.Fatalf("session rows = %+v, want %v", rows, want)
+	}
+	for i := range want {
+		if rows[i].Entry.ID != want[i] {
+			t.Fatalf("session row %d id = %q, want %q", i, rows[i].Entry.ID, want[i])
+		}
+	}
+	r.mu.Lock()
+	r.cfg.Session.Language = "es"
+	r.mu.Unlock()
+	rows = p.Query("reboot")
+	if len(rows) != 1 || rows[0].Entry.Name != "Reiniciar" {
+		t.Fatalf("localized reboot rows = %+v", rows)
+	}
+}
+
+func TestLauncherSearchFindsBareSessionAction(t *testing.T) {
+	r := newPanelRegistry(t)
+	cfg := r.launcherServiceConfig()
+	cfg.Scan = func() []launcher.Entry { return nil }
+	svc := launcher.NewService(cfg)
+	defer svc.Close()
+	<-svc.Results()
+
+	svc.Query("reboot")
+	select {
+	case rows := <-svc.Results():
+		for _, row := range rows {
+			if row.Entry.ID == "session-reboot" && row.Entry.Name == "Reboot" {
+				return
+			}
+		}
+		t.Fatalf("bare reboot search rows = %+v", rows)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for session search results")
+	}
+}
+
+func TestLauncherSessionActivationUsesExistingActionPath(t *testing.T) {
+	r := newPanelRegistry(t)
+	started := make(chan []string, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRun := func() { releaseOnce.Do(func() { close(release) }) }
+	r.runArgv = func(argv []string) error {
+		started <- argv
+		<-release
+		return nil
+	}
+	h := &PanelHost{id: PanelLauncher, launcherAttempt: 1, launcherPendingAttempt: 1}
+	r.mu.Lock()
+	r.panelHosts[PanelLauncher] = h
+	r.mu.Unlock()
+	t.Cleanup(func() {
+		r.mu.Lock()
+		delete(r.panelHosts, PanelLauncher)
+		r.mu.Unlock()
+		releaseRun()
+	})
+
+	p := r.sessionProvider()
+	if p.Activate == nil {
+		t.Fatal("session provider has no activation handler")
+	}
+	if err := p.Activate("reboot", "session-reboot", ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case argv := <-started:
+		if strings.Join(argv, "\x00") != strings.Join([]string{"loginctl", "reboot"}, "\x00") {
+			t.Fatalf("session activation argv = %q", argv)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session action was not started")
+	}
+	r.mu.Lock()
+	delete(r.panelHosts, PanelLauncher)
+	r.mu.Unlock()
+	releaseRun()
+}
+
+func TestLauncherSessionActivationDropsStaleQuery(t *testing.T) {
+	r := newPanelRegistry(t)
+	started := make(chan []string, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRun := func() { releaseOnce.Do(func() { close(release) }) }
+	r.runArgv = func(argv []string) error {
+		started <- argv
+		<-release
+		return nil
+	}
+
+	queryEntered := make(chan struct{})
+	queryRelease := make(chan struct{})
+	var releaseQueryOnce sync.Once
+	releaseQuery := func() { releaseQueryOnce.Do(func() { close(queryRelease) }) }
+	activationResult := make(chan error, 1)
+
+	cfg := r.launcherServiceConfig()
+	cfg.Scan = func() []launcher.Entry { return nil }
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Prefix != "/session" {
+			continue
+		}
+		query, activate := cfg.Providers[i].Query, cfg.Providers[i].Activate
+		cfg.Providers[i].Query = func(q string) []launcher.Result {
+			if q == "reboot" {
+				close(queryEntered)
+				<-queryRelease
+			}
+			return query(q)
+		}
+		cfg.Providers[i].Activate = func(q, id, action string) error {
+			err := activate(q, id, action)
+			activationResult <- err
+			return err
+		}
+	}
+	svc := launcher.NewService(cfg)
+	r.mu.Lock()
+	r.launcherSvc = svc
+	h := &PanelHost{id: PanelLauncher, query: "reboot"}
+	r.panelHosts[PanelLauncher] = h
+	r.mu.Unlock()
+	t.Cleanup(releaseQuery)
+	t.Cleanup(releaseRun)
+	t.Cleanup(func() {
+		r.mu.Lock()
+		delete(r.panelHosts, PanelLauncher)
+		r.mu.Unlock()
+	})
+
+	select {
+	case <-svc.Results(): // initial snapshot
+	case <-time.After(asyncTestWait):
+		t.Fatal("timed out waiting for initial launcher snapshot")
+	}
+	svc.Query("reboot")
+	select {
+	case <-queryEntered:
+	case <-time.After(asyncTestWait):
+		t.Fatal("session query did not block")
+	}
+
+	r.mu.Lock()
+	h.launcherSpawn(r, "session-reboot", "", false)
+	h.query = "suspend"
+	h.launcherAttempt++
+	r.mu.Unlock()
+	releaseQuery()
+
+	select {
+	case err := <-activationResult:
+		if err == nil {
+			t.Fatal("stale session activation was accepted")
+		}
+	case <-time.After(asyncTestWait):
+		t.Fatal("timed out waiting for stale session activation")
+	}
+	select {
+	case argv := <-started:
+		t.Fatalf("stale session action started: %v", argv)
+	default:
 	}
 }

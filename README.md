@@ -211,6 +211,34 @@ Settings are in the settings panel and saved to `$XDG_CONFIG_HOME/sysc-shell/con
 (default: `~/.config/sysc-shell/config.json`). Logs go to
 `journalctl --user -u sysc-shell`.
 
+Add launcher commands under `launcher` in `config.json`:
+
+```json
+{
+  "launcher": {
+    "providers": [{
+      "name": "Files",
+      "prefix": "/files",
+      "glyph": "glyph:description",
+      "description": "Search files",
+      "command": ["file-list", "--query={query}"],
+      "on_select": ["file-open", "{selection}"]
+    }],
+    "actions": [{
+      "id": "open-docs",
+      "label": "Open documentation",
+      "argv": ["browser", "https://example.test/docs"]
+    }]
+  }
+}
+```
+
+The provider command prints one result per line as `label` or `label<TAB>comment`. Type `/files query`
+to search it. `on_select` receives the full output line as `{selection}` and the search text as
+`{query}`. The shell replaces templates inside argv elements and runs both commands without shell
+evaluation. Fixed actions appear in launcher search; actions marked `"dangerous": true` stay hidden
+until you also set `"allow_dangerous": true`.
+
 ## Panels and integrations
 
 The shell draws through `wl_shm` and talks to Niri over its IPC socket.

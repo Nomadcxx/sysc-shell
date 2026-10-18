@@ -358,16 +358,26 @@ type Registry struct {
 	depthClocks     *depthClockHost
 	depthClockLease *services.Lease
 	// launcherSvc is created on the first launcher open; nil until then.
-	launcherSvc *launcher.Service
+	launcherSvc              *launcher.Service
+	launcherServiceProviders []config.LauncherCommandProvider
+	launcherServiceActions   []config.LauncherAction
+	// launcherServiceCloseDone tracks retired services until their callbacks
+	// return. Registry.mu protects this map.
+	launcherServiceCloseDone map[*launcher.Service]chan struct{}
+	launcherRelayStarted     bool
+	// launcherActivationMu serializes Service.Activate calls so each provider
+	// callback sees its own launcherPendingAttempt.
+	launcherActivationMu sync.Mutex
 	// launcherMu guards the query generation, its current plan,
 	// and the batch of provider rows being assembled into one snapshot.
 	// Lock order is Registry.mu then launcherMu. The service goroutine takes
 	// launcherMu only; it never takes Registry.mu while ranking.
-	launcherMu    sync.Mutex
-	launcherGen   uint64
-	launcherPlan  launcherPlan
-	launcherBatch launcherBatch
-	launcherSnaps chan launcherSnap
+	launcherMu                 sync.Mutex
+	launcherGen                uint64
+	launcherProviderGeneration uint64
+	launcherPlan               launcherPlan
+	launcherBatch              launcherBatch
+	launcherSnaps              chan launcherSnap
 	// launcherRankWait, when set, runs on the service goroutine after a rank
 	// and before that rank is stamped. Tests hold a publish there.
 	launcherRankWait func(query string)
@@ -2105,6 +2115,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.cfg.Bar.FontSize != cfg.Bar.FontSize
 				mediaConfigChanged := r.cfg.Media.Preferred != cfg.Media.Preferred ||
 					!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
+				launcherConfigChanged := !sameLauncherCommandProviders(r.cfg.Launcher.Providers, cfg.Launcher.Providers) ||
+					!sameLauncherActions(r.cfg.Launcher.Actions, cfg.Launcher.Actions)
 				var media *services.Media
 				var depthEffects depthClockEffects
 				// Coordinates, unit and city are the request, not a lease
@@ -2167,6 +2179,16 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.previewPrevErr = r.themeErr
 				}
 				surfacePubs := r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
+				if launcherConfigChanged {
+					if h := r.panelHosts[PanelLauncher]; h != nil {
+						h.launcherAttempt++
+						r.launcherSendQuery(h, h.query)
+						r.rebuildPanel(h)
+						surfacePubs = append(surfacePubs, wayland.Invalidation{
+							Global: h.output, SurfaceID: panelSurfaceID(PanelLauncher),
+						})
+					}
+				}
 				if depthClockVisualChanged && r.depthClocks != nil {
 					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
 				}

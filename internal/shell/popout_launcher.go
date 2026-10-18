@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -71,11 +72,38 @@ const (
 // launcher from paying for an XDG scan; the first open scans, and later opens
 // hit the service's rescan-if-stale path (D12). Caller holds r.mu.
 func (r *Registry) launcherServiceLocked() *launcher.Service {
+	if r.launcherSvc != nil && (!sameLauncherCommandProviders(r.launcherServiceProviders, r.cfg.Launcher.Providers) ||
+		!sameLauncherActions(r.launcherServiceActions, r.cfg.Launcher.Actions)) {
+		stale := r.launcherSvc
+		r.launcherSvc = nil
+		r.launcherServiceProviders = nil
+		r.launcherServiceActions = nil
+		r.launcherMu.Lock()
+		r.launcherProviderGeneration++
+		r.launcherMu.Unlock()
+		if r.launcherServiceCloseDone == nil {
+			r.launcherServiceCloseDone = make(map[*launcher.Service]chan struct{})
+		}
+		closed := make(chan struct{})
+		r.launcherServiceCloseDone[stale] = closed
+		go func() {
+			stale.Close()
+			close(closed)
+			r.mu.Lock()
+			delete(r.launcherServiceCloseDone, stale)
+			r.mu.Unlock()
+		}()
+	}
 	if r.launcherSvc == nil {
 		cfg := r.launcherServiceConfig()
 		cfg.History = launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil)
 		r.launcherSvc = launcher.NewService(cfg)
-		go r.relayLauncher(r.launcherSvc)
+		r.launcherServiceProviders = cloneLauncherCommandProviders(r.cfg.Launcher.Providers)
+		r.launcherServiceActions = cloneLauncherActions(r.cfg.Launcher.Actions)
+		if !r.launcherRelayStarted {
+			r.launcherRelayStarted = true
+			go r.relayLauncher(r.launcherSvc)
+		}
 	}
 	return r.launcherSvc
 }
@@ -116,24 +144,20 @@ const (
 // service hands to Rank or to a provider, which is how a callback proves it
 // belongs to the current generation.
 type launcherPlan struct {
-	kind           launcherKind
-	passed         string
-	provider       string
-	inlineProvider string
-	need           int
+	kind            launcherKind
+	passed          string
+	provider        string
+	inlineProviders []string
 }
 
-// launcherBatch accumulates the callbacks of one service run. Inline calc and
-// application rank publish as a single snapshot, matching the service.
-// ponytail: this shell has one Inline provider; if another is added, collect
-// rows by prefix and merge them in registry order.
+// launcherBatch accumulates inline provider and main result callbacks into the
+// single snapshot the panel applies for a query.
 type launcherBatch struct {
-	gen        uint64
-	haveInline bool
-	haveMain   bool
-	emitted    bool
-	inline     []launcher.Result
-	rows       []launcher.Result
+	gen      uint64
+	haveMain bool
+	emitted  bool
+	inline   map[string][]launcher.Result
+	rows     []launcher.Result
 }
 
 // relayLauncher applies result snapshots to the open launcher panel. Service
@@ -190,10 +214,10 @@ func (r *Registry) ensureLauncherSnaps() {
 	}
 }
 
-// rankLauncher is the service rank hook. It stamps the rows with the query
-// generation after an optional test wait, so a publish can be held until a
-// newer query has been issued.
-func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost func(query, identifier string) int) []launcher.Result {
+// rankLauncher is the service rank hook. It stamps rows with the service
+// generation after an optional test wait, so a replaced service cannot add
+// stale rows to a newer batch.
+func (r *Registry) rankLauncher(providerGeneration uint64, entries []launcher.Entry, query string, boost func(query, identifier string) int) []launcher.Result {
 	rows := launcherRank(entries, query, boost)
 	r.launcherMu.Lock()
 	wait := r.launcherRankWait
@@ -201,7 +225,7 @@ func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost fu
 	if wait != nil {
 		wait(query)
 	}
-	r.noteLauncherRows(launcherAppsPrefix, query, rows)
+	r.noteLauncherRowsForGeneration(providerGeneration, launcherAppsPrefix, query, rows)
 	return rows
 }
 
@@ -209,6 +233,7 @@ func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost fu
 // holds r.mu. A snapshot from an earlier generation no longer matches, so it
 // cannot clear launcherAwaiting.
 func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
+	svc := r.launcherServiceLocked()
 	plan := classifyLauncherQuery(text, r.launcherProviders())
 	r.launcherMu.Lock()
 	r.launcherGen++
@@ -223,32 +248,36 @@ func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
 		h.launcherSel = 0
 		h.launcherAwaiting = false
 	}
-	r.launcherServiceLocked().Query(text)
+	svc.Query(text)
 }
 
 func classifyLauncherQuery(text string, providers []launcher.Provider) launcherPlan {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return launcherPlan{kind: launcherKindApps, provider: launcherAppsPrefix, need: 1}
+		return launcherPlan{kind: launcherKindApps, provider: launcherAppsPrefix}
 	}
 	if !strings.HasPrefix(text, "/") {
+		var inlineProviders []string
 		for _, provider := range providers {
 			if provider.Inline {
-				return launcherPlan{kind: launcherKindInline, passed: text,
-					provider: launcherAppsPrefix, inlineProvider: provider.Prefix, need: 2}
+				inlineProviders = append(inlineProviders, provider.Prefix)
 			}
 		}
-		return launcherPlan{kind: launcherKindApps, passed: text, provider: launcherAppsPrefix, need: 1}
+		if len(inlineProviders) > 0 {
+			return launcherPlan{kind: launcherKindInline, passed: text,
+				provider: launcherAppsPrefix, inlineProviders: inlineProviders}
+		}
+		return launcherPlan{kind: launcherKindApps, passed: text, provider: launcherAppsPrefix}
 	}
 	seg, rest, _ := strings.Cut(text[1:], " ")
 	prefix := "/" + seg
 	passed := strings.TrimSpace(rest)
 	if prefix == launcherAppsPrefix {
-		return launcherPlan{kind: launcherKindApps, passed: passed, provider: launcherAppsPrefix, need: 1}
+		return launcherPlan{kind: launcherKindApps, passed: passed, provider: launcherAppsPrefix}
 	}
 	for _, provider := range providers {
 		if prefix == provider.Prefix {
-			return launcherPlan{kind: launcherKindProvider, passed: passed, provider: provider.Prefix, need: 1}
+			return launcherPlan{kind: launcherKindProvider, passed: passed, provider: provider.Prefix}
 		}
 	}
 	return launcherPlan{kind: launcherKindOverview, passed: seg}
@@ -258,9 +287,12 @@ func classifyLauncherQuery(text string, providers []launcher.Provider) launcherP
 // match the plan for the current generation; a rank that started for the
 // previous text is ignored, and so is a snapshot emitted before the new
 // generation was issued.
-func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Result) {
+func (r *Registry) noteLauncherRowsForGeneration(generation uint64, provider, query string, rows []launcher.Result) {
 	r.launcherMu.Lock()
 	defer r.launcherMu.Unlock()
+	if generation != r.launcherProviderGeneration {
+		return
+	}
 	plan := r.launcherPlan
 	if r.launcherGen == 0 || query != plan.passed {
 		return
@@ -271,7 +303,7 @@ func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Resu
 			return
 		}
 	case launcherKindInline:
-		if provider != launcherAppsPrefix && provider != plan.inlineProvider {
+		if provider != launcherAppsPrefix && !slices.Contains(plan.inlineProviders, provider) {
 			return
 		}
 	case launcherKindProvider:
@@ -282,26 +314,33 @@ func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Resu
 		return
 	}
 	b := &r.launcherBatch
-	if b.gen != r.launcherGen || (b.emitted && (provider == plan.inlineProvider || plan.need == 1)) {
+	if b.gen != r.launcherGen || b.emitted {
 		*b = launcherBatch{gen: r.launcherGen}
 	}
 	cloned := append([]launcher.Result(nil), rows...)
-	if provider == plan.inlineProvider && plan.kind == launcherKindInline {
-		b.inline = cloned
-		b.haveInline = true
+	isInline := plan.kind == launcherKindInline && slices.Contains(plan.inlineProviders, provider)
+	if isInline {
+		if b.inline == nil {
+			b.inline = make(map[string][]launcher.Result, len(plan.inlineProviders))
+		}
+		b.inline[provider] = cloned
 	} else {
 		b.rows = cloned
 		b.haveMain = true
-	}
-	if plan.need == 2 && (!b.haveInline || !b.haveMain) {
-		return
 	}
 	if !b.haveMain {
 		return
 	}
 	out := b.rows
-	if plan.need == 2 {
-		out = append(append([]launcher.Result(nil), b.inline...), b.rows...)
+	if plan.kind == launcherKindInline {
+		if len(b.inline) != len(plan.inlineProviders) {
+			return
+		}
+		out = nil
+		for _, prefix := range plan.inlineProviders {
+			out = append(out, b.inline[prefix]...)
+		}
+		out = append(out, b.rows...)
 	}
 	b.emitted = true
 	r.emitLauncherSnapLocked(launcherSnap{gen: r.launcherGen, rows: out})
@@ -330,7 +369,7 @@ func (r *Registry) emitLauncherSnapLocked(snap launcherSnap) {
 func (r *Registry) launcherOverviewRows(filter string) []launcher.Result {
 	filter = strings.ToLower(filter)
 	type item struct{ id, name, comment, icon string }
-	items := []item{{"/apps", "Applications", "Installed desktop applications", "glyph:apps"}}
+	items := []item{{launcherAppsPrefix, "Applications", "Installed desktop applications", "glyph:apps"}}
 	for _, p := range r.launcherProviders() {
 		items = append(items, item{p.Prefix, p.Name, p.Description, p.Glyph})
 	}
@@ -346,6 +385,18 @@ func (r *Registry) launcherOverviewRows(filter string) []launcher.Result {
 		}})
 	}
 	return out
+}
+
+func (r *Registry) launcherOverviewPrefix(id string) bool {
+	if id == launcherAppsPrefix {
+		return true
+	}
+	for _, provider := range r.launcherProviders() {
+		if provider.Prefix == id {
+			return true
+		}
+	}
+	return false
 }
 
 // launcherHeader is the SYSC rail: six slashes, the brand mark, six slashes.
@@ -691,7 +742,7 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	if res.Entry.ID == "" {
 		return // a hint row explains; it does not act
 	}
-	if len(res.Entry.Argv) == 0 && strings.HasPrefix(res.Entry.ID, "/") {
+	if len(res.Entry.Argv) == 0 && r.launcherOverviewPrefix(res.Entry.ID) {
 		h.errLabel = ""
 		h.launcherAttempt++
 		h.query = res.Entry.ID
@@ -703,7 +754,10 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	}
 	// A Notes row closes the panel (or shows its error) from its own action.
 	notes := res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID
-	h.launcherSpawn(r, res.Entry.ID, res.Action, !notes)
+	// Session actions keep the launcher open until runSessionAction publishes
+	// its asynchronous success or error result.
+	session := sessionArgv(res.Entry.ID, "") != nil
+	h.launcherSpawn(r, res.Entry.ID, res.Action, !notes && !session)
 }
 
 const (
@@ -787,10 +841,9 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 	h.errLabel = ""
 	h.launcherAttempt++
 	attempt := h.launcherAttempt
-	h.launcherPendingAttempt = attempt
 	svc := r.launcherServiceLocked()
 	go func() {
-		err := svc.Activate(id, action)
+		err := r.activateLauncherService(h, svc, attempt, id, action)
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		host := r.panelHosts[PanelLauncher]
@@ -810,6 +863,25 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 		}
 		r.closePanelLocked(PanelLauncher)
 	}()
+}
+
+func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, attempt uint64, id, action string) error {
+	r.launcherActivationMu.Lock()
+	defer r.launcherActivationMu.Unlock()
+	r.mu.Lock()
+	h.launcherPendingAttempt = attempt
+	r.mu.Unlock()
+
+	err := svc.Activate(id, action)
+	if errors.Is(err, launcher.ErrServiceClosed) {
+		r.mu.Lock()
+		closed := r.launcherServiceCloseDone[svc]
+		r.mu.Unlock()
+		if closed != nil {
+			<-closed
+		}
+	}
+	return err
 }
 
 // launcherPointerPress handles row clicks. A left press launches immediately

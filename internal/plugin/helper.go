@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +58,10 @@ func HelperServe(args []string) int {
 	if p, ok := strings.CutPrefix(mode, "shutdown-marker:"); ok {
 		shutdownMarker = p
 		mode = "ok"
+	}
+	if mode == "hold-stderr" {
+		time.Sleep(time.Minute)
+		return 0
 	}
 	// record-input:<path> appends each input event. A host that drops the
 	// last buffered change never produces a line for it.
@@ -122,6 +128,36 @@ func HelperServe(args []string) int {
 		return 4
 	case "ignore-shutdown":
 		time.Sleep(time.Minute)
+		return 0
+	case "stderr-tail-on-shutdown":
+		msg, err := in.Decode()
+		if err != nil {
+			return 1
+		}
+		if _, ok := msg.(*v1.HostShutdown); !ok {
+			return 1
+		}
+		fmt.Fprintln(os.Stderr, "stderr prefix")
+		_ = out.Encode(&v1.ViewSnapshot{ViewID: "stderr-ready", Revision: 1,
+			Root: &v1.Node{Kind: v1.KindText, Text: "stderr ready"}})
+		time.Sleep(200 * time.Millisecond)
+		fmt.Fprintln(os.Stderr, "stderr final marker")
+		return 0
+	case "stderr-inherited-child":
+		msg, err := in.Decode()
+		if err != nil {
+			return 1
+		}
+		if _, ok := msg.(*v1.HostShutdown); !ok {
+			return 1
+		}
+		child := exec.Command(os.Args[0], HelperFlag, "hold-stderr")
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			return 1
+		}
+		_ = out.Encode(&v1.ViewSnapshot{ViewID: "stderr-child", Revision: 1,
+			Root: &v1.Node{Kind: v1.KindText, Text: strconv.Itoa(child.Process.Pid)}})
 		return 0
 	case "flood":
 		// More frames than any sane budget allows, written in one burst so

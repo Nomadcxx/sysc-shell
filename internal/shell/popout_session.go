@@ -152,18 +152,7 @@ func sessionActionsCard(th Theme, tr func(string, string) string, locker string)
 	// destructive marks the two actions that end the session without warning.
 	// They take the error-toned outline from the catalogue rather than a solid
 	// red block: a permanent red slab reads as an alarm, not as a control.
-	type action struct {
-		name, id, icon string
-		destructive    bool
-	}
-	acts := []action{
-		{name: "Lock", id: "session-lock", icon: "lock"},
-		{name: "Log out", id: "session-logout", icon: "logout"},
-		{name: "Suspend", id: "session-suspend", icon: "bedtime"},
-		{name: "Screen off", id: "session-display-off", icon: "visibility_off"},
-		{name: "Reboot", id: "session-reboot", icon: "restart_alt", destructive: true},
-		{name: "Power off", id: "session-poweroff", icon: "power_settings_new", destructive: true},
-	}
+	acts := sessionActionOptions()
 	if locker == "" {
 		acts = acts[1:]
 	}
@@ -187,6 +176,22 @@ func sessionActionsCard(th Theme, tr func(string, string) string, locker string)
 		rows = append(rows, node)
 	}
 	return monitorCard(th.Metrics, rows)
+}
+
+type sessionAction struct {
+	name, id, icon string
+	destructive    bool
+}
+
+func sessionActionOptions() []sessionAction {
+	return []sessionAction{
+		{name: "Lock", id: "session-lock", icon: "lock"},
+		{name: "Log out", id: "session-logout", icon: "logout"},
+		{name: "Suspend", id: "session-suspend", icon: "bedtime"},
+		{name: "Screen off", id: "session-display-off", icon: "visibility_off"},
+		{name: "Reboot", id: "session-reboot", icon: "restart_alt", destructive: true},
+		{name: "Power off", id: "session-poweroff", icon: "power_settings_new", destructive: true},
+	}
 }
 
 func sessionArgv(action, locker string) []string {
@@ -321,7 +326,18 @@ func runArgvDefault(argv []string) error {
 		defer cancel()
 		return exec.CommandContext(ctx, path, argv[1:]...).Run()
 	}
-	return exec.Command(path, argv[1:]...).Start()
+	return startArgvDetached(path, argv[1:])
+}
+
+// startArgvDetached reaps a launched process after it exits without waiting on
+// the caller for the process lifetime.
+func startArgvDetached(path string, args []string) error {
+	cmd := exec.Command(path, args...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 func startInhibitDefault() (io.Closer, error) {
