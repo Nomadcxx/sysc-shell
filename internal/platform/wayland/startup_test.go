@@ -36,7 +36,7 @@ func TestRunDrainsInvalidationsDuringConnect(t *testing.T) {
 			NewHost: func(uint32, string) (HostCallbacks, error) {
 				return HostCallbacks{}, nil
 			},
-			PrepareConfig: func(config.Config, []HostIdentity) (PreparedConfig, error) {
+			PrepareConfig: func(config.Config, []HostIdentity, uint64) (PreparedConfig, error) {
 				return PreparedConfig{}, nil
 			},
 		})

@@ -186,8 +186,9 @@ type Registry struct {
 	configWriteMu sync.Mutex
 	// settingsWriteMu guards pending Settings edits and snapshots written by the
 	// debounce worker until their matching config reloads are applied.
-	settingsWriteMu      sync.Mutex
-	settingsWriteReloads []config.Config
+	settingsWriteMu         sync.Mutex
+	settingsWriteGeneration uint64
+	settingsWriteReloads    []settingsWriteReload
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
 	writeDelay           time.Duration
@@ -395,6 +396,11 @@ type Registry struct {
 	// afterLauncherSnap runs on the relay after a received snapshot has been
 	// accepted or ignored. Registry.mu.
 	afterLauncherSnap func()
+}
+
+type settingsWriteReload struct {
+	generation uint64
+	config     config.Config
 }
 
 func listPalettes(st *theme.Store) []theme.PaletteInfo {
@@ -1270,6 +1276,14 @@ func (r *Registry) BindPersist(path string, reloads chan<- struct{}) {
 	r.mu.Unlock()
 }
 
+// SettingsWriteGeneration reports the latest successful debounced Settings
+// write. Wayland samples it before reading a reload candidate.
+func (r *Registry) SettingsWriteGeneration() uint64 {
+	r.settingsWriteMu.Lock()
+	defer r.settingsWriteMu.Unlock()
+	return r.settingsWriteGeneration
+}
+
 // Tokens is the palette the registry generated at construction or last reload.
 func (r *Registry) Tokens() theme.Tokens {
 	r.mu.Lock()
@@ -2062,14 +2076,21 @@ func (r *Registry) outputGlobalsLocked() map[string]uint32 {
 	return globals
 }
 
-// PrepareConfig builds every enabled host's replacement bar and acquires its
-// services before the caller changes live host policy.
+// PrepareConfig prepares a candidate using the latest known Settings-write
+// generation. Reload owners must use PrepareConfigWithGeneration with the
+// generation they sampled before reading the candidate.
+func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+	return r.PrepareConfigWithGeneration(cfg, identities, r.SettingsWriteGeneration())
+}
+
+// PrepareConfigWithGeneration builds every enabled host's replacement bar and
+// acquires its services before the caller changes live host policy.
 //
 // Acquiring here, and releasing the outgoing leases only in Commit, is what
 // keeps a service in continuous use from stopping: its consumer count never
 // reaches zero, so it is never restarted. A failure at any point releases
 // exactly what this call acquired.
-func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []wayland.HostIdentity, configGeneration uint64) (wayland.PreparedConfig, error) {
 	tok, genErr := r.generateTheme(cfg)
 	bars := make(map[uint32]*Bar, len(identities))
 	leases := make(map[uint32][]*services.Lease, len(identities))
@@ -2166,7 +2187,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.settingsWriteMu.Lock()
 				settingsWriteReloadAt := -1
 				for i, written := range r.settingsWriteReloads {
-					if reflect.DeepEqual(written, cfg) {
+					if reflect.DeepEqual(written.config, cfg) {
 						settingsWriteReloadAt = i
 					}
 				}
@@ -2174,7 +2195,14 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				if settingsWriteReload {
 					r.settingsWriteReloads = slices.Clone(r.settingsWriteReloads[settingsWriteReloadAt+1:])
 				} else {
-					r.settingsWriteReloads = nil
+					retained := r.settingsWriteReloads[:0]
+					for _, written := range r.settingsWriteReloads {
+						if written.generation > configGeneration {
+							retained = append(retained, written)
+						}
+					}
+					clear(r.settingsWriteReloads[len(retained):])
+					r.settingsWriteReloads = retained
 				}
 				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
 					if h := r.panelHosts[id]; h != nil {

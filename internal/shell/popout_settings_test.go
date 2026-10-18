@@ -1591,12 +1591,28 @@ written:
 	}
 }
 
+// startTestInvalidationDrain models the production Wayland bridge. A Registry
+// blocks publishers when its bounded queue fills, and tests have no owner to
+// receive those invalidations unless they provide one.
+func startTestInvalidationDrain(reg *Registry) {
+	go func() {
+		for {
+			select {
+			case <-reg.closed:
+				return
+			case <-reg.invalidations:
+			}
+		}
+	}()
+}
+
 func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
 	reg := NewRegistry(base)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -1630,11 +1646,12 @@ func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
 	reg.settingsWriteMu.Lock()
 	reg.settingsWriteMu.Unlock()
 
+	configGeneration := reg.SettingsWriteGeneration()
 	candidate, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := reg.PrepareConfig(candidate, nil)
+	prepared, err := reg.PrepareConfigWithGeneration(candidate, nil, configGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1664,12 +1681,190 @@ func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
 	}
 }
 
+func TestSettingsExternalReloadAfterWriteRetiresWriterSnapshot(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := NewRegistry(base)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "written"})
+	generation := h.writeTimerGeneration
+	reg.settingsWriteMu.Lock()
+	revision := h.settingsWriteRevision
+	reg.settingsWriteMu.Unlock()
+	reg.mu.Unlock()
+	h.writeTimerExpired(reg, generation, revision)
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("debounced write did not finish")
+	}
+
+	external, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external.Bar.Edge = "right"
+	if err := config.Write(path, external); err != nil {
+		t.Fatal(err)
+	}
+	configGeneration := reg.SettingsWriteGeneration()
+	candidate, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfigWithGeneration(candidate, nil, configGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "later edit"})
+	reg.mu.Unlock()
+	prepared.Commit()
+
+	reg.mu.Lock()
+	draft := h.draft.Clone()
+	timerPending := h.writeTimer != nil
+	reg.mu.Unlock()
+	reg.settingsWriteMu.Lock()
+	pendingSnapshots := len(reg.settingsWriteReloads)
+	reg.settingsWriteMu.Unlock()
+	if draft.Session.Locker != "written" || draft.Bar.Edge != "right" || timerPending || pendingSnapshots != 0 {
+		t.Fatalf("genuine reload did not replace the draft: locker=%q edge=%q timerPending=%t snapshots=%d",
+			draft.Session.Locker, draft.Bar.Edge, timerPending, pendingSnapshots)
+	}
+}
+
+func TestSettingsStaleReloadCommitKeepsLaterWriteSnapshot(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := NewRegistry(base)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.configWriteMu.Lock()
+	writerLocked := true
+	t.Cleanup(func() {
+		if writerLocked {
+			reg.configWriteMu.Unlock()
+		}
+	})
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
+	timer := h.writeTimer
+	generation := h.writeTimerGeneration
+	reg.settingsWriteMu.Lock()
+	revision := h.settingsWriteRevision
+	reg.settingsWriteMu.Unlock()
+	reg.mu.Unlock()
+	if timer == nil {
+		t.Fatal("Settings edit did not arm a write timer")
+	}
+
+	// Run the real timer body while the file writer is held, so the reload
+	// candidate can be prepared before the Settings write publishes its snapshot.
+	h.writeTimerExpired(reg, generation, revision)
+	timer.Stop()
+
+	external := base.Clone()
+	external.Bar.Edge = "right"
+	externalGeneration := reg.SettingsWriteGeneration()
+	if err := config.Write(path, external); err != nil {
+		t.Fatal(err)
+	}
+	preparedExternal, err := reg.PrepareConfigWithGeneration(external, nil, externalGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reg.configWriteMu.Unlock()
+	writerLocked = false
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("debounced write did not finish")
+	}
+	reg.settingsWriteMu.Lock()
+	reg.settingsWriteMu.Unlock()
+	if got := reg.SettingsWriteGeneration(); got != externalGeneration+1 {
+		t.Fatalf("Settings-write generation = %d, want %d", got, externalGeneration+1)
+	}
+
+	// This candidate predates the writer but commits after its snapshot exists.
+	preparedExternal.Commit()
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "later edit"})
+	reg.mu.Unlock()
+	selfGeneration := reg.SettingsWriteGeneration()
+	written, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedSelf, err := reg.PrepareConfigWithGeneration(written, nil, selfGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedSelf.Commit()
+
+	reg.mu.Lock()
+	draft := h.draft.Session.Locker
+	timerPending := h.writeTimer != nil
+	if timerPending {
+		h.flushDraft(reg)
+	}
+	reg.mu.Unlock()
+	if draft != "later edit" || !timerPending {
+		t.Fatalf("stale reload discarded later edit: draft=%q timerPending=%t", draft, timerPending)
+	}
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "later edit" {
+		t.Fatalf("flushing after self-reload wrote locker %q, want later edit", got.Session.Locker)
+	}
+}
+
 func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
 	reg := NewRegistry(base)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
