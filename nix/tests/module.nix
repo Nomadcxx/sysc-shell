@@ -54,6 +54,10 @@ let
         type = lib.types.attrs;
         default = { };
       };
+      home.packages = lib.mkOption {
+        type = lib.types.listOf lib.types.package;
+        default = [ ];
+      };
     };
   };
 
@@ -103,6 +107,13 @@ let
 in
 {
   disabledWritesNothing = off.config.xdg.configFile == { };
+
+  # The shell binary goes into the profile, so the `sysc-shell ipc` commands the
+  # documentation names are on PATH for a Nix install.
+  enabledInstallsThePackage = builtins.elem package.outPath
+    (map (p: p.outPath) on.config.home.packages);
+
+  disabledInstallsNoPackage = off.config.home.packages == [ ];
 
   # The conflict guard must be an activation entry, not an assertion: pure
   # evaluation cannot see ~/.local/bin, which is how a flake is evaluated.

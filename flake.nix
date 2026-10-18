@@ -15,7 +15,9 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
       pkgsFor = system: import nixpkgs { inherit system; };
       lib = nixpkgs.lib;
-      commit = self.shortRev or "dirty";
+      # dirtyShortRev when the tree is dirty, so a dirty build reports the
+      # revision it was cut from instead of the word "dirty".
+      commit = self.shortRev or self.dirtyShortRev or "dirty";
     in
     {
       packages = forAllSystems (
@@ -58,21 +60,21 @@
         sysc-shell-plugin-weather = final.callPackage ./nix/plugin-weather.nix { };
       };
 
-      # home-manager only. The module writes home-manager options (xdg.configFile,
-      # home.homeDirectory), so exporting it as a NixOS module would promise a
+      # home-manager only, and one module rather than one per system. The module
+      # writes home-manager options (xdg.configFile, home.activation,
+      # home.packages), so exporting it as a NixOS module would promise a
       # configuration that cannot evaluate.
-      homeModules.forAllSystems = forAllSystems (
-        system:
+      #
+      # The package default is looked up from the evaluating side's pkgs, so a
+      # configuration never has to name a system, and a user on either system
+      # this flake supports gets that system's package.
+      homeModules.default =
+        { pkgs, lib, ... }:
         {
-          default =
-            { lib, ... }:
-            {
-              imports = [ ./nix/module.nix ];
-              # mkDefault, not a plain value: a user pointing the option at
-              # their own build wins over this flake's.
-              programs.sysc-shell.package = lib.mkDefault self.packages.${system}.default;
-            };
-        }
-      );
+          imports = [ ./nix/module.nix ];
+          # mkDefault, not a plain value: a user pointing the option at their
+          # own build wins over this flake's.
+          programs.sysc-shell.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
     };
 }

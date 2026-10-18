@@ -42,7 +42,7 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       description = ''
-        The sysc-shell derivation the unit starts. The flake's homeModules
+        The sysc-shell derivation the unit starts. The flake's homeModules.default
         defaults it to that flake's package; with the overlay alone, set it to
         pkgs.sysc-shell.
       '';
@@ -65,6 +65,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # The store binary is what the unit starts, and it is also the binary the
+    # documentation's read-only checks run (`sysc-shell ipc status`). Nothing
+    # else puts it on PATH, so it goes in the profile.
+    home.packages = [ cfg.package ];
+
     # The conflict guard runs at activation, not at evaluation. In pure
     # evaluation -- how a flake is evaluated -- builtins.pathExists answers
     # false for every path outside the store, so an assertion here would never
@@ -110,4 +115,8 @@ in
       )
     ];
   };
+
+  # home-manager class: imported into a NixOS evaluation, the class mismatch is
+  # the error, instead of the first home.* option.
+  _class = "homeManager";
 }
