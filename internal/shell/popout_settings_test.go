@@ -1591,6 +1591,79 @@ written:
 	}
 }
 
+func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := NewRegistry(base)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
+	generation := h.writeTimerGeneration
+	reg.settingsWriteMu.Lock()
+	revision := h.settingsWriteRevision
+	reg.settingsWriteMu.Unlock()
+	reg.mu.Unlock()
+
+	// Invoke the real timer path and wait until its write has released the
+	// settings lock. Its reload candidate remains unapplied in this test.
+	h.writeTimerExpired(reg, generation, revision)
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("first debounced write did not finish")
+	}
+	reg.settingsWriteMu.Lock()
+	reg.settingsWriteMu.Unlock()
+
+	candidate, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfig(candidate, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "second"})
+	reg.mu.Unlock()
+	prepared.Commit()
+
+	reg.mu.Lock()
+	draft := h.draft.Session.Locker
+	timerPending := h.writeTimer != nil
+	if timerPending {
+		h.flushDraft(reg)
+	}
+	reg.mu.Unlock()
+	if draft != "second" || !timerPending {
+		t.Fatalf("self-reload discarded newer edit: draft=%q timerPending=%t", draft, timerPending)
+	}
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "second" {
+		t.Fatalf("flushing after self-reload wrote locker %q, want second", got.Session.Locker)
+	}
+}
+
 func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"

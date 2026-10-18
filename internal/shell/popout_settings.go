@@ -1892,6 +1892,22 @@ func (r *Registry) writeDebouncedSettingsChanges(h *PanelHost, changes []setting
 	return r.writeSettingsChanges(h, changes, revision, path, fallback, palettes)
 }
 
+func applySettingsWriteChanges(cfg *config.Config, changes []settingsWriteChange, palettes []theme.PaletteInfo) error {
+	registryFor := func(c config.Config) *settings.Registry {
+		return settings.DefaultFor(c, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)))
+	}
+	for _, change := range changes {
+		entry := registryFor(*cfg).ByPath(change.path)
+		if entry == nil || entry.Set == nil {
+			return fmt.Errorf("settings: %q is no longer available", change.path)
+		}
+		if err := entry.Set(cfg, change.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Registry) writeSettingsChanges(h *PanelHost, changes []settingsWriteChange, revision uint64, path string, fallback config.Config, palettes []theme.PaletteInfo) (bool, error) {
 	// Take configWriteMu first. The worker never takes Registry.mu while it
 	// holds either write lock, so reloads can invalidate its revision safely.
@@ -1912,22 +1928,16 @@ func (r *Registry) writeSettingsChanges(h *PanelHost, changes []settingsWriteCha
 	} else if err != nil {
 		return true, err
 	}
-	registryFor := func(c config.Config) *settings.Registry {
-		return settings.DefaultFor(c, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)))
-	}
-	for _, change := range changes {
-		entry := registryFor(cfg).ByPath(change.path)
-		if entry == nil || entry.Set == nil {
-			return true, fmt.Errorf("settings: %q is no longer available", change.path)
-		}
-		if err := entry.Set(&cfg, change.value); err != nil {
-			return true, err
-		}
+	if err := applySettingsWriteChanges(&cfg, changes, palettes); err != nil {
+		return true, err
 	}
 	if err := r.writeConfigLocked(cfg); err != nil {
 		return true, err
 	}
 	h.settingsWriteChanges = nil
+	if r.reloads != nil {
+		r.settingsWriteReloads = append(r.settingsWriteReloads, cfg.Clone())
+	}
 	return true, nil
 }
 

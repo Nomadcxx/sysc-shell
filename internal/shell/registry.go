@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -183,8 +184,10 @@ type Registry struct {
 	// transactions ordered. IPC setters read after taking it so concurrent
 	// edits preserve each other's config fields.
 	configWriteMu sync.Mutex
-	// settingsWriteMu guards pending Settings changes and invalidates them when a config reload replaces them.
-	settingsWriteMu sync.Mutex
+	// settingsWriteMu guards pending Settings edits and snapshots written by the
+	// debounce worker until their matching config reloads are applied.
+	settingsWriteMu      sync.Mutex
+	settingsWriteReloads []config.Config
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
 	writeDelay           time.Duration
@@ -2154,34 +2157,54 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.cfg = cfg
 				r.syncSoundLocked()
 				r.pushIdleInputsLocked()
-				// An open settings panel holds its own draft, and a change
-				// arriving from outside it would otherwise be reverted by the
-				// next control write, which puts that draft back whole. The
-				// registry is rebuilt with it because an entry's options can
-				// depend on another setting.
+				// An open settings panel holds its own draft. A genuine reload
+				// replaces it; a reload from its own delayed write rebases any
+				// newer edits over the written config.
+				r.settingsWriteMu.Lock()
+				settingsWriteReloadAt := -1
+				for i, written := range r.settingsWriteReloads {
+					if reflect.DeepEqual(written, cfg) {
+						settingsWriteReloadAt = i
+					}
+				}
+				settingsWriteReload := settingsWriteReloadAt >= 0
+				if settingsWriteReload {
+					r.settingsWriteReloads = slices.Clone(r.settingsWriteReloads[settingsWriteReloadAt+1:])
+				} else {
+					r.settingsWriteReloads = nil
+				}
 				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
 					if h := r.panelHosts[id]; h != nil {
 						if id == PanelSettings {
 							h.invalidateSettingsBrowseIfChanged(cfg)
-							r.settingsWriteMu.Lock()
-							h.settingsWriteRevision++
-							h.settingsWriteChanges = nil
-							if h.writeTimer != nil {
-								h.writeTimer.Stop()
-								h.writeTimer = nil
+							if settingsWriteReload {
+								draft := cfg.Clone()
+								if err := applySettingsWriteChanges(&draft, h.settingsWriteChanges, r.palettes); err == nil {
+									h.draft = draft
+								} else {
+									settingsWriteReload = false
+								}
 							}
-							h.draft = cfg.Clone()
-							r.settingsWriteMu.Unlock()
+							if !settingsWriteReload {
+								h.settingsWriteRevision++
+								h.settingsWriteChanges = nil
+								if h.writeTimer != nil {
+									h.writeTimer.Stop()
+									h.writeTimer = nil
+								}
+								h.draft = cfg.Clone()
+							}
 						} else {
 							h.draft = cfg.Clone()
 						}
-						h.set = r.settingsForLocked(cfg)
+						h.set = r.settingsForLocked(h.draft)
 						if id == PanelSettings {
 							h.reseedSettingsFields()
 							h.reseedSettingsMenus()
 						}
 					}
 				}
+				r.settingsWriteMu.Unlock()
 				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media
 				r.tokens = tok
