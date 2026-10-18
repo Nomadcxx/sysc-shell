@@ -119,14 +119,13 @@ type Session struct {
 	// Granted is what the host offered and the plugin accepted.
 	Granted []Capability
 
-	cmd        *exec.Cmd
-	stdin      io.WriteCloser
-	enc        *v1.Encoder
-	dec        *v1.Decoder
-	stderr     *tail
-	stderrDone chan struct{}
-	grace      time.Duration
-	inbound    *Inbound
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	enc     *v1.Encoder
+	dec     *v1.Decoder
+	stderr  *tail
+	grace   time.Duration
+	inbound *Inbound
 
 	sendMu sync.Mutex
 	recvMu sync.Mutex
@@ -165,6 +164,14 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	// find the compositor and its own config, not the whole session
 	// environment (which can carry tokens, proxy credentials, search paths).
 	cmd.Env = pluginEnvironment()
+	grace := s.ShutdownGrace
+	if grace <= 0 {
+		grace = time.Second
+	}
+	stderr := newTail(MaxStderrBytes)
+	// Cmd.Wait owns the pipe copy and does not close stderr until it finishes.
+	cmd.Stderr = stderr
+	cmd.WaitDelay = grace
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -174,30 +181,20 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("plugin: %s: stdout: %w", s.Manifest.ID, err)
 	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("plugin: %s: stderr: %w", s.Manifest.ID, err)
-	}
-
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("plugin: start %s: %w", s.Manifest.ID, err)
 	}
 
 	sess := &Session{
-		cmd:        cmd,
-		stdin:      stdin,
-		enc:        v1.NewEncoder(stdin),
-		dec:        v1.NewDecoder(stdout, v1.ToHost),
-		stderr:     newTail(MaxStderrBytes),
-		stderrDone: make(chan struct{}),
-		grace:      s.ShutdownGrace,
-		inbound:    NewInbound(nil, s.Limits),
-		started:    time.Now(),
+		cmd:     cmd,
+		stdin:   stdin,
+		enc:     v1.NewEncoder(stdin),
+		dec:     v1.NewDecoder(stdout, v1.ToHost),
+		stderr:  stderr,
+		grace:   grace,
+		inbound: NewInbound(nil, s.Limits),
+		started: time.Now(),
 	}
-	go func() {
-		defer close(sess.stderrDone)
-		sess.stderr.drain(stderrPipe)
-	}()
 
 	if err := s.handshake(ctx, sess); err != nil {
 		s.reap(sess)
@@ -433,16 +430,10 @@ func (s *Session) shutdown() ExitReason {
 
 	select {
 	case err := <-done:
-		if s.stderrDone != nil {
-			<-s.stderrDone
-		}
 		return classify(err)
 	case <-timer.C:
 		_ = s.cmd.Process.Kill()
 		<-done
-		if s.stderrDone != nil {
-			<-s.stderrDone
-		}
 		return ExitReason{Kind: ExitKilled}
 	}
 }
@@ -489,20 +480,6 @@ func (t *tail) bytes() []byte {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]byte(nil), t.data...)
-}
-
-// drain copies a stream into the window until it ends.
-func (t *tail) drain(r io.Reader) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			_, _ = t.Write(buf[:n])
-		}
-		if err != nil {
-			return
-		}
-	}
 }
 
 // pluginEnvironment is the allowlisted view of the host environment a plugin

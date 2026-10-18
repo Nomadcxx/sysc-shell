@@ -345,6 +345,89 @@ func TestStderrKeepsTheMostRecentBytes(t *testing.T) {
 	}
 }
 
+func TestCloseRetainsStderrWrittenJustBeforeExit(t *testing.T) {
+	t.Parallel()
+
+	sess := startHelper(t, "stderr-tail-on-shutdown")
+	sess.stderr.mu.Lock()
+	closed := make(chan ExitReason, 1)
+	go func() { closed <- sess.Close() }()
+
+	msg, err := sess.Recv()
+	if err != nil {
+		sess.stderr.mu.Unlock()
+		t.Fatalf("Recv(stderr-ready): %v", err)
+	}
+	if got, ok := msg.(*v1.ViewSnapshot); !ok || got.ViewID != "stderr-ready" {
+		sess.stderr.mu.Unlock()
+		t.Fatalf("message = %#v, want stderr-ready snapshot", msg)
+	}
+	// Keep the tail writer blocked until the helper emits its final marker and
+	// exits. cmd.Wait must keep the stderr copy open until the writer catches up.
+	time.Sleep(250 * time.Millisecond)
+	sess.stderr.mu.Unlock()
+
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not finish after the stderr drain was released")
+	}
+	if got := string(sess.Stderr()); !strings.Contains(got, "stderr final marker") {
+		t.Fatalf("stderr tail = %q, want final marker", got)
+	}
+}
+
+func TestCloseBoundsStderrPipeHeldByChild(t *testing.T) {
+	t.Parallel()
+
+	s := supervisor(installHelper(t, "stderr-inherited-child"))
+	s.ShutdownGrace = 100 * time.Millisecond
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	closed := make(chan ExitReason, 1)
+	closeFinished := false
+	var child *os.Process
+	defer func() {
+		if child != nil {
+			_ = child.Kill()
+		}
+		if !closeFinished {
+			select {
+			case <-closed:
+			case <-time.After(2 * time.Second):
+				t.Error("Close stayed blocked after the stderr child was killed")
+			}
+		}
+	}()
+
+	go func() { closed <- sess.Close() }()
+	msg, err := sess.Recv()
+	if err != nil {
+		t.Fatalf("Recv(stderr-child): %v", err)
+	}
+	snapshot, ok := msg.(*v1.ViewSnapshot)
+	if !ok || snapshot.ViewID != "stderr-child" || snapshot.Root == nil {
+		t.Fatalf("message = %#v, want stderr-child snapshot", msg)
+	}
+	var pid int
+	if _, err := fmt.Sscan(snapshot.Root.Text, &pid); err != nil || pid <= 0 {
+		t.Fatalf("child PID = %q, err = %v", snapshot.Root.Text, err)
+	}
+	child, err = os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("find stderr child: %v", err)
+	}
+
+	select {
+	case <-closed:
+		closeFinished = true
+	case <-time.After(time.Second):
+		t.Fatal("Close did not bound the inherited stderr pipe")
+	}
+}
+
 func TestSessionCarriesMessagesInEachDirection(t *testing.T) {
 	t.Parallel()
 
