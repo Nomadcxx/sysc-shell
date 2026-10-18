@@ -172,6 +172,7 @@ type Snapshot struct {
 type ServiceConfig struct {
 	Engine      Engine
 	Settings    Settings
+	CyclePolicy CyclePolicy
 	Connectors  []string
 	Roots       []string
 	PersistPath string
@@ -202,16 +203,21 @@ type engineResult struct {
 type Service struct {
 	engine      Engine
 	set         Settings
+	cyclePolicy CyclePolicy
+	cycleStart  time.Time
+	cycleDate   string
 	roots       []string
 	persistPath string
 
-	cmds    chan Command
-	results chan engineResult
-	updates chan Snapshot
-	quit    chan struct{}
-	done    chan struct{}
-	closing sync.Once
-	work    sync.WaitGroup
+	cmds          chan Command
+	cycleUpdates  chan CyclePolicy
+	cycleUpdateMu sync.Mutex
+	results       chan engineResult
+	updates       chan Snapshot
+	quit          chan struct{}
+	done          chan struct{}
+	closing       sync.Once
+	work          sync.WaitGroup
 
 	coverage func() (map[string]string, error)
 	thumbs   *Thumbnailer
@@ -248,8 +254,12 @@ type Service struct {
 
 // NewService starts the service loop.
 func NewService(cfg ServiceConfig) *Service {
+	cycleNow := time.Now()
 	s := &Service{
 		engine:         cfg.Engine,
+		cyclePolicy:    cfg.CyclePolicy,
+		cycleStart:     cycleNow,
+		cycleDate:      dailyCycleBaseline(cycleNow, cfg.CyclePolicy.Time),
 		restarted:      make(map[string]bool),
 		auto:           make(map[string]Reasons),
 		paused:         make(map[string]bool),
@@ -261,6 +271,7 @@ func NewService(cfg ServiceConfig) *Service {
 		coverage:       cfg.Coverage,
 		cfgHook:        cfg.ConfigHook,
 		cmds:           make(chan Command, 32),
+		cycleUpdates:   make(chan CyclePolicy, 1),
 		results:        make(chan engineResult, 32),
 		// One slot, coalescing: a picker that is closed or slow must never
 		// block an apply.
@@ -344,6 +355,30 @@ func (s *Service) Enqueue(c Command) {
 	}
 }
 
+// SetCyclePolicy hands a live configuration update to the service loop. The
+// one-slot channel coalesces reloads so the most recent committed policy wins.
+func (s *Service) SetCyclePolicy(policy CyclePolicy) {
+	s.cycleUpdateMu.Lock()
+	defer s.cycleUpdateMu.Unlock()
+	select {
+	case <-s.quit:
+		return
+	default:
+	}
+	select {
+	case s.cycleUpdates <- policy:
+	default:
+		select {
+		case <-s.cycleUpdates:
+		default:
+		}
+		select {
+		case s.cycleUpdates <- policy:
+		case <-s.quit:
+		}
+	}
+}
+
 // RefreshTerminalCatalog asks the service loop to refresh the installed
 // sysc-terminal registry and publish the updated capabilities.
 func (s *Service) RefreshTerminalCatalog() {
@@ -377,10 +412,13 @@ func (s *Service) run() {
 			return
 		case c := <-s.cmds:
 			s.handle(c)
+		case policy := <-s.cycleUpdates:
+			s.updateCyclePolicy(policy, time.Now())
 		case r := <-s.results:
 			s.finish(r)
 		case <-ticker.C:
 			s.supervise()
+			s.runCycle(time.Now())
 		case <-s.thumbProgress():
 			// A preview landed on disk; the picker only picks it up on a
 			// snapshot, so publish one.
@@ -423,6 +461,49 @@ func (s *Service) thumbProgress() <-chan struct{} {
 	return s.thumbs.Progress()
 }
 
+func (s *Service) updateCyclePolicy(policy CyclePolicy, now time.Time) {
+	if s.cyclePolicy == policy {
+		return
+	}
+	s.cyclePolicy = policy
+	s.cycleStart = now
+	s.cycleDate = dailyCycleBaseline(now, policy.Time)
+}
+
+// runCycle evaluates one schedule event and queues a normal, generation-aware
+// apply for each assigned output. Schedule timing stays in this owner loop.
+func (s *Service) runCycle(now time.Time) {
+	if !cycleDue(s.cyclePolicy, now, s.cycleStart, s.cycleDate) {
+		return
+	}
+	switch s.cyclePolicy.Mode {
+	case CycleModeInterval:
+		s.cycleStart = now
+	case CycleModeTime:
+		s.cycleDate = now.Local().Format("2006-01-02")
+	}
+	if s.engine == nil || s.lib == nil {
+		return
+	}
+	entries := s.lib.All()
+	var jobs []Job
+	for _, connector := range s.store.Connectors() {
+		assignment, ok := s.store.Assignment(connector)
+		if !ok || s.store.Runtime(connector).State == StateStarting {
+			continue
+		}
+		entry, ok := nextCycleEntry(entries, assignment.Path)
+		if !ok {
+			continue
+		}
+		delete(s.restarted, connector)
+		jobs = append(jobs, s.store.Apply(connector, entry.Path, entry.Kind)...)
+	}
+	if len(jobs) > 0 {
+		s.dispatch(jobs)
+	}
+}
+
 // enqueueThumbs hands the current library to the generator.
 func (s *Service) enqueueThumbs() {
 	if s.thumbs == nil || s.lib == nil {
@@ -434,6 +515,7 @@ func (s *Service) enqueueThumbs() {
 func (s *Service) handle(c Command) {
 	switch c.Op {
 	case OpApply:
+		s.cycleStart = time.Now()
 		if c.Token == AllOutputs {
 			clear(s.restarted)
 		} else {

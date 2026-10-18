@@ -538,6 +538,22 @@ func wallpaperDiff(got, base Wallpaper) *wireWallpaper {
 		v := got.Hidden
 		w.Hidden = &v
 	}
+	if got.CycleEnabled != base.CycleEnabled {
+		v := got.CycleEnabled
+		w.CycleEnabled = &v
+	}
+	if got.CycleMode != base.CycleMode {
+		v := got.CycleMode
+		w.CycleMode = &v
+	}
+	if got.CycleInterval != base.CycleInterval {
+		v := got.CycleInterval.String()
+		w.CycleInterval = &v
+	}
+	if got.CycleTime != base.CycleTime {
+		v := got.CycleTime
+		w.CycleTime = &v
+	}
 	if got.PauseCovered != base.PauseCovered {
 		v := got.PauseCovered
 		w.PauseCovered = &v

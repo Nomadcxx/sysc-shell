@@ -183,6 +183,208 @@ func awaitSnapshot(t *testing.T, svc *Service, want func(Snapshot) bool) Snapsho
 	}
 }
 
+func newCycleServiceForTest(t *testing.T, roots, connectors []string, assignments map[string]Assignment, policy CyclePolicy) (*Service, *fakeEngine) {
+	t.Helper()
+	engine := newFakeEngine()
+	svc := &Service{
+		engine:         engine,
+		set:            Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+		cyclePolicy:    policy,
+		cycleStart:     time.Now().Add(-time.Hour),
+		cycleDate:      dailyCycleBaseline(time.Now(), policy.Time),
+		roots:          slices.Clone(roots),
+		restarted:      make(map[string]bool),
+		cmds:           make(chan Command, 32),
+		cycleUpdates:   make(chan CyclePolicy, 1),
+		results:        make(chan engineResult, 32),
+		updates:        make(chan Snapshot, 1),
+		quit:           make(chan struct{}),
+		auto:           make(map[string]Reasons),
+		paused:         make(map[string]bool),
+		fps:            make(map[string]int),
+		fpsUnsupported: make(map[string]bool),
+	}
+	svc.store.SetConnectors(connectors)
+	svc.store.Adopt(assignments)
+	svc.lib = Scan(roots)
+	svc.caps = engine.Capabilities()
+	return svc, engine
+}
+
+func writeCycleLibrary(t *testing.T, names ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func finishCycleJobs(t *testing.T, svc *Service, count int) {
+	t.Helper()
+	for range count {
+		select {
+		case result := <-svc.results:
+			svc.finish(result)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for wallpaper cycle apply")
+		}
+	}
+	svc.work.Wait()
+}
+
+func TestServiceCycleAdvancesEachAssignedOutputIndependently(t *testing.T) {
+	root := writeCycleLibrary(t, "a.png", "b.png", "c.png")
+	policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+	svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1", "DP-3"}, map[string]Assignment{
+		"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+		"DP-3": {Kind: KindVideo, Path: filepath.Join(root, "b.png"), DesiredPlayback: StatePlaying},
+	}, policy)
+	now := time.Now()
+	svc.cycleStart = now.Add(-policy.Interval)
+	svc.restarted["DP-1"] = true
+
+	svc.runCycle(now)
+	finishCycleJobs(t, svc, 2)
+	if svc.restarted["DP-1"] {
+		t.Fatal("new cycle selection retained the previous restart guard")
+	}
+
+	got := engine.appliedPaths()
+	slices.Sort(got)
+	want := []string{filepath.Join(root, "b.png"), filepath.Join(root, "c.png")}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("cycled paths = %v, want %v", got, want)
+	}
+	if got, _ := svc.store.Assignment("DP-1"); got.Path != filepath.Join(root, "b.png") {
+		t.Errorf("DP-1 assignment = %+v, want b.png", got)
+	}
+	if got, _ := svc.store.Assignment("DP-3"); got.Path != filepath.Join(root, "c.png") {
+		t.Errorf("DP-3 assignment = %+v, want c.png", got)
+	}
+}
+
+func TestServiceCycleSkipsUnassignedAndApplyingOutputs(t *testing.T) {
+	t.Run("unassigned output", func(t *testing.T) {
+		root := writeCycleLibrary(t, "a.png", "b.png")
+		policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+		svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1", "DP-2"}, map[string]Assignment{
+			"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+		}, policy)
+		now := time.Now()
+		svc.cycleStart = now.Add(-policy.Interval)
+		svc.runCycle(now)
+		finishCycleJobs(t, svc, 1)
+		if got := engine.appliedPaths(); !slices.Equal(got, []string{filepath.Join(root, "b.png")}) {
+			t.Fatalf("applied paths = %v, want only DP-1's next entry", got)
+		}
+		if _, ok := svc.store.Assignment("DP-2"); ok {
+			t.Fatal("cycling assigned an output that had no prior assignment")
+		}
+	})
+
+	t.Run("apply in flight", func(t *testing.T) {
+		root := writeCycleLibrary(t, "a.png", "b.png")
+		policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+		svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1"}, map[string]Assignment{
+			"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+		}, policy)
+		svc.store.Apply("DP-1", filepath.Join(root, "a.png"), KindImage)
+		now := time.Now()
+		svc.cycleStart = now.Add(-policy.Interval)
+		svc.runCycle(now)
+		if got := engine.appliedPaths(); len(got) != 0 {
+			t.Fatalf("cycle applied during another apply: %v", got)
+		}
+		if got := svc.store.Runtime("DP-1").State; got != StateStarting {
+			t.Fatalf("in-flight runtime state = %v, want to remain starting", got)
+		}
+	})
+}
+
+func TestServiceCycleNoopsWhenDisabledOrWithoutMultipleEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		names   []string
+		enabled bool
+	}{
+		{name: "disabled", names: []string{"a.png", "b.png"}},
+		{name: "empty library", enabled: true},
+		{name: "single entry", names: []string{"a.png"}, enabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeCycleLibrary(t, tc.names...)
+			policy := CyclePolicy{Enabled: tc.enabled, Mode: CycleModeInterval, Interval: time.Minute}
+			svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1"}, map[string]Assignment{
+				"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+			}, policy)
+			now := time.Now()
+			svc.cycleStart = now.Add(-time.Hour)
+			svc.runCycle(now)
+			if got := engine.appliedPaths(); len(got) != 0 {
+				t.Fatalf("cycle applied paths %v, want none", got)
+			}
+			if got, _ := svc.store.Assignment("DP-1"); got.Path != filepath.Join(root, "a.png") {
+				t.Fatalf("assignment = %+v, want original assignment", got)
+			}
+		})
+	}
+}
+
+func TestServiceCycleFailurePreservesPreviousAssignment(t *testing.T) {
+	root := writeCycleLibrary(t, "a.png", "b.png")
+	policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+	svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1"}, map[string]Assignment{
+		"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+	}, policy)
+	engine.fail[filepath.Join(root, "b.png")] = errors.New("candidate failed")
+	now := time.Now()
+	svc.cycleStart = now.Add(-policy.Interval)
+
+	svc.runCycle(now)
+	finishCycleJobs(t, svc, 1)
+
+	if got, _ := svc.store.Assignment("DP-1"); got.Path != filepath.Join(root, "a.png") {
+		t.Fatalf("failed cycle assignment = %+v, want prior a.png", got)
+	}
+	if got := svc.store.Runtime("DP-1"); got.State != StateError || got.Err != "candidate failed" {
+		t.Fatalf("failed cycle runtime = %+v, want visible candidate error", got)
+	}
+}
+
+func TestServiceCyclePolicyUpdatesCoalesceAndManualApplyResetsInterval(t *testing.T) {
+	old := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+	svc, _ := newCycleServiceForTest(t, nil, nil, nil, old)
+	first := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: 2 * time.Minute}
+	latest := CyclePolicy{Enabled: true, Mode: CycleModeTime, Time: "08:30"}
+	svc.SetCyclePolicy(first)
+	svc.SetCyclePolicy(latest)
+	if got := <-svc.cycleUpdates; got != latest {
+		t.Fatalf("coalesced policy = %+v, want latest %+v", got, latest)
+	}
+
+	now := time.Now()
+	svc.updateCyclePolicy(latest, now)
+	if svc.cyclePolicy != latest || !svc.cycleStart.Equal(now) {
+		t.Fatalf("updated policy/start = %+v/%v", svc.cyclePolicy, svc.cycleStart)
+	}
+	wantDate := dailyCycleBaseline(now, latest.Time)
+	if svc.cycleDate != wantDate {
+		t.Fatalf("daily baseline = %q, want %q", svc.cycleDate, wantDate)
+	}
+
+	svc.cyclePolicy = old
+	svc.cycleStart = now.Add(-time.Hour)
+	svc.handle(Command{Op: OpApply, Token: "missing", Kind: KindImage, Path: "/wallpaper/manual.png"})
+	if svc.cycleStart.Before(now) {
+		t.Fatalf("manual apply did not reset interval baseline: %v before %v", svc.cycleStart, now)
+	}
+	finishCycleJobs(t, svc, 0)
+}
+
 func TestServiceRefreshesTerminalCatalog(t *testing.T) {
 	engine := newFakeEngine()
 	engine.caps = Capabilities{

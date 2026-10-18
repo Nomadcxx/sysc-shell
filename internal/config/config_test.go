@@ -1006,6 +1006,10 @@ func TestWallpaperDefaults(t *testing.T) {
 		Fade:            false,
 		FadeDuration:    0.5,
 		Hidden:          "none",
+		CycleEnabled:    false,
+		CycleMode:       "interval",
+		CycleInterval:   5 * time.Minute,
+		CycleTime:       "06:00",
 		PauseCovered:    true,
 		PauseLocked:     true,
 		OnBattery:       "limit-10",
@@ -1255,6 +1259,60 @@ func TestWallpaperRoundTrip(t *testing.T) {
 	}
 	if back.Wallpaper != cfg.Wallpaper {
 		t.Fatalf("round trip = %+v, want %+v", back.Wallpaper, cfg.Wallpaper)
+	}
+}
+
+func TestWallpaperCyclePolicyDefaultsAndRoundTrips(t *testing.T) {
+	defaults, err := Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatalf("parse defaults: %v", err)
+	}
+	explicitDefaults, err := Parse([]byte(`{"wallpaper":{"cycle_enabled":false,"cycle_mode":"interval","cycle_interval":"5m","cycle_time":"06:00"}}`))
+	if err != nil {
+		t.Fatalf("parse explicit cycle defaults: %v", err)
+	}
+	if defaults.Wallpaper != explicitDefaults.Wallpaper {
+		t.Fatalf("implicit wallpaper defaults = %+v, explicit cycle defaults = %+v", defaults.Wallpaper, explicitDefaults.Wallpaper)
+	}
+
+	cfg, err := Parse([]byte(`{"wallpaper":{"cycle_enabled":true,"cycle_mode":"time","cycle_interval":"45m","cycle_time":"08:30"}}`))
+	if err != nil {
+		t.Fatalf("parse cycle policy: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if back.Wallpaper != cfg.Wallpaper {
+		t.Fatalf("cycle policy round trip = %+v, want %+v", back.Wallpaper, cfg.Wallpaper)
+	}
+}
+
+func TestWallpaperCyclePolicyRejectsInvalidValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		path string
+	}{
+		{"mode", `{"wallpaper":{"cycle_mode":"random"}}`, "wallpaper.cycle_mode"},
+		{"interval", `{"wallpaper":{"cycle_interval":"30s"}}`, "wallpaper.cycle_interval"},
+		{"time", `{"wallpaper":{"cycle_time":"25:00"}}`, "wallpaper.cycle_time"},
+		{"non-padded time", `{"wallpaper":{"cycle_time":"8:30"}}`, "wallpaper.cycle_time"},
+		{"seconds in time", `{"wallpaper":{"cycle_time":"08:30:00"}}`, "wallpaper.cycle_time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.body))
+			if err == nil {
+				t.Fatalf("Parse(%s) succeeded, want a validation error", tc.body)
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("error %q must name %q", err, tc.path)
+			}
+		})
 	}
 }
 

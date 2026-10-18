@@ -2198,7 +2198,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.syncTrayLocked()
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
+				wallpaperSvc := r.wallpaperSvc
 				r.mu.Unlock()
+				if wallpaperSvc != nil {
+					wallpaperSvc.SetCyclePolicy(wallpaperCyclePolicy(cfg.Wallpaper))
+				}
 				// A settings edit can change the autopause policy; nothing
 				// else re-evaluates it on a static desktop.
 				r.syncAutoPause()

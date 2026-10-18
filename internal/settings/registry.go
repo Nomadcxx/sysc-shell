@@ -707,6 +707,46 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setEnum("wallpaper.hidden", wallpaperHidden, func(c *config.Config, v string) { c.Wallpaper.Hidden = v }),
 		},
 		{
+			Path: "wallpaper.cycle-enabled", Label: "Automatic cycling", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindBool,
+			Describe: "Advance assigned wallpapers on a global schedule.",
+			Get:      getBool(func(c config.Config) bool { return c.Wallpaper.CycleEnabled }),
+			Set:      setBool("wallpaper.cycle-enabled", func(c *config.Config, b bool) { c.Wallpaper.CycleEnabled = b }),
+		},
+		{
+			Path: "wallpaper.cycle-mode", Label: "Schedule", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindEnum,
+			Describe: "Change wallpapers after a fixed interval or once at a local time each day.",
+			Options:  wallpaperCycleModes, OptionLabels: []string{"Interval", "Daily time"},
+			Get: func(c config.Config) string { return c.Wallpaper.CycleMode },
+			Set: setEnum("wallpaper.cycle-mode", wallpaperCycleModes, func(c *config.Config, v string) { c.Wallpaper.CycleMode = v }),
+		},
+		{
+			Path: "wallpaper.cycle-interval", Label: "Interval", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindString,
+			Describe: "How often assigned wallpapers change, as a duration such as 30m (minimum 1m).",
+			Get:      func(c config.Config) string { return c.Wallpaper.CycleInterval.String() },
+			Set: write(func(c *config.Config, v string) error {
+				d, err := time.ParseDuration(strings.TrimSpace(v))
+				if err != nil || d < time.Minute {
+					return fmt.Errorf("settings: wallpaper.cycle-interval: %q is not a duration of at least 1m", v)
+				}
+				c.Wallpaper.CycleInterval = d
+				return nil
+			}),
+		},
+		{
+			Path: "wallpaper.cycle-time", Label: "Daily time", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindString,
+			Describe: "Local time to change wallpapers each day, in HH:MM form.",
+			Get:      func(c config.Config) string { return c.Wallpaper.CycleTime },
+			Set: write(func(c *config.Config, v string) error {
+				value := strings.TrimSpace(v)
+				parsed, err := time.Parse("15:04", value)
+				if err != nil || parsed.Format("15:04") != value {
+					return fmt.Errorf("settings: wallpaper.cycle-time: %q is not a local time in HH:MM form", v)
+				}
+				c.Wallpaper.CycleTime = value
+				return nil
+			}),
+		},
+		{
 			Path: "wallpaper.pause-covered", Label: "When covered", Section: "Wallpaper", Group: "When covered or idle", Kind: KindBool,
 			Describe: "Pause the wallpaper while a window covers this output.",
 			Get:      getBool(func(c config.Config) bool { return c.Wallpaper.PauseCovered }),
@@ -923,6 +963,7 @@ var (
 	wallpaperScales     = []string{"fill", "stretch", "original", "panscan"}
 	wallpaperFPS        = []string{"30", "60", "100"}
 	wallpaperHidden     = []string{"none", "auto-pause", "auto-stop"}
+	wallpaperCycleModes = []string{"interval", "time"}
 	wallpaperOnBattery  = []string{"keep", "pause", "limit-10"}
 	wallpaperLowBattery = []string{"off", "10", "15", "20", "25", "30"}
 	osdPositions        = []string{

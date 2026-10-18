@@ -21,6 +21,18 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
+func TestWallpaperCyclePolicyProjectsConfig(t *testing.T) {
+	cfg := config.Default().Wallpaper
+	cfg.CycleEnabled = true
+	cfg.CycleMode = "time"
+	cfg.CycleInterval = 45 * time.Minute
+	cfg.CycleTime = "08:30"
+	want := wallpaper.CyclePolicy{Enabled: true, Mode: "time", Interval: 45 * time.Minute, Time: "08:30"}
+	if got := wallpaperCyclePolicy(cfg); got != want {
+		t.Fatalf("wallpaper cycle policy = %+v, want %+v", got, want)
+	}
+}
+
 // openWallpaperPanel brings the picker up on a 1920x1080 top-bar output with a
 // service backed by a fake engine, so nothing here execs or touches a socket.
 func openWallpaperPanel(t *testing.T, roots []string) (*Registry, *wallpaper.Service, []wayland.AuxRequest) {

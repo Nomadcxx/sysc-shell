@@ -415,6 +415,12 @@ type Wallpaper struct {
 	// wallpaper is occluded. It also decides whether a video-to-video apply can
 	// use IPC `change`, because gSlapper requires --auto-stop for that.
 	Hidden string
+	// CycleEnabled opts into the global wallpaper rotation policy. CycleMode is
+	// interval or time; CycleTime is a local HH:MM daily target.
+	CycleEnabled  bool
+	CycleMode     string
+	CycleInterval time.Duration
+	CycleTime     string
 	// PauseCovered pauses the wallpaper while a window covers the output, and
 	// PauseLocked while the session is locked.
 	PauseCovered bool
@@ -458,6 +464,7 @@ var (
 	wallpaperHidden     = map[string]bool{"none": true, "auto-pause": true, "auto-stop": true}
 	wallpaperOnBattery  = map[string]bool{"keep": true, "pause": true, "limit-10": true}
 	wallpaperLowBattery = map[int]bool{0: true, 10: true, 15: true, 20: true, 25: true, 30: true}
+	wallpaperCycleModes = map[string]bool{"interval": true, "time": true}
 )
 
 type Weather struct {
@@ -729,6 +736,10 @@ func Default() Config {
 			FPS:             30,
 			FadeDuration:    0.5,
 			Hidden:          "none",
+			CycleEnabled:    false,
+			CycleMode:       "interval",
+			CycleInterval:   5 * time.Minute,
+			CycleTime:       "06:00",
 			PauseCovered:    true,
 			PauseLocked:     true,
 			OnBattery:       "limit-10",
