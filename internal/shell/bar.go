@@ -32,11 +32,13 @@ const BarGap = 4
 // is held only while copying or changing state; shaping and painting happen
 // after the state has been copied out.
 type Bar struct {
-	mu      sync.Mutex
-	pressed string
-	hover   ui.Rect
-	hoverAt struct{ x, y int }
-	inside  bool
+	mu                    sync.Mutex
+	pressed               string
+	hover                 ui.Rect
+	hoverAt               struct{ x, y int }
+	inside                bool
+	axisValue120Action    string
+	axisValue120Remainder int64
 
 	// Sections are arranged by ui.ArrangeBar into absolute bounds, so painting
 	// and hit testing walk them as one flat list.
@@ -935,6 +937,10 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		// A bar item's action is already its stable key. Only a change of
 		// resolved target repaints; sliding along one pill costs nothing.
 		action, _ := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
+		if b.axisValue120Action != action {
+			b.axisValue120Action = ""
+			b.axisValue120Remainder = 0
+		}
 		changed := b.pointer.setHover(action)
 		b.mu.Unlock()
 		return changed
@@ -942,6 +948,8 @@ func (b *Bar) Handle(event wayland.Event) bool {
 	case wayland.EventPointerLeave:
 		b.inside = false
 		b.pressed = ""
+		b.axisValue120Action = ""
+		b.axisValue120Remainder = 0
 		changed := b.pointer.clear()
 		b.mu.Unlock()
 		return changed
@@ -1005,18 +1013,23 @@ func (b *Bar) Handle(event wayland.Event) bool {
 			b.mu.Unlock()
 			return false
 		}
+		delta := int(event.AxisDiscrete)
+		if delta != 0 {
+			// Discrete steps remain authoritative when a compositor supplies them.
+			b.axisValue120Action = ""
+			b.axisValue120Remainder = 0
+		} else if event.AxisValue120 != 0 {
+			if b.axisValue120Action != action {
+				b.axisValue120Action = action
+				b.axisValue120Remainder = 0
+			}
+			b.axisValue120Remainder += int64(event.AxisValue120)
+			delta = int(b.axisValue120Remainder / 120)
+			b.axisValue120Remainder %= 120
+		}
 		axisFn := b.onAxis
 		gesture, isTray := b.trayGestureLocked(action)
 		b.mu.Unlock()
-		delta := int(event.AxisDiscrete)
-		if delta == 0 {
-			switch {
-			case event.AxisValue120 > 0:
-				delta = 1
-			case event.AxisValue120 < 0:
-				delta = -1
-			}
-		}
 		if axisFn != nil && axisFn(action, delta) {
 			return true
 		}
