@@ -17,7 +17,7 @@ buildGoModule {
   # A go.mod change without this refresh fails the build loudly, which is the
   # point of a fixed-output derivation. The weather plugin shares this go.mod,
   # so nix/plugin-weather.nix carries the same hash.
-  vendorHash = "sha256-zYnmJxcuCxY39ypoOg4jCOG/U6T1krb9Pw0cez7RaN8=";
+  vendorHash = "sha256-+lyN7hiOfvUJOOjJGJ5dEV6XPLrFk5j0284o3DjF7x4=";
 
   # Only the shell binary. The weather plugin has its own output because a
   # plugin is a directory with a manifest, not a bare binary; building it here
