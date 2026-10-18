@@ -19,6 +19,9 @@ import (
 // filesystem widgets watching different mounts.
 type Item struct {
 	ID string
+	// Scroll is the bounded action performed when the wheel is over this item.
+	// Empty follows the item's default, which keeps volume widgets scrollable.
+	Scroll BarScrollAction
 	// Format is the Go layout string for a clock. Empty on other items.
 	Format string
 	// Boundary is how often this clock's text can change, derived from Format
@@ -57,6 +60,28 @@ type Item struct {
 	Plugin   string
 	Entry    string
 	Instance string
+}
+
+// BarScrollAction is the fixed set of actions a bar item may bind to its
+// wheel. An empty value means the item's default action.
+type BarScrollAction string
+
+const (
+	ScrollActionNone       BarScrollAction = "none"
+	ScrollActionVolume     BarScrollAction = "volume"
+	ScrollActionBrightness BarScrollAction = "brightness"
+)
+
+// EffectiveScrollAction resolves an omitted value without serializing an
+// option for every item in the built-in bar.
+func (i Item) EffectiveScrollAction() BarScrollAction {
+	if i.Scroll != "" {
+		return i.Scroll
+	}
+	if i.ID == "volume" {
+		return ScrollActionVolume
+	}
+	return ScrollActionNone
 }
 
 // Plugins is the shell's record of external plugins: which are turned on and

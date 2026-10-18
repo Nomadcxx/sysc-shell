@@ -62,9 +62,10 @@ type barView struct {
 type textWidget struct {
 	// node is the capsule the bar lays out and hits. inner is the content it
 	// wraps, and is what format writes to.
-	node   *ui.Node
-	inner  *ui.Node
-	format func(barView) string
+	node         *ui.Node
+	inner        *ui.Node
+	scrollAction config.BarScrollAction
+	format       func(barView) string
 	// refresh rebuilds a widget whose content is a subtree rather than a
 	// string. It reports whether the tree changed. Widgets with a format do
 	// not set it.
@@ -163,6 +164,7 @@ func clockFloorFor(items []config.Item) string {
 func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFloor string, side bool, contentWidth int) []textWidget {
 	out := make([]textWidget, 0, len(items))
 	for _, item := range items {
+		widgetStart := len(out)
 		switch item.ID {
 		case "launcher":
 			out = append(out, textWidget{
@@ -295,6 +297,9 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 				w = capsuled(w, 0)
 			}
 			out = append(out, w)
+		}
+		if len(out) > widgetStart && item.ID != "group" {
+			out[len(out)-1].scrollAction = item.EffectiveScrollAction()
 		}
 	}
 	for i := range out {

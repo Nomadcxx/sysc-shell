@@ -509,9 +509,26 @@ func TestInspectorShowsTheSelectedWidgetsOwnOptions(t *testing.T) {
 	}
 }
 
+func TestInspectorOffersTheSelectedWidgetsScrollAction(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
+	if !barActivateMu(reg, h, "bar-select:left:0:-1") {
+		t.Fatal("select action was not handled")
+	}
+	node := barInspector(h, 600)
+	var label, control bool
+	walkNodes(node, func(n *ui.Node) {
+		label = label || n.Text == "Scroll action"
+		control = control || strings.HasPrefix(n.Action, "pick:widgets.left.0.scroll=")
+	})
+	if !label || !control {
+		t.Fatalf("scroll action inspector row: label=%t control=%t", label, control)
+	}
+}
+
 func TestInspectorSaysWhenAWidgetHasNoOptions(t *testing.T) {
 	t.Parallel()
-	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "wordmark"}}})
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "workspace"}}})
 	barActivateMu(reg, h, "bar-select:left:0:-1")
 	var text []string
 	walkNodes(barInspector(h, 600), func(n *ui.Node) {

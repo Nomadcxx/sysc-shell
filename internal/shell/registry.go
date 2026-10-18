@@ -1214,6 +1214,10 @@ func (r *Registry) stepAudioAsync(action string) {
 	go func() { _ = r.stepAudio(action) }()
 }
 
+func (r *Registry) stepBrightnessAsync(action string) {
+	go func() { _ = r.stepBrightness(action) }()
+}
+
 func (r *Registry) stepAudio(action string) error {
 	if r.audio == nil || !r.audio.Available() {
 		return fmt.Errorf("audio unavailable")
@@ -2019,11 +2023,18 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return r.handleWorkspacePillAxis(global, id, delta)
 		}
 		switch action {
-		case panelAudioAction:
+		case barScrollActionPrefix + string(config.ScrollActionVolume):
 			if delta > 0 {
 				r.stepAudioAsync("up")
 			} else if delta < 0 {
 				r.stepAudioAsync("down")
+			}
+			return true
+		case barScrollActionPrefix + string(config.ScrollActionBrightness):
+			if delta > 0 {
+				r.stepBrightnessAsync("up")
+			} else if delta < 0 {
+				r.stepBrightnessAsync("down")
 			}
 			return true
 		}
