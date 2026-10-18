@@ -716,16 +716,20 @@ func (d *ddcDev) Read() (int, error) {
 // the same trailing-edge pattern DMS uses: a dragged slider produces one bus
 // transaction, not one per pixel.
 func (d *ddcDev) Set(percent int) error {
-	percent = min(max(percent, 0), 100)
 	d.mu.Lock()
+	d.queueWriteLocked(percent)
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *ddcDev) queueWriteLocked(percent int) {
+	percent = min(max(percent, 0), 100)
 	d.pending, d.hasPend = percent, true
 	if d.timer == nil {
 		d.timer = time.AfterFunc(ddcWriteDebounce, d.writePending)
 	} else {
 		d.timer.Reset(ddcWriteDebounce)
 	}
-	d.mu.Unlock()
-	return nil
 }
 
 func (d *ddcDev) writePending() {
@@ -755,11 +759,25 @@ func (d *ddcDev) Step(delta int) error {
 	if delta == 0 {
 		return nil
 	}
+	d.mu.Lock()
+	if d.hasPend {
+		d.queueWriteLocked(d.pending + delta)
+		d.mu.Unlock()
+		return nil
+	}
+	d.mu.Unlock()
+
 	level, err := d.Read()
 	if err != nil {
 		return err
 	}
-	return d.Set(level + delta)
+	d.mu.Lock()
+	if d.hasPend {
+		level = d.pending
+	}
+	d.queueWriteLocked(level + delta)
+	d.mu.Unlock()
+	return nil
 }
 
 func openI2C(path string) (int, error) {

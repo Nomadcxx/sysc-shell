@@ -693,6 +693,35 @@ func TestBrightnessAssembleReusesDDCInstance(t *testing.T) {
 	}
 }
 
+func TestDDCStepsAccumulateDuringDebounce(t *testing.T) {
+	d := &ddcDev{
+		max:     100,
+		devRoot: t.TempDir(),
+		cache:   50,
+		cacheAt: time.Now(),
+	}
+	defer func() {
+		d.mu.Lock()
+		if d.timer != nil {
+			d.timer.Stop()
+		}
+		d.mu.Unlock()
+	}()
+
+	for range 3 {
+		if err := d.Step(5); err != nil {
+			t.Fatalf("Step: %v", err)
+		}
+	}
+
+	d.mu.Lock()
+	got, pending := d.pending, d.hasPend
+	d.mu.Unlock()
+	if !pending || got != 65 {
+		t.Fatalf("pending DDC level = %d, pending=%t; want 65 after three +5 steps", got, pending)
+	}
+}
+
 func fixtureSysfs(t *testing.T, name string, cur, max int) string {
 	t.Helper()
 	root := t.TempDir()
