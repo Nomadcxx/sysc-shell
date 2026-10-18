@@ -74,14 +74,26 @@ type Trigger struct {
 	AnchorAction string
 }
 
+type settingsWriteChange struct {
+	path  string
+	value string
+}
+
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
 // leases, and reveal state.
 type PanelHost struct {
 	// writeTimer is the pending settings write, if a field or slider has been
 	// moved and has not settled yet.
 	writeTimer *time.Timer
-	id         PanelID
-	output     uint32
+	// writeTimerGeneration invalidates callbacks from replaced or flushed timers.
+	// Registry.mu guards it along with writeTimer.
+	writeTimerGeneration uint64
+	// settingsWriteRevision and settingsWriteChanges are guarded by
+	// Registry.settingsWriteMu.
+	settingsWriteRevision uint64
+	settingsWriteChanges  []settingsWriteChange
+	id                    PanelID
+	output                uint32
 	// filesOwner is the files session whose tree this host currently renders
 	// (PanelFiles only, set at spawn and on rebuild). Teardown cancels a
 	// pending pick only while the host belongs to the current session, so
@@ -4567,7 +4579,7 @@ func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 	// writing per keystroke rewrote the whole document each time.
 	switch e.Kind {
 	case settings.KindInt, settings.KindString:
-		h.deferDraft(r)
+		h.deferDraft(r, e.Path, v)
 	default:
 		h.persistDraft(r)
 	}
@@ -4580,34 +4592,67 @@ const settingsWriteDelay = 400 * time.Millisecond
 
 // deferDraft arms the write, replacing any write already armed, so a run of
 // edits collapses into the one that follows the last of them.
-func (h *PanelHost) deferDraft(r *Registry) {
+func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 	if h.writeTimer != nil {
 		h.writeTimer.Stop()
+	}
+	h.writeTimerGeneration++
+	generation := h.writeTimerGeneration
+	var revision uint64
+	if h.id == PanelSettings {
+		r.settingsWriteMu.Lock()
+		h.settingsWriteRevision++
+		revision = h.settingsWriteRevision
+		h.settingsWriteChanges = appendSettingsWriteChange(h.settingsWriteChanges, path, value)
+		r.settingsWriteMu.Unlock()
 	}
 	delay := settingsWriteDelay
 	if r != nil && r.writeDelay > 0 {
 		delay = r.writeDelay
 	}
 	h.writeTimer = time.AfterFunc(delay, func() {
-		r.mu.Lock()
-		if r.panelHosts[h.id] != h {
-			// The host was replaced while the edit was settling; its draft is
-			// no longer the one on screen.
-			r.mu.Unlock()
-			return
-		}
-		h.writeTimer = nil
-		if h.id == PanelTerminalArt {
-			h.persistDraft(r)
-			r.mu.Unlock()
-			return
-		}
-		cfg := h.draft
-		r.mu.Unlock()
-		// scheduleControl runs the write off the Wayland owner, re-takes the
-		// lock, discards the result if the host has gone, and rebuilds.
-		r.scheduleControl(h, func() error { return r.writeConfig(cfg) })
+		h.writeTimerExpired(r, generation, revision)
 	})
+}
+
+func (h *PanelHost) writeTimerExpired(r *Registry, generation, revision uint64) {
+	r.mu.Lock()
+	if r.panelHosts[h.id] != h || h.writeTimer == nil || h.writeTimerGeneration != generation {
+		// The host was replaced while the edit was settling; its draft is
+		// no longer the one on screen, or a newer timer replaced this one.
+		r.mu.Unlock()
+		return
+	}
+	h.writeTimer = nil
+	if h.id == PanelTerminalArt {
+		h.persistDraft(r)
+		r.mu.Unlock()
+		return
+	}
+	r.settingsWriteMu.Lock()
+	if h.settingsWriteRevision != revision {
+		r.settingsWriteMu.Unlock()
+		r.mu.Unlock()
+		return
+	}
+	changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
+	r.settingsWriteMu.Unlock()
+	r.mu.Unlock()
+	// scheduleControlResult runs the write off the Wayland owner, re-takes the
+	// lock, discards the result if the host has gone, and rebuilds.
+	r.scheduleControlResult(h, func() (bool, error) {
+		return r.writeDebouncedSettingsChanges(h, changes, revision)
+	})
+}
+
+func appendSettingsWriteChange(changes []settingsWriteChange, path, value string) []settingsWriteChange {
+	for i, change := range changes {
+		if change.path == path {
+			changes = append(changes[:i], changes[i+1:]...)
+			break
+		}
+	}
+	return append(changes, settingsWriteChange{path: path, value: value})
 }
 
 // flushDraft writes an edit that has not settled yet. Closing the panel is
@@ -4616,8 +4661,26 @@ func (h *PanelHost) flushDraft(r *Registry) {
 	if h.writeTimer == nil {
 		return
 	}
+	h.writeTimerGeneration++
 	h.writeTimer.Stop()
 	h.writeTimer = nil
+	if h.id == PanelSettings {
+		r.settingsWriteMu.Lock()
+		revision := h.settingsWriteRevision
+		changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
+		r.settingsWriteMu.Unlock()
+		if len(changes) == 0 {
+			return
+		}
+		apply, err := r.writeSettingsChanges(h, changes, revision, r.configPath, r.cfg.Clone(),
+			append([]theme.PaletteInfo(nil), r.palettes...))
+		if apply && err != nil {
+			h.errLabel = err.Error()
+		} else if apply {
+			h.errLabel = ""
+		}
+		return
+	}
 	h.persistDraft(r)
 }
 

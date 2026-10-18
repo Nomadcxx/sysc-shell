@@ -1883,6 +1883,64 @@ func (r *Registry) writeConfig(c config.Config) error {
 	return r.writeConfigLocked(c)
 }
 
+func (r *Registry) writeDebouncedSettingsChanges(h *PanelHost, changes []settingsWriteChange, revision uint64) (bool, error) {
+	r.mu.Lock()
+	path := r.configPath
+	fallback := r.cfg.Clone()
+	palettes := append([]theme.PaletteInfo(nil), r.palettes...)
+	r.mu.Unlock()
+	return r.writeSettingsChanges(h, changes, revision, path, fallback, palettes)
+}
+
+func applySettingsWriteChanges(cfg *config.Config, changes []settingsWriteChange, palettes []theme.PaletteInfo) error {
+	registryFor := func(c config.Config) *settings.Registry {
+		return settings.DefaultFor(c, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)))
+	}
+	for _, change := range changes {
+		entry := registryFor(*cfg).ByPath(change.path)
+		if entry == nil || entry.Set == nil {
+			return fmt.Errorf("settings: %q is no longer available", change.path)
+		}
+		if err := entry.Set(cfg, change.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Registry) writeSettingsChanges(h *PanelHost, changes []settingsWriteChange, revision uint64, path string, fallback config.Config, palettes []theme.PaletteInfo) (bool, error) {
+	// Take configWriteMu first. The worker never takes Registry.mu while it
+	// holds either write lock, so reloads can invalidate its revision safely.
+	r.configWriteMu.Lock()
+	defer r.configWriteMu.Unlock()
+	r.settingsWriteMu.Lock()
+	defer r.settingsWriteMu.Unlock()
+	if h.settingsWriteRevision != revision {
+		return false, nil
+	}
+	if path == "" {
+		h.settingsWriteChanges = nil
+		return true, nil
+	}
+	cfg, err := config.LoadRequired(path)
+	if errors.Is(err, os.ErrNotExist) {
+		cfg = fallback
+	} else if err != nil {
+		return true, err
+	}
+	if err := applySettingsWriteChanges(&cfg, changes, palettes); err != nil {
+		return true, err
+	}
+	if err := r.writeConfigLocked(cfg); err != nil {
+		return true, err
+	}
+	h.settingsWriteChanges = nil
+	if r.reloads != nil {
+		r.settingsWriteReloads = append(r.settingsWriteReloads, cfg.Clone())
+	}
+	return true, nil
+}
+
 // writeConfigLocked is writeConfig while configWriteMu is held by a config
 // transaction or writeConfig itself.
 func (r *Registry) writeConfigLocked(c config.Config) error {

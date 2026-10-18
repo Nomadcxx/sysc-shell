@@ -461,19 +461,28 @@ func audioActionID(action, prefix string) (int, bool) {
 }
 
 func (r *Registry) scheduleControl(h *PanelHost, run func() error) {
+	r.scheduleControlResult(h, func() (bool, error) { return true, run() })
+}
+
+// scheduleControlResult applies the error and rebuilds the host only when the
+// result still applies. A skipped stale operation leaves existing feedback in
+// place but still invalidates the surface after its worker finishes.
+func (r *Registry) scheduleControlResult(h *PanelHost, run func() (bool, error)) {
 	go func() {
-		err := run()
+		apply, err := run()
 		r.mu.Lock()
 		if r.panelHosts[h.id] != h {
 			r.mu.Unlock()
 			return
 		}
-		if err != nil {
-			h.errLabel = err.Error()
-		} else {
-			h.errLabel = ""
+		if apply {
+			if err != nil {
+				h.errLabel = err.Error()
+			} else {
+				h.errLabel = ""
+			}
+			r.rebuildPanel(h)
 		}
-		r.rebuildPanel(h)
 		output, id := h.output, panelSurfaceID(h.id)
 		// The invalidation send can block, so it runs with Registry.mu free.
 		r.mu.Unlock()
