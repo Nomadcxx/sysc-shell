@@ -190,17 +190,9 @@ func parsePrivacyDump(data []byte) (PrivacySnapshot, error) {
 		case consumer.class == "" || !knownNonCaptureNodeClass(consumer.class):
 			switch {
 			case sourceOK && source.state == "running" && audioSourceNode(source, true):
-				formFactor, _ := privacyDeviceMetadata(source, devices)
-				switch audioSourceKind(formFactor) {
-				case privacyMicrophone:
-					snapshot.MicrophoneActive = true
-				case privacyNotMicrophone:
-				default:
-					snapshot.MicrophoneUnknown = true
-				}
+				snapshot.MicrophoneUnknown = true
 			case sourceOK && source.state == "running" && videoSourceNode(source, true):
-				_, api := privacyDeviceMetadata(source, devices)
-				videoPaths[PrivacyVideoPath{SourceNodeID: link.outputNodeID, Camera: api == "v4l2"}] = struct{}{}
+				videoPaths[PrivacyVideoPath{SourceNodeID: link.outputNodeID}] = struct{}{}
 			case !sourceOK || source.class == "":
 				snapshot.MicrophoneUnknown = true
 				videoPaths[PrivacyVideoPath{SourceNodeID: link.outputNodeID}] = struct{}{}

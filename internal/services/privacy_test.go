@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -92,6 +93,39 @@ func TestParsePrivacyDumpKeepsUnclassifiedRunningCaptureUnknown(t *testing.T) {
 	want := []PrivacyVideoPath{{SourceNodeID: 3}}
 	if !slices.Equal(snapshot.VideoPaths, want) {
 		t.Fatalf("unclassified video paths = %+v, want %+v", snapshot.VideoPaths, want)
+	}
+}
+
+func TestParsePrivacyDumpDoesNotPromoteUnknownConsumersToCapture(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		classProps string
+	}{
+		{name: "missing class"},
+		{name: "unrecognized class", classProps: `"media.class":"Vendor/Custom"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := fmt.Sprintf(`[
+				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source","device.form-factor":"microphone"}}},
+				{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.api":"v4l2"}}},
+				{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{%s}}},
+				{"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{%s}}},
+				{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":3}},
+				{"id":6,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":2,"input-node-id":4}}
+			]`, tc.classProps, tc.classProps)
+			snapshot, err := parsePrivacyDump([]byte(input))
+			if err != nil {
+				t.Fatalf("parsePrivacyDump: %v", err)
+			}
+			if !snapshot.Known || snapshot.MicrophoneActive || !snapshot.MicrophoneUnknown {
+				t.Fatalf("unknown audio consumer = %+v, want unknown microphone activity", snapshot)
+			}
+			want := []PrivacyVideoPath{{SourceNodeID: 2}}
+			if !slices.Equal(snapshot.VideoPaths, want) {
+				t.Fatalf("unknown video consumer paths = %+v, want %+v", snapshot.VideoPaths, want)
+			}
+		})
 	}
 }
 
