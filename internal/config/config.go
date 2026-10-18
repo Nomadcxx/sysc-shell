@@ -667,7 +667,8 @@ const (
 // a widget.
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
-	"cpu": {}, "memory": {}, "temperature": {}, "gpu": {}, "filesystem": {}, "block": {}, "network": {},
+	"keyboard-layout": {},
+	"cpu":             {}, "memory": {}, "temperature": {}, "gpu": {}, "filesystem": {}, "block": {}, "network": {},
 	"weather": {}, "battery": {}, "notifications": {}, "privacy": {},
 	"running-apps": {}, "wordmark": {},
 	"launcher": {},

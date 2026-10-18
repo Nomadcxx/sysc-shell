@@ -1947,6 +1947,9 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		switch {
 		case action == panelLauncherAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelLauncher, out, trig) == nil
+		case action == panelKeyboardLayoutAction && (button == 0 || button == buttonLeft):
+			trig = triggerAtAction(bar, trig, panelKeyboardLayoutAction)
+			return r.TogglePanel(PanelKeyboardLayout, out, trig) == nil
 		case action == panelMonitorAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelMonitor, out, trig) == nil
 		case action == panelSessionAction && button == buttonRight:
@@ -2802,6 +2805,10 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	next := projectOutputs(s)
 
 	r.mu.Lock()
+	previousLayouts := r.layouts
+	previousLayoutsSeen := r.layoutsSeen
+	layoutNamesChanged := !slices.Equal(previousLayouts.Names, s.Layouts.Names)
+	layoutCurrentChanged := previousLayouts.Current != s.Layouts.Current
 	previousPrivacy := r.privacy
 	previousNiri := r.niriSnapshot
 	// Replaced wholesale, not merged: a connector absent from the projection
@@ -2842,10 +2849,25 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 		}
 	}
 	changed := r.applyRunningIconsLocked()
-	layoutView, showLayout := layoutOSD(r.layouts, s.Layouts, r.layoutsSeen)
+	layoutView, showLayout := layoutOSD(previousLayouts, s.Layouts, previousLayoutsSeen)
 	r.layouts = niri.KeyboardLayouts{Names: slices.Clone(s.Layouts.Names), Current: s.Layouts.Current}
 	if len(s.Layouts.Names) > 0 {
 		r.layoutsSeen = true
+	}
+	layoutPickerUpdated := false
+	layoutPickerOutput := uint32(0)
+	if h := r.panelHosts[PanelKeyboardLayout]; h != nil && (layoutNamesChanged || layoutCurrentChanged) {
+		if layoutNamesChanged && h.layoutRequested >= 0 {
+			h.layoutRequestSeq++
+			h.layoutRequested = -1
+		} else if layoutCurrentChanged && h.layoutRequested >= 0 && s.Layouts.Current == h.layoutRequested {
+			h.layoutRequestSeq++
+			h.layoutRequested = -1
+		}
+		h.layoutUnavailable = false
+		r.rebuildPanel(h)
+		layoutPickerUpdated = true
+		layoutPickerOutput = h.output
 	}
 	switcherUpdated := false
 	var switcherOutput uint32
@@ -2858,6 +2880,9 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.publish(changed)
 	if runningMenuUpdated {
 		r.publishSurface(runningMenuOutput, runningAppMenuSurfaceID)
+	}
+	if layoutPickerUpdated {
+		r.publishSurface(layoutPickerOutput, panelSurfaceID(PanelKeyboardLayout))
 	}
 	if switcherUpdated {
 		r.publishSurface(switcherOutput, windowSwitcherSurfaceID)
@@ -2884,6 +2909,8 @@ func (r *Registry) viewLocked(connector string) barView {
 		Now:       r.now,
 		Workspace: state.Workspace,
 		Title:     state.Title,
+		Layouts:   niri.KeyboardLayouts{Names: slices.Clone(r.niriSnapshot.Layouts.Names), Current: r.niriSnapshot.Layouts.Current},
+		Locale:    r.cfg.Session.Language,
 		Pills:     state.Pills,
 		Metrics:   r.sample,
 		History:   r.historyLocked(),

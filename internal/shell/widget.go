@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -20,6 +21,8 @@ type barView struct {
 	Now       time.Time
 	Workspace string
 	Title     string
+	Layouts   niri.KeyboardLayouts
+	Locale    string
 	// Pills are this output's workspaces in index order.
 	Pills []workspacePill
 	// Metrics is the newest sampling pass. Its nil fields mean unleased or
@@ -88,12 +91,13 @@ type textWidget struct {
 // groupGap separates members inside a group capsule. noCapsule tells
 // buildWidgets to leave a member unwrapped.
 const (
-	groupGap               = 10
-	noCapsule              = -1
-	clockWidthFloor        = "Wed 30 Sep"
-	gradientTrip           = 2 * time.Second
-	marqueePixelsPerSecond = 30
-	panelLauncherAction    = "panel:launcher"
+	groupGap                  = 10
+	noCapsule                 = -1
+	clockWidthFloor           = "Wed 30 Sep"
+	gradientTrip              = 2 * time.Second
+	marqueePixelsPerSecond    = 30
+	panelLauncherAction       = "panel:launcher"
+	panelKeyboardLayoutAction = "panel:keyboard-layout"
 )
 
 // capsuled wraps one built widget in its pill. Wrapping happens in a single
@@ -211,6 +215,8 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 			w := textWidget{node: stack}
 			w.refresh = func(v barView) bool { return refreshWorkspacePills(stack, v, m, side) }
 			out = append(out, w)
+		case "keyboard-layout":
+			out = append(out, buildKeyboardLayoutWidget())
 		case "window-title":
 			out = append(out, textWidget{
 				node:    &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},

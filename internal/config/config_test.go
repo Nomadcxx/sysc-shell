@@ -94,6 +94,24 @@ func TestBluetoothIsKnownButNotDefault(t *testing.T) {
 	}
 }
 
+func TestKeyboardLayoutIsAnOptInBarItem(t *testing.T) {
+	t.Parallel()
+	parsed, err := Parse([]byte(`{"bar":{"items":{"right":["keyboard-layout"]}}}`))
+	if err != nil {
+		t.Fatalf("keyboard-layout config: %v", err)
+	}
+	if len(parsed.Bar.Right) != 1 || parsed.Bar.Right[0].ID != "keyboard-layout" {
+		t.Fatalf("parsed keyboard-layout item = %+v", parsed.Bar.Right)
+	}
+	for _, lane := range [][]Item{Default().Bar.Left, Default().Bar.Center, Default().Bar.Right} {
+		for _, item := range lane {
+			if item.ID == "keyboard-layout" {
+				t.Fatal("keyboard-layout must remain opt-in")
+			}
+		}
+	}
+}
+
 func TestPrivacyIsKnownAndShipsOnTheDefaultBar(t *testing.T) {
 	t.Parallel()
 	if _, ok := knownItems["privacy"]; !ok {

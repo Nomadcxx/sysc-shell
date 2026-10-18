@@ -24,6 +24,7 @@ const (
 	PanelFiles
 	PanelTerminalArt
 	PanelOnboarding
+	PanelKeyboardLayout
 )
 
 func (p PanelID) String() string {
@@ -64,6 +65,8 @@ func (p PanelID) String() string {
 		return "terminal-art"
 	case PanelOnboarding:
 		return "onboarding"
+	case PanelKeyboardLayout:
+		return "keyboard-layout"
 	default:
 		return "unknown"
 	}
