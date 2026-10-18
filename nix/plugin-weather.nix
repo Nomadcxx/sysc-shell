@@ -12,7 +12,7 @@ buildGoModule {
   #   nix build .#sysc-shell-plugin-weather   # then copy the `got:` hash here
   # The weather plugin shares the repository's go.mod, so this is the same hash
   # as nix/sysc-shell.nix holds.
-  vendorHash = "sha256-zYnmJxcuCxY39ypoOg4jCOG/U6T1krb9Pw0cez7RaN8=";
+  vendorHash = "sha256-+lyN7hiOfvUJOOjJGJ5dEV6XPLrFk5j0284o3DjF7x4=";
 
   # Only the plugin binary. Without this the builder compiles (and tests) every
   # Go package in the repository, the shell binary included, which is the
