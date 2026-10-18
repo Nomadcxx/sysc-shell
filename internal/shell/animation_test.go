@@ -1275,6 +1275,26 @@ func TestSpringConfigureReducedMotionClampsVisibilityOvershoot(t *testing.T) {
 	}
 }
 
+func TestSpringTargetAfterReducedMotionStartsFromCurrentTime(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("h", animHover, 1)
+	clock.add(20 * time.Millisecond)
+	_ = a.Value("h", animHover)
+
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion, Reduced: true}, true)
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion}, false)
+	a.Target("h", animHover, 0)
+
+	if got := a.Value("h", animHover); got != 1 {
+		t.Fatalf("new spring advanced from a stale timestamp: got %g, want its start position 1", got)
+	}
+	clock.add(springStep)
+	if got := a.Value("h", animHover); got >= 1 || got <= 0 {
+		t.Fatalf("new spring did not begin moving after one step: %g", got)
+	}
+}
+
 func TestSpringConfigureSpeedPreservesState(t *testing.T) {
 	t.Parallel()
 	a, clock := newTestAnimator(false)

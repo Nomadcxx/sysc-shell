@@ -607,10 +607,10 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 			if current.spring != nil {
 				x, _ = a.advanceSpring(key, now)
 				current = a.values[key]
+				velocity, advanced, remainder = current.velocity, current.advanced, current.remainder
 			} else {
 				x = current.at(now)
 			}
-			velocity, advanced, remainder = current.velocity, current.advanced, current.remainder
 		}
 		if spring := a.springFor(channel, to > x); spring != nil {
 			a.values[key] = animValue{
