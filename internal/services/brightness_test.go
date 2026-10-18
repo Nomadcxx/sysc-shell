@@ -722,6 +722,94 @@ func TestDDCStepsAccumulateDuringDebounce(t *testing.T) {
 	}
 }
 
+func TestDDCWriteKeepsPendingStepDuringInFlightWrite(t *testing.T) {
+	d := &ddcDev{
+		max:     100,
+		devRoot: t.TempDir(),
+		cache:   50,
+		cacheAt: time.Now(),
+		pending: 55,
+		hasPend: true,
+	}
+	started := make(chan int, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.writePendingWith(func(percent int) error {
+			started <- percent
+			<-release
+			return nil
+		})
+	}()
+	defer func() {
+		releaseOnce.Do(func() { close(release) })
+		<-done
+		d.mu.Lock()
+		if d.timer != nil {
+			d.timer.Stop()
+		}
+		d.mu.Unlock()
+	}()
+
+	select {
+	case percent := <-started:
+		if percent != 55 {
+			t.Fatalf("in-flight write target = %d, want 55", percent)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DDC write did not start")
+	}
+
+	if err := d.Step(5); err != nil {
+		t.Fatalf("Step during DDC write: %v", err)
+	}
+
+	d.mu.Lock()
+	got, pending := d.pending, d.hasPend
+	inFlight, writing := d.inFlight, d.hasInFlight
+	if d.timer != nil {
+		d.timer.Stop()
+		d.timer = nil
+	}
+	d.mu.Unlock()
+	if !pending || got != 60 || !writing || inFlight != 55 {
+		t.Fatalf("pending=%d/%t, in-flight=%d/%t; want pending 60 and in-flight 55", got, pending, inFlight, writing)
+	}
+
+	called := false
+	d.writePendingWith(func(int) error {
+		called = true
+		return nil
+	})
+	if called {
+		t.Fatal("a second DDC write overlapped the in-flight write")
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	<-done
+	d.mu.Lock()
+	got, pending = d.pending, d.hasPend
+	inFlight, writing = d.inFlight, d.hasInFlight
+	cache := d.cache
+	d.mu.Unlock()
+	if cache != 55 || writing || inFlight != 0 || !pending || got != 60 {
+		t.Fatalf("after write: cache=%d, pending=%d/%t, in-flight=%d/%t; want cache 55 and pending 60", cache, got, pending, inFlight, writing)
+	}
+}
+
+func TestDDCWriteClearsInFlightAfterFailure(t *testing.T) {
+	d := &ddcDev{max: 100, cache: 50, cacheAt: time.Now(), pending: 55, hasPend: true}
+	d.writePendingWith(func(int) error { return errors.New("write failed") })
+	d.mu.Lock()
+	cache, inFlight, writing := d.cache, d.inFlight, d.hasInFlight
+	d.mu.Unlock()
+	if cache != 50 || inFlight != 0 || writing {
+		t.Fatalf("after failed write: cache=%d, in-flight=%d/%t; want cache 50 and no in-flight target", cache, inFlight, writing)
+	}
+}
+
 func fixtureSysfs(t *testing.T, name string, cur, max int) string {
 	t.Helper()
 	root := t.TempDir()

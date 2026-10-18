@@ -674,12 +674,14 @@ type ddcDev struct {
 	max       int
 	devRoot   string
 
-	mu      sync.Mutex
-	cache   int
-	cacheAt time.Time
-	pending int
-	hasPend bool
-	timer   *time.Timer
+	mu          sync.Mutex
+	cache       int
+	cacheAt     time.Time
+	pending     int
+	hasPend     bool
+	inFlight    int
+	hasInFlight bool
+	timer       *time.Timer
 }
 
 func (d *ddcDev) ID() string    { return "ddc:" + d.connector }
@@ -733,25 +735,43 @@ func (d *ddcDev) queueWriteLocked(percent int) {
 }
 
 func (d *ddcDev) writePending() {
+	d.writePendingWith(func(percent int) error {
+		fd, err := openI2C(d.path())
+		if err != nil {
+			slog.Warn("brightness: ddc write open failed", "connector", d.connector, "err", err)
+			return err
+		}
+		defer closeI2C(fd)
+		if err := ddcSetVCP(fd, ddcVCPBright, ddcPercentToValue(percent, d.max)); err != nil {
+			slog.Warn("brightness: ddc write failed", "connector", d.connector, "err", err)
+			return err
+		}
+		return nil
+	})
+}
+
+func (d *ddcDev) writePendingWith(write func(int) error) {
 	d.mu.Lock()
-	percent, ok := d.pending, d.hasPend
-	d.hasPend, d.timer = false, nil
+	d.timer = nil
+	if d.hasInFlight || !d.hasPend {
+		d.mu.Unlock()
+		return
+	}
+	percent := d.pending
+	d.hasPend = false
+	d.inFlight, d.hasInFlight = percent, true
 	d.mu.Unlock()
-	if !ok {
-		return
-	}
-	fd, err := openI2C(d.path())
-	if err != nil {
-		slog.Warn("brightness: ddc write open failed", "connector", d.connector, "err", err)
-		return
-	}
-	defer closeI2C(fd)
-	if err := ddcSetVCP(fd, ddcVCPBright, ddcPercentToValue(percent, d.max)); err != nil {
-		slog.Warn("brightness: ddc write failed", "connector", d.connector, "err", err)
-		return
-	}
+
+	err := write(percent)
+
 	d.mu.Lock()
-	d.cache, d.cacheAt = percent, time.Now()
+	d.inFlight, d.hasInFlight = 0, false
+	if err == nil {
+		d.cache, d.cacheAt = percent, time.Now()
+	}
+	if d.hasPend && d.timer == nil {
+		d.timer = time.AfterFunc(ddcWriteDebounce, d.writePending)
+	}
 	d.mu.Unlock()
 }
 
@@ -765,6 +785,11 @@ func (d *ddcDev) Step(delta int) error {
 		d.mu.Unlock()
 		return nil
 	}
+	if d.hasInFlight {
+		d.queueWriteLocked(d.inFlight + delta)
+		d.mu.Unlock()
+		return nil
+	}
 	d.mu.Unlock()
 
 	level, err := d.Read()
@@ -774,6 +799,8 @@ func (d *ddcDev) Step(delta int) error {
 	d.mu.Lock()
 	if d.hasPend {
 		level = d.pending
+	} else if d.hasInFlight {
+		level = d.inFlight
 	}
 	d.queueWriteLocked(level + delta)
 	d.mu.Unlock()
