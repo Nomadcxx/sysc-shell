@@ -727,15 +727,20 @@ func (d *ddcDev) Set(percent int) error {
 func (d *ddcDev) queueWriteLocked(percent int) {
 	percent = min(max(percent, 0), 100)
 	d.pending, d.hasPend = percent, true
-	if d.timer == nil {
-		d.timer = time.AfterFunc(ddcWriteDebounce, d.writePending)
-	} else {
-		d.timer.Reset(ddcWriteDebounce)
-	}
+	d.scheduleWriteLocked()
 }
 
-func (d *ddcDev) writePending() {
-	d.writePendingWith(func(percent int) error {
+func (d *ddcDev) scheduleWriteLocked() {
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(ddcWriteDebounce, func() { d.writePending(timer) })
+	d.timer = timer
+}
+
+func (d *ddcDev) writePending(timer *time.Timer) {
+	d.writePendingFor(timer, func(percent int) error {
 		fd, err := openI2C(d.path())
 		if err != nil {
 			slog.Warn("brightness: ddc write open failed", "connector", d.connector, "err", err)
@@ -752,6 +757,17 @@ func (d *ddcDev) writePending() {
 
 func (d *ddcDev) writePendingWith(write func(int) error) {
 	d.mu.Lock()
+	timer := d.timer
+	d.mu.Unlock()
+	d.writePendingFor(timer, write)
+}
+
+func (d *ddcDev) writePendingFor(timer *time.Timer, write func(int) error) {
+	d.mu.Lock()
+	if d.timer != timer {
+		d.mu.Unlock()
+		return
+	}
 	d.timer = nil
 	if d.hasInFlight || !d.hasPend {
 		d.mu.Unlock()
@@ -770,7 +786,7 @@ func (d *ddcDev) writePendingWith(write func(int) error) {
 		d.cache, d.cacheAt = percent, time.Now()
 	}
 	if d.hasPend && d.timer == nil {
-		d.timer = time.AfterFunc(ddcWriteDebounce, d.writePending)
+		d.scheduleWriteLocked()
 	}
 	d.mu.Unlock()
 }

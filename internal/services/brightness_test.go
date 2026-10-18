@@ -810,6 +810,66 @@ func TestDDCWriteClearsInFlightAfterFailure(t *testing.T) {
 	}
 }
 
+func TestDDCStaleCallbackLeavesRescheduledTargetPending(t *testing.T) {
+	d := &ddcDev{max: 100, pending: 55, hasPend: true}
+	started := make(chan struct{})
+	done := make(chan struct{})
+	wrote := make(chan int, 1)
+	defer func() {
+		d.mu.Lock()
+		if d.timer != nil {
+			d.timer.Stop()
+		}
+		d.mu.Unlock()
+	}()
+
+	d.mu.Lock()
+	d.queueWriteLocked(55)
+	staleTimer := d.timer
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+	go func() {
+		defer close(done)
+		close(started)
+		d.writePendingFor(staleTimer, func(percent int) error {
+			wrote <- percent
+			return nil
+		})
+	}()
+	<-started
+	d.queueWriteLocked(60)
+	scheduledTimer := d.timer
+	if scheduledTimer == nil || scheduledTimer == staleTimer {
+		if scheduledTimer != nil {
+			scheduledTimer.Stop()
+		}
+		d.timer = time.NewTimer(time.Hour)
+		d.mu.Unlock()
+		t.Fatal("queueing a new target reused the stale timer")
+	}
+	if scheduledTimer != nil {
+		scheduledTimer.Stop()
+	}
+	wantTimer := time.NewTimer(time.Hour)
+	d.timer = wantTimer
+	d.mu.Unlock()
+	<-done
+
+	select {
+	case percent := <-wrote:
+		t.Fatalf("stale callback wrote %d before the new debounce window", percent)
+	default:
+	}
+
+	d.mu.Lock()
+	pending, hasPending, timer := d.pending, d.hasPend, d.timer
+	d.mu.Unlock()
+	if !hasPending || pending != 60 || timer == nil || timer != wantTimer {
+		t.Fatalf("after stale callback: pending=%d/%t timer=%p; want pending=60 and timer=%p", pending, hasPending, timer, wantTimer)
+	}
+}
+
 func fixtureSysfs(t *testing.T, name string, cur, max int) string {
 	t.Helper()
 	root := t.TempDir()
