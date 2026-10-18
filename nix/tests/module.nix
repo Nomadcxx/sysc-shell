@@ -144,6 +144,12 @@ in
 
   autostartWantsAtGraphicalSession = builtins.elem wantsFile (configFileNames on.config);
 
+  # The link has to point at the unit. A wants symlink aimed at anything else
+  # still carries the right name, so the name alone proves nothing.
+  autostartWantsLinksTheUnit =
+    on.config.xdg.configFile.${wantsFile}.source.outPath
+    == on.config.xdg.configFile."systemd/user/sysc-shell.service".source.outPath;
+
   autostartFalseOmitsWants = !(builtins.elem wantsFile (configFileNames manual.config));
 
   pluginIsLinkedUnderItsManifestId = builtins.elem "sysc-shell/plugins/org.test.plugin" (configFileNames withPlugin.config);

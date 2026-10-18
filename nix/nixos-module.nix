@@ -50,6 +50,9 @@ in
     # manager. A home-manager install deploys the same substituted file into
     # ~/.config/systemd/user; here it is the machine-wide copy. The wants link
     # is the enablement, and omitting it is what autostart = false means.
+    #
+    # Enabled beside the home-manager module, the user-level unit shadows this
+    # one for the users that have it, which is the same file either way.
     environment.etc = {
       "systemd/user/sysc-shell.service".source = unit;
     } // lib.optionalAttrs cfg.autostart {

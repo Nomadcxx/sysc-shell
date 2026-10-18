@@ -98,15 +98,16 @@ guided installer does not touch a Nix store. home-manager users import the modul
   #   modules = [ inputs.sysc-shell.homeModules.default ];
   #   programs.sysc-shell.enable = true;
   #
-  # Without home-manager, on NixOS:
-  #   imports = [ inputs.sysc-shell.nixosModules.default ];
-  #   programs.sysc-shell.enable = true;
-  #
   #   # Optional: the weather plugin, linked into the user plugin root
   #   # under its manifest id.
   #   programs.sysc-shell.plugins = [
   #     inputs.sysc-shell.packages.${pkgs.system}.sysc-shell-plugin-weather
   #   ];
+  #
+  # Without home-manager, on NixOS, where the package goes into
+  # environment.systemPackages and the unit into /etc/systemd/user:
+  #   imports = [ inputs.sysc-shell.nixosModules.default ];
+  #   programs.sysc-shell.enable = true;
   #
   # Without the module, use the overlay and set the package yourself:
   #   nixpkgs.overlays = [ inputs.sysc-shell.overlays.default ];
@@ -114,17 +115,17 @@ guided installer does not touch a Nix store. home-manager users import the modul
 }
 ```
 
-The module reuses the repository's own `packaging/systemd/sysc-shell.service` with `ExecStart`
-pointed at the store, so there is one unit and one install story, and it puts the shell binary in
-your profile so the `sysc-shell ipc` commands below work. `nixosModules.default` is the
-machine-wide counterpart for a system without home-manager: the package in
-`environment.systemPackages` and the same unit under `/etc/systemd/user`, which every user's
-service manager reads. Plugin directories and shell settings are per user, so those stay with the
-home-manager module. No release is tagged yet, so
-`sysc-shell --version` reports `development (<source revision>)`. Nothing seeds or rewrites
-`config.json`, and `scripts/deploy` does not apply: a Nix install starts a store path, not the
-binary under `~/.local/bin`. Enabling refuses to activate while `~/.local/bin/sysc-shell`
-exists, because two shells would fight over the bar.
+The two modules reuse the repository's own `packaging/systemd/sysc-shell.service` with `ExecStart`
+pointed at the store, so there is one unit and one install story. The home-manager module puts the
+shell binary in your profile, which is what makes the `sysc-shell ipc` commands below work;
+`nixosModules.default` is the machine-wide counterpart for a system without home-manager: the
+package in `environment.systemPackages` and the same unit under `/etc/systemd/user`, which every
+user's service manager reads. Plugin directories and shell settings are per user, so those stay
+with the home-manager module. No release is tagged yet, so `sysc-shell --version` reports
+`development (<source revision>)`. Nothing seeds or rewrites `config.json`, and `scripts/deploy`
+does not apply: a Nix install starts a store path, not the binary under `~/.local/bin`. Enabling
+refuses to activate while `~/.local/bin/sysc-shell` exists, because two shells would fight over
+the bar.
 
 Not covered, on purpose: no CI workflow builds the flake, no companion daemon is packaged, and
 the deploy-guard drop-in is not installed.

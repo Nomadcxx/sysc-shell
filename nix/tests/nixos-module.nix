@@ -102,5 +102,11 @@ in
 
   autostartWantsAtGraphicalSession = builtins.elem wantsFile (etcNames on.config);
 
+  # The link has to point at the unit. A wants symlink aimed at anything else
+  # still carries the right name, so the name alone proves nothing.
+  autostartWantsLinksTheUnit =
+    on.config.environment.etc.${wantsFile}.source.outPath
+    == on.config.environment.etc."systemd/user/sysc-shell.service".source.outPath;
+
   autostartFalseOmitsWants = !(builtins.elem wantsFile (etcNames manual.config));
 }
