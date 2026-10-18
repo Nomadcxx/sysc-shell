@@ -38,6 +38,31 @@ func TestParsePrivacyDumpClassifiesCaptureFromDeviceMetadata(t *testing.T) {
 	}
 }
 
+func TestParsePrivacyDumpSortsCameraApplicationsByName(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[
+		{"id":100,"type":"PipeWire:Interface:Device","info":{"props":{"device.api":"v4l2"}}},
+		{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.id":100}}},
+		{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video","application.name":"Zebra"}}},
+		{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video","application.name":"Alpha"}}},
+		{"id":4,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+		{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":3}}
+	]`)
+	want := []PrivacyVideoPath{
+		{SourceNodeID: 1, Camera: true, ApplicationName: "Alpha"},
+		{SourceNodeID: 1, Camera: true, ApplicationName: "Zebra"},
+	}
+	for range 20 {
+		snapshot, err := parsePrivacyDump(input)
+		if err != nil {
+			t.Fatalf("parsePrivacyDump: %v", err)
+		}
+		if !slices.Equal(snapshot.VideoPaths, want) {
+			t.Fatalf("video paths = %+v, want deterministic order %+v", snapshot.VideoPaths, want)
+		}
+	}
+}
+
 func TestAudioSourceKindRecognizesPipeWireCanonicalFormFactors(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
