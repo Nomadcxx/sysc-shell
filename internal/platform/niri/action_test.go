@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"path/filepath"
 	"testing"
@@ -95,6 +96,10 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 				if err == nil {
 					t.Fatal("Err reply returned nil")
 				}
+				var refusal *ActionRefusalError
+				if !errors.As(err, &refusal) {
+					t.Fatalf("action error = %T, want *ActionRefusalError", err)
+				}
 			} else if err != nil {
 				t.Fatalf("Action: %v", err)
 			}
@@ -117,5 +122,28 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 				t.Fatal("server got no request")
 			}
 		})
+	}
+}
+
+func TestActionDialFailureIsNotSent(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := Action(ctx, filepath.Join(t.TempDir(), "missing.sock"), FocusWindow{ID: 80})
+	var notSent *ActionNotSentError
+	if !errors.As(err, &notSent) {
+		t.Fatalf("action error = %v, want *ActionNotSentError", err)
+	}
+}
+
+func TestMarshalToggleWindowFloatingTargetsStableWindowID(t *testing.T) {
+	t.Parallel()
+	got, err := marshalAction(ToggleWindowFloating{ID: 81})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"Action":{"ToggleWindowFloating":{"id":81}}}`
+	if string(got) != want {
+		t.Fatalf("action = %s, want %s", got, want)
 	}
 }
