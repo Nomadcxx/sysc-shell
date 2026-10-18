@@ -87,15 +87,15 @@ official plugin bundle.
 
 ### Nix
 
-The guided installer and the AUR package remain the primary paths. Nix is a third option for
-home-manager users:
+For Nix, the flake is the installation route: nothing here is packaged as an AUR package and the
+guided installer does not touch a Nix store. home-manager users import the module and enable it:
 
 ```nix
 {
   inputs.sysc-shell.url = "github:Nomadcxx/sysc-shell";
 
   # In a home-manager flake configuration:
-  #   modules = [ inputs.sysc-shell.homeModules.forAllSystems.${pkgs.system}.default ];
+  #   modules = [ inputs.sysc-shell.homeModules.default ];
   #   programs.sysc-shell.enable = true;
   #
   #   # Optional: the weather plugin, linked into the user plugin root
@@ -111,7 +111,8 @@ home-manager users:
 ```
 
 The module reuses the repository's own `packaging/systemd/sysc-shell.service` with `ExecStart`
-pointed at the store, so there is one unit and one install story. No release is tagged yet, so
+pointed at the store, so there is one unit and one install story, and it puts the shell binary in
+your profile so the `sysc-shell ipc` commands below work. No release is tagged yet, so
 `sysc-shell --version` reports `development (<source revision>)`. Nothing seeds or rewrites
 `config.json`, and `scripts/deploy` does not apply: a Nix install starts a store path, not the
 binary under `~/.local/bin`. Enabling refuses to activate while `~/.local/bin/sysc-shell`
@@ -148,9 +149,10 @@ sysc-shell ipc status
 ```
 
 Release binaries are stamped with their version and commit; the same two values appear as `version` in
-`ipc status`. Builds from source, from your AUR helper, and from Nix are not stamped and report
+`ipc status`. Builds from source and from your AUR helper are not stamped and report
 `sysc-shell development (unknown)`. That is the honest answer, not a lookup failure: an unstamped
-build has no version to report until the release workflow stamps it. Use `sysc --version` from the
+build has no version to report until the release workflow stamps it. A Nix build stamps the revision
+it was cut from instead, `sysc-shell development (<source revision>)`. Use `sysc --version` from the
 installer to see which suite an install actually recorded.
 
 ### Companion daemons
