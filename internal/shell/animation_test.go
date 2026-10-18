@@ -1253,6 +1253,28 @@ func TestSpringConfigureReducedMotionSettlesSpatialState(t *testing.T) {
 	}
 }
 
+func TestSpringConfigureReducedMotionClampsVisibilityOvershoot(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	key := animKey{node: "p", channel: animVisible}
+	a.values[key] = animValue{
+		from: 0.95, to: 0, spring: a.springFor(animVisible, false),
+		position: 0.95, velocity: 100, advanced: clock.now(),
+	}
+	clock.add(springStep)
+	if got := a.Value("p", animVisible); got != 1 || a.values[key].position <= 1 {
+		t.Fatalf("spring did not preserve bounded paint over overshoot: value=%g state=%+v", got, a.values[key])
+	}
+
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion, Reduced: true}, true)
+	if got := a.PanelOpacity("p"); got != 1 {
+		t.Fatalf("reduced-motion fade started from unpainted opacity %g", got)
+	}
+	if a.values[key].spring != nil || a.Settled() {
+		t.Fatal("visibility did not retain the capped reduced-motion fade")
+	}
+}
+
 func TestSpringConfigureSpeedPreservesState(t *testing.T) {
 	t.Parallel()
 	a, clock := newTestAnimator(false)

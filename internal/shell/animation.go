@@ -261,7 +261,7 @@ func (a *animator) Configure(motion render.MotionSet, reduced bool) {
 				continue
 			}
 			if key.channel == animVisible && v.position != v.to {
-				a.values[key] = animValue{from: v.position, to: v.to, start: now,
+				a.values[key] = animValue{from: clampUnit(v.position), to: v.to, start: now,
 					dur: min(a.motion.Short, reducedPanelCap), ease: a.easeFor(animVisible)}
 				unfinished = true
 				continue
