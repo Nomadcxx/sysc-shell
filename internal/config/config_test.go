@@ -26,6 +26,54 @@ func TestVolumeIsKnownButNotDefault(t *testing.T) {
 	}
 }
 
+func TestBarItemScrollActionsParseAndWrite(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"bar":{"items":{"left":[
+		{"id":"group","items":[{"id":"clock","scroll":"brightness"}]},
+		{"id":"volume","scroll":"none"},
+		{"id":"volume"}
+	]}}}`))
+	if err != nil {
+		t.Fatalf("Parse supported scroll actions: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	for _, want := range []string{`"scroll": "brightness"`, `"scroll": "none"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("written config is missing %s:\n%s", want, body)
+		}
+	}
+	if _, err := Parse(body); err != nil {
+		t.Fatalf("Parse written config: %v", err)
+	}
+}
+
+func TestBarItemScrollActionsRejectUnknownAndReservedBindings(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"unknown action", `{"bar":{"items":{"left":[{"id":"clock","scroll":"command"}]}}}`},
+		{"workspace override", `{"bar":{"items":{"left":[{"id":"workspace","scroll":"volume"}]}}}`},
+		{"group override", `{"bar":{"items":{"left":[{"id":"group","scroll":"brightness","items":["clock"]}]}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.body))
+			if err == nil || !strings.Contains(err.Error(), "scroll") {
+				t.Fatalf("Parse error = %v, want a scroll field error", err)
+			}
+		})
+	}
+}
+
 func TestBluetoothIsKnownButNotDefault(t *testing.T) {
 	if _, ok := knownItems["bluetooth"]; !ok {
 		t.Fatal("config must accept the bluetooth item")

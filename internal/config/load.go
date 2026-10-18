@@ -33,6 +33,7 @@ type wireFont struct {
 // max-width has nowhere else to live.
 type wireItem struct {
 	ID       string  `json:"id"`
+	Scroll   *string `json:"scroll,omitempty"`
 	Format   *string `json:"format,omitempty"`
 	MaxWidth *int    `json:"max-width,omitempty"`
 
@@ -1309,6 +1310,7 @@ func resolvePlacement(w wireItem, path string) (Item, error) {
 		set  bool
 	}{
 		{"format", w.Format != nil}, {"max-width", w.MaxWidth != nil},
+		{"scroll", w.Scroll != nil},
 		{"display", w.Display != nil}, {"interval", w.Interval != nil},
 		{"path", w.Path != nil}, {"device", w.Device != nil},
 		{"interface", w.Interface != nil}, {"direction", w.Direction != nil},
@@ -1353,6 +1355,17 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	}
 	if w.ID == "plugin" {
 		return resolvePlacement(w, path)
+	}
+	if w.Scroll != nil {
+		switch w.ID {
+		case "workspace":
+			return Item{}, pathErr(path+".scroll", "is reserved for workspace cycling")
+		case "group":
+			return Item{}, pathErr(path+".scroll", "belongs to a group member")
+		}
+		if !validBarScrollAction(*w.Scroll) {
+			return Item{}, pathErr(path+".scroll", "%q is not one of none, volume, brightness", *w.Scroll)
+		}
 	}
 	for _, misplaced := range []struct {
 		name string
@@ -1528,8 +1541,20 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	// switch is discarded for those seven ids -- which silently cost a nested
 	// cpu widget its id. Setting identity after the switch means a branch that
 	// rebuilds the item cannot drop it.
+	if w.Scroll != nil {
+		item.Scroll = BarScrollAction(*w.Scroll)
+	}
 	item.Instance = instance
 	return item, nil
+}
+
+func validBarScrollAction(action string) bool {
+	switch BarScrollAction(action) {
+	case ScrollActionNone, ScrollActionVolume, ScrollActionBrightness:
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveMetric validates one metric item and fills in its defaults.

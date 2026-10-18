@@ -1235,9 +1235,13 @@ func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entr
 			return ""
 		}
 	}
+	entries := make([]Entry, 0, 2)
+	if it.ID != "workspace" && it.ID != "group" && it.ID != "plugin" {
+		entries = append(entries, widgetScrollEntry(ref, it, group, read))
+	}
 	switch it.ID {
 	case "clock":
-		return []Entry{{
+		return append(entries, Entry{
 			Path: widgetEntryPath(ref, "format"), Label: "Format",
 			Section: "Widgets", Group: group,
 			Describe: "Go layout string, such as 15:04 for a 24-hour clock.",
@@ -1249,9 +1253,9 @@ func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entr
 					return nil
 				})(c, v)
 			},
-		}}
+		})
 	case "window-title":
-		return []Entry{{
+		return append(entries, Entry{
 			Path: widgetEntryPath(ref, "max-width"), Label: "Maximum width",
 			Section: "Widgets", Group: group,
 			Describe: "Longest title in logical pixels before it is shortened.",
@@ -1271,9 +1275,37 @@ func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entr
 					return nil
 				})(c, v)
 			},
-		}}
+		})
 	}
-	return nil
+	return entries
+}
+
+func widgetScrollEntry(ref config.ItemRef, it config.Item, group string, read func(func(config.Item) string) Getter) Entry {
+	path := widgetEntryPath(ref, "scroll")
+	options := []string{
+		string(config.ScrollActionNone),
+		string(config.ScrollActionVolume),
+		string(config.ScrollActionBrightness),
+	}
+	defaultValue := string((config.Item{ID: it.ID}).EffectiveScrollAction())
+	return Entry{
+		Path: path, Label: "Scroll action", Section: "Widgets", Group: group,
+		Describe: "Action to perform when the wheel is over this widget.",
+		Kind:     KindEnum, Options: options, OptionLabels: []string{"Disabled", "Volume", "Brightness"},
+		Get:     read(func(i config.Item) string { return string(i.EffectiveScrollAction()) }),
+		Default: func(config.Config) string { return defaultValue },
+		Set: func(c *config.Config, value string) error {
+			for _, option := range options {
+				if value == option {
+					return writeItem(ref, func(i *config.Item) error {
+						i.Scroll = config.BarScrollAction(value)
+						return nil
+					})(c, value)
+				}
+			}
+			return fmt.Errorf("settings: %s: %q is not a valid option", path, value)
+		},
+	}
 }
 
 // write adapts a field assignment into a Setter. Every setter carries the same
