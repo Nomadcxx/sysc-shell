@@ -20,6 +20,8 @@ type AudioNode struct {
 	Level       int    // 0..100, cbrt of PipeWire's linear channelVolumes
 	Muted       bool
 	Default     bool // the default sink or source right now
+	Routeable   bool // has a verified PipeWire/PulseAudio compatibility mapping
+	OutputID    int  // current PipeWire output ID for a playback stream
 }
 
 // AudioSnapshot is one pw-dump pass, split for the panel's two tabs.
@@ -148,6 +150,122 @@ func parsePwdump(data []byte) (AudioSnapshot, error) {
 	return snap, nil
 }
 
+type pulseObject struct {
+	Index      int                        `json:"index"`
+	Sink       int                        `json:"sink"`
+	Properties map[string]json.RawMessage `json:"properties"`
+}
+
+type pulseSinkInput struct {
+	Index int
+	Sink  int
+}
+
+type pulseRouting struct {
+	inputs              map[int]pulseSinkInput // PipeWire stream ID -> PulseAudio sink-input
+	sinks               map[int]int            // PipeWire sink ID -> PulseAudio sink index
+	sinkIDsByPulseIndex map[int]int            // PulseAudio sink index -> PipeWire sink ID
+}
+
+func parsePulseRouting(inputsJSON, sinksJSON []byte) (pulseRouting, error) {
+	var inputs, sinks []pulseObject
+	if err := json.Unmarshal(inputsJSON, &inputs); err != nil {
+		return pulseRouting{}, fmt.Errorf("services: pactl sink-inputs: %w", err)
+	}
+	if err := json.Unmarshal(sinksJSON, &sinks); err != nil {
+		return pulseRouting{}, fmt.Errorf("services: pactl sinks: %w", err)
+	}
+	routing := pulseRouting{
+		inputs:              make(map[int]pulseSinkInput, len(inputs)),
+		sinks:               make(map[int]int, len(sinks)),
+		sinkIDsByPulseIndex: make(map[int]int, len(sinks)),
+	}
+	inputIndexes := make(map[int]struct{}, len(inputs))
+	for _, input := range inputs {
+		if input.Index < 0 || input.Sink < 0 {
+			return pulseRouting{}, fmt.Errorf("services: pactl sink-input has invalid indices")
+		}
+		if _, exists := inputIndexes[input.Index]; exists {
+			return pulseRouting{}, fmt.Errorf("services: duplicate pactl sink-input index %d", input.Index)
+		}
+		inputIndexes[input.Index] = struct{}{}
+		id, ok, err := pulseObjectID(input.Properties)
+		if err != nil {
+			return pulseRouting{}, fmt.Errorf("services: pactl sink-input object.id: %w", err)
+		}
+		if !ok {
+			continue // a PulseAudio stream without a PipeWire identity is not routable
+		}
+		if _, exists := routing.inputs[id]; exists {
+			return pulseRouting{}, fmt.Errorf("services: duplicate pactl sink-input object.id %d", id)
+		}
+		routing.inputs[id] = pulseSinkInput{Index: input.Index, Sink: input.Sink}
+	}
+	for _, sink := range sinks {
+		if sink.Index < 0 {
+			return pulseRouting{}, fmt.Errorf("services: pactl sink has an invalid index")
+		}
+		id, ok, err := pulseObjectID(sink.Properties)
+		if err != nil {
+			return pulseRouting{}, fmt.Errorf("services: pactl sink object.id: %w", err)
+		}
+		if !ok {
+			continue // a sink without a PipeWire identity is not routable
+		}
+		if _, exists := routing.sinks[id]; exists {
+			return pulseRouting{}, fmt.Errorf("services: duplicate pactl sink object.id %d", id)
+		}
+		if _, exists := routing.sinkIDsByPulseIndex[sink.Index]; exists {
+			return pulseRouting{}, fmt.Errorf("services: duplicate pactl sink index %d", sink.Index)
+		}
+		routing.sinks[id] = sink.Index
+		routing.sinkIDsByPulseIndex[sink.Index] = id
+	}
+	return routing, nil
+}
+
+func pulseObjectID(properties map[string]json.RawMessage) (int, bool, error) {
+	raw, ok := properties["object.id"]
+	if !ok {
+		return 0, false, nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		id, err := strconv.Atoi(text)
+		if err != nil || id <= 0 {
+			return 0, false, fmt.Errorf("invalid object.id %q", text)
+		}
+		return id, true, nil
+	}
+	var id int
+	if err := json.Unmarshal(raw, &id); err != nil || id <= 0 {
+		return 0, false, fmt.Errorf("invalid object.id %s", raw)
+	}
+	return id, true, nil
+}
+
+func mergePulseRouting(snap AudioSnapshot, routing pulseRouting) AudioSnapshot {
+	sinkIDs := make(map[int]bool, len(snap.Sinks))
+	for i := range snap.Sinks {
+		snap.Sinks[i].Routeable = false
+		sinkIDs[snap.Sinks[i].ID] = true
+		if _, ok := routing.sinks[snap.Sinks[i].ID]; ok {
+			snap.Sinks[i].Routeable = true
+		}
+	}
+	for i := range snap.Streams {
+		snap.Streams[i].Routeable = false
+		snap.Streams[i].OutputID = 0
+		if input, ok := routing.inputs[snap.Streams[i].ID]; ok {
+			snap.Streams[i].Routeable = true
+			if outputID, exists := routing.sinkIDsByPulseIndex[input.Sink]; exists && sinkIDs[outputID] {
+				snap.Streams[i].OutputID = outputID
+			}
+		}
+	}
+	return snap
+}
+
 func parseDefaultAudioName(raw json.RawMessage) (string, error) {
 	var value struct {
 		Name string `json:"name"`
@@ -216,6 +334,66 @@ func (a *Audio) SetDefault(id int) error {
 	return a.wpctl("set-default", strconv.Itoa(id))
 }
 
+// MoveStream routes one PipeWire playback stream through its current PulseAudio
+// compatibility indices. Both object IDs are refreshed before the move so a
+// stale panel action cannot target a recycled PulseAudio index.
+func (a *Audio) MoveStream(streamID, sinkID int) error {
+	if streamID <= 0 || sinkID <= 0 {
+		return fmt.Errorf("services: invalid audio route IDs")
+	}
+	a.mu.Lock()
+	dumpBin, pactlBin := a.dumpBin, a.pactlBin
+	a.mu.Unlock()
+	if dumpBin == "" {
+		var err error
+		dumpBin, err = resolveBin("", "pw-dump")
+		if err != nil {
+			return fmt.Errorf("services: pw-dump unavailable")
+		}
+	}
+	if pactlBin == "" {
+		return fmt.Errorf("services: pactl unavailable")
+	}
+	data, err := runCmd(dumpBin)
+	if err != nil {
+		return fmt.Errorf("services: refresh audio objects: %w", err)
+	}
+	snap, err := parsePwdump([]byte(data))
+	if err != nil {
+		return err
+	}
+	if !hasAudioNode(snap.Streams, streamID) {
+		return fmt.Errorf("services: stream %d is unavailable", streamID)
+	}
+	if !hasAudioNode(snap.Sinks, sinkID) {
+		return fmt.Errorf("services: output %d is unavailable", sinkID)
+	}
+	routing, err := queryPulseRouting(pactlBin)
+	if err != nil {
+		return fmt.Errorf("services: refresh PulseAudio routes: %w", err)
+	}
+	input, ok := routing.inputs[streamID]
+	if !ok {
+		return fmt.Errorf("services: stream %d has no PulseAudio route", streamID)
+	}
+	pulseSinkIndex, ok := routing.sinks[sinkID]
+	if !ok {
+		return fmt.Errorf("services: output %d is unavailable", sinkID)
+	}
+	_, err = runCmd(pactlBin, "move-sink-input", strconv.Itoa(input.Index), strconv.Itoa(pulseSinkIndex))
+	return err
+}
+
+func hasAudioNode(nodes []AudioNode, id int) bool {
+	count := 0
+	for _, node := range nodes {
+		if node.ID == id {
+			count++
+		}
+	}
+	return count == 1
+}
+
 func (a *Audio) SetNodeVolume(id, level int) error {
 	if level < 0 {
 		level = 0
@@ -278,26 +456,47 @@ func (a *Audio) runMixer(stop, done chan struct{}) {
 
 func (a *Audio) pollMixer() {
 	a.mu.Lock()
-	bin := a.dumpBin
+	bin, pactlBin := a.dumpBin, a.pactlBin
 	a.mu.Unlock()
 	if bin == "" {
 		return
 	}
 	out, err := runCmd(bin)
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	if err != nil {
+		a.mu.Lock()
 		a.publishMixerLocked(err)
+		a.mu.Unlock()
 		return
 	}
 	snap, err := parsePwdump([]byte(out))
 	if err != nil {
+		a.mu.Lock()
 		a.publishMixerLocked(err)
+		a.mu.Unlock()
 		return
 	}
+	if pactlBin != "" {
+		if routing, routeErr := queryPulseRouting(pactlBin); routeErr == nil {
+			snap = mergePulseRouting(snap, routing)
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.mixer = snap
 	a.hasMixer = true
 	a.publishMixerLocked(nil)
+}
+
+func queryPulseRouting(bin string) (pulseRouting, error) {
+	inputs, err := runCmd(bin, "-f", "json", "list", "sink-inputs")
+	if err != nil {
+		return pulseRouting{}, err
+	}
+	sinks, err := runCmd(bin, "-f", "json", "list", "sinks")
+	if err != nil {
+		return pulseRouting{}, err
+	}
+	return parsePulseRouting([]byte(inputs), []byte(sinks))
 }
 
 func (a *Audio) publishMixerLocked(err error) {

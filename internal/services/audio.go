@@ -26,6 +26,7 @@ type Audio struct {
 	leases   leaseSet
 	interval time.Duration
 	bin      string
+	pactlBin string
 	ok       bool
 	last     AudioState
 	hasLast  bool
@@ -47,9 +48,11 @@ func NewAudio(interval time.Duration, path string) *Audio {
 		interval = defaultPoll
 	}
 	bin, err := resolveBin(path, "wpctl")
+	pactlBin, _ := resolveBin("", "pactl")
 	a := &Audio{
 		interval: interval,
 		bin:      bin,
+		pactlBin: pactlBin,
 		ok:       err == nil,
 		changes:  make(chan AudioState, 1),
 		mixerCh:  make(chan AudioSnapshot, 1),

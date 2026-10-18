@@ -368,11 +368,12 @@ type PanelHost struct {
 	profilesOK     bool
 	profilePending bool
 
-	audioTab    string
-	mixerLease  *services.MixerLease
-	pendingVol  map[int]int
-	pendingMute map[int]bool
-	pendingAt   time.Time
+	audioTab        string
+	mixerLease      *services.MixerLease
+	pendingVol      map[int]int
+	pendingMute     map[int]bool
+	pendingAt       time.Time
+	audioRouteSinks []services.AudioNode
 
 	monitorPage      string
 	processFilter    string
@@ -3754,6 +3755,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if n == nil || n.State.Has(ui.StateDisabled) {
 		return false
 	}
+	if h.id == PanelAudio && strings.HasPrefix(n.Action, "audio-route:") {
+		return h.activateAudioRoute(r, n)
+	}
 	if h.id == PanelClipboard {
 		return h.activateClipboard(r, n)
 	}
@@ -4686,6 +4690,10 @@ func (h *PanelHost) flushDraft(r *Registry) {
 
 func (h *PanelHost) applyMenu(r *Registry, path string) {
 	if path == "" {
+		return
+	}
+	if strings.HasPrefix(path, "audio-route:") {
+		h.applyAudioRouteMenu(r, path)
 		return
 	}
 	if path == artPaletteMenu && h.id == PanelTerminalArt {
