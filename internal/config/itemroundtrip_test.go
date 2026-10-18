@@ -33,6 +33,7 @@ var itemFixtures = map[string]Item{
 	"weather":       {ID: "weather", MaxWidth: 180, ShowCondition: true},
 	"battery":       {ID: "battery", Label: "percent", WarnBelow: 20, Interval: 30 * time.Second},
 	"notifications": {ID: "notifications"},
+	"privacy":       {ID: "privacy"},
 	"running-apps":  {ID: "running-apps"},
 	"wordmark":      {ID: "wordmark"},
 	"launcher":      {ID: "launcher"},

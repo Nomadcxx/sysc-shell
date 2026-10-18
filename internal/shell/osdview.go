@@ -16,6 +16,7 @@ const (
 	osdLayout      = "layout"
 	osdDND         = "do not disturb"
 	osdConfigError = "config error"
+	osdPrivacy     = "privacy"
 
 	osdPad         = 12
 	osdInnerW      = osdWidth - 16 - 2*osdPad
@@ -71,6 +72,8 @@ func osdIcon(v OSDView) string {
 		return "notifications"
 	case osdConfigError:
 		return "notifications"
+	case osdPrivacy:
+		return "security"
 	}
 	return ""
 }
@@ -112,6 +115,11 @@ func osdLabel(v OSDView) string {
 			return v.Text
 		}
 		return "Config not applied"
+	case osdPrivacy:
+		if v.Text != "" {
+			return v.Text
+		}
+		return "Privacy activity changed"
 	}
 	return v.Kind
 }
