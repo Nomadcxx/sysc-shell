@@ -10,7 +10,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
-	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestPrivacyStateKeepsAmbiguousCaptureUnknownAndCorrelatesCasts(t *testing.T) {
@@ -46,44 +45,36 @@ func TestPrivacyStateKeepsAmbiguousCaptureUnknownAndCorrelatesCasts(t *testing.T
 				{SourceNodeID: 30}, {SourceNodeID: 31, Camera: true},
 			}},
 			niri: niri.Snapshot{CastsKnown: true},
-			want: privacyState{microphone: privacyInactive, camera: privacyActive, screenShare: privacyInactive},
+			want: privacyState{microphone: privacyInactive, camera: privacyActive, cameraIncomplete: true, cameraDetailsMissing: true, screenShare: privacyInactive},
 		},
 		{
 			name: "cast node is not a camera",
 			pipe: services.PrivacySnapshot{Known: true,
 				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 40, Camera: true}}},
 			niri: niri.Snapshot{Casts: []niri.Cast{{StreamID: 1, Active: true, Target: niri.CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true, PWNodeID: 40, HasPWNodeID: true}}},
-			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive},
+			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive, screenShareIncomplete: true, screenTargets: "Output DP-1"},
 		},
 		{
-			name: "active unknown cast target stays unknown",
+			name: "paused cast node does not mask camera activity",
 			pipe: services.PrivacySnapshot{Known: true,
-				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 41}}},
+				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 40, Camera: true, ApplicationName: "Cheese"}}},
+			niri: niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{{StreamID: 1, Active: false,
+				Target: niri.CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true, PWNodeID: 40, HasPWNodeID: true}}},
+			want: privacyState{microphone: privacyInactive, camera: privacyActive, screenShare: privacyInactive, cameraApps: "Cheese"},
+		},
+		{
+			name: "unknown active cast target with a camera path stays uncertain",
+			pipe: services.PrivacySnapshot{Known: true,
+				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 41, Camera: true}}},
 			niri: niri.Snapshot{Casts: []niri.Cast{{StreamID: 2, Active: true, PWNodeID: 41, HasPWNodeID: true}}},
 			want: privacyState{microphone: privacyInactive, camera: privacyUnknown, screenShare: privacyUnknown},
-		},
-		{
-			name: "inactive cast does not suppress camera evidence",
-			pipe: services.PrivacySnapshot{Known: true,
-				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 42, Camera: true}}},
-			niri: niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{{StreamID: 5, PWNodeID: 42, HasPWNodeID: true}}},
-			want: privacyState{microphone: privacyInactive, camera: privacyActive, screenShare: privacyInactive},
-		},
-		{
-			name: "known inactive target does not suppress camera evidence",
-			pipe: services.PrivacySnapshot{Known: true,
-				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 43, Camera: true}}},
-			niri: niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{{StreamID: 6, Active: true,
-				Target: niri.CastTarget{Kind: "nothing"}, TargetKnown: true,
-				PWNodeID: 43, HasPWNodeID: true}}},
-			want: privacyState{microphone: privacyInactive, camera: privacyActive, screenShare: privacyInactive},
 		},
 		{
 			name: "valid active cast proves share before full baseline",
 			pipe: services.PrivacySnapshot{Known: true},
 			niri: niri.Snapshot{Casts: []niri.Cast{{StreamID: 3, Active: true,
 				Target: niri.CastTarget{Kind: "window", WindowID: 70}, TargetSet: true, TargetKnown: true}}},
-			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive},
+			want: privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyActive, screenShareIncomplete: true, screenTargets: "Window 70"},
 		},
 		{
 			name: "cast baseline absence is unknown",
@@ -108,15 +99,181 @@ func TestPrivacyStateKeepsAmbiguousCaptureUnknownAndCorrelatesCasts(t *testing.T
 	}
 }
 
-func TestPrivacyWidgetIsPersistentAccessibleAndShowsUnavailable(t *testing.T) {
+func TestPrivacyStateCarriesSafeApplicationAndCastTargetDetails(t *testing.T) {
+	t.Parallel()
+	pipe := services.PrivacySnapshot{
+		Known: true, MicrophoneActive: true, MicrophoneApps: []string{"Jitsi Meet"},
+		VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 30, Camera: true, ApplicationName: "Cheese"}},
+	}
+	snapshot := niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{{
+		StreamID: 1, Active: true,
+		Target:    niri.CastTarget{Kind: "window", Name: "private title", WindowID: 70},
+		TargetSet: true, TargetKnown: true,
+	}}}
+	state := privacyStateFrom(pipe, snapshot)
+	if got, want := state, (privacyState{
+		microphone: privacyActive, camera: privacyActive, screenShare: privacyActive,
+		microphoneApps: "Jitsi Meet", cameraApps: "Cheese", screenTargets: "Window 70",
+	}); got != want {
+		t.Fatalf("privacy state = %+v, want %+v", got, want)
+	}
+	tooltip := privacyTooltip(state)
+	for _, want := range []string{"Microphone: Jitsi Meet", "Camera: Cheese", "Screen sharing: Window 70"} {
+		if !strings.Contains(tooltip, want) {
+			t.Errorf("privacy tooltip %q is missing %q", tooltip, want)
+		}
+	}
+	if strings.Contains(tooltip, "private title") {
+		t.Fatalf("privacy tooltip exposed a captured window title: %q", tooltip)
+	}
+}
+
+func TestPrivacySurfacesKeepPartialActivityUncertaintyVisible(t *testing.T) {
+	t.Parallel()
+	validCast := niri.Cast{
+		StreamID: 1, Active: true,
+		Target: niri.CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true,
+	}
+	tests := []struct {
+		name     string
+		pipe     services.PrivacySnapshot
+		niri     niri.Snapshot
+		activity privacyActivity
+		label    string
+	}{
+		{
+			name:     "microphone active with an unclassified source",
+			pipe:     services.PrivacySnapshot{Known: true, MicrophoneActive: true, MicrophoneUnknown: true, MicrophoneApps: []string{"Jitsi Meet"}},
+			niri:     niri.Snapshot{CastsKnown: true},
+			activity: privacyActive, label: "Some microphone sources could not be classified",
+		},
+		{
+			name: "camera active with an unclassified source",
+			pipe: services.PrivacySnapshot{Known: true, VideoPaths: []services.PrivacyVideoPath{
+				{SourceNodeID: 20, Camera: true, ApplicationName: "Cheese"}, {SourceNodeID: 21},
+			}},
+			niri:     niri.Snapshot{CastsKnown: true},
+			activity: privacyActive, label: "Some camera sources could not be classified",
+		},
+		{
+			name: "screen share active with an unknown target",
+			pipe: services.PrivacySnapshot{Known: true},
+			niri: niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{
+				validCast, {StreamID: 2, Active: true},
+			}},
+			activity: privacyActive, label: "Some screen-share targets could not be identified",
+		},
+		{
+			name:     "screen share observed before its baseline",
+			pipe:     services.PrivacySnapshot{Known: true},
+			niri:     niri.Snapshot{Casts: []niri.Cast{validCast}},
+			activity: privacyActive, label: "Some screen-share targets could not be identified",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			state := privacyStateFrom(tc.pipe, tc.niri)
+			var got privacyActivity
+			switch {
+			case tc.pipe.MicrophoneActive:
+				got = state.microphone
+			case len(tc.pipe.VideoPaths) != 0:
+				got = state.camera
+			default:
+				got = state.screenShare
+			}
+			if got != tc.activity {
+				t.Fatalf("activity = %v, want active evidence preserved", got)
+			}
+			warnings := 0
+			for _, icon := range privacyWidgetIcons(state) {
+				if icon.name == "gpp_bad" {
+					warnings++
+				}
+			}
+			if warnings != 1 {
+				t.Fatalf("warning icons = %d, want one when activity is partly unknown", warnings)
+			}
+			if tooltip := privacyTooltip(state); !strings.Contains(tooltip, tc.label) {
+				t.Errorf("privacy tooltip %q is missing %q", tooltip, tc.label)
+			}
+			page := renderText(ccPrivacy(&Registry{privacy: state}, &PanelHost{theme: DefaultTheme()}))
+			if !strings.Contains(page, tc.label) {
+				t.Errorf("Privacy page %q is missing %q", page, tc.label)
+			}
+		})
+	}
+}
+
+func TestPrivacyDetailsShowUnattributedApplicationsAlongsideKnownNames(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dump := filepath.Join(dir, "dump.json")
+	bin := filepath.Join(dir, "pw-dump")
+	data := `[
+		{"id":100,"type":"PipeWire:Interface:Device","info":{"props":{"device.form-factor":"microphone"}}},
+		{"id":101,"type":"PipeWire:Interface:Device","info":{"props":{"device.api":"v4l2"}}},
+		{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source","device.id":100}},"props":{}},
+		{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio","application.name":"Jitsi Meet"}}},
+		{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio"}}},
+		{"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.id":101}}},
+		{"id":5,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video","application.name":"Cheese"}}},
+		{"id":6,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video"}}},
+		{"id":7,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+		{"id":8,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":3}},
+		{"id":9,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":4,"input-node-id":5}},
+		{"id":10,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":4,"input-node-id":6}}
+	]`
+	if err := os.WriteFile(dump, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat '"+dump+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	service := services.NewPrivacy(10*time.Millisecond, bin)
+	defer service.Close()
+	deadline := time.Now().Add(time.Second)
+	var snapshot services.PrivacySnapshot
+	for time.Now().Before(deadline) {
+		snapshot = service.Snapshot()
+		if snapshot.Known {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !snapshot.Known {
+		t.Fatal("PipeWire snapshot did not become known")
+	}
+	state := privacyStateFrom(snapshot, niri.Snapshot{CastsKnown: true})
+	tooltip := privacyTooltip(state)
+	for _, want := range []string{
+		"Jitsi Meet; Application details unavailable",
+		"Cheese; Application details unavailable",
+	} {
+		if !strings.Contains(tooltip, want) {
+			t.Errorf("privacy tooltip %q is missing %q", tooltip, want)
+		}
+	}
+	page := renderText(ccPrivacy(&Registry{privacy: state}, &PanelHost{theme: DefaultTheme()}))
+	for _, want := range []string{"Jitsi Meet", "Cheese", "Application details unavailable"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("Privacy page %q is missing %q", page, want)
+		}
+	}
+}
+
+func TestPrivacyWidgetHidesKnownInactiveAndShowsUnknownOnce(t *testing.T) {
 	t.Parallel()
 	metrics := DefaultTheme().Metrics
 	w := buildPrivacyWidget(metrics.CapsulePadding, metrics)
 	if w.node == nil || w.node.Action != panelPrivacyAction || w.node.Role != "button" {
-		t.Fatalf("privacy node = %+v, want an actionable button", w.node)
+		t.Fatalf("privacy node = %+v, want an accessible Control Centre button", w.node)
 	}
-	if w.node.Absent {
-		t.Fatal("privacy widget is absent before its first update")
+	if w.node.Absent || len(w.node.Children) != 1 || len(w.node.Children[0].Children) != 1 || w.node.Children[0].Children[0].Icon != "gpp_bad" {
+		t.Fatalf("initial privacy icons = %+v, absent=%v; want one unavailable indicator", w.node.Children, w.node.Absent)
+	}
+	if w.node.Padding != metrics.CapsulePadding {
+		t.Fatalf("privacy padding = %d, want configured bar padding %d", w.node.Padding, metrics.CapsulePadding)
 	}
 	state := privacyState{microphone: privacyUnknown, camera: privacyInactive, screenShare: privacyActive}
 	if !w.refresh(barView{Privacy: state}) {
@@ -126,39 +283,53 @@ func TestPrivacyWidgetIsPersistentAccessibleAndShowsUnavailable(t *testing.T) {
 	if w.node.Absent || !strings.Contains(name, "microphone unavailable") || !strings.Contains(name, "screen sharing in use") {
 		t.Fatalf("widget state name = %q, absent=%v", w.node.Name, w.node.Absent)
 	}
-	if len(w.node.Children) != 1 || len(w.node.Children[0].Children) != 3 {
-		t.Fatalf("privacy icon row = %+v, want three source glyphs", w.node.Children)
+	if len(w.node.Children) != 1 || len(w.node.Children[0].Children) != 2 {
+		t.Fatalf("privacy icon row = %+v, want one warning and one active source", w.node.Children)
 	}
 	icons := w.node.Children[0].Children
-	if icons[0].Icon != "gpp_bad" || icons[1].Icon != "camera-off" || icons[2].Icon != "desktop_windows" {
-		t.Fatalf("privacy icons = %+v, want unknown, inactive and active source glyphs", icons)
-	}
-	tooltip := w.node.Tooltip
-	for _, want := range []string{"Microphone: Unavailable", "Camera: Not in use", "Screen sharing: In use"} {
-		if !strings.Contains(tooltip, want) {
-			t.Fatalf("tooltip %q does not include %q", tooltip, want)
-		}
+	if icons[0].Icon != "gpp_bad" || icons[1].Icon != "desktop_windows" {
+		t.Fatalf("privacy icons = %+v, want one warning and the active screen-share glyph", icons)
 	}
 	inactive := privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyInactive}
-	if !w.refresh(barView{Privacy: inactive}) || w.node.Absent {
-		t.Fatal("known inactive state hid the persistent privacy widget")
+	if !w.refresh(barView{Privacy: inactive}) {
+		t.Fatal("known inactive update did not report a change")
 	}
-	if !strings.Contains(w.node.Tooltip, "Microphone: Not in use") || !strings.Contains(w.node.Tooltip, "Screen sharing: Not in use") {
-		t.Fatalf("inactive tooltip = %q", w.node.Tooltip)
+	if !w.node.Absent || !w.hideWhenAbsent {
+		t.Fatalf("known inactive widget absent=%v hideWhenAbsent=%v, want no bar space", w.node.Absent, w.hideWhenAbsent)
+	}
+	if len(w.node.Children[0].Children) != 0 {
+		t.Fatalf("known inactive widget retained icons: %+v", w.node.Children)
 	}
 }
 
-func TestPrivacyPageShowsOnlyPerSourceStatus(t *testing.T) {
+func TestPrivacyWidgetTooltipIncludesActiveDetailsAndUnavailableSignals(t *testing.T) {
 	t.Parallel()
-	r := newPanelRegistry(t)
-	r.privacyPipe = services.PrivacySnapshot{Known: true, MicrophoneActive: true,
-		VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 88, Camera: true}}}
-	r.niriSnapshot = niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{{StreamID: 1, Active: true,
-		Target: niri.CastTarget{Kind: "window", Name: "private title"}, TargetSet: true, TargetKnown: true}}}
-	r.privacy = privacyStateFrom(r.privacyPipe, r.niriSnapshot)
+	metrics := DefaultTheme().Metrics
+	w := buildPrivacyWidget(metrics.CapsulePadding, metrics)
+	state := privacyState{
+		microphone: privacyActive, microphoneApps: "Jitsi Meet",
+		camera:      privacyUnknown,
+		screenShare: privacyActive, screenTargets: "Output DP-1",
+	}
+	w.refresh(barView{Privacy: state})
+	for _, want := range []string{"Microphone: Jitsi Meet", "Camera: Unavailable", "Screen sharing: Output DP-1"} {
+		if !strings.Contains(w.node.Tooltip, want) {
+			t.Errorf("privacy tooltip %q is missing %q", w.node.Tooltip, want)
+		}
+	}
+}
+
+func TestPrivacyControlCentreShowsCurrentDetailsWithoutWindowTitles(t *testing.T) {
+	t.Parallel()
+	r := &Registry{privacy: privacyState{
+		microphone: privacyActive, microphoneApps: "Jitsi Meet, Zoom",
+		camera: privacyActive, cameraApps: "Cheese",
+		screenShare: privacyActive, screenTargets: "Output DP-1, Window 70",
+	}}
 	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
-	text := strings.Join(collectPrivacyText(ccPrivacy(r, h)), "\n")
-	for _, want := range []string{"Microphone", "Camera", "Screen sharing", "In use"} {
+	page := ccPrivacy(r, h)
+	text := renderText(page)
+	for _, want := range []string{"Jitsi Meet, Zoom", "Cheese", "Output DP-1", "Window 70", "In use"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("Privacy page text %q is missing %q", text, want)
 		}
@@ -168,25 +339,48 @@ func TestPrivacyPageShowsOnlyPerSourceStatus(t *testing.T) {
 	}
 }
 
+func TestPrivacyWidgetOpensControlCentrePrivacyPage(t *testing.T) {
+	r := newPanelRegistry(t)
+	callbacks, err := r.NewHost(7, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := callbacks.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar := r.bars[7]
+	if err := bar.Layout(1536, 44); err != nil {
+		t.Fatal(err)
+	}
+	target := bar.actionBounds(panelPrivacyAction)
+	if target.W == 0 {
+		t.Fatal("privacy button has no action bounds")
+	}
+	drainAuxQueue(r)
+	if !clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonLeft) {
+		t.Fatal("privacy button did not activate")
+	}
+	_ = drainAux(t, r, 2)
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	section := ""
+	if h != nil {
+		section = h.section
+	}
+	r.mu.Unlock()
+	if section != "privacy" {
+		t.Fatalf("Control Centre section = %q, want privacy", section)
+	}
+}
+
 func TestPrivacyRegistryRefreshesBarAndClearsStaleActivityOnFailure(t *testing.T) {
 	r := newPanelRegistry(t)
-	metrics := DefaultTheme().Metrics
-	w := buildPrivacyWidget(metrics.CapsulePadding, metrics)
+	w := buildPrivacyWidget(DefaultTheme().Metrics.CapsulePadding, DefaultTheme().Metrics)
 	bar := &Bar{conn: "DP-1", right: []textWidget{w}}
 	r.mu.Lock()
 	r.bars = map[uint32]*Bar{7: bar}
 	bar.apply(r.viewLocked("DP-1"))
 	r.mu.Unlock()
-	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{BarEdge: "top", BarZone: 40}); err != nil {
-		t.Fatal(err)
-	}
-	r.mu.Lock()
-	if err := r.selectPanelSectionLocked(PanelControlCenter, "privacy"); err != nil {
-		r.mu.Unlock()
-		t.Fatal(err)
-	}
-	r.mu.Unlock()
-	_ = drainAux(t, r, 2)
 
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "pw-dump")
@@ -226,55 +420,22 @@ func waitRegistryPrivacy(t *testing.T, r *Registry, bar *Bar, want privacyActivi
 	for time.Now().Before(deadline) {
 		r.mu.Lock()
 		got := r.privacy.microphone
-		pageText := ""
-		if h := r.panelHosts[PanelControlCenter]; h != nil && h.section == "privacy" {
-			pageText = strings.Join(strings.Fields(renderText(h.root)), " ")
-		}
 		r.mu.Unlock()
 		bar.mu.Lock()
 		gotName := bar.right[0].node.Name
 		bar.mu.Unlock()
-		if got == want && strings.Contains(strings.ToLower(gotName), strings.ToLower(name)) &&
-			strings.Contains(strings.ToLower(pageText), strings.ToLower(name)) {
+		if got == want && strings.Contains(strings.ToLower(gotName), strings.ToLower(name)) {
 			return
 		}
 		time.Sleep(time.Millisecond)
 	}
 	r.mu.Lock()
 	got := r.privacy
-	pageText := ""
-	if h := r.panelHosts[PanelControlCenter]; h != nil && h.section == "privacy" {
-		pageText = strings.Join(strings.Fields(renderText(h.root)), " ")
-	}
 	r.mu.Unlock()
 	bar.mu.Lock()
 	gotName := bar.right[0].node.Name
 	bar.mu.Unlock()
-	t.Fatalf("privacy state = %+v, bar name = %q, page = %q; want microphone=%v and %q",
-		got, gotName, pageText, want, name)
-}
-
-func TestPrivacyIndicatorOpensControlCentreAtPrivacy(t *testing.T) {
-	r := newPanelRegistry(t)
-	bar := &Bar{conn: "DP-1"}
-	r.mu.Lock()
-	r.bars = map[uint32]*Bar{7: bar}
-	r.bindBarPanelActionsLocked(7, bar)
-	r.mu.Unlock()
-	if !bar.onAction(panelPrivacyAction, buttonLeft) {
-		t.Fatal("left-click did not open Control Centre at Privacy")
-	}
-	_ = drainAux(t, r, 2)
-	r.mu.Lock()
-	h := r.panelHosts[PanelControlCenter]
-	section := ""
-	if h != nil {
-		section = h.section
-	}
-	r.mu.Unlock()
-	if h == nil || section != "privacy" {
-		t.Fatalf("Control Centre host = %v, section=%q; want the Privacy page", h != nil, section)
-	}
+	t.Fatalf("privacy state = %+v, bar name = %q; want microphone=%v and %q", got, gotName, want, name)
 }
 
 func TestPrivacyItemIsAcceptedAndInDefaultBar(t *testing.T) {
@@ -292,18 +453,4 @@ func TestPrivacyItemIsAcceptedAndInDefaultBar(t *testing.T) {
 	if w := buildWidgets([]config.Item{{ID: "privacy"}}, 0, DefaultTheme().Metrics); len(w) != 1 || w[0].node == nil {
 		t.Fatalf("privacy widget build = %+v", w)
 	}
-}
-
-func collectPrivacyText(n *ui.Node) []string {
-	if n == nil {
-		return nil
-	}
-	var out []string
-	if strings.TrimSpace(n.Text) != "" {
-		out = append(out, strings.TrimSpace(n.Text))
-	}
-	for _, child := range n.Children {
-		out = append(out, collectPrivacyText(child)...)
-	}
-	return out
 }

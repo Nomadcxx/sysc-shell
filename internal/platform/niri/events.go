@@ -94,12 +94,13 @@ type CastTarget struct {
 	WindowID uint64
 }
 
-// Snapshot is an immutable view of workspace, window, and keyboard state.
+// Snapshot is an immutable view of workspace, window, keyboard, and cast state.
 type Snapshot struct {
-	Workspaces   []Workspace
-	Windows      []Window
-	Layouts      KeyboardLayouts
-	Casts        []Cast
+	Workspaces []Workspace
+	Windows    []Window
+	Layouts    KeyboardLayouts
+	Casts      []Cast
+	// CastsKnown distinguishes an empty baseline from not having received one.
 	CastsKnown   bool
 	OverviewOpen bool
 	// FocusedOutput is derived from the workspace whose is_focused is true.

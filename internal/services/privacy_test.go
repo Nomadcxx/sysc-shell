@@ -1,7 +1,6 @@
 package services
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,11 +27,39 @@ func TestParsePrivacyDumpClassifiesCaptureFromDeviceMetadata(t *testing.T) {
 		t.Fatalf("audio capture = %+v, want a known mic and an unclassified active path", snapshot)
 	}
 	want := []PrivacyVideoPath{
-		{SourceNodeID: 3, Camera: true},
+		{SourceNodeID: 3, Camera: true, ApplicationName: "Cheese"},
 		{SourceNodeID: 11},
 	}
 	if !slices.Equal(snapshot.VideoPaths, want) {
 		t.Fatalf("video paths = %+v, want %+v", snapshot.VideoPaths, want)
+	}
+	if want := []string{"Jitsi Meet"}; !slices.Equal(snapshot.MicrophoneApps, want) {
+		t.Fatalf("microphone applications = %q, want %q", snapshot.MicrophoneApps, want)
+	}
+}
+
+func TestParsePrivacyDumpSortsCameraApplicationsByName(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[
+		{"id":100,"type":"PipeWire:Interface:Device","info":{"props":{"device.api":"v4l2"}}},
+		{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.id":100}}},
+		{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video","application.name":"Zebra"}}},
+		{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video","application.name":"Alpha"}}},
+		{"id":4,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+		{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":3}}
+	]`)
+	want := []PrivacyVideoPath{
+		{SourceNodeID: 1, Camera: true, ApplicationName: "Alpha"},
+		{SourceNodeID: 1, Camera: true, ApplicationName: "Zebra"},
+	}
+	for range 20 {
+		snapshot, err := parsePrivacyDump(input)
+		if err != nil {
+			t.Fatalf("parsePrivacyDump: %v", err)
+		}
+		if !slices.Equal(snapshot.VideoPaths, want) {
+			t.Fatalf("video paths = %+v, want deterministic order %+v", snapshot.VideoPaths, want)
+		}
 	}
 }
 
@@ -50,6 +77,27 @@ func TestAudioSourceKindRecognizesPipeWireCanonicalFormFactors(t *testing.T) {
 				t.Fatalf("audioSourceKind(%q) = %v, want %v", tc.formFactor, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParsePrivacyDumpSortsDeduplicatesAndSanitizesApplications(t *testing.T) {
+	t.Parallel()
+	input := `[
+		{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source","device.form-factor":"microphone"}}},
+		{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio","application.name":"Zulu\nBridge"}}},
+		{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio","application.name":"Alpha"}}},
+		{"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio","application.name":"Zulu\nBridge"}}},
+		{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+		{"id":6,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":3}},
+		{"id":7,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":4}}
+	]`
+	snapshot, err := parsePrivacyDump([]byte(input))
+	if err != nil {
+		t.Fatalf("parsePrivacyDump: %v", err)
+	}
+	want := []string{"Alpha", "Zulu Bridge"}
+	if !slices.Equal(snapshot.MicrophoneApps, want) {
+		t.Fatalf("microphone applications = %q, want %q", snapshot.MicrophoneApps, want)
 	}
 }
 
@@ -73,57 +121,119 @@ func TestParsePrivacyDumpRejectsMalformedOrNullSnapshot(t *testing.T) {
 	}
 }
 
-func TestParsePrivacyDumpKeepsUnclassifiedRunningCaptureUnknown(t *testing.T) {
-	t.Parallel()
-	input := `[
-		{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source"}}},
-		{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{}}},
-		{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source"}}},
-		{"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{}}},
-		{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
-		{"id":6,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":3,"input-node-id":4}}
-	]`
-	snapshot, err := parsePrivacyDump([]byte(input))
-	if err != nil {
-		t.Fatalf("parsePrivacyDump: %v", err)
-	}
-	if !snapshot.Known || !snapshot.MicrophoneUnknown {
-		t.Fatalf("unclassified audio path = %+v, want microphone unknown", snapshot)
-	}
-	want := []PrivacyVideoPath{{SourceNodeID: 3}}
-	if !slices.Equal(snapshot.VideoPaths, want) {
-		t.Fatalf("unclassified video paths = %+v, want %+v", snapshot.VideoPaths, want)
+func TestSamePrivacySnapshotTracksMissingMicrophoneDetails(t *testing.T) {
+	current := PrivacySnapshot{Known: true, MicrophoneActive: true}
+	updated := current
+	updated.MicrophoneDetailsMissing = true
+	if samePrivacySnapshot(current, updated) {
+		t.Fatal("missing application details did not invalidate the snapshot")
 	}
 }
 
-func TestParsePrivacyDumpDoesNotPromoteUnknownConsumersToCapture(t *testing.T) {
+func TestParsePrivacyDumpUnknownConsumerClassesStayUnknown(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name       string
-		classProps string
+		name  string
+		props string
 	}{
-		{name: "missing class"},
-		{name: "unrecognized class", classProps: `"media.class":"Vendor/Custom"`},
+		{name: "missing", props: `{}`},
+		{name: "unrecognized", props: `{"media.class":"Stream/Unknown"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			input := fmt.Sprintf(`[
+			input := `[
 				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source","device.form-factor":"microphone"}}},
-				{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.api":"v4l2"}}},
-				{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{%s}}},
-				{"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{%s}}},
-				{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":3}},
-				{"id":6,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":2,"input-node-id":4}}
-			]`, tc.classProps, tc.classProps)
+				{"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":` + tc.props + `}},
+				{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.api":"v4l2"}}},
+				{"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":` + tc.props + `}},
+				{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+				{"id":6,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":3,"input-node-id":4}}
+			]`
 			snapshot, err := parsePrivacyDump([]byte(input))
 			if err != nil {
 				t.Fatalf("parsePrivacyDump: %v", err)
 			}
 			if !snapshot.Known || snapshot.MicrophoneActive || !snapshot.MicrophoneUnknown {
-				t.Fatalf("unknown audio consumer = %+v, want unknown microphone activity", snapshot)
+				t.Fatalf("audio capture = %+v, want unknown without positive activity", snapshot)
 			}
-			want := []PrivacyVideoPath{{SourceNodeID: 2}}
+			want := []PrivacyVideoPath{{SourceNodeID: 3}}
 			if !slices.Equal(snapshot.VideoPaths, want) {
-				t.Fatalf("unknown video consumer paths = %+v, want %+v", snapshot.VideoPaths, want)
+				t.Fatalf("video paths = %+v, want unclassified path %+v", snapshot.VideoPaths, want)
+			}
+		})
+	}
+}
+
+func TestParsePrivacyDumpIncompleteCaptureLinksStayUnknown(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                  string
+		input                 string
+		wantMicrophoneUnknown bool
+		wantVideoPaths        []PrivacyVideoPath
+	}{
+		{
+			name: "missing audio consumer",
+			input: `[
+				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source"}}},
+				{"id":2,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":99}}
+			]`,
+			wantMicrophoneUnknown: true,
+		},
+		{
+			name: "known headphone source stays inactive",
+			input: `[
+				{"id":100,"type":"PipeWire:Interface:Device","info":{"props":{"device.form-factor":"headphone"}}},
+				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source","device.id":"100"}}},
+				{"id":2,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":99}}
+			]`,
+		},
+		{
+			name: "suspended microphone source stays inactive",
+			input: `[
+				{"id":100,"type":"PipeWire:Interface:Device","info":{"props":{"device.form-factor":"microphone"}}},
+				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"media.class":"Audio/Source","device.id":"100"}}},
+				{"id":2,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":99}}
+			]`,
+		},
+		{
+			name: "missing video consumer",
+			input: `[
+				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source"}}},
+				{"id":2,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":99}}
+			]`,
+			wantVideoPaths: []PrivacyVideoPath{{SourceNodeID: 1}},
+		},
+		{
+			name: "suspended video source stays inactive",
+			input: `[
+				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"media.class":"Video/Source","device.api":"v4l2"}}},
+				{"id":2,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":99}}
+			]`,
+		},
+		{
+			name: "unknown consumers missing state",
+			input: `[
+				{"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source"}}},
+				{"id":2,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Stream/Unknown"}}},
+				{"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source"}}},
+				{"id":4,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Stream/Unknown"}}},
+				{"id":5,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+				{"id":6,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":3,"input-node-id":4}}
+			]`,
+			wantMicrophoneUnknown: true,
+			wantVideoPaths:        []PrivacyVideoPath{{SourceNodeID: 3}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot, err := parsePrivacyDump([]byte(tc.input))
+			if err != nil {
+				t.Fatalf("parsePrivacyDump: %v", err)
+			}
+			if !snapshot.Known || snapshot.MicrophoneActive || snapshot.MicrophoneUnknown != tc.wantMicrophoneUnknown {
+				t.Fatalf("audio state = %+v, want known non-active, microphone unknown=%v", snapshot, tc.wantMicrophoneUnknown)
+			}
+			if !slices.Equal(snapshot.VideoPaths, tc.wantVideoPaths) {
+				t.Fatalf("video paths = %+v, want %+v", snapshot.VideoPaths, tc.wantVideoPaths)
 			}
 		})
 	}

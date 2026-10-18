@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const (
@@ -22,24 +23,30 @@ const (
 // is true only when structural PipeWire device metadata identifies a camera.
 // Other paths retain their source IDs for correlation with Niri casts.
 type PrivacyVideoPath struct {
-	SourceNodeID uint32
-	Camera       bool
+	SourceNodeID    uint32
+	Camera          bool
+	ApplicationName string
 }
 
 // PrivacySnapshot is the PipeWire portion of privacy state. Known is false
-// until a complete graph snapshot has been parsed successfully. Unclassified
-// audio capture is kept separate from positive microphone evidence so shell
-// state can prefer an active proof while still reporting ambiguity otherwise.
+// until a complete graph snapshot has been parsed successfully. Unclassified audio
+// capture stays separate from positive microphone evidence. Missing application
+// names stay separate because they affect details, not activity confidence.
 type PrivacySnapshot struct {
-	Known             bool
-	MicrophoneActive  bool
+	Known            bool
+	MicrophoneActive bool
+	// MicrophoneUnknown signals an active audio path that cannot be safely classified.
 	MicrophoneUnknown bool
-	VideoPaths        []PrivacyVideoPath
+	// MicrophoneDetailsMissing signals a proven microphone path without application.name.
+	MicrophoneDetailsMissing bool
+	MicrophoneApps           []string
+	VideoPaths               []PrivacyVideoPath
 }
 
 // Clone returns an immutable copy suitable for crossing the services/shell
 // boundary.
 func (s PrivacySnapshot) Clone() PrivacySnapshot {
+	s.MicrophoneApps = slices.Clone(s.MicrophoneApps)
 	s.VideoPaths = slices.Clone(s.VideoPaths)
 	return s
 }
@@ -72,6 +79,7 @@ type privacyDevice struct {
 
 type privacyNode struct {
 	class, state, formFactor, api string
+	applicationName               string
 	deviceID                      uint32
 	hasDeviceID                   bool
 }
@@ -124,12 +132,13 @@ func parsePrivacyDump(data []byte) (PrivacySnapshot, error) {
 			}
 			deviceID, hasDeviceID := pipewireID(props["device.id"])
 			nodes[id] = privacyNode{
-				class:       class,
-				state:       state,
-				formFactor:  normalizedProp(props, "device.form-factor"),
-				api:         normalizedProp(props, "device.api"),
-				deviceID:    deviceID,
-				hasDeviceID: hasDeviceID,
+				class:           class,
+				state:           state,
+				formFactor:      normalizedProp(props, "device.form-factor"),
+				api:             normalizedProp(props, "device.api"),
+				applicationName: privacyApplicationName(stringProp(props, "application.name")),
+				deviceID:        deviceID,
+				hasDeviceID:     hasDeviceID,
 			}
 		case "PipeWire:Interface:Link":
 			if entry.Info == nil || entry.Info.State == nil ||
@@ -150,18 +159,21 @@ func parsePrivacyDump(data []byte) (PrivacySnapshot, error) {
 		if link.state != "active" {
 			continue
 		}
+		source, sourceOK := nodes[link.outputNodeID]
 		consumer, consumerOK := nodes[link.inputNodeID]
 		if !consumerOK {
+			markUnknownPrivacyLink(&snapshot, videoPaths, source, sourceOK, link.outputNodeID, devices)
 			continue
 		}
-		source, sourceOK := nodes[link.outputNodeID]
 		if consumer.state != "running" {
 			if consumer.state == "" {
-				if audioCaptureClass(consumer.class) || consumer.class == "" && audioSourceNode(source, sourceOK) {
+				switch {
+				case audioCaptureClass(consumer.class):
 					snapshot.MicrophoneUnknown = true
-				}
-				if videoCaptureClass(consumer.class) || consumer.class == "" && videoSourceNode(source, sourceOK) {
+				case videoCaptureClass(consumer.class):
 					videoPaths[PrivacyVideoPath{SourceNodeID: link.outputNodeID}] = struct{}{}
+				case consumer.class == "" || !knownNonCaptureNodeClass(consumer.class):
+					markUnknownPrivacyLink(&snapshot, videoPaths, source, sourceOK, link.outputNodeID, devices)
 				}
 			}
 			continue
@@ -176,6 +188,11 @@ func parsePrivacyDump(data []byte) (PrivacySnapshot, error) {
 			switch audioSourceKind(formFactor) {
 			case privacyMicrophone:
 				snapshot.MicrophoneActive = true
+				if consumer.applicationName == "" {
+					snapshot.MicrophoneDetailsMissing = true
+				} else {
+					snapshot.MicrophoneApps = appendPrivacyApplication(snapshot.MicrophoneApps, consumer.applicationName)
+				}
 			case privacyNotMicrophone:
 			default:
 				snapshot.MicrophoneUnknown = true
@@ -185,22 +202,20 @@ func parsePrivacyDump(data []byte) (PrivacySnapshot, error) {
 			if sourceOK && source.state == "running" && videoSourceNode(source, true) {
 				_, api := privacyDeviceMetadata(source, devices)
 				path.Camera = api == "v4l2"
+				if path.Camera {
+					path.ApplicationName = consumer.applicationName
+				}
 			}
 			videoPaths[path] = struct{}{}
 		case consumer.class == "" || !knownNonCaptureNodeClass(consumer.class):
-			switch {
-			case sourceOK && source.state == "running" && audioSourceNode(source, true):
-				snapshot.MicrophoneUnknown = true
-			case sourceOK && source.state == "running" && videoSourceNode(source, true):
-				videoPaths[PrivacyVideoPath{SourceNodeID: link.outputNodeID}] = struct{}{}
-			case !sourceOK || source.class == "":
-				snapshot.MicrophoneUnknown = true
-				videoPaths[PrivacyVideoPath{SourceNodeID: link.outputNodeID}] = struct{}{}
-			}
+			// An unfamiliar consumer is ambiguous; source metadata alone cannot
+			// prove that it is an application capture stream.
+			markUnknownPrivacyLink(&snapshot, videoPaths, source, sourceOK, link.outputNodeID, devices)
 		}
 	}
 
 	snapshot.Known = true
+	snapshot.MicrophoneApps = sortedPrivacyApplications(snapshot.MicrophoneApps)
 	for path := range videoPaths {
 		snapshot.VideoPaths = append(snapshot.VideoPaths, path)
 	}
@@ -211,15 +226,67 @@ func parsePrivacyDump(data []byte) (PrivacySnapshot, error) {
 		if a.SourceNodeID > b.SourceNodeID {
 			return 1
 		}
-		if a.Camera == b.Camera {
-			return 0
-		}
-		if a.Camera {
+		if a.Camera != b.Camera && a.Camera {
 			return -1
 		}
-		return 1
+		if a.Camera != b.Camera {
+			return 1
+		}
+		if a.ApplicationName < b.ApplicationName {
+			return -1
+		}
+		if a.ApplicationName > b.ApplicationName {
+			return 1
+		}
+		return 0
 	})
 	return snapshot, nil
+}
+
+func markUnknownPrivacyLink(snapshot *PrivacySnapshot, videoPaths map[PrivacyVideoPath]struct{}, source privacyNode, sourceOK bool, sourceNodeID uint32, devices map[uint32]privacyDevice) {
+	switch {
+	case audioSourceNode(source, sourceOK):
+		if source.state == "running" {
+			formFactor, _ := privacyDeviceMetadata(source, devices)
+			if audioSourceKind(formFactor) != privacyNotMicrophone {
+				snapshot.MicrophoneUnknown = true
+			}
+		}
+	case videoSourceNode(source, sourceOK):
+		if source.state == "running" {
+			videoPaths[PrivacyVideoPath{SourceNodeID: sourceNodeID}] = struct{}{}
+		}
+	case !sourceOK || source.class == "":
+		snapshot.MicrophoneUnknown = true
+		videoPaths[PrivacyVideoPath{SourceNodeID: sourceNodeID}] = struct{}{}
+	}
+}
+
+func privacyApplicationName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, name)
+	name = strings.Join(strings.Fields(name), " ")
+	runes := []rune(name)
+	if len(runes) > 96 {
+		return string(runes[:95]) + "…"
+	}
+	return name
+}
+
+func appendPrivacyApplication(names []string, name string) []string {
+	if name == "" || slices.Contains(names, name) {
+		return names
+	}
+	return append(names, name)
+}
+
+func sortedPrivacyApplications(names []string) []string {
+	slices.Sort(names)
+	return slices.Compact(names)
 }
 
 func privacyRelevantNodeClass(class string) bool {
@@ -443,5 +510,7 @@ func (p *Privacy) publish(next PrivacySnapshot) {
 
 func samePrivacySnapshot(a, b PrivacySnapshot) bool {
 	return a.Known == b.Known && a.MicrophoneActive == b.MicrophoneActive &&
-		a.MicrophoneUnknown == b.MicrophoneUnknown && slices.Equal(a.VideoPaths, b.VideoPaths)
+		a.MicrophoneUnknown == b.MicrophoneUnknown && a.MicrophoneDetailsMissing == b.MicrophoneDetailsMissing &&
+		slices.Equal(a.MicrophoneApps, b.MicrophoneApps) &&
+		slices.Equal(a.VideoPaths, b.VideoPaths)
 }

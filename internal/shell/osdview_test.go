@@ -1,11 +1,166 @@
 package shell
 
 import (
+	"slices"
 	"testing"
+	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func TestPrivacyOSDTransitionsIgnoreBaselinesAndUnknown(t *testing.T) {
+	t.Parallel()
+	knownInactive := privacyState{microphone: privacyInactive, camera: privacyInactive, screenShare: privacyInactive}
+	active := knownInactive
+	active.microphone = privacyActive
+	niriKnown := niri.Snapshot{CastsKnown: true}
+	if got := privacyTransitions(privacyState{}, knownInactive, niri.Snapshot{}, niriKnown); len(got) != 0 {
+		t.Fatalf("initial baseline changes = %+v, want none", got)
+	}
+	if got, want := privacyTransitions(knownInactive, active, niriKnown, niriKnown), []privacyChange{
+		{source: privacyMicrophone, action: privacyStarted},
+	}; !slices.Equal(got, want) {
+		t.Fatalf("known start changes = %+v, want %+v", got, want)
+	}
+	unknown := active
+	unknown.microphone = privacyUnknown
+	if got := privacyTransitions(active, unknown, niriKnown, niriKnown); len(got) != 0 {
+		t.Fatalf("known-to-unknown changes = %+v, want none", got)
+	}
+	if got := privacyTransitions(unknown, active, niriKnown, niriKnown); len(got) != 0 {
+		t.Fatalf("unknown-to-known changes = %+v, want none", got)
+	}
+}
+
+func TestPrivacyOSDNamesCastStartPauseResumeAndStop(t *testing.T) {
+	t.Parallel()
+	pipe := services.PrivacySnapshot{Known: true}
+	active := niri.Cast{StreamID: 9, Active: true,
+		Target: niri.CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true}
+	paused := active
+	paused.Active = false
+	state := func(casts ...niri.Cast) (privacyState, niri.Snapshot) {
+		snapshot := niri.Snapshot{CastsKnown: true, Casts: casts}
+		return privacyStateFrom(pipe, snapshot), snapshot
+	}
+	old, empty := state()
+	started, startSnapshot := state(active)
+	pausedState, pauseSnapshot := state(paused)
+	_, stoppedSnapshot := state()
+	cases := []struct {
+		name   string
+		from   privacyState
+		to     privacyState
+		before niri.Snapshot
+		after  niri.Snapshot
+		want   privacyChange
+	}{
+		{"start", old, started, empty, startSnapshot, privacyChange{source: privacyScreenShare, action: privacyStarted}},
+		{"pause", started, pausedState, startSnapshot, pauseSnapshot, privacyChange{source: privacyScreenShare, action: privacyPaused}},
+		{"resume", pausedState, started, pauseSnapshot, startSnapshot, privacyChange{source: privacyScreenShare, action: privacyResumed}},
+		{"stop", started, old, startSnapshot, stoppedSnapshot, privacyChange{source: privacyScreenShare, action: privacyStopped}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := privacyTransitions(tc.from, tc.to, tc.before, tc.after); !slices.Equal(got, []privacyChange{tc.want}) {
+				t.Fatalf("changes = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrivacyOSDTracksAggregateScreenShareTransitions(t *testing.T) {
+	pipe := services.PrivacySnapshot{Known: true}
+	cast := func(id uint64, active bool, target niri.CastTarget) niri.Cast {
+		return niri.Cast{StreamID: id, Active: active, Target: target, TargetSet: true, TargetKnown: true}
+	}
+	outputA := niri.CastTarget{Kind: "output", Name: "DP-1"}
+	outputB := niri.CastTarget{Kind: "output", Name: "DP-2"}
+	nothing := niri.CastTarget{Kind: "nothing"}
+	snapshot := func(casts ...niri.Cast) (privacyState, niri.Snapshot) {
+		s := niri.Snapshot{CastsKnown: true, Casts: casts}
+		return privacyStateFrom(pipe, s), s
+	}
+
+	one, oneSnapshot := snapshot(cast(1, true, outputA))
+	two, twoSnapshot := snapshot(cast(1, true, outputA), cast(2, true, outputB))
+	if got := privacyTransitions(one, two, oneSnapshot, twoSnapshot); len(got) != 0 {
+		t.Fatalf("adding a second active cast emitted OSD changes %+v", got)
+	}
+	if got := privacyTransitions(two, one, twoSnapshot, oneSnapshot); len(got) != 0 {
+		t.Fatalf("removing one of two active casts emitted OSD changes %+v", got)
+	}
+	knownInactive, inactiveSnapshot := snapshot(cast(3, true, nothing))
+	activated, activatedSnapshot := snapshot(cast(3, true, outputA))
+	if got, want := privacyTransitions(knownInactive, activated, inactiveSnapshot, activatedSnapshot), []privacyChange{{source: privacyScreenShare, action: privacyStarted}}; !slices.Equal(got, want) {
+		t.Fatalf("known target activation changes = %+v, want %+v", got, want)
+	}
+}
+
+func TestPrivacyOSDCoalescesNearbySourceEvents(t *testing.T) {
+	t.Parallel()
+	if got, want := privacyChangeText([]privacyChange{
+		{source: privacyCamera, action: privacyStarted},
+		{source: privacyMicrophone, action: privacyStarted},
+	}), "Microphone and camera started"; got != want {
+		t.Fatalf("privacy change text = %q, want %q", got, want)
+	}
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.queuePrivacyOSD([]privacyChange{{source: privacyMicrophone, action: privacyStarted}})
+	r.queuePrivacyOSD([]privacyChange{{source: privacyCamera, action: privacyStarted}})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		view := r.osd.view
+		r.mu.Unlock()
+		if view.Kind == osdPrivacy {
+			if view.Text != "Microphone and camera started" {
+				t.Fatalf("privacy OSD text = %q", view.Text)
+			}
+			if got := osdIcon(view); got != "security" {
+				t.Fatalf("privacy OSD icon = %q, want security", got)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("privacy OSD relay did not publish combined changes")
+}
+
+func TestPrivacyOSDAnnouncesRegistryCastStart(t *testing.T) {
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.mu.Lock()
+	r.privacyPipe = services.PrivacySnapshot{Known: true}
+	r.niriSnapshot = niri.Snapshot{CastsKnown: true}
+	r.privacy = privacyStateFrom(r.privacyPipe, r.niriSnapshot)
+	r.mu.Unlock()
+
+	r.UpdateNiri(niri.Snapshot{CastsKnown: true, Casts: []niri.Cast{{
+		StreamID: 3, Active: true,
+		Target: niri.CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true,
+	}}})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		view := r.osd.view
+		r.mu.Unlock()
+		if view.Kind == osdPrivacy {
+			if view.Text != "Screen sharing started" {
+				t.Fatalf("privacy OSD text = %q", view.Text)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("known cast start did not reach the privacy OSD")
+}
 
 func TestOSDIconAndLabelPerKind(t *testing.T) {
 	cases := []struct {

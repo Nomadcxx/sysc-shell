@@ -74,6 +74,7 @@ type Registry struct {
 	privacyPipe   services.PrivacySnapshot
 	privacy       privacyState
 	privacySvc    *services.Privacy
+	privacyOSD    chan []privacyChange
 	now           time.Time
 	focused       string
 	layouts       niri.KeyboardLayouts
@@ -492,6 +493,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:               make(map[PanelID]*PanelHost),
 		panelShields:             make(map[uint32]*PanelHost),
 		closed:                   make(chan struct{}),
+		privacyOSD:               make(chan []privacyChange, 8),
 		dwell:                    newDwell(defaultDwell),
 		runArgv:                  runArgvDefault,
 		lookPath:                 exec.LookPath,
@@ -549,6 +551,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.publishCommittedThemeSelection(cfg, initialTokens)
 	}
 	r.osd = newOSDManager(r, 0)
+	go r.relayPrivacyOSD()
 	r.tooltips = newTooltipHost(r, nil)
 	go r.relayTooltips(r.dwell)
 	r.mediaIntent = newMediaStripIntent(nil)
@@ -2779,12 +2782,14 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 
 	r.mu.Lock()
 	previousPrivacy := r.privacy
+	previousNiri := r.niriSnapshot
 	// Replaced wholesale, not merged: a connector absent from the projection
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
 	r.niriSnapshot = cloneNiriSnapshot(s)
 	r.privacy = privacyStateFrom(r.privacyPipe, r.niriSnapshot)
+	privacyChanges := privacyTransitions(previousPrivacy, r.privacy, previousNiri, r.niriSnapshot)
 	privacyPageOutput := uint32(0)
 	privacyPageOpen := false
 	if r.privacy != previousPrivacy {
@@ -2839,6 +2844,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	if showLayout {
 		r.OSD().Show(layoutView)
 	}
+	r.queuePrivacyOSD(privacyChanges)
 	r.syncAutoPause()
 	return changed
 }
