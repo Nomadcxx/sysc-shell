@@ -300,9 +300,9 @@ const (
 
 func audioSourceKind(formFactor string) audioSourceClassification {
 	switch formFactor {
-	case "microphone", "headset", "handsfree", "handset":
+	case "microphone", "headset", "hands-free", "handsfree", "handset":
 		return privacyMicrophone
-	case "headphones", "speaker", "line", "monitor", "tv", "radio", "streaming":
+	case "headphone", "headphones", "speaker", "line", "monitor", "tv", "radio", "streaming":
 		return privacyNotMicrophone
 	default:
 		return privacyUnclassifiedSource

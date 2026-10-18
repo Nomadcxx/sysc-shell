@@ -35,6 +35,23 @@ func TestParsePrivacyDumpClassifiesCaptureFromDeviceMetadata(t *testing.T) {
 	}
 }
 
+func TestAudioSourceKindRecognizesPipeWireCanonicalFormFactors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		formFactor string
+		want       audioSourceClassification
+	}{
+		{formFactor: "hands-free", want: privacyMicrophone},
+		{formFactor: "headphone", want: privacyNotMicrophone},
+	} {
+		t.Run(tc.formFactor, func(t *testing.T) {
+			if got := audioSourceKind(tc.formFactor); got != tc.want {
+				t.Fatalf("audioSourceKind(%q) = %v, want %v", tc.formFactor, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParsePrivacyDumpEmptyGraphIsKnownInactive(t *testing.T) {
 	t.Parallel()
 	snapshot, err := parsePrivacyDump([]byte(`[]`))
