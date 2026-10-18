@@ -442,21 +442,22 @@ func run(ctx context.Context) (err error) {
 	}()
 
 	runErr := wayland.Run(ctx, cfg, wayland.Callbacks{
-		NewHost:       registry.NewHost,
-		PrepareConfig: registry.PrepareConfig,
-		DropHost:      registry.DropHost,
-		DropAux:       registry.DropAux,
-		Capabilities:  registry.SetCapabilities,
-		Invalidations: registry.Invalidations(),
-		Aux:           registry.AuxRequests(),
-		Selection:     registry.Selections(),
-		Idle:          idleSvc.Requests(),
-		IdleEvents:    idleSvc.Events(),
-		Gamma:         registry.GammaRequests(),
-		GammaEvents:   registry.GammaEventSink(),
-		Reloads:       reloads,
-		ConfigPath:    cfgPath,
-		ReloadResult:  reloadRelay.submit,
+		NewHost:          registry.NewHost,
+		PrepareConfig:    registry.PrepareConfigWithGeneration,
+		ConfigGeneration: registry.SettingsWriteGeneration,
+		DropHost:         registry.DropHost,
+		DropAux:          registry.DropAux,
+		Capabilities:     registry.SetCapabilities,
+		Invalidations:    registry.Invalidations(),
+		Aux:              registry.AuxRequests(),
+		Selection:        registry.Selections(),
+		Idle:             idleSvc.Requests(),
+		IdleEvents:       idleSvc.Events(),
+		Gamma:            registry.GammaRequests(),
+		GammaEvents:      registry.GammaEventSink(),
+		Reloads:          reloads,
+		ConfigPath:       cfgPath,
+		ReloadResult:     reloadRelay.submit,
 	})
 	if runErr != nil {
 		return runErr

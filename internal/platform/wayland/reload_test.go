@@ -23,7 +23,7 @@ func TestReloadEqualConfigSkipsPrepareAndReportsRecovery(t *testing.T) {
 	calls := 0
 	o := owner{cfg: &current, hosts: newHostSet(), cb: Callbacks{
 		ConfigPath: path,
-		PrepareConfig: func(config.Config, []HostIdentity) (PreparedConfig, error) {
+		PrepareConfig: func(config.Config, []HostIdentity, uint64) (PreparedConfig, error) {
 			t.Fatal("equal config prepared replacement resources")
 			return PreparedConfig{}, nil
 		},
@@ -39,6 +39,42 @@ func TestReloadEqualConfigSkipsPrepareAndReportsRecovery(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("outcomes = %d, want one recovery", calls)
+	}
+}
+
+func TestReloadConfigSnapshotsGenerationBeforeRead(t *testing.T) {
+	current := config.Default()
+	candidate := current.Clone()
+	candidate.Bar.Height++
+	path := filepath.Join(t.TempDir(), "config.json")
+	const wantGeneration = 19
+	generationCalls, prepareCalls := 0, 0
+	o := owner{cfg: &current, hosts: newHostSet(), cb: Callbacks{
+		ConfigPath: path,
+		ConfigGeneration: func() uint64 {
+			generationCalls++
+			if err := config.Write(path, candidate); err != nil {
+				t.Fatalf("write config from generation callback: %v", err)
+			}
+			return wantGeneration
+		},
+		PrepareConfig: func(got config.Config, _ []HostIdentity, generation uint64) (PreparedConfig, error) {
+			prepareCalls++
+			if !reflect.DeepEqual(got, candidate) {
+				t.Fatalf("prepared config = %+v, want %+v", got, candidate)
+			}
+			if generation != wantGeneration {
+				t.Fatalf("prepared generation = %d, want %d", generation, wantGeneration)
+			}
+			return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() {}, Rollback: func() {}}, nil
+		},
+	}}
+
+	if err := o.reloadConfig(); err != nil {
+		t.Fatalf("reloadConfig: %v", err)
+	}
+	if generationCalls != 1 || prepareCalls != 1 {
+		t.Fatalf("generation calls=%d, prepare calls=%d, want one each", generationCalls, prepareCalls)
 	}
 }
 
@@ -71,7 +107,7 @@ func TestReloadRefusesMissingAndMalformedFilesWithoutPreparing(t *testing.T) {
 			var outcomes []error
 			o := owner{cfg: cfgPointer, hosts: hosts, cb: Callbacks{
 				ConfigPath: path,
-				PrepareConfig: func(config.Config, []HostIdentity) (PreparedConfig, error) {
+				PrepareConfig: func(config.Config, []HostIdentity, uint64) (PreparedConfig, error) {
 					prepareCalls++
 					return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() {}, Rollback: func() {}}, nil
 				},
@@ -125,7 +161,7 @@ func TestReloadPreparationFailureRollsBackAndReportsOneRefusal(t *testing.T) {
 	var outcomes []error
 	o := owner{cfg: &current, hosts: hosts, cb: Callbacks{
 		ConfigPath: path,
-		PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+		PrepareConfig: func(_ config.Config, identities []HostIdentity, _ uint64) (PreparedConfig, error) {
 			callbacks := map[uint32]HostCallbacks{}
 			for _, identity := range identities {
 				callbacks[identity.Global] = validHostCallbacks()
@@ -174,7 +210,7 @@ func TestReloadSuccessReportsAfterCommitAndEmptyPathDoesNothing(t *testing.T) {
 	var outcomes []error
 	o := owner{cfg: &current, hosts: newHostSet(), cb: Callbacks{
 		ConfigPath: path,
-		PrepareConfig: func(config.Config, []HostIdentity) (PreparedConfig, error) {
+		PrepareConfig: func(config.Config, []HostIdentity, uint64) (PreparedConfig, error) {
 			return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() { committed = true }, Rollback: func() {}}, nil
 		},
 		ReloadResult: func(err error) {
@@ -198,7 +234,7 @@ func TestReloadSuccessReportsAfterCommitAndEmptyPathDoesNothing(t *testing.T) {
 	}
 	withoutCallback := owner{cfg: &current, hosts: newHostSet(), cb: Callbacks{
 		ConfigPath: path,
-		PrepareConfig: func(config.Config, []HostIdentity) (PreparedConfig, error) {
+		PrepareConfig: func(config.Config, []HostIdentity, uint64) (PreparedConfig, error) {
 			return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() {}, Rollback: func() {}}, nil
 		},
 	}}
@@ -248,7 +284,7 @@ func TestReloadApplyTransportFailureDoesNotReportSuccess(t *testing.T) {
 	var outcomes []error
 	o := owner{cfg: &current, hosts: hosts, cb: Callbacks{
 		ConfigPath: configPath,
-		PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+		PrepareConfig: func(_ config.Config, identities []HostIdentity, _ uint64) (PreparedConfig, error) {
 			callbacks := make(map[uint32]HostCallbacks, len(identities))
 			for _, identity := range identities {
 				callbacks[identity.Global] = validHostCallbacks()
