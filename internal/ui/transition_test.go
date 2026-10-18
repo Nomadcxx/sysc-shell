@@ -106,3 +106,97 @@ func TestLerpRectRoundsRatherThanTruncates(t *testing.T) {
 		t.Errorf("negative direction midpoint X = %d, want 0", got)
 	}
 }
+
+func TestSpringStepUsesUpdatedVelocity(t *testing.T) {
+	t.Parallel()
+	// Semi-implicit Euler: velocity first, then position. The expected pair
+	// pins the integration order; swapping it changes the position by one
+	// velocity increment and fails.
+	s := Spring{Stiffness: 100, Damping: 20,
+		PositionEpsilon: 0.001, VelocityEpsilon: 0.001}
+	x, v, rest := s.Step(0, 0, 1, 0.002)
+	if math.Abs(x-0.0004) > 1e-12 || math.Abs(v-0.2) > 1e-12 || rest {
+		t.Fatalf("step = (%g, %g, %v), want (0.0004, 0.2, false)", x, v, rest)
+	}
+}
+
+func TestSpringRestNeedsPositionAndVelocity(t *testing.T) {
+	t.Parallel()
+	// Both thresholds gate rest: proximity with speed still moving is not
+	// rest, and a stationary value away from the target is not rest either.
+	s := Spring{Stiffness: 100, Damping: 20,
+		PositionEpsilon: 0.001, VelocityEpsilon: 0.001}
+	for _, tc := range []struct {
+		x, v float64
+		rest bool
+	}{
+		{1, 0, true},
+		{1.0005, 0.0005, true},
+		{1, 0.1, false},
+		{0.99, 0, false},
+	} {
+		x, v, rest := s.Step(tc.x, tc.v, 1, 0.002)
+		if rest != tc.rest || rest && (x != 1 || v != 0) {
+			t.Fatalf("from (%g,%g) -> (%g,%g,%v)", tc.x, tc.v, x, v, rest)
+		}
+	}
+}
+
+func TestSpringStepInvalidStateSettlesSafely(t *testing.T) {
+	t.Parallel()
+	// Anything the caller cannot reproduce settles exactly instead of
+	// integrating: bad coefficients, bad thresholds, non-finite state, or an
+	// interval outside (0, 0.002]. A hard snap is the safe recovery; NaN must
+	// never reach a stored value.
+	valid := Spring{Stiffness: 100, Damping: 20,
+		PositionEpsilon: 0.001, VelocityEpsilon: 0.001}
+	for _, tc := range []struct {
+		name     string
+		spring   Spring
+		x, v, dt float64
+	}{
+		{"zero stiffness", Spring{Damping: 20, PositionEpsilon: 0.001, VelocityEpsilon: 0.001}, 0, 0, 0.002},
+		{"negative stiffness", Spring{Stiffness: -100, Damping: 20, PositionEpsilon: 0.001, VelocityEpsilon: 0.001}, 0, 0, 0.002},
+		{"infinite stiffness", Spring{Stiffness: math.Inf(1), Damping: 20, PositionEpsilon: 0.001, VelocityEpsilon: 0.001}, 0, 0, 0.002},
+		{"zero damping", Spring{Stiffness: 100, PositionEpsilon: 0.001, VelocityEpsilon: 0.001}, 0, 0, 0.002},
+		{"negative damping", Spring{Stiffness: 100, Damping: -20, PositionEpsilon: 0.001, VelocityEpsilon: 0.001}, 0, 0, 0.002},
+		{"NaN damping", Spring{Stiffness: 100, Damping: math.NaN(), PositionEpsilon: 0.001, VelocityEpsilon: 0.001}, 0, 0, 0.002},
+		{"zero position epsilon", Spring{Stiffness: 100, Damping: 20, VelocityEpsilon: 0.001}, 0, 0, 0.002},
+		{"nonpositive velocity epsilon", Spring{Stiffness: 100, Damping: 20, PositionEpsilon: 0.001, VelocityEpsilon: math.Inf(-1)}, 0, 0, 0.002},
+		{"NaN position", valid, math.NaN(), 0, 0.002},
+		{"infinite velocity", valid, 0, math.Inf(1), 0.002},
+		{"oversized step", valid, 0, 0, 0.003},
+		{"NaN step", valid, 0, 0, math.NaN()},
+	} {
+		x, v, rest := tc.spring.Step(tc.x, tc.v, 1, tc.dt)
+		if x != 1 || v != 0 || !rest {
+			t.Errorf("%s: step = (%v, %v, %v), want (1, 0, true)", tc.name, x, v, rest)
+		}
+	}
+}
+
+func TestSpringStepNonpositiveTimeDoesNotAdvance(t *testing.T) {
+	t.Parallel()
+	// A zero or backwards interval is not motion: the value keeps its exact
+	// state and its current rest classification, because settling on a
+	// timestamp the caller cannot advance from would erase momentum.
+	s := Spring{Stiffness: 100, Damping: 20,
+		PositionEpsilon: 0.001, VelocityEpsilon: 0.001}
+	for _, tc := range []struct {
+		name     string
+		x, v     float64
+		wantRest bool
+	}{
+		{"moving", 0, 0.2, false},
+		{"passing the target at speed", 1, 0.2, false},
+		{"settled", 1, 0, true},
+	} {
+		for _, dt := range []float64{0, -1} {
+			x, v, rest := s.Step(tc.x, tc.v, 1, dt)
+			if x != tc.x || v != tc.v || rest != tc.wantRest {
+				t.Errorf("%s at dt %g: step = (%v, %v, %v), want (%v, %v, %v)",
+					tc.name, dt, x, v, rest, tc.x, tc.v, tc.wantRest)
+			}
+		}
+	}
+}

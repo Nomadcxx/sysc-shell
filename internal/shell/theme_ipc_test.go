@@ -244,6 +244,9 @@ func TestThemePreviewRepaintsOpenPanelsWithCandidatePalette(t *testing.T) {
 	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
 
 	cfg := config.Default()
+	// The candidate is resolved from the same accessibility settings as the
+	// running registry, so a preview does not clear reduced motion.
+	cfg.Accessibility.ReducedMotion = true
 	cfg.ThemeGen.Source = "palette"
 	cfg.ThemeGen.Seed = "gruvbox"
 	tokens, ok := theme.NamedPalette(cfg.ThemeGen.Seed, cfg.ThemeGen.Mode, false)

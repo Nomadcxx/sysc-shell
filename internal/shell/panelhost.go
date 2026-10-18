@@ -4826,6 +4826,8 @@ func (h *PanelHost) retheme(next Theme) {
 	if h.anim == nil {
 		return
 	}
+	// A speed or reduced-motion change reaches a running surface animation.
+	h.anim.Configure(next.Motion, next.Motion.Reduced)
 	key := panelSurfaceID(h.id)
 	// Restart from zero so the blend runs the whole way from what is rendering.
 	h.anim.Reset(key, animTheme)

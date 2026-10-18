@@ -956,6 +956,9 @@ func TestReducedMotionSnapsToTheNewPalette(t *testing.T) {
 	defer reg.mu.Unlock()
 
 	want := lightTheme()
+	// A resolved theme carries the reduced flag (theme.go resolves it from the
+	// accessibility config); the helper theme needs it explicitly.
+	want.Motion.Reduced = true
 	h.retheme(want)
 	// A palette change is colour, not motion: there is nothing for reduced
 	// motion to want held.

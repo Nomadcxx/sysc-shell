@@ -70,7 +70,6 @@ type toastHost struct {
 
 	anim      *animator
 	shown     map[string]map[uint32]ui.Rect
-	from      map[string]map[uint32]ui.Rect
 	stopSlide chan struct{}
 	sliding   bool
 
@@ -129,7 +128,6 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 		hovered:         map[string]map[uint32]bool{},
 		expanded:        map[uint32]bool{},
 		shown:           map[string]map[uint32]ui.Rect{},
-		from:            map[string]map[uint32]ui.Rect{},
 		geometry:        map[string]toastGeometry{},
 		scale120:        map[string]int{},
 		measured:        map[string]bool{},
@@ -160,7 +158,15 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 
 // restyleLocked rebinds the cached layout style to the published palette and
 // relayouts every output. Called with Registry.mu held, from the retheme pass.
-func (h *toastHost) restyleLocked() { h.recompute() }
+func (h *toastHost) restyleLocked() {
+	if h.anim != nil {
+		// The animator's table follows the published theme, so a speed or
+		// reduced-motion change reaches open toasts instead of waiting for the
+		// next surface.
+		h.anim.Configure(h.r.panelTheme().Motion, h.r.cfg.Accessibility.ReducedMotion)
+	}
+	h.recompute()
+}
 
 func (h *toastHost) harness() *hostHarness { return h.harnessRef }
 
@@ -175,6 +181,11 @@ func toastSlideKey(connector string, id uint32) string {
 // surface that no longer exists. The next syncOutputs opens a fresh one
 // (GitHub #21).
 func (h *toastHost) drop(connector string) {
+	if h.anim != nil {
+		for id := range h.shown[connector] {
+			h.anim.Forget(toastSlideKey(connector, id))
+		}
+	}
 	delete(h.outputs, connector)
 	delete(h.visible, connector)
 	delete(h.queued, connector)
@@ -310,10 +321,11 @@ func (h *toastHost) configureLocked(connector string, width, height, scale120 in
 			for id, rect := range h.shown[connector] {
 				rect.X += delta
 				h.shown[connector][id] = rect
-			}
-			for id, rect := range h.from[connector] {
-				rect.X += delta
-				h.from[connector][id] = rect
+				// A card still in flight moves with the surface: its drawn
+				// offset and its destination both shift by the same delta.
+				if h.anim != nil {
+					h.anim.shiftStackRectX(toastSlideKey(connector, id), float64(delta))
+				}
 			}
 			if h.pressing && h.pressConnector == connector {
 				h.press.rect.X += delta
@@ -951,33 +963,43 @@ func (h *toastHost) publishSlideFrame() {
 	}
 }
 
-// displayRect is where one output draws a card this frame: on its way from
-// its old slot to the new one, or in its slot once settled.
+// displayRect is where one output draws a card this frame: its stored geometry
+// channels while the stack settles, or the slot itself once they retire. Paint,
+// hit testing and the input region all read this one rectangle, so a click
+// always lands on the pixels the user can see. Caller holds r.mu.
 func (h *toastHost) displayRect(connector string, id uint32, target ui.Rect) ui.Rect {
-	from, ok := h.from[connector][id]
-	if !ok || h.anim == nil || h.anim.reduced {
+	if h.anim == nil || h.anim.reduced {
 		return target
 	}
-	p := h.anim.Value(toastSlideKey(connector, id), animVisible)
-	if p >= 1 {
-		delete(h.from[connector], id)
+	node := toastSlideKey(connector, id)
+	if !h.anim.has(node, animStackX) {
 		return target
 	}
-	return ui.LerpRect(from, target, p)
+	rect := ui.Rect{
+		X: int(math.Round(h.anim.Value(node, animStackX))),
+		Y: int(math.Round(h.anim.Value(node, animStackY))),
+		W: int(math.Round(h.anim.Value(node, animStackW))),
+		H: int(math.Round(h.anim.Value(node, animStackH))),
+	}
+	// A spring may dip a pixel below a component's endpoints; a card is never
+	// narrower than nothing. X and Y may stay negative: the surface clips them.
+	if rect.W < 0 {
+		rect.W = 0
+	}
+	if rect.H < 0 {
+		rect.H = 0
+	}
+	return rect
 }
 
-// noteTargets tracks the visible cards' target rectangles per output. Moved
-// cards restart from where they are drawn so a second change never jumps.
+// noteTargets tracks the visible cards' target rectangles per output. A moved
+// card retargets its stored geometry, so a second change never jumps and the
+// spring keeps whatever speed the card already had. Caller holds r.mu.
 func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect) (moved bool) {
 	shown := h.shown[connector]
 	if shown == nil {
 		shown = make(map[uint32]ui.Rect, len(ids))
 		h.shown[connector] = shown
-	}
-	from := h.from[connector]
-	if from == nil {
-		from = make(map[uint32]ui.Rect)
-		h.from[connector] = from
 	}
 	seen := make(map[uint32]bool, len(ids))
 	for i, id := range ids {
@@ -989,12 +1011,7 @@ func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect)
 		if ok && old != rects[i] {
 			moved = true
 			if h.anim != nil && !h.anim.reduced {
-				from[id] = h.displayRect(connector, id, old)
-				key := toastSlideKey(connector, id)
-				h.anim.Reset(key, animVisible)
-				h.anim.Target(key, animVisible, 1)
-			} else {
-				delete(from, id)
+				h.anim.TargetStackRect(toastSlideKey(connector, id), old, rects[i])
 			}
 		}
 		shown[id] = rects[i]
@@ -1002,7 +1019,6 @@ func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect)
 	for id := range shown {
 		if !seen[id] {
 			delete(shown, id)
-			delete(from, id)
 			if h.anim != nil {
 				h.anim.Forget(toastSlideKey(connector, id))
 			}

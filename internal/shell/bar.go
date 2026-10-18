@@ -319,6 +319,11 @@ func (b *Bar) themeSnapshot() Theme {
 // geometry already supplied by the Wayland configure path.
 func (b *Bar) retheme(theme Theme) {
 	b.mu.Lock()
+	if b.anim != nil {
+		// A speed or reduced-motion change reaches a running bar animation
+		// instead of waiting for the next surface.
+		b.anim.Configure(theme.Motion, theme.Motion.Reduced)
+	}
 	scale, body := b.style.Scale120, b.style.Body
 	b.theme = theme
 	b.style = barStyle(theme)

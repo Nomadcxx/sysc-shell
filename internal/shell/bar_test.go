@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
@@ -815,7 +816,11 @@ func TestOnlyClickableCapsulesAnimate(t *testing.T) {
 	// chrome the pointer can light up; only actionable pills animate.
 	p := newTestBar(t)
 	withSyntheticAction(t, p, 1920)
+	// Settlement and value resolution write back spring state, so the caller
+	// holds the bar lock here just as Render does.
+	p.mu.Lock()
 	root, _ := p.renderViewLocked()
+	p.mu.Unlock()
 
 	clickable, display := 0, 0
 	var walk func(*ui.Node)
@@ -842,5 +847,42 @@ func TestOnlyClickableCapsulesAnimate(t *testing.T) {
 		if n.Kind == ui.KindCapsule && n.Action == "" && ui.Animated(n) {
 			t.Errorf("display capsule %q animates", nodeText(n))
 		}
+	}
+}
+
+// A theme change reaches the bar's running animator: the table and the
+// reduced-motion flag move, the animator is kept, and the accepted geometry is
+// untouched.
+func TestBarRethemeAppliesMotion(t *testing.T) {
+	t.Parallel()
+	p := newTestBar(t)
+	withSyntheticAction(t, p, 1920)
+	p.mu.Lock()
+	anim := p.anim
+	anim.Target("synthetic-action", animHover, 1)
+	scale, body := p.style.Scale120, p.style.Body
+	p.mu.Unlock()
+
+	next := DefaultTheme()
+	next.Motion = render.MotionSet{
+		Durations: theme.BaseMotion.AtSpeed(25),
+		Spatial:   theme.CurveOutQuart,
+		Reduced:   true,
+	}
+	p.retheme(next)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.anim != anim {
+		t.Fatal("retheme replaced the bar animator")
+	}
+	if !p.anim.reduced {
+		t.Fatal("reduced motion did not reach the bar animator")
+	}
+	if p.style.Scale120 != scale || p.style.Body != body {
+		t.Fatal("retheme disturbed the accepted bar geometry")
+	}
+	if got := p.anim.Value("synthetic-action", animHover); got != 1 {
+		t.Fatalf("hover did not settle under reduced motion: %g", got)
 	}
 }

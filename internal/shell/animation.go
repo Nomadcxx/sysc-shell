@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -51,6 +52,17 @@ const (
 	// open weather panel would otherwise animate at the interaction cadence
 	// for as long as it is open.
 	effectFrameCap = 66 * time.Millisecond
+
+	// springStep is the fixed integration lattice. Every spring scalar advances
+	// in whole steps of this size and keeps the leftover fraction, so a stored
+	// value depends on how much time passed, never on how the caller chopped it
+	// into samples.
+	springStep = 2 * time.Millisecond
+	// springResumeGap is the longest gap a scalar integrates through. Beyond it
+	// the value snaps: replaying a motion nobody watched is less honest than
+	// arriving where it was already going, and the ceiling bounds one advance at
+	// fewer than a thousand steps.
+	springResumeGap = 2 * time.Second
 )
 
 // animChannel is one animated property of one keyed node.
@@ -79,6 +91,13 @@ const (
 	animSprite
 	// animRipple is one press ripple's linear phase.
 	animRipple
+	// animStackX/Y/W/H are one toast card's drawn rectangle: the four
+	// components move as separate scalars so an interrupted stack keeps each
+	// component's position and velocity. They are internal to the toast host.
+	animStackX
+	animStackY
+	animStackW
+	animStackH
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -100,6 +119,18 @@ type animValue struct {
 	// the cycle while a new speed for the same list keeps its phase.
 	steps int
 	poses uint64
+	// A spring channel replaces the duration curve with physics. spring holds
+	// the coefficients, position and velocity are the stored x and v, advanced
+	// is the last timestamp integrated, and remainder is the leftover fraction
+	// of one lattice step. Eased, looping, and sprite values leave these zero.
+	spring    *ui.Spring
+	position  float64
+	velocity  float64
+	advanced  time.Time
+	remainder time.Duration
+	// opacityOnly keeps a visibility fade from driving panel translation,
+	// including if a new spring target retargets it before it settles.
+	opacityOnly bool
 }
 
 func (v animValue) at(now time.Time) float64 {
@@ -197,6 +228,78 @@ func (a *animator) nudge() {
 	}
 }
 
+// Configure replaces the resolved motion table and reduced-motion flag without
+// discarding what is in flight. Springs are advanced to the current clock
+// first, and a speed or style change keeps each spring's position, velocity and
+// target while replacing only its coefficients. Enabling reduced motion settles
+// spring channels at once; panel visibility keeps the existing capped opacity
+// fade from wherever it renders; decorative loops park on their reduced resting
+// values; and an eased transition snaps to its target. Disabling reduced motion
+// changes nothing already settled, so motion resumes only on the next genuine
+// target change. Caller holds the surface's lock.
+func (a *animator) Configure(motion render.MotionSet, reduced bool) {
+	if a == nil {
+		return
+	}
+	now := a.now()
+	a.reduced = reduced || motion.Reduced
+	a.spatial = motion.Spatial
+	if m := motion.Durations; m != (theme.MotionTokens{}) {
+		a.motion = m
+	} else {
+		a.motion = theme.BaseMotion
+	}
+	unfinished := false
+	for key, v := range a.values {
+		switch {
+		case v.spring != nil:
+			a.advanceSpring(key, now)
+			v = a.values[key]
+			if !a.reduced {
+				if spring := a.springFor(key.channel, v.to > v.position); spring != nil {
+					v.spring = spring
+				}
+				a.values[key] = v
+				unfinished = unfinished || v.position != v.to || v.velocity != 0
+				continue
+			}
+			if key.channel == animVisible && v.position != v.to {
+				a.values[key] = animValue{from: clampUnit(v.position), to: v.to, start: now,
+					dur: min(a.motion.Short, reducedPanelCap), ease: a.easeFor(animVisible), opacityOnly: true}
+				unfinished = true
+				continue
+			}
+			switch key.channel {
+			case animStackX, animStackY, animStackW, animStackH:
+				delete(a.values, key)
+				continue
+			}
+			a.values[key] = animValue{from: v.to, to: v.to, start: now}
+		case v.loop != ui.GradientNone:
+			if !a.reduced {
+				continue
+			}
+			// A decorative loop parks where reduced motion rests it: a
+			// gradient holds its midpoint, every other loop rests at zero.
+			rest := 0.0
+			if key.channel == animGradient {
+				rest = (v.from + v.to) / 2
+			}
+			a.values[key] = animValue{from: rest, to: rest, start: now}
+		case a.reduced && key.channel != animVisible && !v.settled(now):
+			// Hover, press, selection, theme and ripple stop where they are:
+			// reduced motion has no reason to finish a transition nobody asked
+			// to see the end of.
+			a.values[key] = animValue{from: v.to, to: v.to, start: now}
+		default:
+			unfinished = unfinished || !v.settled(now)
+		}
+	}
+	if unfinished {
+		a.nudge()
+	}
+}
+
 // easeFor is a method because the curve is a theme axis now: an expressive
 // motion style settles every spatial recipe harder, not just selection.
 func (a *animator) easeFor(channel animChannel) func(float64) float64 {
@@ -249,11 +352,134 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 		// A value glide reads as one motion whatever its direction: a battery
 		// filling and draining both travel the same road.
 		return a.motion.Medium
+	case animStackX, animStackY, animStackW, animStackH:
+		// Toast geometry reads as one motion whatever its direction, and one
+		// token keeps the four components of a card moving together.
+		return a.motion.Medium
 	case animRipple:
 		return rippleGrow + rippleFade
 	}
 	return 0
 }
+
+// springCapable reports whether a channel animates as a spring. Press, theme,
+// ripple, and every looping channel keep their duration curves.
+func springCapable(channel animChannel) bool {
+	switch channel {
+	case animHover, animSelect, animVisible, animProgress,
+		animStackX, animStackY, animStackW, animStackH:
+		return true
+	}
+	return false
+}
+
+// normalizedSpring reports whether a spring channel paints a normalized
+// amount: opacity, hover tint, selection, or a meter value. Geometry channels
+// hold logical pixels and are not clamped at the paint boundary.
+func normalizedSpring(channel animChannel) bool {
+	switch channel {
+	case animHover, animSelect, animVisible, animProgress:
+		return true
+	}
+	return false
+}
+
+// badgeProgress is the one-shot +N badge pop: an eased phase on the progress
+// channel, not a value glide, so it keeps its duration curve.
+func badgeProgress(node string, channel animChannel) bool {
+	return channel == animProgress && strings.HasPrefix(node, badgeKeyPrefix)
+}
+
+// springFor derives the physical coefficients a channel animates with from the
+// resolved duration table: omega = 12/T, critically damped. A nil result means
+// the channel keeps its duration curve — reduced motion collapses it, and a
+// zero token has no physical response to derive. The duration tokens set the
+// physical response, not a hard completion deadline: the value is within a
+// thousandth of its target at about T.
+func (a *animator) springFor(channel animChannel, rising bool) *ui.Spring {
+	if a.reduced {
+		return nil
+	}
+	t := a.duration(channel, rising)
+	if t <= 0 {
+		return nil
+	}
+	// The expressive style settles spatial recipes harder: a stiffer spring,
+	// not a different curve.
+	factor := 1.0
+	if a.spatial == theme.CurveOutQuart {
+		factor = 1.1
+	}
+	omega := 12 * factor / t.Seconds()
+	positionEpsilon, velocityEpsilon := 0.001, 0.001/t.Seconds()
+	switch channel {
+	case animStackX, animStackY, animStackW, animStackH:
+		// Toast geometry is logical pixels, so its rest thresholds are pixels:
+		// a card is settled when it is within a tenth of a pixel and its speed
+		// is a tenth of a pixel a second for each second of token.
+		positionEpsilon, velocityEpsilon = 0.1, 0.1/t.Seconds()
+	}
+	return &ui.Spring{
+		Stiffness:       omega * omega,
+		Damping:         2 * omega,
+		PositionEpsilon: positionEpsilon,
+		VelocityEpsilon: velocityEpsilon,
+	}
+}
+
+// advanceSpring integrates one spring value to now on the fixed lattice and
+// writes the result back into the map. It is the only writer of spring state,
+// which is what keeps Value and the settlement queries from integrating the
+// same timestamp twice, and what keeps a copied range value from silently
+// dropping its integration. A clock that repeats or moves backwards integrates
+// nothing.
+//
+// ponytail: whole 2 ms steps with an integer-nanosecond remainder, and a
+// 2-second resume snap, bound one advance at fewer than a thousand steps per
+// scalar. Analytic integration is the upgrade path if measured smoothness or
+// catch-up cost ever defeats this bounded form.
+func (a *animator) advanceSpring(key animKey, now time.Time) (float64, bool) {
+	v, ok := a.values[key]
+	if !ok || v.spring == nil {
+		return 0, false
+	}
+	if now.After(v.advanced) {
+		if elapsed := now.Sub(v.advanced); elapsed >= springResumeGap {
+			v.position, v.velocity, v.remainder = v.to, 0, 0
+			v.advanced = now
+		} else {
+			v.remainder += elapsed
+			steps := v.remainder / springStep
+			v.remainder -= steps * springStep
+			v.advanced = now
+			seconds := springStep.Seconds()
+			for ; steps > 0; steps-- {
+				x, velocity, rest := v.spring.Step(v.position, v.velocity, v.to, seconds)
+				v.position, v.velocity = x, velocity
+				if rest {
+					break
+				}
+			}
+		}
+		a.values[key] = v
+	}
+	return v.position, v.position == v.to && v.velocity == 0
+}
+
+// clampUnit keeps a normalized paint value inside its frame. The stored value
+// is deliberately not clamped: erasing overshoot would erase momentum.
+func clampUnit(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+// finite reports a real number that is neither NaN nor an infinity.
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // spinnerCycle is one turn of an activity spinner, and spinnerPoses the
 // steps it takes: about thirty a second, smooth at an inline size while
@@ -367,21 +593,117 @@ func resolveProgressMotion(anim *animator, root *ui.Node) {
 // Target aims a value at to. A reversal starts from wherever the value is
 // rendering right now, so a control that turns around mid-flight never jumps.
 // Re-aiming at the current target is a no-op, which is what keeps an unchanged
-// pointer position from invalidating the surface.
+// pointer position from invalidating the surface. A spring channel consumes
+// elapsed time under the old target and then keeps its stored position and
+// velocity, changing only the destination and the preset the direction selects.
 func (a *animator) Target(node string, channel animChannel, to float64) {
+	if !finite(to) {
+		// A non-finite target is a caller bug; refusing it leaves the value
+		// exactly where it was rather than storing a NaN.
+		return
+	}
 	key := animKey{node: node, channel: channel}
 	now := a.now()
 	current, ok := a.values[key]
 	if ok && current.to == to {
 		return
 	}
+	opacityOnly := false
+	if springCapable(channel) && !badgeProgress(node, channel) {
+		x, velocity := 0.0, 0.0
+		advanced, remainder := now, time.Duration(0)
+		if ok {
+			if current.spring != nil {
+				var atRest bool
+				x, atRest = a.advanceSpring(key, now)
+				current = a.values[key]
+				velocity, advanced, remainder = current.velocity, current.advanced, current.remainder
+				opacityOnly = channel == animVisible && current.opacityOnly && !atRest
+			} else {
+				x = current.at(now)
+				opacityOnly = channel == animVisible && current.opacityOnly && !current.settled(now)
+			}
+		}
+		if spring := a.springFor(channel, to > x); spring != nil {
+			a.values[key] = animValue{
+				from: x, to: to, start: now, spring: spring,
+				position: x, velocity: velocity, advanced: advanced, remainder: remainder,
+				opacityOnly: opacityOnly,
+			}
+			a.nudge()
+			return
+		}
+		// Reduced motion collapses the channel onto the duration curve below,
+		// which snaps when the duration is zero.
+	}
 	from := 0.0
 	if ok {
-		from = current.at(now)
+		if current.spring != nil {
+			// A spring value only reaches here when reduced motion took the
+			// channel away from physics; it settles to its stored target.
+			from = current.to
+		} else {
+			from = current.at(now)
+		}
 	}
 	dur := a.duration(channel, to > from)
-	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel)}
+	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel),
+		opacityOnly: channel == animVisible && opacityOnly}
 	a.nudge()
+}
+
+// TargetStackRect aims one card's drawn rectangle at its new slot through four
+// fixed components, so an interrupted stack keeps each component's position and
+// velocity instead of restarting a shared progress. Missing components are
+// seeded at the old rectangle and left resting when that component does not
+// move; components already in flight only change destination. Reduced motion
+// creates no geometry state at all: the card is drawn at its slot.
+func (a *animator) TargetStackRect(node string, from, to ui.Rect) {
+	if a == nil {
+		return
+	}
+	now := a.now()
+	components := [4]struct {
+		channel  animChannel
+		from, to int
+	}{
+		{animStackX, from.X, to.X},
+		{animStackY, from.Y, to.Y},
+		{animStackW, from.W, to.W},
+		{animStackH, from.H, to.H},
+	}
+	for _, c := range components {
+		key := animKey{node: node, channel: c.channel}
+		if _, ok := a.values[key]; !ok {
+			if spring := a.springFor(c.channel, float64(c.to) > float64(c.from)); spring != nil {
+				a.values[key] = animValue{
+					from: float64(c.from), to: float64(c.from), start: now, spring: spring,
+					position: float64(c.from), advanced: now,
+				}
+			}
+		}
+		// A component that did not move is already resting at its value; the
+		// ordinary target path is a no-op for it.
+		a.Target(node, c.channel, float64(c.to))
+	}
+}
+
+// shiftStackRectX moves one card's stored x -- both where it is drawn and
+// where it is heading -- by dx logical pixels, so a card still in flight keeps
+// its drawn offset and its destination when a surface resizes. The y, width
+// and height components are unaffected by a horizontal coordinate change.
+func (a *animator) shiftStackRectX(node string, dx float64) {
+	if a == nil || dx == 0 {
+		return
+	}
+	key := animKey{node: node, channel: animStackX}
+	v, ok := a.values[key]
+	if !ok {
+		return
+	}
+	v.position += dx
+	v.to += dx
+	a.values[key] = v
 }
 
 // TargetLoop runs a linear paint offset until the node leaves the tree. An
@@ -457,6 +779,14 @@ func (a *animator) SpriteRest() (time.Duration, bool) {
 				decorative = decorative || !v.settled(now)
 				continue
 			}
+			// A moving spring is ordinary motion: it keeps the tick, and it
+			// advances here so a sprite-only surface cannot stall it.
+			if v.spring != nil {
+				if _, atRest := a.advanceSpring(key, now); !atRest {
+					return 0, false
+				}
+				continue
+			}
 			if !v.settled(now) {
 				return 0, false
 			}
@@ -528,21 +858,40 @@ func (a *animator) has(node string, channel animChannel) bool {
 	return ok
 }
 
-// Value is the resolved scalar for one channel.
+// Value is the resolved scalar for one channel. A spring advances to the
+// current clock and reports its stored position; a normalized channel clamps
+// the painted value into [0,1] while the stored state keeps any overshoot, so a
+// reversal does not lose its momentum to a paint bound.
 func (a *animator) Value(node string, channel animChannel) float64 {
-	v, ok := a.values[animKey{node: node, channel: channel}]
+	key := animKey{node: node, channel: channel}
+	v, ok := a.values[key]
 	if !ok {
 		return 0
+	}
+	if v.spring != nil {
+		x, _ := a.advanceSpring(key, a.now())
+		if normalizedSpring(channel) {
+			return clampUnit(x)
+		}
+		return x
 	}
 	return v.at(a.now())
 }
 
 // Settled reports whether every value has reached its target. While this is
 // false the surface asks for another frame; once true it stops, so an idle
-// shell schedules nothing.
+// shell schedules nothing. A spring settles on its physics state, not on an
+// eased duration: advancing it here is what lets a cap-skipped frame still
+// reach its endpoint.
 func (a *animator) Settled() bool {
 	now := a.now()
-	for _, v := range a.values {
+	for key, v := range a.values {
+		if v.spring != nil {
+			if _, rest := a.advanceSpring(key, now); !rest {
+				return false
+			}
+			continue
+		}
 		if !v.settled(now) {
 			return false
 		}
@@ -556,6 +905,12 @@ func (a *animator) SettledExceptEffects() bool {
 	now := a.now()
 	for key, v := range a.values {
 		if key.channel == animEffect || key.channel == animGradient {
+			continue
+		}
+		if v.spring != nil {
+			if _, rest := a.advanceSpring(key, now); !rest {
+				return false
+			}
 			continue
 		}
 		if !v.settled(now) {
@@ -578,7 +933,10 @@ func (a *animator) Forget(node string) {
 
 // Retarget moves every colour-bearing value to a new palette by restarting the
 // transitions in flight from their current rendered values. A theme change is
-// a target change like any other, so it reuses the same clock.
+// a target change like any other, so it reuses the same clock. A spring keeps
+// its stored position and velocity: its coefficients come from the resolved
+// duration table (a speed or style change replaces them through Configure), and
+// recreating the value would erase the momentum the channel exists to keep.
 func (a *animator) Retarget() {
 	defer a.nudge()
 	now := a.now()
@@ -587,6 +945,9 @@ func (a *animator) Retarget() {
 			continue
 		}
 		if v.loop != ui.GradientNone {
+			continue
+		}
+		if v.spring != nil {
 			continue
 		}
 		if v.settled(now) {
@@ -608,6 +969,21 @@ func (a *animator) PressScale(node string) float64 {
 func (a *animator) PanelSlide(node string) int {
 	if a.reduced {
 		return 0
+	}
+	key := animKey{node: node, channel: animVisible}
+	if v, ok := a.values[key]; ok && v.opacityOnly {
+		// A reduced-motion visibility fade stays anchored through any retarget
+		// until it settles, so changing the target cannot jump into a slide.
+		if v.spring != nil {
+			if _, atRest := a.advanceSpring(key, a.now()); !atRest {
+				return 0
+			}
+		} else if !v.settled(a.now()) {
+			return 0
+		}
+		v = a.values[key]
+		v.opacityOnly = false
+		a.values[key] = v
 	}
 	return int(float64(panelSlidePx)*(1-a.Value(node, animVisible)) + 0.5)
 }

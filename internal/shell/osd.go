@@ -149,6 +149,11 @@ func (m *OSDManager) prepareHide() []wayland.AuxRequest {
 // retheme updates a visible OSD and reports the surfaces that need repainting.
 // Registry.mu is held by the caller.
 func (m *OSDManager) retheme(t Theme) []wayland.Invalidation {
+	if m.anim != nil {
+		// The animator's table follows the published theme even while the OSD
+		// is hidden, so the next reveal uses the current motion.
+		m.anim.Configure(t.Motion, t.Motion.Reduced)
+	}
 	if !m.Visible() {
 		return nil
 	}
