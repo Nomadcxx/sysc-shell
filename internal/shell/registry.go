@@ -376,6 +376,13 @@ type Registry struct {
 	// launcherActivationMu serializes Service.Activate calls so each provider
 	// callback sees its own launcherPendingAttempt.
 	launcherActivationMu sync.Mutex
+	// launcherApplications is an immutable copy for Settings. A refresh is
+	// requested under Registry.mu and fetched off the Wayland owner.
+	launcherApplications   atomic.Pointer[launcherApplicationSnapshot]
+	launcherAppsRefreshing bool
+	// launcherAppPrefs is an immutable ranking and terminal-choice snapshot.
+	// The service reads it without taking Registry.mu while Settings may hold it.
+	launcherAppPrefs atomic.Pointer[launcherAppPreferenceSnapshot]
 	// launcherMu guards the query generation, its current plan,
 	// and the batch of provider rows being assembled into one snapshot.
 	// Lock order is Registry.mu then launcherMu. The service goroutine takes
@@ -511,6 +518,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		onboardingFontInstall:          runCJKFontInstall,
 		machineFacts:                   readMachineFacts(),
 	}
+	r.storeLauncherAppPreferences(cfg.Applications)
 	// Absent marker (missing file, malformed state, or a pre-onboarding
 	// config) means the wizard has not been seen. A malformed file is left
 	// untouched; the marker only moves when the user acts.
@@ -2097,6 +2105,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		Commit: func() {
 			once.Do(func() {
 				r.mu.Lock()
+				applicationPreferencesChanged := r.cfg.Applications.DefaultTerminal != cfg.Applications.DefaultTerminal ||
+					!slices.Equal(r.cfg.Applications.Favourites, cfg.Applications.Favourites) ||
+					!slices.Equal(r.cfg.Applications.Hidden, cfg.Applications.Hidden)
 				polkitPolicyChanged := r.cfg.Session.PolkitAgent != cfg.Session.PolkitAgent
 				polkitNeedsStart := len(bars) > 0 && r.polkitAgent == nil
 				outgoing := r.leases
@@ -2158,6 +2169,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				if applicationPreferencesChanged {
+					r.storeLauncherAppPreferences(cfg.Applications)
+				}
 				r.syncSoundLocked()
 				r.pushIdleInputsLocked()
 				// An open settings panel holds its own draft. A genuine reload
@@ -2255,6 +2269,13 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					surfacePubs = append(surfacePubs, wayland.Invalidation{
 						Global: h.output, SurfaceID: panelSurfaceID(PanelSettings),
 					})
+				}
+				if applicationPreferencesChanged {
+					if output, ok := r.refreshOpenLauncherLocked(); ok {
+						surfacePubs = append(surfacePubs, wayland.Invalidation{
+							Global: output, SurfaceID: panelSurfaceID(PanelLauncher),
+						})
+					}
 				}
 				// Seeded only: every replacement bar is reconfigured and
 				// repainted by the owner as part of adopting the candidate.

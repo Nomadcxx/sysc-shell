@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -209,6 +210,12 @@ type wireMedia struct {
 	Blacklist []string `json:"blacklist,omitempty"`
 }
 
+type wireApplicationPreferences struct {
+	Favourites      []string `json:"favourites,omitempty"`
+	Hidden          []string `json:"hidden,omitempty"`
+	DefaultTerminal *string  `json:"default-terminal,omitempty"`
+}
+
 type wireSounds struct {
 	Notification *bool `json:"notification,omitempty"`
 	Volume       *int  `json:"volume,omitempty"`
@@ -250,24 +257,25 @@ type wireTerminalArt struct {
 }
 
 type wireConfig struct {
-	Bar           *wireBar             `json:"bar,omitempty"`
-	Theme         *wireTheme           `json:"theme,omitempty"`
-	ThemeGen      *wireThemeGen        `json:"theme-gen,omitempty"`
-	Accessibility *wireAccessibility   `json:"accessibility,omitempty"`
-	Session       *wireSession         `json:"session,omitempty"`
-	Launcher      *wireLauncher        `json:"launcher,omitempty"`
-	Idle          *wireIdle            `json:"idle,omitempty"`
-	Panels        *wirePanels          `json:"panels,omitempty"`
-	Tray          *wireTrayPreferences `json:"tray,omitempty"`
-	Weather       *wireWeather         `json:"weather,omitempty"`
-	NightLight    *wireNightLight      `json:"night-light,omitempty"`
-	Media         *wireMedia           `json:"media,omitempty"`
-	Monitor       *wireMonitor         `json:"monitor,omitempty"`
-	Sounds        *wireSounds          `json:"sounds,omitempty"`
-	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
-	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
-	Outputs       []wireOutput         `json:"outputs,omitempty"`
-	Templates     map[string]bool      `json:"templates,omitempty"`
+	Bar           *wireBar                    `json:"bar,omitempty"`
+	Theme         *wireTheme                  `json:"theme,omitempty"`
+	ThemeGen      *wireThemeGen               `json:"theme-gen,omitempty"`
+	Accessibility *wireAccessibility          `json:"accessibility,omitempty"`
+	Session       *wireSession                `json:"session,omitempty"`
+	Launcher      *wireLauncher               `json:"launcher,omitempty"`
+	Idle          *wireIdle                   `json:"idle,omitempty"`
+	Panels        *wirePanels                 `json:"panels,omitempty"`
+	Tray          *wireTrayPreferences        `json:"tray,omitempty"`
+	Weather       *wireWeather                `json:"weather,omitempty"`
+	NightLight    *wireNightLight             `json:"night-light,omitempty"`
+	Media         *wireMedia                  `json:"media,omitempty"`
+	Monitor       *wireMonitor                `json:"monitor,omitempty"`
+	Sounds        *wireSounds                 `json:"sounds,omitempty"`
+	Wallpaper     *wireWallpaper              `json:"wallpaper,omitempty"`
+	TerminalArt   *wireTerminalArt            `json:"terminal-art,omitempty"`
+	Outputs       []wireOutput                `json:"outputs,omitempty"`
+	Templates     map[string]bool             `json:"templates,omitempty"`
+	Applications  *wireApplicationPreferences `json:"applications,omitempty"`
 	// TerminalOpacity is Config.TerminalOpacity; absent means 100.
 	TerminalOpacity *int         `json:"terminal-opacity,omitempty"`
 	Plugins         *wirePlugins `json:"plugins,omitempty"`
@@ -287,6 +295,23 @@ type wirePluginSource struct {
 }
 
 var sourceNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+const (
+	maxApplicationPreferenceIDs = 4096
+	maxApplicationDesktopIDSize = 4095
+)
+
+func validApplicationDesktopID(id string) bool {
+	if id == "" || len(id) > maxApplicationDesktopIDSize || !utf8.ValidString(id) {
+		return false
+	}
+	for _, r := range id {
+		if r == '/' || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
 
 // validSourceURL admits https repositories and local file:// ones, which is
 // how an author tests a catalog before publishing it.
@@ -516,6 +541,13 @@ func parseCandidate(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Media = media
+	}
+	if wire.Applications != nil {
+		applications, err := applyApplicationPreferences(*wire.Applications, "applications")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Applications = applications
 	}
 	if wire.Sounds != nil {
 		sounds, err := applySounds(*wire.Sounds, "sounds")
@@ -1109,6 +1141,52 @@ func applyMedia(w wireMedia, path string) (Media, error) {
 		}
 		seen[name] = struct{}{}
 		out.Blacklist = append(out.Blacklist, name)
+	}
+	return out, nil
+}
+
+func applyApplicationPreferences(w wireApplicationPreferences, path string) (ApplicationPreferences, error) {
+	validate := func(field string, ids []string) error {
+		if len(ids) > maxApplicationPreferenceIDs {
+			return pathErr(path+"."+field, "has more than %d desktop IDs", maxApplicationPreferenceIDs)
+		}
+		seen := make(map[string]struct{}, len(ids))
+		for i, id := range ids {
+			itemPath := fmt.Sprintf("%s.%s[%d]", path, field, i)
+			if !validApplicationDesktopID(id) {
+				return pathErr(itemPath, "%q is not a valid desktop ID", id)
+			}
+			if _, ok := seen[id]; ok {
+				return pathErr(itemPath, "%q appears more than once", id)
+			}
+			seen[id] = struct{}{}
+		}
+		return nil
+	}
+	if err := validate("favourites", w.Favourites); err != nil {
+		return ApplicationPreferences{}, err
+	}
+	if err := validate("hidden", w.Hidden); err != nil {
+		return ApplicationPreferences{}, err
+	}
+	favouriteIDs := make(map[string]struct{}, len(w.Favourites))
+	for _, id := range w.Favourites {
+		favouriteIDs[id] = struct{}{}
+	}
+	for i, id := range w.Hidden {
+		if _, ok := favouriteIDs[id]; ok {
+			return ApplicationPreferences{}, pathErr(fmt.Sprintf("%s.hidden[%d]", path, i), "%q also appears in favourites", id)
+		}
+	}
+	out := ApplicationPreferences{
+		Favourites: slices.Clone(w.Favourites),
+		Hidden:     slices.Clone(w.Hidden),
+	}
+	if w.DefaultTerminal != nil {
+		if !validApplicationDesktopID(*w.DefaultTerminal) {
+			return ApplicationPreferences{}, pathErr(path+".default-terminal", "%q is not a valid desktop ID", *w.DefaultTerminal)
+		}
+		out.DefaultTerminal = *w.DefaultTerminal
 	}
 	return out, nil
 }

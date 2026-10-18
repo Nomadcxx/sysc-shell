@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"os/exec"
 	"slices"
 	"strings"
@@ -13,6 +14,66 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
+
+func TestLauncherServiceConfigReadsDefaultTerminalAfterConfigReload(t *testing.T) {
+	r := newPanelRegistry(t)
+	next := config.Default()
+	next.Applications.DefaultTerminal = "foot"
+	prepared, err := r.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	serviceConfig := r.launcherServiceConfig()
+	if serviceConfig.TerminalDesktopID == nil {
+		t.Fatal("launcher service has no live terminal preference callback")
+	}
+	if got := serviceConfig.TerminalDesktopID(); got != "foot" {
+		t.Fatalf("selected terminal ID = %q, want foot", got)
+	}
+}
+
+func TestLauncherServiceUsesSelectedTerminalAfterConfigReload(t *testing.T) {
+	r := newPanelRegistry(t)
+	next := config.Default()
+	next.Applications.DefaultTerminal = "foot"
+	prepared, err := r.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	var spawned []string
+	serviceConfig := r.launcherServiceConfig()
+	serviceConfig.Scan = func() []launcher.Entry {
+		return []launcher.Entry{
+			{ID: "foot", Name: "Foot", Argv: []string{"foot"}, TerminalApp: true},
+			{ID: "editor", Name: "Editor", Argv: []string{"system-terminal", "-e", "editor"},
+				ExecArgv: []string{"editor"}, Terminal: true},
+		}
+	}
+	serviceConfig.LookPath = func(name string) (string, error) {
+		if name == "foot" {
+			return "/usr/bin/foot", nil
+		}
+		return "", exec.ErrNotFound
+	}
+	serviceConfig.Run = func(_ context.Context, argv []string) error {
+		spawned = slices.Clone(argv)
+		return nil
+	}
+	svc := launcher.NewService(serviceConfig)
+	defer svc.Close()
+	<-svc.Results()
+	if err := svc.Activate("editor", ""); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	want := []string{"niri", "msg", "action", "spawn", "--", "/usr/bin/foot", "-e", "editor"}
+	if !slices.Equal(spawned, want) {
+		t.Fatalf("spawn argv = %v, want %v", spawned, want)
+	}
+}
 
 func TestCalcProviderRows(t *testing.T) {
 	r := newPanelRegistry(t)

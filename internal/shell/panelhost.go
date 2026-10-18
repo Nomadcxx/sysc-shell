@@ -3826,6 +3826,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if r.handlePalettes(h, n) {
 		return true
 	}
+	if h.id == PanelSettings && strings.HasPrefix(n.Action, "applications:") {
+		return h.applicationSettingsAction(r, n)
+	}
 	if strings.HasPrefix(n.Action, "bluetooth-") && bluetoothBodyVisible(h) {
 		return h.activateBluetooth(r, n)
 	}

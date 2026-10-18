@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
@@ -19,6 +20,14 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
+
+const launcherApplicationsRefreshAfter = time.Minute
+
+type launcherApplicationSnapshot struct {
+	entries     []launcher.Entry
+	attemptedAt time.Time
+	available   bool
+}
 
 // Launcher chrome: SYSC rail, pill search, a list of padded row pills with an
 // 8px gap between them. The 40px icon slot is a letter until a theme raster
@@ -106,6 +115,48 @@ func (r *Registry) launcherServiceLocked() *launcher.Service {
 		}
 	}
 	return r.launcherSvc
+}
+
+// refreshLauncherApplicationsLocked requests a fresh scan away from the
+// Wayland owner. Settings renders the last immutable copy immediately, or a
+// loading state until the first reply arrives.
+func (r *Registry) refreshLauncherApplicationsLocked(h *PanelHost) {
+	current := r.launcherApplications.Load()
+	if r.launcherAppsRefreshing || current != nil && time.Since(current.attemptedAt) < launcherApplicationsRefreshAfter {
+		return
+	}
+	svc := r.launcherServiceLocked()
+	r.launcherAppsRefreshing = true
+	go func() {
+		entries, err := svc.RefreshApplications()
+		now := time.Now()
+
+		r.mu.Lock()
+		r.launcherAppsRefreshing = false
+		previous := r.launcherApplications.Load()
+		if err == nil {
+			r.launcherApplications.Store(&launcherApplicationSnapshot{entries: entries, attemptedAt: now, available: true})
+		} else if r.launcherSvc != svc {
+			// A retired service's error is not a scan result; let Settings retry
+			// against the replacement service when it rebuilds.
+		} else if previous != nil {
+			r.launcherApplications.Store(&launcherApplicationSnapshot{
+				entries: previous.entries, attemptedAt: now, available: previous.available,
+			})
+		} else {
+			r.launcherApplications.Store(&launcherApplicationSnapshot{attemptedAt: now})
+		}
+		visible := r.panelHosts[PanelSettings] == h && h.section == "Applications"
+		if visible {
+			r.rebuildPanel(h)
+		}
+		output := h.output
+		r.mu.Unlock()
+
+		if visible {
+			r.publishSurface(output, panelSurfaceID(PanelSettings))
+		}
+	}()
 }
 
 // launcherHistoryPath is the shell's existing ranking file. sysc-launch's
@@ -215,17 +266,26 @@ func (r *Registry) ensureLauncherSnaps() {
 }
 
 // rankLauncher is the service rank hook. It stamps rows with the service
-// generation after an optional test wait, so a replaced service cannot add
-// stale rows to a newer batch.
+// generation and applies the current preference snapshot, so a replaced
+// service or a stale preference snapshot cannot publish outdated rows.
 func (r *Registry) rankLauncher(providerGeneration uint64, entries []launcher.Entry, query string, boost func(query, identifier string) int) []launcher.Result {
-	rows := launcherRank(entries, query, boost)
+	prefs := r.launcherAppPrefs.Load()
+	rows := launcherRankWithPreferences(entries, query, boost, prefs)
 	r.launcherMu.Lock()
 	wait := r.launcherRankWait
 	r.launcherMu.Unlock()
 	if wait != nil {
 		wait(query)
 	}
-	r.noteLauncherRowsForGeneration(providerGeneration, launcherAppsPrefix, query, rows)
+	r.launcherMu.Lock()
+	defer r.launcherMu.Unlock()
+	// A repeated query can finish after a preference refresh has queued the
+	// same text again. Do not stamp rows ranked from the previous snapshot as
+	// current while holding the same lock used to advance query generations.
+	if r.launcherAppPrefs.Load() != prefs || providerGeneration != r.launcherProviderGeneration {
+		return rows
+	}
+	r.noteLauncherRowsLocked(launcherAppsPrefix, query, rows)
 	return rows
 }
 
@@ -243,12 +303,32 @@ func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
 
 	h.launcherQueryGen = gen
 	h.launcherAwaiting = true
+	// A menu belongs to the result set that opened it. Drop it whenever a
+	// query changes so a delayed result cannot leave an old desktop action live.
+	h.menu = nil
+	h.launcherMenuID = ""
+	h.launcherActions = nil
 	if plan.kind == launcherKindOverview {
 		h.launcherResults = r.launcherOverviewRows(plan.passed)
 		h.launcherSel = 0
 		h.launcherAwaiting = false
 	}
 	svc.Query(text)
+}
+
+// refreshOpenLauncherLocked re-ranks the current query after application
+// preferences change. Caller holds Registry.mu; its bool reports whether a
+// launcher surface needs invalidation after the caller unlocks.
+func (r *Registry) refreshOpenLauncherLocked() (uint32, bool) {
+	h := r.panelHosts[PanelLauncher]
+	if h == nil {
+		return 0, false
+	}
+	h.launcherSel = 0
+	h.launcherScroll = 0
+	r.launcherSendQuery(h, h.query)
+	r.rebuildPanel(h)
+	return h.output, true
 }
 
 func classifyLauncherQuery(text string, providers []launcher.Provider) launcherPlan {
@@ -293,6 +373,13 @@ func (r *Registry) noteLauncherRowsForGeneration(generation uint64, provider, qu
 	if generation != r.launcherProviderGeneration {
 		return
 	}
+	r.noteLauncherRowsLocked(provider, query, rows)
+}
+
+// noteLauncherRowsLocked is noteLauncherRows for a caller that already holds
+// launcherMu, as application ranking must check its preference snapshot and
+// stamp rows atomically with respect to query generation changes.
+func (r *Registry) noteLauncherRowsLocked(provider, query string, rows []launcher.Result) {
 	plan := r.launcherPlan
 	if r.launcherGen == 0 || query != plan.passed {
 		return
@@ -889,6 +976,9 @@ func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, 
 // a KindMenu (D7). Rows are deliberately not focusable, so the field keeps
 // keyboard focus and typing always filters.
 func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
+	if h.launcherAwaiting {
+		return true
+	}
 	x, y := int(math.Floor(e.X)), int(math.Floor(e.Y))
 	i, ok := launcherRowAt(h.root, x, y)
 	if !ok || i >= len(h.launcherResults) {
@@ -908,6 +998,9 @@ func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
 }
 
 func (h *PanelHost) openLauncherActions(r *Registry, id string) bool {
+	if h.launcherAwaiting {
+		return true
+	}
 	var actions []launcher.Action
 	for _, res := range h.launcherResults {
 		if res.Entry.ID == id {
@@ -933,7 +1026,7 @@ func (h *PanelHost) openLauncherActions(r *Registry, id string) bool {
 // applyLauncherMenu runs the selected desktop action after the menu closes
 // with a committed selection.
 func (h *PanelHost) applyLauncherMenu(r *Registry) {
-	if h.menu == nil {
+	if h.menu == nil || h.launcherAwaiting {
 		return
 	}
 	idx := h.menu.Index()
@@ -947,6 +1040,9 @@ func (h *PanelHost) applyLauncherMenu(r *Registry) {
 }
 
 func (h *PanelHost) activateLauncher(r *Registry, n *ui.Node) bool {
+	if h.launcherAwaiting {
+		return true
+	}
 	if n.Kind != ui.KindMenu || h.menu == nil {
 		return false
 	}

@@ -210,6 +210,8 @@ func (c Config) Clone() Config {
 		out.Launcher.Providers[i].Command = slices.Clone(out.Launcher.Providers[i].Command)
 		out.Launcher.Providers[i].OnSelect = slices.Clone(out.Launcher.Providers[i].OnSelect)
 	}
+	out.Applications.Favourites = slices.Clone(c.Applications.Favourites)
+	out.Applications.Hidden = slices.Clone(c.Applications.Hidden)
 	out.Templates = maps.Clone(c.Templates)
 	out.Plugins = c.Plugins.Clone()
 	return out
@@ -557,6 +559,14 @@ type Media struct {
 	Blacklist []string
 }
 
+// ApplicationPreferences stores shell-owned choices by the stable desktop ID
+// from sysc-launch. It does not change desktop files or MIME associations.
+type ApplicationPreferences struct {
+	Favourites      []string
+	Hidden          []string
+	DefaultTerminal string
+}
+
 // Monitor is the system monitor panel. Colours are theme role names, not
 // hex, so they follow the wallpaper palette; theme.ColorRoleNames is the
 // vocabulary.
@@ -607,6 +617,7 @@ type Config struct {
 	Weather       Weather
 	NightLight    NightLight
 	Media         Media
+	Applications  ApplicationPreferences
 	Monitor       Monitor
 	Sounds        Sounds
 	Wallpaper     Wallpaper

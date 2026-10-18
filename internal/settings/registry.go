@@ -910,7 +910,7 @@ func SectionClusters() []Cluster {
 		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
 		// duplicates, and Plugins is not a panel.
 		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver", "Night Light"}},
-		{"Shell", []string{"Bar", "Widgets", "Tray"}},
+		{"Shell", []string{"Bar", "Widgets", "Tray", "Applications"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
 		{"System", []string{"Session", "Lock Screen", "Accessibility", "Sounds"}},
