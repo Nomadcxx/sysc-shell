@@ -116,6 +116,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
+	clearAudioRouteMenu(h)
 	m := h.metrics()
 	snap, _, unavailable := audioMixerState(r)
 	out := []*ui.Node{

@@ -188,6 +188,26 @@ func TestAudioRouteMenuClosesWhenAnOutputDisappears(t *testing.T) {
 	}
 }
 
+func TestAudioRouteMenuClosesWhenSwitchingToDevicesTab(t *testing.T) {
+	h := &PanelHost{
+		id:              PanelAudio,
+		audioTab:        "devices",
+		menuPath:        "audio-route:82",
+		audioRouteSinks: []services.AudioNode{{ID: 46, Description: "Headphones", Routeable: true}},
+		menu:            NewMenu([]string{"Headphones"}, 0),
+	}
+	h.menu.Open()
+
+	r := &Registry{}
+	_ = audioDevicesTree(r, h)
+	if h.keyPress(r, keyEnter) {
+		t.Fatal("Enter was handled by a hidden route menu after switching tabs")
+	}
+	if h.menu != nil || h.menuPath != "" || len(h.audioRouteSinks) != 0 {
+		t.Fatalf("route menu survived entering the Devices tab: menu=%p path=%q sinks=%v", h.menu, h.menuPath, h.audioRouteSinks)
+	}
+}
+
 func TestAudioRouteMenuUsesScheduledMovePath(t *testing.T) {
 	dir := t.TempDir()
 	dump := `[{"id":46,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.main"}}},{"id":34,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.other"}}},{"id":82,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.player"}}}]`
