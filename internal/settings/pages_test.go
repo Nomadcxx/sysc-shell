@@ -73,6 +73,16 @@ func TestClustersCoverTheRailOnce(t *testing.T) {
 	}
 }
 
+func TestApplicationsSectionIsInTheShellCluster(t *testing.T) {
+	t.Parallel()
+	for _, cluster := range SectionClusters() {
+		if cluster.Name == "Shell" && slices.Contains(cluster.Sections, "Applications") {
+			return
+		}
+	}
+	t.Fatal("Applications is missing from the Shell cluster")
+}
+
 func TestLockScreenInSystemCluster(t *testing.T) {
 	for _, c := range SectionClusters() {
 		if c.Name == "System" && slices.Contains(c.Sections, "Lock Screen") {

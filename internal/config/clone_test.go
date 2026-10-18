@@ -21,6 +21,9 @@ func populatedConfig() Config {
 	cfg.Tray.Pinned = []string{"id:pinned"}
 	cfg.Tray.Order = []string{"id:order"}
 	cfg.Media.Blacklist = []string{"org.mpris.MediaPlayer2.blacklisted"}
+	cfg.Applications.Favourites = []string{"org.gnome.Nautilus"}
+	cfg.Applications.Hidden = []string{"old-editor"}
+	cfg.Applications.DefaultTerminal = "foot"
 	cfg.Templates = map[string]bool{"foot": true}
 	cfg.Plugins = Plugins{
 		Enabled: []string{"timer"},
@@ -55,6 +58,8 @@ func TestCloneIsDeep(t *testing.T) {
 	clone.Tray.Pinned[0] = "changed"
 	clone.Tray.Order[0] = "changed"
 	clone.Media.Blacklist[0] = "changed"
+	clone.Applications.Favourites[0] = "changed"
+	clone.Applications.Hidden[0] = "changed"
 	clone.Templates["foot"] = false
 	clone.Plugins.Enabled[0] = "changed"
 	clone.Plugins.Settings["timer"]["sound"] = false

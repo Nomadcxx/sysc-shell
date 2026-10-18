@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/junegunn/fzf/src/algo"
 	"github.com/junegunn/fzf/src/util"
 )
@@ -23,11 +24,55 @@ const (
 
 var launcherInitFZF sync.Once
 
+type launcherAppPreferenceSnapshot struct {
+	favourites        map[string]struct{}
+	hidden            map[string]struct{}
+	defaultTerminalID string
+}
+
+func newLauncherAppPreferenceSnapshot(prefs config.ApplicationPreferences) *launcherAppPreferenceSnapshot {
+	snapshot := &launcherAppPreferenceSnapshot{
+		favourites:        make(map[string]struct{}, len(prefs.Favourites)),
+		hidden:            make(map[string]struct{}, len(prefs.Hidden)),
+		defaultTerminalID: prefs.DefaultTerminal,
+	}
+	for _, id := range prefs.Favourites {
+		snapshot.favourites[id] = struct{}{}
+	}
+	for _, id := range prefs.Hidden {
+		snapshot.hidden[id] = struct{}{}
+	}
+	return snapshot
+}
+
+func (p *launcherAppPreferenceSnapshot) hides(id string) bool {
+	if p == nil {
+		return false
+	}
+	_, hidden := p.hidden[id]
+	return hidden
+}
+
+func (p *launcherAppPreferenceSnapshot) favours(id string) bool {
+	if p == nil {
+		return false
+	}
+	_, favourite := p.favourites[id]
+	return favourite
+}
+
 func launcherRank(entries []launcher.Entry, query string, boost func(query, identifier string) int) []launcher.Result {
+	return launcherRankWithPreferences(entries, query, boost, nil)
+}
+
+func launcherRankWithPreferences(entries []launcher.Entry, query string, boost func(query, identifier string) int, prefs *launcherAppPreferenceSnapshot) []launcher.Result {
 	query = strings.TrimSpace(query)
 	slab := util.MakeSlab(100*1024, 2048)
 	results := make([]launcher.Result, 0, len(entries))
 	for _, entry := range entries {
+		if prefs.hides(entry.ID) {
+			continue
+		}
 		score, matched := launcherEntryScore(entry, query, slab)
 		if !matched {
 			continue
@@ -41,6 +86,9 @@ func launcherRank(entries []launcher.Entry, query string, boost func(query, iden
 	// applications only. An action matches on "<App> <Action>".
 	if query != "" {
 		for _, entry := range entries {
+			if prefs.hides(entry.ID) {
+				continue
+			}
 			for _, a := range entry.Actions {
 				score, ok := launcherFuzzyScore(entry.Name+" "+a.Name, query, slab)
 				if !ok {
@@ -62,6 +110,9 @@ func launcherRank(entries []launcher.Entry, query string, boost func(query, iden
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score != results[j].Score {
 			return results[i].Score > results[j].Score
+		}
+		if left, right := prefs.favours(results[i].Entry.ID), prefs.favours(results[j].Entry.ID); left != right {
+			return left
 		}
 		left, right := strings.ToLower(results[i].Entry.Name), strings.ToLower(results[j].Entry.Name)
 		if left != right {

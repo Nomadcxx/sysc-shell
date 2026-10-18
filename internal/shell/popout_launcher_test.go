@@ -1862,6 +1862,207 @@ func TestLauncherEnterWaitsForResultsOfTheCurrentQuery(t *testing.T) {
 	}
 }
 
+func TestApplicationPreferenceRefreshInvalidatesOpenLauncherActions(t *testing.T) {
+	t.Parallel()
+
+	entries := launcherTestEntries()
+	reg, run, reqs := openLauncherPanel(t, entries)
+	search := reqs[1].Open.Callbacks.Handle
+	search(wayland.Event{Kind: wayland.EventIME, IMECommit: "firefox"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(result launcher.Result) bool {
+			return result.Entry.ID == "firefox.desktop" && result.Action == ""
+		})
+	})
+
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	settingsHost := reg.panelHosts[PanelSettings]
+	if settingsHost == nil {
+		t.Fatal("Settings did not coexist with the Launcher")
+	}
+	reg.configPath = t.TempDir() + "/config.json"
+	reg.mu.Lock()
+	settingsHost.section = "Applications"
+	settingsHost.draft = reg.cfg.Clone()
+	settingsHost.set = reg.settingsForLocked(settingsHost.draft)
+	reg.rebuildPanel(settingsHost)
+	launcherHost := reg.panelHosts[PanelLauncher]
+	row := slices.IndexFunc(launcherHost.launcherResults, func(result launcher.Result) bool {
+		return result.Entry.ID == "firefox.desktop"
+	})
+	if row < 0 {
+		reg.mu.Unlock()
+		t.Fatal("Launcher lost Firefox before the preference changed")
+	}
+	bounds, ok := walkActionBounds(launcherHost.root, fmt.Sprintf("launch:%d", row))
+	if !ok {
+		reg.mu.Unlock()
+		t.Fatal("Firefox row has no laid-out bounds")
+	}
+	if !launcherHost.openLauncherActions(reg, "firefox.desktop") || launcherHost.menu == nil {
+		reg.mu.Unlock()
+		t.Fatal("Firefox actions menu did not open")
+	}
+	reg.mu.Unlock()
+	waitFor(t, func() bool {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return slices.ContainsFunc(settingsHost.focus, func(n *ui.Node) bool {
+			return n.Action == "applications:hidden:firefox.desktop"
+		})
+	})
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	started := make(chan struct{}, 1)
+	reg.launcherMu.Lock()
+	reg.launcherRankWait = func(query string) {
+		if query == "firefox" {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-release
+		}
+	}
+	reg.launcherMu.Unlock()
+
+	activateSettingsAction(t, reg, settingsHost, "applications:hidden:firefox.desktop")
+	select {
+	case <-started:
+	case <-time.After(asyncTestWait):
+		t.Fatal("preference update did not requery the current launcher search")
+	}
+
+	reg.mu.Lock()
+	launcherHost = reg.panelHosts[PanelLauncher]
+	if launcherHost == nil || !launcherHost.launcherAwaiting {
+		reg.mu.Unlock()
+		t.Fatal("Launcher did not mark its stale rows as awaiting refreshed results")
+	}
+	if launcherHost.menu != nil || launcherHost.launcherMenuID != "" || len(launcherHost.launcherActions) != 0 {
+		reg.mu.Unlock()
+		t.Fatal("preference update left a stale actions menu open")
+	}
+	if !launcherHost.launcherPointerPress(reg, wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnRight,
+		X: float64(bounds.X + 4), Y: float64(bounds.Y + 4),
+	}) {
+		reg.mu.Unlock()
+		t.Fatal("right click on a stale launcher row was not consumed")
+	}
+	if launcherHost.menu != nil {
+		reg.mu.Unlock()
+		t.Fatal("right click reopened the stale Firefox actions menu")
+	}
+	launcherHost.launcherActivateSelected(reg)
+	reg.mu.Unlock()
+
+	run.mu.Lock()
+	spawned := run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("stale launcher row spawned %v while refresh was pending", spawned)
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.IndexFunc(h.launcherResults, func(result launcher.Result) bool {
+			return result.Entry.ID == "firefox.desktop"
+		}) < 0
+	})
+}
+
+func TestLauncherDropsRankFromOldPreferenceSnapshot(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "firefox"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(result launcher.Result) bool {
+			return result.Entry.ID == "firefox.desktop"
+		})
+	})
+
+	releaseOld, releaseNew := make(chan struct{}), make(chan struct{})
+	var releaseOldOnce, releaseNewOnce sync.Once
+	t.Cleanup(func() {
+		releaseOldOnce.Do(func() { close(releaseOld) })
+		releaseNewOnce.Do(func() { close(releaseNew) })
+	})
+	oldStarted, newStarted := make(chan struct{}, 1), make(chan struct{}, 1)
+	applied := make(chan struct{}, 2)
+	rankCalls := 0
+	reg.launcherMu.Lock()
+	reg.launcherRankWait = func(query string) {
+		if query != "firefox" {
+			return
+		}
+		rankCalls++ // The service serializes Rank callbacks on its worker.
+		if rankCalls == 1 {
+			oldStarted <- struct{}{}
+			<-releaseOld
+		} else if rankCalls == 2 {
+			newStarted <- struct{}{}
+			<-releaseNew
+		}
+	}
+	reg.afterLauncherSnap = func() { applied <- struct{}{} }
+	reg.launcherMu.Unlock()
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	reg.launcherSendQuery(h, h.query)
+	reg.mu.Unlock()
+	select {
+	case <-oldStarted:
+	case <-time.After(asyncTestWait):
+		t.Fatal("old preference snapshot did not reach Rank")
+	}
+
+	reg.mu.Lock()
+	prefs := reg.cfg.Applications
+	prefs.Hidden = []string{"firefox.desktop"}
+	reg.cfg.Applications = prefs
+	reg.storeLauncherAppPreferences(prefs)
+	if _, ok := reg.refreshOpenLauncherLocked(); !ok {
+		reg.mu.Unlock()
+		t.Fatal("open Launcher did not refresh after the preference change")
+	}
+	reg.mu.Unlock()
+	releaseOldOnce.Do(func() { close(releaseOld) })
+	select {
+	case <-newStarted:
+	case <-time.After(asyncTestWait):
+		t.Fatal("new preference snapshot did not reach Rank")
+	}
+
+	select {
+	case <-applied:
+		t.Fatal("rank from the old preference snapshot was applied as the new query")
+	case <-time.After(150 * time.Millisecond):
+	}
+	reg.mu.Lock()
+	h = reg.panelHosts[PanelLauncher]
+	awaiting := h != nil && h.launcherAwaiting
+	reg.mu.Unlock()
+	if !awaiting {
+		t.Fatal("old preference results cleared the new query's awaiting state")
+	}
+
+	releaseOldOnce.Do(func() { close(releaseOld) })
+	releaseNewOnce.Do(func() { close(releaseNew) })
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && !slices.ContainsFunc(h.launcherResults, func(result launcher.Result) bool {
+			return result.Entry.ID == "firefox.desktop"
+		})
+	})
+}
+
 // Inline calc is merged into the stamped snapshot. The service composes it
 // ahead of the application rows; the shell's stamp has to do the same.
 func TestLauncherInlineExpressionLeadsTheResults(t *testing.T) {

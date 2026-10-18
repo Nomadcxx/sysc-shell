@@ -274,6 +274,12 @@ func (r *Registry) launcherServiceConfig() launcher.ServiceConfig {
 		},
 		Providers:         r.launcherProviders(),
 		ApplicationsGlyph: "glyph:apps",
+		TerminalDesktopID: func() string {
+			if prefs := r.launcherAppPrefs.Load(); prefs != nil {
+				return prefs.defaultTerminalID
+			}
+			return ""
+		},
 	}
 }
 
@@ -324,6 +330,10 @@ func (r *Registry) sessionProvider() launcher.Provider {
 			return nil
 		},
 	}
+}
+
+func (r *Registry) storeLauncherAppPreferences(prefs config.ApplicationPreferences) {
+	r.launcherAppPrefs.Store(newLauncherAppPreferenceSnapshot(prefs))
 }
 
 func (r *Registry) notesProvider() launcher.Provider {

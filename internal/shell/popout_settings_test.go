@@ -7,9 +7,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/buildinfo"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -30,6 +33,407 @@ func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
 	focus := ui.Focusables(h.root)
 	if len(focus) == 0 || focus[0].Kind != ui.KindTextField || focus[0].Name != "Search" {
 		t.Fatalf("first focusable = %+v, want Search field", focus)
+	}
+}
+
+func TestSettingsApplicationsShowsAccessibleControlsAndStaleFeedback(t *testing.T) {
+	cfg := config.Default()
+	cfg.Applications.Favourites = []string{"missing-favourite"}
+	cfg.Applications.Hidden = []string{"missing-hidden"}
+	cfg.Applications.DefaultTerminal = "missing-terminal"
+	reg, h := newApplicationSettingsHost(t, cfg, []launcher.Entry{
+		{ID: "photo-editor", Name: "Photo Editor", Comment: "Edit pictures"},
+		{ID: "foot", Name: "Foot", Categories: []string{"System", "TerminalEmulator"}, TerminalApp: true},
+	})
+	_ = reg
+
+	favourite := findAction(h.root, "applications:favourite:photo-editor")
+	if favourite == nil || favourite.Kind != ui.KindToggle || favourite.Role != "switch" ||
+		!favourite.Focusable || favourite.Name != "Mark Photo Editor as a favourite" {
+		t.Fatalf("favourite control = %+v, want an accessible switch for Photo Editor", favourite)
+	}
+	hidden := findAction(h.root, "applications:hidden:photo-editor")
+	if hidden == nil || hidden.Kind != ui.KindToggle || hidden.Role != "switch" ||
+		!hidden.Focusable || hidden.Name != "Hide Photo Editor from the launcher" {
+		t.Fatalf("hidden control = %+v, want an accessible switch for Photo Editor", hidden)
+	}
+	terminal := findAction(h.root, "applications:terminal:foot")
+	if terminal == nil || terminal.Kind != ui.KindButton || terminal.Role != "button" || !terminal.Focusable {
+		t.Fatalf("terminal control = %+v, want an accessible button for Foot", terminal)
+	}
+	stale := findAction(h.root, "applications:remove-stale")
+	if stale == nil || stale.Role != "button" || !stale.Focusable {
+		t.Fatalf("stale preference action = %+v, want an accessible cleanup button", stale)
+	}
+	foundFeedback := false
+	for _, n := range walk(h.root) {
+		if n.Role == "status" && strings.Contains(n.Text, "3 saved application preferences") {
+			foundFeedback = true
+			if strings.Contains(n.Text, "missing-") {
+				t.Fatalf("stale feedback exposed raw IDs: %q", n.Text)
+			}
+		}
+	}
+	if !foundFeedback {
+		t.Fatal("page did not report stale favourite, hidden, and default IDs")
+	}
+}
+
+func TestSettingsApplicationSwitchNamesFollowLocale(t *testing.T) {
+	for _, tc := range []struct {
+		locale, favourite, hidden string
+	}{
+		{"es", "Marcar Photo Editor como favorita", "Ocultar Photo Editor del lanzador"},
+		{"ja", "Photo Editor をお気に入りに追加", "Photo Editor をランチャーで非表示にする"},
+		{"ko", "Photo Editor 즐겨찾기에 추가", "런처에서 Photo Editor 숨기기"},
+		{"pt", "Adicionar Photo Editor aos favoritos", "Ocultar Photo Editor do iniciador"},
+		{"ru", "Добавить «Photo Editor» в избранное", "Скрыть «Photo Editor» из списка приложений"},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			h := newSettingsHost()
+			h.draft.Session.Language = tc.locale
+			row := applicationPreferenceRow(h, launcher.Entry{ID: "photo-editor", Name: "Photo Editor"}, false, false, false)
+			favourite := findAction(row, "applications:favourite:photo-editor")
+			hidden := findAction(row, "applications:hidden:photo-editor")
+			if favourite == nil || favourite.Name != tc.favourite {
+				t.Errorf("favourite accessible name = %q, want %q", nameOf(favourite), tc.favourite)
+			}
+			if hidden == nil || hidden.Name != tc.hidden {
+				t.Errorf("hidden accessible name = %q, want %q", nameOf(hidden), tc.hidden)
+			}
+		})
+	}
+}
+
+func TestExternalApplicationPreferenceChangeRefreshesLauncherQuery(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "firefox"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(result launcher.Result) bool {
+			return result.Entry.ID == "firefox.desktop"
+		})
+	})
+
+	reg.mu.Lock()
+	next := reg.cfg.Clone()
+	reg.mu.Unlock()
+	next.Applications.Hidden = []string{"firefox.desktop"}
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.query == "firefox" && !h.launcherAwaiting &&
+			!slices.ContainsFunc(h.launcherResults, func(result launcher.Result) bool {
+				return result.Entry.ID == "firefox.desktop"
+			})
+	})
+}
+
+func TestSettingsApplicationsChangesPersistAndReachLauncherService(t *testing.T) {
+	cfg := config.Default()
+	reg, h := newApplicationSettingsHost(t, cfg, []launcher.Entry{
+		{ID: "photo-editor", Name: "Photo Editor"},
+		{ID: "foot", Name: "Foot", TerminalApp: true},
+	})
+	reg.configPath = filepath.Join(t.TempDir(), "config.json")
+
+	activateSettingsAction(t, reg, h, "applications:favourite:photo-editor")
+	if !slices.Equal(reg.cfg.Applications.Favourites, []string{"photo-editor"}) {
+		t.Fatalf("saved favourites = %v, want photo-editor", reg.cfg.Applications.Favourites)
+	}
+	activateSettingsAction(t, reg, h, "applications:hidden:photo-editor")
+	if len(reg.cfg.Applications.Favourites) != 0 || !slices.Equal(reg.cfg.Applications.Hidden, []string{"photo-editor"}) {
+		t.Fatalf("hidden edit left conflicting preferences: %+v", reg.cfg.Applications)
+	}
+	activateSettingsAction(t, reg, h, "applications:terminal:foot")
+	if got := reg.launcherServiceConfig().TerminalDesktopID(); got != "foot" {
+		t.Fatalf("launcher terminal ID = %q, want foot after the settings edit", got)
+	}
+	loaded, err := config.Load(reg.configPath)
+	if err != nil {
+		t.Fatalf("Load saved config: %v", err)
+	}
+	if !slices.Equal(loaded.Applications.Hidden, []string{"photo-editor"}) || loaded.Applications.DefaultTerminal != "foot" {
+		t.Fatalf("persisted applications = %+v", loaded.Applications)
+	}
+}
+
+func TestSettingsApplicationsSearchFiltersInstalledEntries(t *testing.T) {
+	reg, h := newApplicationSettingsHost(t, config.Default(), []launcher.Entry{
+		{ID: "photo-editor", Name: "Photo Editor"},
+		{ID: "foot", Name: "Foot", TerminalApp: true},
+	})
+
+	reg.mu.Lock()
+	h.query = "foot"
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+
+	if findAction(h.root, "applications:favourite:foot") == nil {
+		t.Fatal("search for Foot did not keep the matching installed application")
+	}
+	if findAction(h.root, "applications:favourite:photo-editor") != nil {
+		t.Fatal("search for Foot kept the non-matching Photo Editor")
+	}
+}
+
+func TestSettingsApplicationsSnapshotRefreshDoesNotBlockRegistry(t *testing.T) {
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	entries := []launcher.Entry{{ID: "photo-editor", Name: "Photo Editor"}}
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return entries
+	}})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseScan) }) })
+	<-scanStarted
+
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.panelHosts[PanelSettings] = h
+	reg.mu.Unlock()
+
+	rendered := make(chan *ui.Node, 1)
+	go func() {
+		reg.mu.Lock()
+		h.root = settingsTree(reg, h)
+		root := h.root
+		reg.mu.Unlock()
+		rendered <- root
+	}()
+	select {
+	case root := <-rendered:
+		if !containsText(root, "Loading installed applications…") {
+			t.Fatal("initial applications view did not show loading status")
+		}
+	case <-time.After(100 * time.Millisecond):
+		releaseOnce.Do(func() { close(releaseScan) })
+		<-rendered
+		t.Fatal("Settings waited for the installed-app scan while holding Registry.mu")
+	}
+
+	releaseOnce.Do(func() { close(releaseScan) })
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		ready := findAction(reg.panelHosts[PanelSettings].root, "applications:favourite:photo-editor") != nil
+		reg.mu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("Settings did not rebuild from the completed application snapshot")
+}
+
+func TestSettingsApplicationsRefreshUpdatesReopenedHost(t *testing.T) {
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	entries := []launcher.Entry{{ID: "photo-editor", Name: "Photo Editor"}}
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return entries
+	}})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseScan) }) })
+
+	oldHost := newSettingsHost()
+	oldHost.section = "Applications"
+	oldHost.output = 7
+	oldHost.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.panelHosts[PanelSettings] = oldHost
+	oldHost.root = settingsTree(reg, oldHost)
+	reg.mu.Unlock()
+	select {
+	case <-scanStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial application scan did not start")
+	}
+
+	reg.mu.Lock()
+	reg.closePanelLocked(PanelSettings)
+	currentHost := newSettingsHost()
+	currentHost.section = "Applications"
+	currentHost.output = 7
+	currentHost.stopAnim = make(chan struct{})
+	reg.panelHosts[PanelSettings] = currentHost
+	currentHost.root = settingsTree(reg, currentHost)
+	reg.mu.Unlock()
+
+	releaseOnce.Do(func() { close(releaseScan) })
+	waitFor(t, func() bool {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return reg.panelHosts[PanelSettings] == currentHost &&
+			findAction(currentHost.root, "applications:favourite:photo-editor") != nil
+	})
+}
+
+func TestSettingsRefreshesStaleApplicationSnapshot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	oldEntries := []launcher.Entry{{ID: "old.desktop", Name: "Old"}}
+	var now atomic.Int64
+	now.Store(time.Now().UnixNano())
+	var scans atomic.Int32
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		if scans.Add(1) == 1 {
+			return oldEntries
+		}
+		return []launcher.Entry{
+			{ID: "old.desktop", Name: "Old"},
+			{ID: "new.desktop", Name: "New"},
+		}
+	}, Now: func() time.Time { return time.Unix(0, now.Load()) }, StaleAfter: time.Minute})
+	if _, err := svc.Applications(); err != nil {
+		t.Fatal(err)
+	}
+	now.Add(int64(2 * time.Minute))
+
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.launcherApplications.Store(&launcherApplicationSnapshot{
+		entries: oldEntries, attemptedAt: time.Now().Add(-2 * launcherApplicationsRefreshAfter), available: true,
+	})
+	reg.panelHosts[PanelSettings] = h
+	h.root = settingsTree(reg, h)
+	h.focus = ui.Focusables(h.root)
+	reg.mu.Unlock()
+
+	waitFor(t, func() bool {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return slices.ContainsFunc(h.focus, func(n *ui.Node) bool {
+			return n.Action == "applications:favourite:new.desktop"
+		})
+	})
+}
+
+func TestSettingsRetriesApplicationRefreshAfterServiceReplacement(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_DATA_DIRS", filepath.Join(home, "system-data"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseScan) }) }
+	defer release()
+	stale := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return []launcher.Entry{{ID: "stale.desktop", Name: "Stale"}}
+	}})
+
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.output = 7
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = stale
+	reg.launcherServiceProviders = cloneLauncherCommandProviders(reg.cfg.Launcher.Providers)
+	reg.launcherServiceActions = cloneLauncherActions(reg.cfg.Launcher.Actions)
+	reg.panelHosts[PanelSettings] = h
+	reg.refreshLauncherApplicationsLocked(h)
+	reg.mu.Unlock()
+
+	select {
+	case <-scanStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial application scan did not start")
+	}
+
+	reg.mu.Lock()
+	reg.cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Test", Prefix: "/test", Command: []string{"true"}, OnSelect: []string{"open"},
+	}}
+	current := reg.launcherServiceLocked()
+	reg.mu.Unlock()
+	if current == stale {
+		t.Fatal("launcher config change did not replace its service")
+	}
+
+	waitFor(t, func() bool {
+		snapshot := reg.launcherApplications.Load()
+		return snapshot != nil && snapshot.available
+	})
+	release()
+}
+
+func TestSettingsApplicationsPreferenceActionUsesCachedSnapshot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	entries := []launcher.Entry{{ID: "photo-editor", Name: "Photo Editor"}}
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return entries
+	}})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseScan) }) })
+	<-scanStarted
+
+	cfg := config.Default()
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	h.draft = cfg.Clone()
+	h.root = applicationPreferenceRow(h, entries[0], false, false, false)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+	reg.mu.Lock()
+	reg.cfg = cfg.Clone()
+	reg.configPath = filepath.Join(t.TempDir(), "config.json")
+	reg.launcherSvc = svc
+	reg.launcherApplications.Store(&launcherApplicationSnapshot{
+		entries: slices.Clone(entries), attemptedAt: time.Now(), available: true,
+	})
+	reg.panelHosts[PanelSettings] = h
+	reg.mu.Unlock()
+
+	n := findAction(h.root, "applications:favourite:photo-editor")
+	finished := make(chan bool, 1)
+	go func() {
+		reg.mu.Lock()
+		finished <- h.applicationSettingsAction(reg, n)
+		reg.mu.Unlock()
+	}()
+	select {
+	case handled := <-finished:
+		if !handled {
+			t.Fatal("favourite action was not handled")
+		}
+	case <-time.After(100 * time.Millisecond):
+		releaseOnce.Do(func() { close(releaseScan) })
+		<-finished
+		t.Fatal("Settings action waited for the installed-app scan while holding Registry.mu")
+	}
+	reg.mu.Lock()
+	favourited := slices.Equal(reg.cfg.Applications.Favourites, []string{"photo-editor"})
+	reg.mu.Unlock()
+	if !favourited {
+		t.Fatal("favourite action did not persist the cached application ID")
 	}
 }
 
@@ -719,6 +1123,47 @@ func newSettingsHost() *PanelHost {
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	return h
+}
+
+func newApplicationSettingsHost(t *testing.T, cfg config.Config, entries []launcher.Entry) (*Registry, *PanelHost) {
+	t.Helper()
+	reg := newPanelRegistry(t)
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry { return entries }})
+	h := newSettingsHost()
+	h.draft = cfg.Clone()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.cfg = cfg.Clone()
+	reg.storeLauncherAppPreferences(cfg.Applications)
+	reg.launcherSvc = svc
+	reg.launcherApplications.Store(&launcherApplicationSnapshot{
+		entries: slices.Clone(entries), attemptedAt: time.Now(), available: true,
+	})
+	reg.panelHosts[PanelSettings] = h
+	h.root = settingsTree(reg, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+	reg.mu.Unlock()
+	return reg, h
+}
+
+func activateSettingsAction(t *testing.T, reg *Registry, h *PanelHost, action string) {
+	t.Helper()
+	reg.mu.Lock()
+	for i, n := range h.focus {
+		if n != nil && n.Action == action {
+			h.roving.Set(i)
+			activated := h.activate(reg)
+			reg.mu.Unlock()
+			if !activated {
+				t.Fatalf("activation returned false for %q", action)
+			}
+			return
+		}
+	}
+	reg.mu.Unlock()
+	t.Fatalf("focus list has no action %q", action)
 }
 
 func byRole(n *ui.Node, role string) []*ui.Node {

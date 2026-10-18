@@ -43,6 +43,16 @@ func Write(path string, c Config) error {
 	if _, err := applyMedia(wireMedia{Preferred: &c.Media.Preferred, Blacklist: c.Media.Blacklist}, "media"); err != nil {
 		return err
 	}
+	applications := wireApplicationPreferences{
+		Favourites: c.Applications.Favourites,
+		Hidden:     c.Applications.Hidden,
+	}
+	if c.Applications.DefaultTerminal != "" {
+		applications.DefaultTerminal = &c.Applications.DefaultTerminal
+	}
+	if _, err := applyApplicationPreferences(applications, "applications"); err != nil {
+		return err
+	}
 	if _, err := applyMonitor(*monitorWire(c.Monitor), "monitor"); err != nil {
 		return err
 	}
@@ -164,6 +174,16 @@ func toWire(c Config) wireConfig {
 		if c.Media.Preferred != "" {
 			preferred := c.Media.Preferred
 			w.Media.Preferred = &preferred
+		}
+	}
+	if len(c.Applications.Favourites) > 0 || len(c.Applications.Hidden) > 0 || c.Applications.DefaultTerminal != "" {
+		w.Applications = &wireApplicationPreferences{
+			Favourites: append([]string(nil), c.Applications.Favourites...),
+			Hidden:     append([]string(nil), c.Applications.Hidden...),
+		}
+		if c.Applications.DefaultTerminal != "" {
+			v := c.Applications.DefaultTerminal
+			w.Applications.DefaultTerminal = &v
 		}
 	}
 	if c.Monitor != defaultMonitor() {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/fontscan"
@@ -93,6 +94,7 @@ var settingsSectionIcons = map[string]string{
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
 	"Tray":          "apps",
+	"Applications":  "apps",
 	"Plugins":       "extension",
 	"Session":       "power_settings_new",
 	"Lock Screen":   "lock",
@@ -244,6 +246,9 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 	search.Width = settingsRailWidth
 	settingsFieldInset(h, search)
 	search.Placeholder = "Search settings…"
+	if section == "Applications" {
+		search.Placeholder = h.tr("applications.search", "Search applications…")
+	}
 	// Bounded like the content column: a tall font, a short pane or a long
 	// section list scrolls the rail instead of pushing its last tab past the
 	// pane's content edge.
@@ -403,6 +408,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 			Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{settingsRail(h, section, head), right},
 		}}}
 	}
+	if section == "Applications" {
+		return body(applicationsSettingsTree(r, h))
+	}
 
 	if searching {
 		var hits []settings.Entry
@@ -455,6 +463,293 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 	}
 	return body(content)
+}
+
+func applicationsSettingsTree(r *Registry, h *PanelHost) *ui.Node {
+	if r == nil {
+		return settingsBody(h, theme.MarginL, &ui.Node{
+			Kind: ui.KindText, Text: h.tr("applications.unavailable", "Installed applications are unavailable."),
+			Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
+	r.refreshLauncherApplicationsLocked(h)
+	snapshot := r.launcherApplications.Load()
+	if snapshot == nil {
+		return settingsBody(h, theme.MarginL, &ui.Node{
+			Kind: ui.KindText, Text: h.tr("applications.loading", "Loading installed applications…"),
+			Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
+	if !snapshot.available {
+		return settingsBody(h, theme.MarginL, &ui.Node{
+			Kind: ui.KindText, Text: h.tr("applications.unavailable", "Installed applications are unavailable."),
+			Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
+	entries := slices.Clone(snapshot.entries)
+	sort.SliceStable(entries, func(i, j int) bool {
+		left, right := strings.ToLower(entries[i].Name), strings.ToLower(entries[j].Name)
+		if left != right {
+			return left < right
+		}
+		return entries[i].ID < entries[j].ID
+	})
+	installed := make(map[string]launcher.Entry, len(entries))
+	terminalCount := 0
+	for _, entry := range entries {
+		installed[entry.ID] = entry
+		if entry.TerminalApp {
+			terminalCount++
+		}
+	}
+
+	stale := make(map[string]struct{})
+	for _, ids := range [][]string{h.draft.Applications.Favourites, h.draft.Applications.Hidden} {
+		for _, id := range ids {
+			if _, ok := installed[id]; !ok {
+				stale[id] = struct{}{}
+			}
+		}
+	}
+	selectedTerminal := ""
+	if id := h.draft.Applications.DefaultTerminal; id != "" {
+		if entry, ok := installed[id]; ok && entry.TerminalApp {
+			selectedTerminal = entry.Name
+		} else {
+			stale[id] = struct{}{}
+		}
+	}
+
+	children := []*ui.Node{{
+		Kind: ui.KindText, Text: h.tr("applications.hint", "Choose launcher favourites, hidden apps, and a supported terminal. These choices do not edit desktop files."),
+		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+	}}
+	defaultStatus := h.tr("applications.default_detected", "Using the detected terminal.")
+	if selectedTerminal != "" {
+		defaultStatus = fmt.Sprintf(h.tr("applications.default_selected", "%s is the default terminal."), selectedTerminal)
+	} else if h.draft.Applications.DefaultTerminal != "" {
+		defaultStatus = h.tr("applications.default_stale", "The saved terminal is unavailable. Using the detected terminal.")
+	} else if terminalCount == 0 {
+		defaultStatus = h.tr("applications.no_terminals", "No supported terminal applications are installed.")
+	}
+	defaultRows := []*ui.Node{{
+		Kind: ui.KindText, Text: defaultStatus, Name: "Default terminal status", Role: "status",
+		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+	}}
+	if h.draft.Applications.DefaultTerminal != "" {
+		defaultRows = append(defaultRows, applicationPreferenceButton(h, h.tr("applications.clear", "Clear"),
+			h.tr("applications.clear_default_name", "Clear the saved default terminal"), "applications:clear-terminal"))
+	}
+	children = append(children, settingsGroupCard(h, h.tr("applications.default_terminal", "Default terminal"), defaultRows))
+
+	if len(stale) > 0 {
+		feedback := fmt.Sprintf(h.trn("applications.stale", len(stale),
+			"%d saved application preference is unavailable.", "%d saved application preferences are unavailable."), len(stale))
+		children = append(children, settingsGroupCard(h, h.tr("applications.saved_choices", "Saved choices"), []*ui.Node{
+			{
+				Kind: ui.KindRow, PinEnd: true, Gap: theme.MarginM, Width: settingsCardInner(h),
+				Children: []*ui.Node{
+					{Kind: ui.KindText, Text: feedback, Name: "Stale application preferences", Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+					applicationPreferenceButton(h, h.tr("applications.remove_stale", "Remove stale"),
+						h.tr("applications.remove_stale_name", "Remove unavailable application choices"), "applications:remove-stale"),
+				},
+			},
+		}))
+	}
+
+	query := strings.ToLower(strings.TrimSpace(h.query))
+	favourites, hidden := stringSet(h.draft.Applications.Favourites), stringSet(h.draft.Applications.Hidden)
+	var rows []*ui.Node
+	for _, entry := range entries {
+		if query != "" && !applicationMatchesQuery(entry, query) {
+			continue
+		}
+		rows = append(rows, applicationPreferenceRow(h, entry, favourites[entry.ID], hidden[entry.ID],
+			h.draft.Applications.DefaultTerminal == entry.ID))
+	}
+	if len(rows) == 0 {
+		message := h.tr("applications.no_apps", "No installed applications match.")
+		if query == "" {
+			message = h.tr("applications.no_installed", "No installed applications were found.")
+		}
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: message, Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+	}
+	children = append(children, settingsGroupCard(h, h.tr("applications.installed", "Installed applications"), rows))
+	return settingsBody(h, theme.MarginL, children...)
+}
+
+func applicationMatchesQuery(entry launcher.Entry, query string) bool {
+	fields := []string{entry.Name, entry.GenericName, entry.Comment, entry.ID}
+	fields = append(fields, entry.Keywords...)
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func applicationPreferenceRow(h *PanelHost, entry launcher.Entry, favourite, hidden, defaultTerminal bool) *ui.Node {
+	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: entry.Name, Name: entry.Name, Role: "heading", TextRole: theme.RoleLabel},
+	}}
+	if entry.Comment != "" {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: entry.Comment, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+	}
+	controls := []*ui.Node{
+		applicationPreferenceToggle(h, h.tr("applications.favourite", "Favourite"),
+			fmt.Sprintf(h.tr("applications.favourite_name", "Mark %s as a favourite"), entry.Name), favourite, "applications:favourite:"+entry.ID),
+		applicationPreferenceToggle(h, h.tr("applications.hidden", "Hidden"),
+			fmt.Sprintf(h.tr("applications.hidden_name", "Hide %s from the launcher"), entry.Name), hidden, "applications:hidden:"+entry.ID),
+	}
+	if entry.TerminalApp {
+		text, name := h.tr("applications.set_terminal", "Set terminal"), fmt.Sprintf(h.tr("applications.set_terminal_name", "Set %s as the default terminal"), entry.Name)
+		if defaultTerminal {
+			text, name = h.tr("applications.current_terminal", "Default"), fmt.Sprintf(h.tr("applications.current_terminal_name", "%s is the default terminal"), entry.Name)
+		}
+		button := applicationPreferenceButton(h, text, name, "applications:terminal:"+entry.ID)
+		if defaultTerminal {
+			button.State |= ui.StateSelected
+			button.Fill = ui.FillAccent
+		}
+		controls = append(controls, button)
+	}
+	return &ui.Node{Kind: ui.KindColumn, Width: settingsCardInner(h), Gap: theme.MarginXS, Children: []*ui.Node{
+		label,
+		{Kind: ui.KindRow, Gap: theme.MarginM, Children: controls},
+	}}
+}
+
+func applicationPreferenceToggle(h *PanelHost, label, name string, active bool, action string) *ui.Node {
+	value := 0.0
+	if active {
+		value = 1
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
+		{Kind: ui.KindToggle, Value: value, Action: action, Name: name, Role: "switch", Focusable: true},
+	}}
+}
+
+func applicationPreferenceButton(h *PanelHost, text, name, action string) *ui.Node {
+	return &ui.Node{Kind: ui.KindButton, Text: text, Action: action, Name: name, Role: "button", Focusable: true,
+		Height: h.metrics().CompactControl, Padding: h.metrics().ButtonPadding, Shape: ui.ShapeMedium, Fill: ui.FillOutline}
+}
+
+func (h *PanelHost) applicationSettingsAction(r *Registry, n *ui.Node) bool {
+	if h == nil || h.id != PanelSettings || r == nil || n == nil {
+		return false
+	}
+	action, value, ok := strings.Cut(strings.TrimPrefix(n.Action, "applications:"), ":")
+	if !ok && strings.TrimPrefix(n.Action, "applications:") != "clear-terminal" && strings.TrimPrefix(n.Action, "applications:") != "remove-stale" {
+		return false
+	}
+	prefs := h.draft.Applications
+	prefs.Favourites = slices.Clone(prefs.Favourites)
+	prefs.Hidden = slices.Clone(prefs.Hidden)
+	switch action {
+	case "favourite", "hidden":
+		if n.Kind != ui.KindToggle {
+			return false
+		}
+		if _, found := applicationFromSnapshot(r, value); !found {
+			h.errLabel = h.tr("applications.unavailable", "Installed applications are unavailable.")
+			r.rebuildPanel(h)
+			return true
+		}
+		ui.Activate(n)
+		active := n.Value != 0
+		if action == "favourite" {
+			if active {
+				prefs.Favourites = addUnique(prefs.Favourites, value)
+				prefs.Hidden = removeString(prefs.Hidden, value)
+			} else {
+				prefs.Favourites = removeString(prefs.Favourites, value)
+			}
+		} else if active {
+			prefs.Hidden = addUnique(prefs.Hidden, value)
+			prefs.Favourites = removeString(prefs.Favourites, value)
+		} else {
+			prefs.Hidden = removeString(prefs.Hidden, value)
+		}
+	case "terminal":
+		entry, found := applicationFromSnapshot(r, value)
+		if !found || !entry.TerminalApp {
+			h.errLabel = h.tr("applications.terminal_unavailable", "That terminal application is no longer available.")
+			r.rebuildPanel(h)
+			return true
+		}
+		prefs.DefaultTerminal = value
+	case "clear-terminal":
+		prefs.DefaultTerminal = ""
+	case "remove-stale":
+		snapshot := r.launcherApplications.Load()
+		if snapshot == nil || !snapshot.available {
+			h.errLabel = h.tr("applications.unavailable", "Installed applications are unavailable.")
+			r.rebuildPanel(h)
+			return true
+		}
+		installed := make(map[string]launcher.Entry, len(snapshot.entries))
+		for _, entry := range snapshot.entries {
+			installed[entry.ID] = entry
+		}
+		prefs.Favourites = keepInstalledIDs(prefs.Favourites, installed)
+		prefs.Hidden = keepInstalledIDs(prefs.Hidden, installed)
+		if entry, found := installed[prefs.DefaultTerminal]; !found || !entry.TerminalApp {
+			prefs.DefaultTerminal = ""
+		}
+	default:
+		return false
+	}
+	return h.saveApplicationPreferences(r, prefs)
+}
+
+func applicationFromSnapshot(r *Registry, id string) (launcher.Entry, bool) {
+	snapshot := r.launcherApplications.Load()
+	if snapshot == nil || !snapshot.available {
+		return launcher.Entry{}, false
+	}
+	for _, entry := range snapshot.entries {
+		if entry.ID == id {
+			return entry, true
+		}
+	}
+	return launcher.Entry{}, false
+}
+
+func keepInstalledIDs(ids []string, installed map[string]launcher.Entry) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := installed[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (h *PanelHost) saveApplicationPreferences(r *Registry, prefs config.ApplicationPreferences) bool {
+	h.draft.Applications = prefs
+	saved := false
+	if err := r.writeConfig(h.draft); err != nil {
+		h.errLabel = err.Error()
+	} else {
+		saved = true
+		h.errLabel = ""
+		r.cfg.Applications = config.ApplicationPreferences{
+			Favourites:      slices.Clone(prefs.Favourites),
+			Hidden:          slices.Clone(prefs.Hidden),
+			DefaultTerminal: prefs.DefaultTerminal,
+		}
+		r.storeLauncherAppPreferences(prefs)
+	}
+	h.set = r.settingsForLocked(h.draft)
+	r.rebuildPanel(h)
+	if saved {
+		if launcherOutput, launcherRefresh := r.refreshOpenLauncherLocked(); launcherRefresh {
+			r.publishSurface(launcherOutput, panelSurfaceID(PanelLauncher))
+		}
+	}
+	return true
 }
 
 // settingsTrayTitles names each Tray card after the item it holds (sysc-861).

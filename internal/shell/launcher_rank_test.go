@@ -8,6 +8,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 )
 
 // alphabetEntries builds n entries named A0000..., B0001..., cycling the
@@ -153,6 +154,72 @@ func TestLauncherRankTieBreaksDeterministically(t *testing.T) {
 		if got[i].Entry.ID != id {
 			t.Fatalf("order[%d] = %q, want %q", i, got[i].Entry.ID, id)
 		}
+	}
+}
+
+func TestLauncherPreferencesHideAppsAndTheirActions(t *testing.T) {
+	entries := []launcher.Entry{
+		{ID: "hidden.desktop", Name: "Secret Tool", Actions: []launcher.Action{{ID: "secret", Name: "Open Vault"}}},
+		{ID: "visible.desktop", Name: "Visible Tool", Actions: []launcher.Action{{ID: "open", Name: "Open Notes"}}},
+	}
+	prefs := &launcherAppPreferenceSnapshot{hidden: map[string]struct{}{"hidden.desktop": {}}}
+
+	browse := launcherRankWithPreferences(entries, "", nil, prefs)
+	if len(browse) != 1 || browse[0].Entry.ID != "visible.desktop" {
+		t.Fatalf("browse rows = %+v, want only visible.desktop", browse)
+	}
+	search := launcherRankWithPreferences(entries, "vault", nil, prefs)
+	if len(search) != 0 {
+		t.Fatalf("hidden app action search rows = %+v, want none", search)
+	}
+	visibleAction := launcherRankWithPreferences(entries, "notes", nil, prefs)
+	if len(visibleAction) != 1 || visibleAction[0].Action != "open" {
+		t.Fatalf("visible action rows = %+v, want the visible app action", visibleAction)
+	}
+}
+
+func TestLauncherPreferencesFavouriteOnlyBreaksScoreTies(t *testing.T) {
+	equal := []launcher.Entry{
+		{ID: "a.desktop", Name: "Same Tool"},
+		{ID: "z.desktop", Name: "Same Tool"},
+	}
+	prefs := &launcherAppPreferenceSnapshot{favourites: map[string]struct{}{"z.desktop": {}}}
+	got := launcherRankWithPreferences(equal, "", nil, prefs)
+	if len(got) != 2 || got[0].Entry.ID != "z.desktop" {
+		t.Fatalf("equal-score order = %+v, want favourite z.desktop first", got)
+	}
+
+	betterMatch := []launcher.Entry{
+		{ID: "fox.desktop", Name: "Fox"},
+		{ID: "firefox.desktop", Name: "Firefox"},
+	}
+	prefs = &launcherAppPreferenceSnapshot{favourites: map[string]struct{}{"firefox.desktop": {}}}
+	got = launcherRankWithPreferences(betterMatch, "fox", nil, prefs)
+	if len(got) != 2 || got[0].Entry.ID != "fox.desktop" {
+		t.Fatalf("better-text order = %+v, want Fox before favourite Firefox", got)
+	}
+}
+
+func TestLauncherRankReadsPreferencesAfterConfigReload(t *testing.T) {
+	reg := newPanelRegistry(t)
+	entries := []launcher.Entry{
+		{ID: "hidden.desktop", Name: "Hidden Tool"},
+		{ID: "visible.desktop", Name: "Visible Tool"},
+	}
+	next := config.Default()
+	next.Applications.Hidden = []string{"hidden.desktop"}
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	reg.launcherMu.Lock()
+	providerGeneration := reg.launcherProviderGeneration
+	reg.launcherMu.Unlock()
+	got := reg.rankLauncher(providerGeneration, entries, "", nil)
+	if len(got) != 1 || got[0].Entry.ID != "visible.desktop" {
+		t.Fatalf("rank after config reload = %+v, want only visible.desktop", got)
 	}
 }
 

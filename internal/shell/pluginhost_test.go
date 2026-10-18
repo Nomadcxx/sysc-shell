@@ -721,21 +721,36 @@ func TestPluginPanelTextChangeSubmitAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	var action string
-	reg.mu.Lock()
-	host.roving.Count = len(ui.Focusables(host.root))
-	// Focus the text field if present and submit.
-	for i, n := range ui.Focusables(host.root) {
-		if n.Kind == ui.KindTextField {
-			host.roving.Set(i)
-			n.Text = "tea"
-			action = n.Action
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		host = reg.panelHosts[PanelPlugin]
+		if host != nil && host.root != nil {
+			focus := ui.Focusables(host.root)
+			for i, n := range focus {
+				if n.Kind == ui.KindTextField {
+					host.roving.Count = len(focus)
+					host.roving.Set(i)
+					n.Text = "tea"
+					action = n.Action
+					break
+				}
+			}
+		}
+		reg.mu.Unlock()
+		if action != "" {
 			break
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	reg.mu.Unlock()
-	if action != "" {
-		reg.deliverPluginText(action, "tea", v1.EventChange)
-		reg.deliverPluginText(action, "tea", v1.EventSubmit)
+	if action == "" {
+		t.Fatal("plugin panel text input never appeared")
+	}
+	if !reg.deliverPluginText(action, "tea", v1.EventChange) {
+		t.Fatal("plugin text change was not accepted")
+	}
+	if !reg.deliverPluginText(action, "tea", v1.EventSubmit) {
+		t.Fatal("plugin text submit was not accepted")
 	}
 	reg.ClosePanel(PanelPlugin)
 	deadline = time.Now().Add(2 * time.Second)
