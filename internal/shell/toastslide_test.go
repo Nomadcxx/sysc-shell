@@ -70,6 +70,29 @@ func TestReducedMotionNeverSlides(t *testing.T) {
 	}
 }
 
+func TestReducedMotionRelayoutDoesNotRestoreOldToastGeometry(t *testing.T) {
+	now := time.Unix(100, 0)
+	h := slideHost(t, &now)
+	old := ui.Rect{X: 20, Y: 200, W: 300, H: 80}
+	first := ui.Rect{X: 20, Y: 100, W: 300, H: 80}
+	next := ui.Rect{X: 20, Y: 10, W: 300, H: 80}
+	h.noteTargets("DP-1", []uint32{3}, []ui.Rect{old})
+	h.noteTargets("DP-1", []uint32{3}, []ui.Rect{first})
+
+	motion := DefaultTheme().Motion
+	motion.Reduced = true
+	h.anim.Configure(motion, true)
+	if got := h.displayRect("DP-1", 3, next); got != next {
+		t.Fatalf("reduced motion drew stale geometry: %+v, want %+v", got, next)
+	}
+	h.noteTargets("DP-1", []uint32{3}, []ui.Rect{next})
+	motion.Reduced = false
+	h.anim.Configure(motion, false)
+	if got := h.displayRect("DP-1", 3, next); got != next {
+		t.Fatalf("disabling reduced motion restored old geometry %+v, want %+v", got, next)
+	}
+}
+
 func TestSlideStateIsPerOutput(t *testing.T) {
 	now := time.Unix(100, 0)
 	h := slideHost(t, &now)
@@ -450,7 +473,7 @@ func TestToastRethemeAppliesMotion(t *testing.T) {
 	if !h.anim.reduced {
 		t.Fatal("reduced motion did not reach the toast animator")
 	}
-	if got := h.anim.Value(toastSlideKey("eDP-1", 1), animStackY); got != 100 {
-		t.Fatalf("geometry did not settle under reduced motion: %g", got)
+	if h.anim.has(toastSlideKey("eDP-1", 1), animStackY) {
+		t.Fatal("reduced motion retained toast geometry state")
 	}
 }

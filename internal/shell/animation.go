@@ -128,6 +128,9 @@ type animValue struct {
 	velocity  float64
 	advanced  time.Time
 	remainder time.Duration
+	// opacityOnly keeps a visibility fade from driving panel translation,
+	// including if a new spring target retargets it before it settles.
+	opacityOnly bool
 }
 
 func (v animValue) at(now time.Time) float64 {
@@ -262,8 +265,13 @@ func (a *animator) Configure(motion render.MotionSet, reduced bool) {
 			}
 			if key.channel == animVisible && v.position != v.to {
 				a.values[key] = animValue{from: clampUnit(v.position), to: v.to, start: now,
-					dur: min(a.motion.Short, reducedPanelCap), ease: a.easeFor(animVisible)}
+					dur: min(a.motion.Short, reducedPanelCap), ease: a.easeFor(animVisible), opacityOnly: true}
 				unfinished = true
+				continue
+			}
+			switch key.channel {
+			case animStackX, animStackY, animStackW, animStackH:
+				delete(a.values, key)
 				continue
 			}
 			a.values[key] = animValue{from: v.to, to: v.to, start: now}
@@ -600,22 +608,27 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 	if ok && current.to == to {
 		return
 	}
+	opacityOnly := false
 	if springCapable(channel) && !badgeProgress(node, channel) {
 		x, velocity := 0.0, 0.0
 		advanced, remainder := now, time.Duration(0)
 		if ok {
 			if current.spring != nil {
-				x, _ = a.advanceSpring(key, now)
+				var atRest bool
+				x, atRest = a.advanceSpring(key, now)
 				current = a.values[key]
 				velocity, advanced, remainder = current.velocity, current.advanced, current.remainder
+				opacityOnly = channel == animVisible && current.opacityOnly && !atRest
 			} else {
 				x = current.at(now)
+				opacityOnly = channel == animVisible && current.opacityOnly && !current.settled(now)
 			}
 		}
 		if spring := a.springFor(channel, to > x); spring != nil {
 			a.values[key] = animValue{
 				from: x, to: to, start: now, spring: spring,
 				position: x, velocity: velocity, advanced: advanced, remainder: remainder,
+				opacityOnly: opacityOnly,
 			}
 			a.nudge()
 			return
@@ -634,7 +647,8 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 		}
 	}
 	dur := a.duration(channel, to > from)
-	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel)}
+	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel),
+		opacityOnly: channel == animVisible && opacityOnly}
 	a.nudge()
 }
 
@@ -955,6 +969,21 @@ func (a *animator) PressScale(node string) float64 {
 func (a *animator) PanelSlide(node string) int {
 	if a.reduced {
 		return 0
+	}
+	key := animKey{node: node, channel: animVisible}
+	if v, ok := a.values[key]; ok && v.opacityOnly {
+		// A reduced-motion visibility fade stays anchored through any retarget
+		// until it settles, so changing the target cannot jump into a slide.
+		if v.spring != nil {
+			if _, atRest := a.advanceSpring(key, a.now()); !atRest {
+				return 0
+			}
+		} else if !v.settled(a.now()) {
+			return 0
+		}
+		v = a.values[key]
+		v.opacityOnly = false
+		a.values[key] = v
 	}
 	return int(float64(panelSlidePx)*(1-a.Value(node, animVisible)) + 0.5)
 }

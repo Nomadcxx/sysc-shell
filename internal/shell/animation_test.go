@@ -1295,6 +1295,53 @@ func TestSpringTargetAfterReducedMotionStartsFromCurrentTime(t *testing.T) {
 	}
 }
 
+func TestSpringConfigureDisablingReducedMotionKeepsPanelFadeOpacityOnly(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("p", animVisible, 1)
+	clock.add(10 * time.Millisecond)
+	_ = a.Value("p", animVisible)
+
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion, Reduced: true}, true)
+	if a.PanelSlide("p") != 0 {
+		t.Fatal("reduced-motion fade moved the panel")
+	}
+	opacity := a.PanelOpacity("p")
+	if opacity <= 0 || opacity >= 1 {
+		t.Fatalf("expected an in-flight reduced-motion fade, got opacity %g", opacity)
+	}
+
+	a.Configure(render.MotionSet{Durations: theme.BaseMotion}, false)
+	if got := a.PanelOpacity("p"); got != opacity {
+		t.Fatalf("disabling reduced motion changed opacity from %g to %g", opacity, got)
+	}
+	if got := a.PanelSlide("p"); got != 0 {
+		t.Fatalf("disabling reduced motion turned the opacity fade into a %d px slide", got)
+	}
+	a.Target("p", animVisible, 0)
+	key := animKey{node: "p", channel: animVisible}
+	if a.values[key].spring == nil {
+		t.Fatal("a new visibility target did not resume spring motion")
+	}
+	if got := a.PanelSlide("p"); got != 0 {
+		t.Fatalf("new visibility target jumped the panel by %d px", got)
+	}
+	for i := 0; i < 1000 && !a.Settled(); i++ {
+		clock.add(springStep)
+		_ = a.PanelSlide("p")
+	}
+	if !a.Settled() {
+		t.Fatal("opacity-only visibility spring did not settle")
+	}
+	if got := a.PanelSlide("p"); got != panelSlidePx {
+		t.Fatalf("settled hidden panel slide = %d, want %d", got, panelSlidePx)
+	}
+	a.Target("p", animVisible, 1)
+	if a.values[key].opacityOnly {
+		t.Fatal("a later settled visibility transition retained opacity-only behavior")
+	}
+}
+
 func TestSpringConfigureSpeedPreservesState(t *testing.T) {
 	t.Parallel()
 	a, clock := newTestAnimator(false)
