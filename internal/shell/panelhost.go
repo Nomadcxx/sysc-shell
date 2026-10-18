@@ -4696,6 +4696,12 @@ func (h *PanelHost) applyMenu(r *Registry, path string) {
 		h.applyAudioRouteMenu(r, path)
 		return
 	}
+	if h.id == PanelControlCenter && path == caffeineMenuAction {
+		if m := h.menus[path]; m != nil {
+			r.setCaffeinePreset(h, m.Value())
+		}
+		return
+	}
 	if path == artPaletteMenu && h.id == PanelTerminalArt {
 		if m := h.menus[path]; m != nil {
 			h.artSetPalette(r, m.Value())

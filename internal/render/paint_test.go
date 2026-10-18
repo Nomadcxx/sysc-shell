@@ -2466,6 +2466,21 @@ func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
 	}
 }
 
+func TestPaintMenuUsesStadiumShapeAndSelectedFill(t *testing.T) {
+	n := &ui.Node{
+		Kind: ui.KindMenu, Text: "Caffeine 15m", Width: 160, Height: 44,
+		Shape: ui.ShapeStadium, State: ui.StateSelected, Fill: ui.FillAccent,
+	}
+	c := paintChromeNode(t, n, testStyle)
+	x, y := fillPointOf(n)
+	if got := pixelAt(t, c, x, y); got != testStyle.accent() {
+		t.Fatalf("selected menu fill = %+v, want accent %+v", got, testStyle.accent())
+	}
+	if got := pixelAt(t, c, n.Bounds.X, n.Bounds.Y); got != testStyle.Background {
+		t.Fatalf("stadium menu corner = %+v, want untouched background %+v", got, testStyle.Background)
+	}
+}
+
 func TestPaintMenuPopupOverlaysFollowingContent(t *testing.T) {
 	t.Parallel()
 	const width, height = 140, 80

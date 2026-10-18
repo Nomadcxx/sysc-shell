@@ -54,6 +54,8 @@
  "bt.unavailable": "Bluetooth недоступен",
  "cc.brightness": "Яркость",
  "cc.caffeine": "Кофеин",
+ "cc.caffeine.off": "Выкл.",
+ "cc.caffeine.indefinite": "Бессрочно",
  "cc.calendar_empty": "Событий впереди нет",
  "cc.charge": "Заряд",
  "cc.cpu": "ЦП",

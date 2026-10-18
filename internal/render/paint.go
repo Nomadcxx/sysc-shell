@@ -727,8 +727,8 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	if popup.H > 0 && popup.Y > box.Y {
 		field.H = popup.Y - box.Y
 	}
-	radius := style.Scale120.Physical(6)
-	surface := style.containerHighest()
+	radius := chromeRadius(style, nodeRadius(style, n, 6), field)
+	surface, foreground := chromeFill(style, n, style.containerHighest())
 	c.FillRounded(field, radius, surface)
 	if boundary := style.outlineVariant(); boundary.A > 0 {
 		c.StrokeRounded(field, radius, max(style.Scale120.Physical(1), 1), boundary)
@@ -737,7 +737,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	textBox := ui.Rect{X: field.X + pad, Y: field.Y + pad,
 		W: max(field.W-2*pad, 0), H: max(field.H-2*pad, 0)}
 	textBox = centreLine(textBox, text, style, n)
-	_ = paintText(c, n.Text, textBox, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
+	_ = paintTextColor(c, n.Text, textBox, text, style, textSpec(style, n), n.Tabular, foreground, n.Underline)
 	paintMenuChevron(c, n, text, style)
 	return nil
 }

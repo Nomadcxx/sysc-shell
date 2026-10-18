@@ -24,6 +24,13 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+func TestCaffeineInhibitAllowsSuspend(t *testing.T) {
+	want := []string{"--what=idle", "--who=sysc-shell", "--why=Caffeine", "--mode=block", "sleep", "infinity"}
+	if got := caffeineInhibitArgs(); !slices.Equal(got, want) {
+		t.Fatalf("Caffeine inhibitor args = %v, want %v", got, want)
+	}
+}
+
 func TestSessionActionsList(t *testing.T) {
 	t.Parallel()
 	_, h := newSessionHost(t, "swaylock")

@@ -348,12 +348,15 @@ func startInhibitDefault() (io.Closer, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(path, "--what=idle:sleep", "--who=sysc-shell",
-		"--why=Caffeine", "--mode=block", "sleep", "infinity")
+	cmd := exec.Command(path, caffeineInhibitArgs()...)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	return &processHold{cmd: cmd}, nil
+}
+
+func caffeineInhibitArgs() []string {
+	return []string{"--what=idle", "--who=sysc-shell", "--why=Caffeine", "--mode=block", "sleep", "infinity"}
 }
 
 type processHold struct{ cmd *exec.Cmd }

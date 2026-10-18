@@ -164,6 +164,7 @@ func run(ctx context.Context) (err error) {
 						continue
 					}
 					idleSvc.Wake()
+					registry.UpdateClock(time.Now())
 					registry.NightLight().Recompute()
 					registry.RepaintAll()
 				}

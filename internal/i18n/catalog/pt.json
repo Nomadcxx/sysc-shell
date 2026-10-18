@@ -54,6 +54,8 @@
  "bt.unavailable": "Bluetooth indisponível",
  "cc.brightness": "Brilho",
  "cc.caffeine": "Cafeína",
+ "cc.caffeine.off": "Desativada",
+ "cc.caffeine.indefinite": "Indefinida",
  "cc.calendar_empty": "Nenhum evento próximo",
  "cc.charge": "Carga",
  "cc.cpu": "CPU",

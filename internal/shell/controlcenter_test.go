@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -490,12 +492,20 @@ func TestHomeToggleRowHoldsFourPills(t *testing.T) {
 	if row.Kind != ui.KindRow || row.Gap != theme.MarginM || len(row.Children) != 4 {
 		t.Fatalf("toggle row = %+v, want four pills in a MarginM row", row)
 	}
-	actions := map[string]string{"Caffeine": "cc:caffeine", "Wallpaper": "cc:wallpaper",
+	actions := map[string]string{"Caffeine": "cc:caffeine-preset", "Wallpaper": "cc:wallpaper",
 		"Terminal Art": "cc:terminal-art", "Screensaver": "settings-section:Screensaver"}
 	for name, action := range actions {
 		n := findByName(row, name)
-		if n == nil || n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium || n.Action != action {
-			t.Errorf("%s = %+v, want a stadium button with %s", name, n, action)
+		if n == nil || n.Action != action {
+			t.Errorf("%s = %+v, want action %s", name, n, action)
+			continue
+		}
+		if name == "Caffeine" {
+			if n.Kind != ui.KindMenu || n.Role != "combobox" || !n.Focusable || n.Shape != ui.ShapeStadium {
+				t.Errorf("Caffeine = %+v, want an accessible stadium menu", n)
+			}
+		} else if n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium {
+			t.Errorf("%s = %+v, want a stadium button", name, n)
 		}
 	}
 	// The idle-held list rides on the Caffeine pill's tooltip: the page has no
@@ -548,8 +558,16 @@ func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	}
 	for _, name := range []string{"Caffeine", "Wallpaper", "Terminal Art", "Screensaver"} {
 		n := findByName(quick, name)
-		if n == nil || n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium || !n.Focusable {
-			t.Errorf("%s = %+v, want independent capsule button", name, n)
+		if n == nil || n.Shape != ui.ShapeStadium || !n.Focusable {
+			t.Errorf("%s = %+v, want independent capsule control", name, n)
+			continue
+		}
+		if name == "Caffeine" {
+			if n.Kind != ui.KindMenu || n.Role != "combobox" {
+				t.Errorf("Caffeine = %+v, want an accessible preset menu", n)
+			}
+		} else if n.Kind != ui.KindButton {
+			t.Errorf("%s = %+v, want an independent capsule button", name, n)
 		}
 	}
 	if segmented := findNode(quick, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented }); segmented != nil {
@@ -1353,6 +1371,307 @@ func TestCaffeineHoldIsReleasedOnClose(t *testing.T) {
 	if !released {
 		t.Fatal("the idle inhibit outlived the shell")
 	}
+}
+
+func TestCaffeinePresetValues(t *testing.T) {
+	options, values := caffeinePresetOptions(nil)
+	wantOptions := []string{"Off", "15m", "30m", "1h", "2h", "4h", "8h", "Indefinite"}
+	wantValues := []string{"off", "15m", "30m", "1h", "2h", "4h", "8h", "indefinite"}
+	if !slices.Equal(options, wantOptions) || !slices.Equal(values, wantValues) {
+		t.Fatalf("preset options/values = %v / %v, want %v / %v", options, values, wantOptions, wantValues)
+	}
+	wantDurations := []time.Duration{0, 15 * time.Minute, 30 * time.Minute, time.Hour, 2 * time.Hour, 4 * time.Hour, 8 * time.Hour, 0}
+	wantActive := []bool{false, true, true, true, true, true, true, true}
+	for i, value := range values {
+		got, ok := caffeinePresetFor(value)
+		if !ok || got.duration != wantDurations[i] || got.active != wantActive[i] {
+			t.Errorf("preset %q = %+v, %v; want duration %s active %v", value, got, ok, wantDurations[i], wantActive[i])
+		}
+	}
+	if _, ok := caffeinePresetFor("unexpected"); ok {
+		t.Fatal("unknown preset was accepted")
+	}
+}
+
+func TestCaffeineRemainingMinutes(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	deadline := now.Add(2 * time.Minute)
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+		want int
+	}{
+		{name: "exact minutes", now: now, want: 2},
+		{name: "partial minute rounds up", now: now.Add(time.Nanosecond), want: 2},
+		{name: "under one minute", now: deadline.Add(-time.Second), want: 1},
+		{name: "at deadline", now: deadline, want: 0},
+		{name: "after deadline", now: deadline.Add(time.Second), want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := caffeineRemainingMinutes(deadline, tc.now); got != tc.want {
+				t.Fatalf("remaining minutes = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCaffeinePresetStateAndTimerReplacement(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	r.startInhibit = func() (io.Closer, error) {
+		return closerFunc(func() error { close(released); return nil }), nil
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	r.setCaffeinePreset(h, "15m")
+	firstDeadline, firstTimer := r.inhibitUntil, r.inhibitTimer
+	r.mu.Unlock()
+	if firstDeadline.IsZero() || firstTimer == nil {
+		t.Fatal("15m did not install a wall-clock deadline and timer")
+	}
+	waitUntil := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		started := r.inhibit != nil
+		r.mu.Unlock()
+		if started {
+			break
+		}
+		if time.Now().After(waitUntil) {
+			t.Fatal("timed preset did not start its inhibitor")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.mu.Lock()
+	r.setCaffeinePreset(h, "30m")
+	secondDeadline, secondTimer := r.inhibitUntil, r.inhibitTimer
+	if !secondDeadline.After(firstDeadline) || secondTimer == nil || secondTimer == firstTimer {
+		r.mu.Unlock()
+		t.Fatalf("replacement deadline/timer = %v / %p; first was %v / %p", secondDeadline, secondTimer, firstDeadline, firstTimer)
+	}
+	if firstTimer.Stop() {
+		r.mu.Unlock()
+		t.Fatal("replacement left the first expiry timer running")
+	}
+	r.mu.Unlock()
+
+	r.caffeineTimerExpired(firstDeadline)
+	r.mu.Lock()
+	if !r.inhibitWanted || !r.inhibitUntil.Equal(secondDeadline) {
+		r.mu.Unlock()
+		t.Fatal("stale timer expired the replacement preset")
+	}
+	r.setCaffeinePreset(h, "indefinite")
+	if r.inhibitTimer != nil || !r.inhibitUntil.IsZero() || !r.inhibitWanted {
+		r.mu.Unlock()
+		t.Fatal("Indefinite retained a timer or lost the inhibit")
+	}
+	r.setCaffeinePreset(h, "off")
+	r.mu.Unlock()
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("Off did not release the inhibitor")
+	}
+}
+
+func TestCaffeineExpiresOnResumeAndKeepsExternalInhibitors(t *testing.T) {
+	r := newPanelRegistry(t)
+	released := false
+	r.SetExternalInhibitors([]services.ScreenSaverInhibitor{{App: "mpv", Cookie: 1}})
+	now := time.Now().Round(0)
+	r.mu.Lock()
+	r.inhibitWanted = true
+	r.inhibitDuration = 15 * time.Minute
+	r.inhibitUntil = now.Add(-time.Second)
+	r.inhibit = closerFunc(func() error { released = true; return nil })
+	r.mu.Unlock()
+
+	// The resume handler feeds current wall time through UpdateClock.
+	r.UpdateClock(now)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inhibitWanted || !r.inhibitUntil.IsZero() || r.inhibitTimer != nil || !released {
+		t.Fatalf("expired Caffeine state = wanted %v, deadline %v, timer %v, released %v", r.inhibitWanted, r.inhibitUntil, r.inhibitTimer, released)
+	}
+	if len(r.externalInhibitors) != 1 || r.externalInhibitors[0].App != "mpv" {
+		t.Fatalf("external inhibitors changed during Caffeine expiry: %+v", r.externalInhibitors)
+	}
+}
+
+func TestCaffeineCloseStopsExpiryTimer(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.inhibitTimer = time.AfterFunc(time.Hour, func() {})
+	timer := r.inhibitTimer
+	r.Close()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inhibitTimer != nil || timer.Stop() {
+		t.Fatal("Registry.Close left the Caffeine expiry timer running")
+	}
+}
+
+func TestCaffeineTimerExpiresWithoutClockUpdate(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	deadline := time.Now().Round(0).Add(-time.Second)
+	r.mu.Lock()
+	r.inhibitWanted = true
+	r.inhibitDuration = 15 * time.Minute
+	r.inhibitUntil = deadline
+	r.inhibit = closerFunc(func() error { close(released); return nil })
+	r.inhibitTimer = time.AfterFunc(time.Hour, func() {})
+	r.mu.Unlock()
+
+	r.caffeineTimerExpired(deadline)
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("expiry timer did not release the inhibitor")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inhibitWanted || !r.inhibitUntil.IsZero() || r.inhibitTimer != nil {
+		t.Fatalf("timer expiry left Caffeine active: wanted %v, deadline %v, timer %v", r.inhibitWanted, r.inhibitUntil, r.inhibitTimer)
+	}
+}
+
+func TestCaffeineTimedStartFailureClearsDeadline(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	r.startInhibit = func() (io.Closer, error) {
+		close(started)
+		return nil, errors.New("caffeine denied")
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	r.setCaffeinePreset(h, "15m")
+	timer := r.inhibitTimer
+	r.mu.Unlock()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed Caffeine did not attempt inhibitor startup")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		cleared := !r.inhibitWanted && r.inhibitDuration == 0 && r.inhibitUntil.IsZero() && r.inhibitTimer == nil
+		label := h.errLabel
+		r.mu.Unlock()
+		if cleared && label == "caffeine denied" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("failed start did not clear timer and preset: cleared=%v error=%q", cleared, label)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if timer == nil || timer.Stop() {
+		t.Fatal("failed startup left its expiry timer running")
+	}
+}
+
+func TestCaffeineControlCentreMenu(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelControlCenter]
+	menu := findAction(h.root, "cc:caffeine-preset")
+	if menu == nil || menu.Kind != ui.KindMenu || menu.Role != "combobox" || menu.Name != "Caffeine" || !menu.Focusable {
+		t.Fatalf("Caffeine menu = %+v, want a focusable accessible combobox", menu)
+	}
+	model := h.menus["cc:caffeine-preset"]
+	if model == nil || !slices.Equal(model.options, []string{"Off", "15m", "30m", "1h", "2h", "4h", "8h", "Indefinite"}) ||
+		!slices.Equal(model.values, []string{"off", "15m", "30m", "1h", "2h", "4h", "8h", "indefinite"}) {
+		t.Fatalf("Caffeine menu options = %+v, want all eight presets", model)
+	}
+}
+
+func TestCaffeineMenuSelection(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{}, 1)
+	r.startInhibit = func() (io.Closer, error) {
+		started <- struct{}{}
+		return closerFunc(func() error { return nil }), nil
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	for i, node := range h.focus {
+		if node.Action == "cc:caffeine-preset" {
+			h.roving.Set(i)
+			break
+		}
+	}
+	if !h.activate(r) || h.menu == nil || !h.menu.Opened() {
+		r.mu.Unlock()
+		t.Fatal("activating Caffeine did not open its preset menu")
+	}
+	if !h.keyInput(r, ui.KeyInput{Code: keyDown}) || !h.keyInput(r, ui.KeyInput{Code: keyEnter}) {
+		r.mu.Unlock()
+		t.Fatal("keyboard selection did not commit the next Caffeine preset")
+	}
+	if !r.inhibitWanted || r.inhibitDuration != 15*time.Minute || r.inhibitUntil.IsZero() {
+		r.mu.Unlock()
+		t.Fatalf("selected preset state = wanted %v, duration %s, deadline %v", r.inhibitWanted, r.inhibitDuration, r.inhibitUntil)
+	}
+	r.mu.Unlock()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("selecting 15m did not start the inhibitor")
+	}
+}
+
+func TestCaffeineRemainingInMenu(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	r.now = now
+	r.inhibitWanted = true
+	r.inhibitDuration = 30 * time.Minute
+	r.inhibitUntil = now.Add(8*time.Minute + 30*time.Second)
+	r.rebuildPanel(h)
+	menu := findAction(h.root, "cc:caffeine-preset")
+	if menu == nil || !strings.Contains(menu.Text, "9m") || !menu.State.Has(ui.StateSelected) {
+		r.mu.Unlock()
+		t.Fatalf("timed Caffeine menu = %+v, want rounded remaining minutes", menu)
+	}
+	r.inhibitDuration = 0
+	r.inhibitUntil = time.Time{}
+	r.rebuildPanel(h)
+	menu = findAction(h.root, "cc:caffeine-preset")
+	if menu == nil || !strings.Contains(menu.Text, "Indefinite") || !menu.State.Has(ui.StateSelected) {
+		r.mu.Unlock()
+		t.Fatalf("Indefinite Caffeine menu = %+v, want no countdown", menu)
+	}
+	r.inhibitWanted = false
+	r.rebuildPanel(h)
+	menu = findAction(h.root, "cc:caffeine-preset")
+	if menu == nil || !strings.Contains(menu.Text, "Off") || menu.State.Has(ui.StateSelected) {
+		r.mu.Unlock()
+		t.Fatalf("Off Caffeine menu = %+v, want Off", menu)
+	}
+	r.mu.Unlock()
 }
 
 func TestPanelSectionValidationPrecedesMutation(t *testing.T) {
