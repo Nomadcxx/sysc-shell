@@ -378,8 +378,10 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
 	if r != nil && r.configReloadError != "" {
+		// ponytail: KindText is single-line; retain the located header here and the full diagnostic in IPC until Settings gains multiline text.
+		diagnostic, _, _ := strings.Cut(r.configReloadError, "\n")
 		head = append(head, &ui.Node{
-			Kind: ui.KindText, Text: r.configReloadError, Name: "Configuration reload error",
+			Kind: ui.KindText, Text: diagnostic, Name: "Configuration reload error",
 			Role: "status", Tone: ui.ToneError,
 		})
 	}

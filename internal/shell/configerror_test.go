@@ -79,8 +79,8 @@ func TestConfigReloadSettingsPresentationPersistsAndRecovers(t *testing.T) {
 	reg.mu.Unlock()
 
 	reg.RecordConfigReload(&config.Diagnostic{
-		File: "config.json", Field: "bar.height", Message: "value is not positive",
-		Excerpt: "line 2: [redacted]",
+		File: "config.json", Message: "invalid JSON", Line: 1, Column: 23,
+		Excerpt: "1 | {\"***\": **,,}\n  |                       ^",
 	})
 	opened := drainAux(t, reg, 1)
 	if opened[0].Open == nil || opened[0].Open.ID != "osd:7" {
@@ -104,7 +104,14 @@ func TestConfigReloadSettingsPresentationPersistsAndRecovers(t *testing.T) {
 	if diagnostic.Name != "Configuration reload error" || diagnostic.Role != "status" || diagnostic.Tone != ui.ToneError || diagnostic.Focusable {
 		t.Fatalf("reload diagnostic semantics = %+v", diagnostic)
 	}
-	if !strings.Contains(diagnostic.Text, "bar.height") || localErr != "Local save failed" || !strings.Contains(treeText(h.root), localErr) {
+	if diagnostic.Text != "config: config.json:1:23: invalid JSON" {
+		t.Fatalf("Settings diagnostic = %q, want only the located header", diagnostic.Text)
+	}
+	status, ok := reg.Status()["config_error"].(string)
+	if !ok || !strings.Contains(status, "\n1 |") || !strings.Contains(status, "\n  |") {
+		t.Fatalf("status diagnostic lost excerpt and caret: %q", status)
+	}
+	if localErr != "Local save failed" || !strings.Contains(treeText(h.root), localErr) {
 		t.Fatalf("Settings did not keep both error sources: local=%q diagnostic=%q", localErr, diagnostic.Text)
 	}
 	if focusAfter == "" || focusAfter != focusBefore {
