@@ -1993,6 +1993,9 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		return false
 	})
 	bar.setAxisHandler(func(action string, delta int) bool {
+		if id, ok := workspaceID(action); ok {
+			return r.handleWorkspacePillAxis(global, id, delta)
+		}
 		switch action {
 		case panelAudioAction:
 			if delta > 0 {
