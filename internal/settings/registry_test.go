@@ -779,6 +779,41 @@ func TestAnOptionWriteMintsTheWidgetsId(t *testing.T) {
 	}
 }
 
+func TestWidgetScrollActionEntryIsScopedAndBounded(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.Parse([]byte(`{"bar":{"items":{"left":[{"id":"group","items":["clock","volume"]}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r := DefaultFor(cfg)
+	clock := r.ByPath("widgets.left.0.0.scroll")
+	volume := r.ByPath("widgets.left.0.1.scroll")
+	if clock == nil || volume == nil {
+		t.Fatalf("scroll entries = clock:%v volume:%v, want one row per bar item", clock != nil, volume != nil)
+	}
+	if clock.Kind != KindEnum || len(clock.Options) != 3 {
+		t.Fatalf("scroll entry kind/options = %d/%v, want a three-action enum", clock.Kind, clock.Options)
+	}
+	if got := clock.Get(cfg); got != "none" {
+		t.Fatalf("clock scroll action = %q, want none", got)
+	}
+	if got := volume.Get(cfg); got != "volume" {
+		t.Fatalf("volume scroll action = %q, want the existing volume default", got)
+	}
+	if err := clock.Set(&cfg, "brightness"); err != nil {
+		t.Fatalf("Set brightness: %v", err)
+	}
+	if got := clock.Get(cfg); got != "brightness" {
+		t.Fatalf("clock scroll action after edit = %q, want brightness", got)
+	}
+	if got := volume.Get(cfg); got != "volume" {
+		t.Fatalf("editing the clock changed volume scroll action to %q", got)
+	}
+	if err := clock.Set(&cfg, "command"); err == nil {
+		t.Fatal("accepted a scroll action outside the bounded enum")
+	}
+}
+
 // Task 14 and D9. The three comma-separated string entries are gone, replaced
 // by the lane editor. They were the only way to reach lane arrangement before
 // it existed, which is why their retirement came last rather than first.

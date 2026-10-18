@@ -9,22 +9,9 @@
 let
   cfg = config.programs.sysc-shell;
 
-  # The unit is the repository's own file, not text written here. The only
-  # difference for a Nix install is where the binary lives, so that is the only
-  # substitution: keeping the rest of the file means one install story, and a
-  # fix to Restart or KillMode reaches every user of it.
-  #
-  # --replace-fail, not --replace: if the committed unit stops naming the
-  # installer path, the module fails here instead of deploying a unit that
-  # starts a binary nobody installed.
-  #
-  # The deploy-guard drop-in beside it is deliberately not installed: its job is
-  # to refuse a hand-copied binary, and a store path cannot be replaced by hand.
-  unit = pkgs.runCommand "sysc-shell.service" { } ''
-    install -m 0644 ${../packaging/systemd/sysc-shell.service} $out
-    substituteInPlace $out \
-      --replace-fail '%h/.local/bin/sysc-shell' '${lib.getExe cfg.package}'
-  '';
+  # The substituted unit, shared with the NixOS module. nix/unit.nix carries the
+  # reasoning about why the file is deployed rather than a unit written here.
+  unit = import ./unit.nix { inherit pkgs lib; package = cfg.package; };
 
   # A plugin is keyed by the id in its own manifest, because that is what
   # internal/plugin/discovery.go looks up. A system root is a fixed /usr/share

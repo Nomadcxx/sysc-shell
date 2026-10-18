@@ -389,6 +389,7 @@ func itemsEqual(a, b []Item) bool {
 	for i := range a {
 		x, y := a[i], b[i]
 		x.Boundary, y.Boundary = 0, 0
+		x.Scroll, y.Scroll = x.EffectiveScrollAction(), y.EffectiveScrollAction()
 		// An Item carries group members, so it is no longer comparable with
 		// ==. Members are compared recursively and then cleared so the
 		// remaining scalar fields compare as before.
@@ -413,6 +414,10 @@ func encodeItems(items []Item) []wireItem {
 
 func encodeItem(it Item) wireItem {
 	w := wireItem{ID: it.ID}
+	if scroll := it.EffectiveScrollAction(); scroll != (Item{ID: it.ID}).EffectiveScrollAction() {
+		v := string(scroll)
+		w.Scroll = &v
+	}
 	// An instance id is emitted for whatever carries one, not only for a
 	// placement. Without this the editor mints an id, the write drops it, and
 	// the next load hands back anonymous widgets -- the identity model inert.

@@ -116,7 +116,7 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	o := owner{
 		cfg:   &current,
 		hosts: hosts,
-		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity, _ uint64) (PreparedConfig, error) {
 			if len(identities) != 1 || identities[0] != (HostIdentity{Global: 7, Connector: "DP-1"}) {
 				t.Fatalf("identities = %v, want global 7 / DP-1", identities)
 			}
@@ -128,7 +128,7 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 		}},
 	}
 
-	prepared, err := o.prepareConfig(candidate)
+	prepared, err := o.prepareConfig(candidate, 0)
 	if err != nil {
 		t.Fatalf("prepareConfig: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) 
 	o := owner{
 		cfg:   &current,
 		hosts: hosts,
-		cb: Callbacks{PrepareConfig: func(_ config.Config, _ []HostIdentity) (PreparedConfig, error) {
+		cb: Callbacks{PrepareConfig: func(_ config.Config, _ []HostIdentity, _ uint64) (PreparedConfig, error) {
 			callbacks := validHostCallbacks()
 			callbacks.Configure = func(width, height, scale120 int) error {
 				configured = true
@@ -184,7 +184,7 @@ func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) 
 		}},
 	}
 
-	if _, err := o.prepareConfig(config.Default()); err != nil {
+	if _, err := o.prepareConfig(config.Default(), 0); err != nil {
 		t.Fatalf("prepareConfig: %v", err)
 	}
 	if !configured {
@@ -233,7 +233,7 @@ func TestPrepareConfigConfiguresMappedReplacementForProspectiveGeometry(t *testi
 			o := owner{
 				cfg:   &current,
 				hosts: hosts,
-				cb: Callbacks{PrepareConfig: func(_ config.Config, _ []HostIdentity) (PreparedConfig, error) {
+				cb: Callbacks{PrepareConfig: func(_ config.Config, _ []HostIdentity, _ uint64) (PreparedConfig, error) {
 					callbacks := validHostCallbacks()
 					callbacks.OutputSize = func(width, height int) {
 						outputSized = width == 1536 && height == 864
@@ -252,7 +252,7 @@ func TestPrepareConfigConfiguresMappedReplacementForProspectiveGeometry(t *testi
 					}, nil
 				}},
 			}
-			if _, err := o.prepareConfig(candidate); err != nil {
+			if _, err := o.prepareConfig(candidate, 0); err != nil {
 				t.Fatalf("prepareConfig: %v", err)
 			}
 			if !configured || !outputSized {
@@ -280,7 +280,7 @@ func TestPrepareConfigFailureRollsBackEveryCandidate(t *testing.T) {
 	o := owner{
 		cfg:   &current,
 		hosts: hosts,
-		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity, _ uint64) (PreparedConfig, error) {
 			callbacks := map[uint32]HostCallbacks{}
 			for _, identity := range identities {
 				callbacks[identity.Global] = validHostCallbacks()
@@ -297,7 +297,7 @@ func TestPrepareConfigFailureRollsBackEveryCandidate(t *testing.T) {
 	}
 	candidate := config.Default()
 	candidate.Bar.Edge = "left"
-	if _, err := o.prepareConfig(candidate); err == nil {
+	if _, err := o.prepareConfig(candidate, 0); err == nil {
 		t.Fatal("prepareConfig accepted the rejected candidate")
 	}
 	if !rolledBack {
@@ -345,7 +345,7 @@ func TestApplyConfigCommitsDisabledPoliciesTogether(t *testing.T) {
 	o := owner{
 		cfg:   &current,
 		hosts: hosts,
-		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity, _ uint64) (PreparedConfig, error) {
 			if len(identities) != 0 {
 				t.Fatalf("enabled identities = %v, want none", identities)
 			}
@@ -396,7 +396,7 @@ func TestHotplugUsesTheAcceptedOutputPolicy(t *testing.T) {
 				built = true
 				return validHostCallbacks(), nil
 			},
-			PrepareConfig: func(_ config.Config, _ []HostIdentity) (PreparedConfig, error) {
+			PrepareConfig: func(_ config.Config, _ []HostIdentity, _ uint64) (PreparedConfig, error) {
 				return PreparedConfig{
 					Hosts:    map[uint32]HostCallbacks{},
 					Commit:   func() { committed = true },

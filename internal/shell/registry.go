@@ -71,6 +71,10 @@ type Registry struct {
 	effectOutputs map[string]bool
 	leases        map[uint32][]*services.Lease
 	niriSnapshot  niri.Snapshot
+	privacyPipe   services.PrivacySnapshot
+	privacy       privacyState
+	privacySvc    *services.Privacy
+	privacyOSD    chan []privacyChange
 	now           time.Time
 	focused       string
 	layouts       niri.KeyboardLayouts
@@ -186,8 +190,9 @@ type Registry struct {
 	configWriteMu sync.Mutex
 	// settingsWriteMu guards pending Settings edits and snapshots written by the
 	// debounce worker until their matching config reloads are applied.
-	settingsWriteMu      sync.Mutex
-	settingsWriteReloads []config.Config
+	settingsWriteMu         sync.Mutex
+	settingsWriteGeneration uint64
+	settingsWriteReloads    []settingsWriteReload
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
 	writeDelay           time.Duration
@@ -404,6 +409,11 @@ type Registry struct {
 	afterLauncherSnap func()
 }
 
+type settingsWriteReload struct {
+	generation uint64
+	config     config.Config
+}
+
 func listPalettes(st *theme.Store) []theme.PaletteInfo {
 	if st == nil {
 		return nil
@@ -490,6 +500,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:               make(map[PanelID]*PanelHost),
 		panelShields:             make(map[uint32]*PanelHost),
 		closed:                   make(chan struct{}),
+		privacyOSD:               make(chan []privacyChange, 8),
 		dwell:                    newDwell(defaultDwell),
 		runArgv:                  runArgvDefault,
 		lookPath:                 exec.LookPath,
@@ -548,6 +559,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.publishCommittedThemeSelection(cfg, initialTokens)
 	}
 	r.osd = newOSDManager(r, 0)
+	go r.relayPrivacyOSD()
 	r.tooltips = newTooltipHost(r, nil)
 	go r.relayTooltips(r.dwell)
 	r.mediaIntent = newMediaStripIntent(nil)
@@ -566,6 +578,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.setBrightness(services.NewBrightnessDDC("", "", 0))
 	}
 	if !runningAsTest() {
+		r.setPrivacyService(services.NewPrivacy(0, ""))
 		r.lockKeys = services.NewLockKeys("", 0)
 		r.lockKeys.Start()
 		go r.relayLockKeysOSD(r.lockKeys)
@@ -1216,6 +1229,10 @@ func (r *Registry) stepAudioAsync(action string) {
 	go func() { _ = r.stepAudio(action) }()
 }
 
+func (r *Registry) stepBrightnessAsync(action string) {
+	go func() { _ = r.stepBrightness(action) }()
+}
+
 func (r *Registry) stepAudio(action string) error {
 	if r.audio == nil || !r.audio.Available() {
 		return fmt.Errorf("audio unavailable")
@@ -1276,6 +1293,14 @@ func (r *Registry) BindPersist(path string, reloads chan<- struct{}) {
 	r.configPath = path
 	r.reloads = reloads
 	r.mu.Unlock()
+}
+
+// SettingsWriteGeneration reports the latest successful debounced Settings
+// write. Wayland samples it before reading a reload candidate.
+func (r *Registry) SettingsWriteGeneration() uint64 {
+	r.settingsWriteMu.Lock()
+	defer r.settingsWriteMu.Unlock()
+	return r.settingsWriteGeneration
 }
 
 // Tokens is the palette the registry generated at construction or last reload.
@@ -1966,6 +1991,15 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelWeatherAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			trig = triggerAtAction(bar, trig, panelWeatherAction)
 			return r.TogglePanel(PanelWeather, out, trig) == nil
+		case action == panelPrivacyAction && (button == 0 || button == buttonLeft):
+			trig = triggerAtAction(bar, trig, panelPrivacyAction)
+			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
+				return false
+			}
+			r.mu.Lock()
+			err := r.selectPanelSectionLocked(PanelControlCenter, "privacy")
+			r.mu.Unlock()
+			return err == nil
 		case action == panelBluetoothAction && button == buttonRight:
 			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
@@ -2013,11 +2047,18 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return r.handleWorkspacePillAxis(global, id, delta)
 		}
 		switch action {
-		case panelAudioAction:
+		case barScrollActionPrefix + string(config.ScrollActionVolume):
 			if delta > 0 {
 				r.stepAudioAsync("up")
 			} else if delta < 0 {
 				r.stepAudioAsync("down")
+			}
+			return true
+		case barScrollActionPrefix + string(config.ScrollActionBrightness):
+			if delta > 0 {
+				r.stepBrightnessAsync("up")
+			} else if delta < 0 {
+				r.stepBrightnessAsync("down")
 			}
 			return true
 		}
@@ -2070,14 +2111,21 @@ func (r *Registry) outputGlobalsLocked() map[string]uint32 {
 	return globals
 }
 
-// PrepareConfig builds every enabled host's replacement bar and acquires its
-// services before the caller changes live host policy.
+// PrepareConfig prepares a candidate using the latest known Settings-write
+// generation. Reload owners must use PrepareConfigWithGeneration with the
+// generation they sampled before reading the candidate.
+func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+	return r.PrepareConfigWithGeneration(cfg, identities, r.SettingsWriteGeneration())
+}
+
+// PrepareConfigWithGeneration builds every enabled host's replacement bar and
+// acquires its services before the caller changes live host policy.
 //
 // Acquiring here, and releasing the outgoing leases only in Commit, is what
 // keeps a service in continuous use from stopping: its consumer count never
 // reaches zero, so it is never restarted. A failure at any point releases
 // exactly what this call acquired.
-func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []wayland.HostIdentity, configGeneration uint64) (wayland.PreparedConfig, error) {
 	tok, genErr := r.generateTheme(cfg)
 	bars := make(map[uint32]*Bar, len(identities))
 	leases := make(map[uint32][]*services.Lease, len(identities))
@@ -2180,7 +2228,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.settingsWriteMu.Lock()
 				settingsWriteReloadAt := -1
 				for i, written := range r.settingsWriteReloads {
-					if reflect.DeepEqual(written, cfg) {
+					if reflect.DeepEqual(written.config, cfg) {
 						settingsWriteReloadAt = i
 					}
 				}
@@ -2188,7 +2236,14 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				if settingsWriteReload {
 					r.settingsWriteReloads = slices.Clone(r.settingsWriteReloads[settingsWriteReloadAt+1:])
 				} else {
-					r.settingsWriteReloads = nil
+					retained := r.settingsWriteReloads[:0]
+					for _, written := range r.settingsWriteReloads {
+						if written.generation > configGeneration {
+							retained = append(retained, written)
+						}
+					}
+					clear(r.settingsWriteReloads[len(retained):])
+					r.settingsWriteReloads = retained
 				}
 				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
 					if h := r.panelHosts[id]; h != nil {
@@ -2419,6 +2474,7 @@ func (r *Registry) Close() {
 	var mediaArt *mediaArtWorker
 	var soundPlayer cuePlayer
 	var depthEffects depthClockEffects
+	var privacySvc *services.Privacy
 	if locked {
 		if r.polkitHost != nil && r.polkitHost.open_ {
 			r.polkitHost.finishLocked(true)
@@ -2469,6 +2525,8 @@ func (r *Registry) Close() {
 		r.mediaArt = nil
 		soundPlayer = r.sound
 		r.sound = nil
+		privacySvc = r.privacySvc
+		r.privacySvc = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -2524,6 +2582,9 @@ func (r *Registry) Close() {
 	}
 	if soundPlayer != nil {
 		_ = soundPlayer.Close()
+	}
+	if privacySvc != nil {
+		privacySvc.Close()
 	}
 	if mediaArt != nil {
 		mediaArt.Close()
@@ -2741,11 +2802,23 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	next := projectOutputs(s)
 
 	r.mu.Lock()
+	previousPrivacy := r.privacy
+	previousNiri := r.niriSnapshot
 	// Replaced wholesale, not merged: a connector absent from the projection
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
 	r.niriSnapshot = cloneNiriSnapshot(s)
+	r.privacy = privacyStateFrom(r.privacyPipe, r.niriSnapshot)
+	privacyChanges := privacyTransitions(previousPrivacy, r.privacy, previousNiri, r.niriSnapshot)
+	privacyPageOutput := uint32(0)
+	privacyPageOpen := false
+	if r.privacy != previousPrivacy {
+		if h := r.panelHosts[PanelControlCenter]; h != nil && h.section == "privacy" {
+			r.rebuildPanel(h)
+			privacyPageOutput, privacyPageOpen = h.output, true
+		}
+	}
 	r.focused = s.FocusedOutput
 	if r.toasts != nil && r.toasts.focusedWindowFillsOutput() != r.toasts.fullscreenFocused {
 		// Layout events can change the toast policy without changing bar text.
@@ -2786,9 +2859,13 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	if switcherUpdated {
 		r.publishSurface(switcherOutput, windowSwitcherSurfaceID)
 	}
+	if privacyPageOpen {
+		r.publishSurface(privacyPageOutput, panelSurfaceID(PanelControlCenter))
+	}
 	if showLayout {
 		r.OSD().Show(layoutView)
 	}
+	r.queuePrivacyOSD(privacyChanges)
 	r.syncAutoPause()
 	return changed
 }
@@ -2833,6 +2910,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		}
 	}
 	view.Bluetooth = r.bluetoothState
+	view.Privacy = r.privacy
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}

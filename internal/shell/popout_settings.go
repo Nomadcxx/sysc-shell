@@ -2232,8 +2232,12 @@ func (r *Registry) writeSettingsChanges(h *PanelHost, changes []settingsWriteCha
 		return true, err
 	}
 	h.settingsWriteChanges = nil
+	r.settingsWriteGeneration++
 	if r.reloads != nil {
-		r.settingsWriteReloads = append(r.settingsWriteReloads, cfg.Clone())
+		r.settingsWriteReloads = append(r.settingsWriteReloads, settingsWriteReload{
+			generation: r.settingsWriteGeneration,
+			config:     cfg.Clone(),
+		})
 	}
 	return true, nil
 }
