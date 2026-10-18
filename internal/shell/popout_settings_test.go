@@ -1591,12 +1591,28 @@ written:
 	}
 }
 
+// startTestInvalidationDrain models the production Wayland bridge. A Registry
+// blocks publishers when its bounded queue fills, and tests have no owner to
+// receive those invalidations unless they provide one.
+func startTestInvalidationDrain(reg *Registry) {
+	go func() {
+		for {
+			select {
+			case <-reg.closed:
+				return
+			case <-reg.invalidations:
+			}
+		}
+	}()
+}
+
 func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
 	reg := NewRegistry(base)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -1671,6 +1687,7 @@ func TestSettingsExternalReloadAfterWriteRetiresWriterSnapshot(t *testing.T) {
 	reg := NewRegistry(base)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -1741,6 +1758,7 @@ func TestSettingsStaleReloadCommitKeepsLaterWriteSnapshot(t *testing.T) {
 	reg := NewRegistry(base)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -1846,6 +1864,7 @@ func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *test
 	reg := NewRegistry(base)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	startTestInvalidationDrain(reg)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
