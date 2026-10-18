@@ -237,6 +237,53 @@ func TestSettingsApplicationsSnapshotRefreshDoesNotBlockRegistry(t *testing.T) {
 	t.Fatal("Settings did not rebuild from the completed application snapshot")
 }
 
+func TestSettingsApplicationsRefreshUpdatesReopenedHost(t *testing.T) {
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	entries := []launcher.Entry{{ID: "photo-editor", Name: "Photo Editor"}}
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return entries
+	}})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseScan) }) })
+
+	oldHost := newSettingsHost()
+	oldHost.section = "Applications"
+	oldHost.output = 7
+	oldHost.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.panelHosts[PanelSettings] = oldHost
+	oldHost.root = settingsTree(reg, oldHost)
+	reg.mu.Unlock()
+	select {
+	case <-scanStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial application scan did not start")
+	}
+
+	reg.mu.Lock()
+	reg.closePanelLocked(PanelSettings)
+	currentHost := newSettingsHost()
+	currentHost.section = "Applications"
+	currentHost.output = 7
+	currentHost.stopAnim = make(chan struct{})
+	reg.panelHosts[PanelSettings] = currentHost
+	currentHost.root = settingsTree(reg, currentHost)
+	reg.mu.Unlock()
+
+	releaseOnce.Do(func() { close(releaseScan) })
+	waitFor(t, func() bool {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return reg.panelHosts[PanelSettings] == currentHost &&
+			findAction(currentHost.root, "applications:favourite:photo-editor") != nil
+	})
+}
+
 func TestSettingsRefreshesStaleApplicationSnapshot(t *testing.T) {
 	reg := newPanelRegistry(t)
 	oldEntries := []launcher.Entry{{ID: "old.desktop", Name: "Old"}}

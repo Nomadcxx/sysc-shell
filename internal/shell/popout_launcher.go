@@ -146,11 +146,13 @@ func (r *Registry) refreshLauncherApplicationsLocked(h *PanelHost) {
 		} else {
 			r.launcherApplications.Store(&launcherApplicationSnapshot{attemptedAt: now})
 		}
-		visible := r.panelHosts[PanelSettings] == h && h.section == "Applications"
+		currentHost := r.panelHosts[PanelSettings]
+		visible := currentHost != nil && currentHost.section == "Applications"
+		var output uint32
 		if visible {
-			r.rebuildPanel(h)
+			r.rebuildPanel(currentHost)
+			output = currentHost.output
 		}
-		output := h.output
 		r.mu.Unlock()
 
 		if visible {
