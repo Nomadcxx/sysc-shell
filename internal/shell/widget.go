@@ -46,6 +46,7 @@ type barView struct {
 	// the radio off, which the wifi widget paints as the no-signal glyph.
 	Network   services.NetworkState
 	Bluetooth services.BluetoothState
+	Privacy   privacyState
 	// Media is the active player's snapshot. Its zero value renders the widget
 	// absent: a bar with nothing playing reserves no gap.
 	Media    services.MediaState
@@ -260,6 +261,8 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 			})
 		case "notifications":
 			out = append(out, buildNotifyWidget(m))
+		case "privacy":
+			out = append(out, buildPrivacyWidget(pad, m))
 		case "wallpaper":
 			out = append(out, buildWallpaperWidget())
 		case "terminal-art":

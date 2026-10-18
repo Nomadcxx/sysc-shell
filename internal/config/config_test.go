@@ -46,6 +46,26 @@ func TestBluetoothIsKnownButNotDefault(t *testing.T) {
 	}
 }
 
+func TestPrivacyIsKnownAndShipsOnTheDefaultBar(t *testing.T) {
+	t.Parallel()
+	if _, ok := knownItems["privacy"]; !ok {
+		t.Fatal("config must accept the privacy item")
+	}
+	parsed, err := Parse([]byte(`{"bar":{"items":{"right":["privacy"]}}}`))
+	if err != nil {
+		t.Fatalf("privacy config: %v", err)
+	}
+	if len(parsed.Bar.Right) != 1 || parsed.Bar.Right[0].ID != "privacy" {
+		t.Fatalf("parsed privacy item = %+v", parsed.Bar.Right)
+	}
+	for _, item := range Default().Bar.Right {
+		if item.ID == "privacy" {
+			return
+		}
+	}
+	t.Fatal("privacy is absent from the default right lane")
+}
+
 func TestDefaultBarMatchesLegacyContentBand(t *testing.T) {
 	t.Parallel()
 	bar := Default().Bar
@@ -391,7 +411,7 @@ func TestDefaultVocabularyShipsCentrePillAndMedia(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
-			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" {
+			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" || m.ID == "privacy" {
 				continue
 			}
 			if m.Interval <= 0 {

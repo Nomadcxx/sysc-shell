@@ -79,6 +79,7 @@ func compareWindowMRU(a, b niri.Window) int {
 func cloneNiriSnapshot(snapshot niri.Snapshot) niri.Snapshot {
 	snapshot.Workspaces = slices.Clone(snapshot.Workspaces)
 	snapshot.Windows = slices.Clone(snapshot.Windows)
+	snapshot.Casts = slices.Clone(snapshot.Casts)
 	snapshot.Layouts.Names = slices.Clone(snapshot.Layouts.Names)
 	return snapshot
 }
