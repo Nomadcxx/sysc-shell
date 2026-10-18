@@ -1,6 +1,9 @@
 package niri
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // Wire fixtures follow the Niri 26.04 schema. Titles and connectors are
 // invented; no real window or machine state appears here.
@@ -50,6 +53,132 @@ func applyAll(t *testing.T, lines ...string) *state {
 		}
 	}
 	return &s
+}
+
+func castSnapshotJSON(t *testing.T, s *state) map[string]json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(s.snapshot())
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	var snapshot map[string]json.RawMessage
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	return snapshot
+}
+
+func TestCastsChangedPublishesKnownBaseline(t *testing.T) {
+	t.Parallel()
+	var s state
+	changed, err := s.apply([]byte(`{"CastsChanged":{"casts":[]}}`))
+	if err != nil || !changed {
+		t.Fatalf("apply empty baseline = (%v, %v), want (true, nil)", changed, err)
+	}
+	snapshot := castSnapshotJSON(t, &s)
+	var known bool
+	if err := json.Unmarshal(snapshot["CastsKnown"], &known); err != nil || !known {
+		t.Fatalf("CastsKnown = %s, want true", snapshot["CastsKnown"])
+	}
+	var casts []json.RawMessage
+	if err := json.Unmarshal(snapshot["Casts"], &casts); err != nil || len(casts) != 0 {
+		t.Fatalf("Casts = %s, want an empty list", snapshot["Casts"])
+	}
+}
+
+func TestCastsChangedSortsSnapshot(t *testing.T) {
+	t.Parallel()
+	line := `{"CastsChanged":{"casts":[` +
+		`{"stream_id":29,"is_active":false,"target":{"Nothing":{}}},` +
+		`{"stream_id":21,"is_active":false,"target":{"Nothing":{}}}]}}`
+	s := applyAll(t, line)
+	var casts []struct {
+		StreamID uint64 `json:"StreamID"`
+	}
+	if err := json.Unmarshal(castSnapshotJSON(t, s)["Casts"], &casts); err != nil {
+		t.Fatalf("decode casts: %v", err)
+	}
+	if len(casts) != 2 || casts[0].StreamID != 21 || casts[1].StreamID != 29 {
+		t.Fatalf("cast order = %+v, want stream IDs 21, 29", casts)
+	}
+}
+
+func TestCastStartedOrChangedUpsertsAndCastStoppedRemoves(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, `{"CastsChanged":{"casts":[]}}`)
+	started := `{"CastStartedOrChanged":{"cast":{"stream_id":22,"is_active":true,` +
+		`"target":{"Output":{"name":"DP-9"}},"pw_node_id":44}}}`
+	changed, err := s.apply([]byte(started))
+	if err != nil || !changed {
+		t.Fatalf("apply cast start = (%v, %v), want (true, nil)", changed, err)
+	}
+	snapshot := castSnapshotJSON(t, s)
+	var casts []struct {
+		StreamID    uint64 `json:"StreamID"`
+		Active      bool   `json:"Active"`
+		TargetSet   bool   `json:"TargetSet"`
+		TargetKnown bool   `json:"TargetKnown"`
+		PWNodeID    uint32 `json:"PWNodeID"`
+		HasPWNodeID bool   `json:"HasPWNodeID"`
+	}
+	if err := json.Unmarshal(snapshot["Casts"], &casts); err != nil {
+		t.Fatalf("decode casts: %v", err)
+	}
+	if len(casts) != 1 || casts[0].StreamID != 22 || !casts[0].Active ||
+		!casts[0].TargetSet || !casts[0].TargetKnown || casts[0].PWNodeID != 44 || !casts[0].HasPWNodeID {
+		t.Fatalf("cast snapshot = %+v, want active output cast 22 with PipeWire node 44", casts)
+	}
+	changed, err = s.apply([]byte(`{"CastStopped":{"stream_id":22}}`))
+	if err != nil || !changed {
+		t.Fatalf("apply cast stop = (%v, %v), want (true, nil)", changed, err)
+	}
+	if got := castSnapshotJSON(t, s)["Casts"]; string(got) != "[]" {
+		t.Fatalf("Casts after stop = %s, want []", got)
+	}
+}
+
+func TestUnknownCastTargetDoesNotBecomeInactive(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, `{"CastsChanged":{"casts":[]}}`)
+	event := `{"CastStartedOrChanged":{"cast":{"stream_id":23,"is_active":true,` +
+		`"target":{"FutureTarget":{}},"pw_node_id":null}}}`
+	if changed, err := s.apply([]byte(event)); err != nil || !changed {
+		t.Fatalf("apply cast with unknown target = (%v, %v), want (true, nil)", changed, err)
+	}
+	snapshot := castSnapshotJSON(t, s)
+	var casts []struct {
+		Active      bool `json:"Active"`
+		TargetSet   bool `json:"TargetSet"`
+		TargetKnown bool `json:"TargetKnown"`
+	}
+	if err := json.Unmarshal(snapshot["Casts"], &casts); err != nil {
+		t.Fatalf("decode casts: %v", err)
+	}
+	if len(casts) != 1 || !casts[0].Active || casts[0].TargetKnown || casts[0].TargetSet {
+		t.Fatalf("cast state = %+v, want active with an unknown target", casts)
+	}
+}
+
+func TestCastWindowTargetRequiresANonzeroWindowID(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, `{"CastsChanged":{"casts":[{"stream_id":25,"is_active":true,"target":{"Window":{"id":0}}}]}}`)
+	cast := s.snapshot().Casts[0]
+	if cast.TargetKnown || cast.TargetSet {
+		t.Fatalf("zero-ID target = %+v, want unknown and unset", cast)
+	}
+}
+
+func TestMalformedCastEventLeavesBaselineUnchanged(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, `{"CastsChanged":{"casts":[]}}`)
+	if _, err := s.apply([]byte(`{"CastStartedOrChanged":{"cast":{"stream_id":24}}}`)); err == nil {
+		t.Fatal("cast without is_active was accepted")
+	}
+	snapshot := castSnapshotJSON(t, s)
+	var casts []json.RawMessage
+	if err := json.Unmarshal(snapshot["Casts"], &casts); err != nil || len(casts) != 0 {
+		t.Fatalf("malformed cast changed state: %s", snapshot["Casts"])
+	}
 }
 
 func TestWindowsChangedReplacesTheWholeSet(t *testing.T) {
@@ -466,5 +595,96 @@ func TestMalformedWindowLayoutChangeIsAStreamError(t *testing.T) {
 	}
 	if after := len(s.snapshot().Windows); after != before {
 		t.Fatalf("windows changed after a decode error: %d -> %d", before, after)
+	}
+}
+
+const castsChangedFixture = `{"CastsChanged":{"casts":[` +
+	`{"stream_id":9,"session_id":4,"kind":"PipeWire","target":{"Output":{"name":"DP-1"}},` +
+	`"is_dynamic_target":false,"is_active":true,"pid":null,"pw_node_id":12},` +
+	`{"stream_id":11,"session_id":5,"kind":"WlrScreencopy","target":{"Window":{"id":80}},` +
+	`"is_dynamic_target":false,"is_active":false,"pid":1001,"pw_node_id":null}]}}`
+
+func TestCastsChangedReplacesWholeSetAndMarksKnown(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, castsChangedFixture)
+
+	snap := s.snapshot()
+	if !snap.CastsKnown || len(snap.Casts) != 2 {
+		t.Fatalf("casts known=%v set=%+v, want two known casts", snap.CastsKnown, snap.Casts)
+	}
+	want := []Cast{
+		{StreamID: 9, Active: true, Target: CastTarget{Kind: "output", Name: "DP-1"}, TargetSet: true, TargetKnown: true, PWNodeID: 12, HasPWNodeID: true},
+		{StreamID: 11, Target: CastTarget{Kind: "window", WindowID: 80}, TargetSet: true, TargetKnown: true},
+	}
+	for i := range want {
+		if snap.Casts[i] != want[i] {
+			t.Fatalf("casts = %+v, want %+v", snap.Casts, want)
+		}
+	}
+
+	publish, err := s.apply([]byte(`{"CastsChanged":{"casts":[]}}`))
+	if err != nil {
+		t.Fatalf("apply empty replacement: %v", err)
+	}
+	if !publish || !s.snapshot().CastsKnown || len(s.snapshot().Casts) != 0 {
+		t.Fatalf("empty replacement publish=%v snapshot=%+v, want known inactive", publish, s.snapshot().Casts)
+	}
+}
+
+func TestCastStartedOrChangedUpsertsByStreamID(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, castsChangedFixture)
+	lines := []string{
+		`{"CastStartedOrChanged":{"cast":{"stream_id":9,"target":{"Window":{"id":81}},"is_active":false}}}`,
+		`{"CastStartedOrChanged":{"cast":{"stream_id":12,"target":{"Nothing":{}},"is_active":true}}}`,
+	}
+	for _, line := range lines {
+		if _, err := s.apply([]byte(line)); err != nil {
+			t.Fatalf("apply %s: %v", line, err)
+		}
+	}
+
+	snap := s.snapshot()
+	if !snap.CastsKnown || len(snap.Casts) != 3 {
+		t.Fatalf("snapshot = %+v, want three known casts", snap.Casts)
+	}
+	if got := snap.Casts[0]; got != (Cast{StreamID: 9, Target: CastTarget{Kind: "window", WindowID: 81}, TargetSet: true, TargetKnown: true}) {
+		t.Errorf("updated cast = %+v", got)
+	}
+	if got := snap.Casts[2]; got != (Cast{StreamID: 12, Active: true, Target: CastTarget{Kind: "nothing"}, TargetKnown: true}) {
+		t.Errorf("new cast = %+v", got)
+	}
+}
+
+func TestCastStoppedRemovesOnlyTheNamedStream(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, castsChangedFixture)
+	if _, err := s.apply([]byte(`{"CastStopped":{"stream_id":9}}`)); err != nil {
+		t.Fatalf("apply stop: %v", err)
+	}
+	if casts := s.snapshot().Casts; len(casts) != 1 || casts[0].StreamID != 11 {
+		t.Fatalf("casts after stop = %+v, want only stream 11", casts)
+	}
+	if publish, err := s.apply([]byte(`{"CastStopped":{"stream_id":999}}`)); err != nil || publish {
+		t.Fatalf("unknown stop publish=%v err=%v, want no change", publish, err)
+	}
+}
+
+func TestMalformedCastEventDoesNotChangeState(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, castsChangedFixture)
+	before := s.snapshot()
+	for _, line := range []string{
+		`{"CastsChanged":{}}`,
+		`{"CastStartedOrChanged":{"cast":{"target":{"Nothing":{}},"is_active":true}}}`,
+		`{"CastStopped":{}}`,
+	} {
+		if _, err := s.apply([]byte(line)); err == nil {
+			t.Errorf("apply %s succeeded, want an error", line)
+		}
+		after := s.snapshot()
+		if !after.CastsKnown || len(after.Casts) != len(before.Casts) || after.Casts[0] != before.Casts[0] {
+			t.Fatalf("state changed after %s: %+v", line, after.Casts)
+		}
 	}
 }

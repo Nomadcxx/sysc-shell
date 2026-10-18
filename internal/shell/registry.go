@@ -71,6 +71,9 @@ type Registry struct {
 	effectOutputs map[string]bool
 	leases        map[uint32][]*services.Lease
 	niriSnapshot  niri.Snapshot
+	privacyPipe   services.PrivacySnapshot
+	privacy       privacyState
+	privacySvc    *services.Privacy
 	now           time.Time
 	focused       string
 	layouts       niri.KeyboardLayouts
@@ -564,6 +567,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.setBrightness(services.NewBrightnessDDC("", "", 0))
 	}
 	if !runningAsTest() {
+		r.setPrivacyService(services.NewPrivacy(0, ""))
 		r.lockKeys = services.NewLockKeys("", 0)
 		r.lockKeys.Start()
 		go r.relayLockKeysOSD(r.lockKeys)
@@ -1972,6 +1976,15 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelWeatherAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			trig = triggerAtAction(bar, trig, panelWeatherAction)
 			return r.TogglePanel(PanelWeather, out, trig) == nil
+		case action == panelPrivacyAction && (button == 0 || button == buttonLeft):
+			trig = triggerAtAction(bar, trig, panelPrivacyAction)
+			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
+				return false
+			}
+			r.mu.Lock()
+			err := r.selectPanelSectionLocked(PanelControlCenter, "privacy")
+			r.mu.Unlock()
+			return err == nil
 		case action == panelBluetoothAction && button == buttonRight:
 			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
@@ -2426,6 +2439,7 @@ func (r *Registry) Close() {
 	var mediaArt *mediaArtWorker
 	var soundPlayer cuePlayer
 	var depthEffects depthClockEffects
+	var privacySvc *services.Privacy
 	if locked {
 		if r.polkitHost != nil && r.polkitHost.open_ {
 			r.polkitHost.finishLocked(true)
@@ -2476,6 +2490,8 @@ func (r *Registry) Close() {
 		r.mediaArt = nil
 		soundPlayer = r.sound
 		r.sound = nil
+		privacySvc = r.privacySvc
+		r.privacySvc = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -2531,6 +2547,9 @@ func (r *Registry) Close() {
 	}
 	if soundPlayer != nil {
 		_ = soundPlayer.Close()
+	}
+	if privacySvc != nil {
+		privacySvc.Close()
 	}
 	if mediaArt != nil {
 		mediaArt.Close()
@@ -2748,11 +2767,21 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	next := projectOutputs(s)
 
 	r.mu.Lock()
+	previousPrivacy := r.privacy
 	// Replaced wholesale, not merged: a connector absent from the projection
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
 	r.niriSnapshot = cloneNiriSnapshot(s)
+	r.privacy = privacyStateFrom(r.privacyPipe, r.niriSnapshot)
+	privacyPageOutput := uint32(0)
+	privacyPageOpen := false
+	if r.privacy != previousPrivacy {
+		if h := r.panelHosts[PanelControlCenter]; h != nil && h.section == "privacy" {
+			r.rebuildPanel(h)
+			privacyPageOutput, privacyPageOpen = h.output, true
+		}
+	}
 	r.focused = s.FocusedOutput
 	if r.toasts != nil && r.toasts.focusedWindowFillsOutput() != r.toasts.fullscreenFocused {
 		// Layout events can change the toast policy without changing bar text.
@@ -2792,6 +2821,9 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	}
 	if switcherUpdated {
 		r.publishSurface(switcherOutput, windowSwitcherSurfaceID)
+	}
+	if privacyPageOpen {
+		r.publishSurface(privacyPageOutput, panelSurfaceID(PanelControlCenter))
 	}
 	if showLayout {
 		r.OSD().Show(layoutView)
@@ -2840,6 +2872,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		}
 	}
 	view.Bluetooth = r.bluetoothState
+	view.Privacy = r.privacy
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}

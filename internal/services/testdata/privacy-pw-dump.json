@@ -1,0 +1,21 @@
+[
+  {"id":100,"type":"PipeWire:Interface:Device","info":{"props":{"device.form-factor":"headset"}}},
+  {"id":101,"type":"PipeWire:Interface:Device","info":{"props":{"device.api":"v4l2"}}},
+  {"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source","device.id":"100"}}},
+  {"id":2,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio"}}},
+  {"id":3,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source","device.id":101}}},
+  {"id":4,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video"}}},
+  {"id":5,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"media.class":"Stream/Input/Audio"}}},
+  {"id":6,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio"}}},
+  {"id":7,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Audio/Source"}}},
+  {"id":8,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Output/Audio"}}},
+  {"id":11,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Video/Source"}}},
+  {"id":12,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Video"}}},
+  {"id":13,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":2}},
+  {"id":14,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":3,"input-node-id":4}},
+  {"id":15,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":1,"input-node-id":5}},
+  {"id":16,"type":"PipeWire:Interface:Link","info":{"state":"paused","output-node-id":1,"input-node-id":6}},
+  {"id":17,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":7,"input-node-id":2}},
+  {"id":18,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":3,"input-node-id":8}},
+  {"id":19,"type":"PipeWire:Interface:Link","info":{"state":"active","output-node-id":11,"input-node-id":12}}
+]

@@ -250,7 +250,16 @@ func TestControlCentreRailKeepsDisabledDestinationsAddressable(t *testing.T) {
 		!media.Focusable || media.State.Has(ui.StateDisabled) {
 		t.Errorf("enabled Media entry = %+v", media)
 	}
-	network := entries[5]
+	var network *ui.Node
+	for _, entry := range entries {
+		if entry.Name == "Network" {
+			network = entry
+			break
+		}
+	}
+	if network == nil {
+		t.Fatal("Network destination missing from rail")
+	}
 	if network.Name != "Network" || network.Action != "section:network" ||
 		!network.Focusable || network.State.Has(ui.StateDisabled) {
 		t.Errorf("enabled Network entry = %+v", network)
@@ -1202,7 +1211,7 @@ func TestControlCentrePagesLayOutAtTheContractSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = drainAux(t, r, 2)
-	for _, section := range []string{"home", "audio", "monitor", "power", "weather", "calendar", "notifications"} {
+	for _, section := range []string{"home", "audio", "privacy", "monitor", "power", "weather", "calendar", "notifications"} {
 		t.Run(section, func(t *testing.T) {
 			r.mu.Lock()
 			defer r.mu.Unlock()

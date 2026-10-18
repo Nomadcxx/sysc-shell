@@ -73,11 +73,34 @@ type KeyboardLayouts struct {
 	Current int
 }
 
+// Cast is a Niri screencast. TargetKnown distinguishes a recognised target
+// from a future or malformed one; TargetSet is false for the explicit Nothing
+// target. Unknown targets never imply that screen sharing is inactive.
+type Cast struct {
+	StreamID    uint64
+	Active      bool
+	Target      CastTarget
+	TargetSet   bool
+	TargetKnown bool
+	PWNodeID    uint32
+	HasPWNodeID bool
+}
+
+// CastTarget is Niri's selected cast destination. Kind is "nothing", "output",
+// "window", or "unknown".
+type CastTarget struct {
+	Kind     string
+	Name     string
+	WindowID uint64
+}
+
 // Snapshot is an immutable view of workspace, window, and keyboard state.
 type Snapshot struct {
 	Workspaces   []Workspace
 	Windows      []Window
 	Layouts      KeyboardLayouts
+	Casts        []Cast
+	CastsKnown   bool
 	OverviewOpen bool
 	// FocusedOutput is derived from the workspace whose is_focused is true.
 	// Niri has no dedicated event or field for it.
@@ -273,6 +296,86 @@ type wireOverviewOpenedOrClosed struct {
 	IsOpen *bool `json:"is_open"`
 }
 
+type wireCast struct {
+	StreamID *uint64         `json:"stream_id"`
+	IsActive *bool           `json:"is_active"`
+	Target   json.RawMessage `json:"target"`
+	PWNodeID *uint32         `json:"pw_node_id"`
+}
+
+func (c wireCast) project() (Cast, error) {
+	if c.StreamID == nil {
+		return Cast{}, fmt.Errorf("niri: cast is missing stream_id")
+	}
+	if c.IsActive == nil {
+		return Cast{}, fmt.Errorf("niri: cast %d is missing is_active", *c.StreamID)
+	}
+	out := Cast{StreamID: *c.StreamID, Active: *c.IsActive}
+	out.Target, out.TargetSet, out.TargetKnown = projectCastTarget(c.Target)
+	if c.PWNodeID != nil && *c.PWNodeID > 0 {
+		out.PWNodeID, out.HasPWNodeID = *c.PWNodeID, true
+	}
+	return out, nil
+}
+
+// projectCastTarget handles Niri's externally tagged CastTarget enum. Unknown
+// variants from a newer compositor stay representable as unknown state.
+
+func projectCastTarget(data json.RawMessage) (target CastTarget, set, known bool) {
+	unknown := CastTarget{Kind: "unknown"}
+	if len(data) == 0 || string(data) == "null" {
+		return unknown, false, false
+	}
+	var variants map[string]json.RawMessage
+	if err := json.Unmarshal(data, &variants); err != nil || len(variants) != 1 {
+		return unknown, false, false
+	}
+	for kind, payload := range variants {
+		switch kind {
+		case "Nothing":
+			var empty map[string]json.RawMessage
+			if err := json.Unmarshal(payload, &empty); err != nil || empty == nil || len(empty) != 0 {
+				return unknown, false, false
+			}
+			return CastTarget{Kind: "nothing"}, false, true
+		case "Output":
+			var output struct {
+				Name *string `json:"name"`
+			}
+			if err := json.Unmarshal(payload, &output); err != nil || output.Name == nil {
+				return unknown, false, false
+			}
+			if strings.TrimSpace(*output.Name) == "" {
+				return unknown, false, false
+			}
+			return CastTarget{Kind: "output", Name: *output.Name}, true, true
+		case "Window":
+			var window struct {
+				ID *uint64 `json:"id"`
+			}
+			if err := json.Unmarshal(payload, &window); err != nil || window.ID == nil || *window.ID == 0 {
+				return unknown, false, false
+			}
+			return CastTarget{Kind: "window", WindowID: *window.ID}, true, true
+		default:
+			return unknown, false, false
+		}
+	}
+	return unknown, false, false
+}
+
+type wireCastsChanged struct {
+	Casts *[]wireCast `json:"casts"`
+}
+
+type wireCastStartedOrChanged struct {
+	Cast *wireCast `json:"cast"`
+}
+
+type wireCastStopped struct {
+	StreamID *uint64 `json:"stream_id"`
+}
+
 // state accumulates workspace and window events into snapshots.
 //
 // last is the most recently published snapshot. Comparing against it is what
@@ -281,6 +384,8 @@ type state struct {
 	workspaces   []Workspace
 	windows      []Window
 	layouts      KeyboardLayouts
+	casts        map[uint64]Cast
+	castsKnown   bool
 	overviewOpen bool
 	last         Snapshot
 }
@@ -481,6 +586,60 @@ func (s *state) apply(line []byte) (bool, error) {
 		return s.publishIfChanged(), nil
 	}
 
+	if payload, ok := envelope["CastsChanged"]; ok {
+		var changed wireCastsChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode CastsChanged: %w", err)
+		}
+		if changed.Casts == nil {
+			return false, fmt.Errorf("niri: CastsChanged is missing casts")
+		}
+		next := make(map[uint64]Cast, len(*changed.Casts))
+		for _, wire := range *changed.Casts {
+			cast, err := wire.project()
+			if err != nil {
+				return false, err
+			}
+			if _, exists := next[cast.StreamID]; exists {
+				return false, fmt.Errorf("niri: CastsChanged repeats stream_id %d", cast.StreamID)
+			}
+			next[cast.StreamID] = cast
+		}
+		s.casts, s.castsKnown = next, true
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["CastStartedOrChanged"]; ok {
+		var changed wireCastStartedOrChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode CastStartedOrChanged: %w", err)
+		}
+		if changed.Cast == nil {
+			return false, fmt.Errorf("niri: CastStartedOrChanged is missing cast")
+		}
+		cast, err := changed.Cast.project()
+		if err != nil {
+			return false, err
+		}
+		if s.casts == nil {
+			s.casts = make(map[uint64]Cast)
+		}
+		s.casts[cast.StreamID] = cast
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["CastStopped"]; ok {
+		var stopped wireCastStopped
+		if err := json.Unmarshal(payload, &stopped); err != nil {
+			return false, fmt.Errorf("niri: decode CastStopped: %w", err)
+		}
+		if stopped.StreamID == nil {
+			return false, fmt.Errorf("niri: CastStopped is missing stream_id")
+		}
+		delete(s.casts, *stopped.StreamID)
+		return s.publishIfChanged(), nil
+	}
+
 	return false, nil
 }
 
@@ -538,9 +697,26 @@ func (s *state) snapshot() Snapshot {
 		return 0
 	})
 
+	casts := make([]Cast, 0, len(s.casts))
+	for _, cast := range s.casts {
+		casts = append(casts, cast)
+	}
+	slices.SortFunc(casts, func(a, b Cast) int {
+		switch {
+		case a.StreamID < b.StreamID:
+			return -1
+		case a.StreamID > b.StreamID:
+			return 1
+		default:
+			return 0
+		}
+	})
+
 	snap := Snapshot{
 		Workspaces:   workspaces,
 		Windows:      windows,
+		Casts:        casts,
+		CastsKnown:   s.castsKnown,
 		OverviewOpen: s.overviewOpen,
 		Layouts: KeyboardLayouts{
 			Names:   slices.Clone(s.layouts.Names),
@@ -563,8 +739,10 @@ func (s *state) publishIfChanged() bool {
 	next := s.snapshot()
 	if next.FocusedOutput == s.last.FocusedOutput &&
 		next.OverviewOpen == s.last.OverviewOpen &&
+		next.CastsKnown == s.last.CastsKnown &&
 		slices.Equal(next.Workspaces, s.last.Workspaces) &&
 		slices.Equal(next.Windows, s.last.Windows) &&
+		slices.Equal(next.Casts, s.last.Casts) &&
 		slices.Equal(next.Layouts.Names, s.last.Layouts.Names) &&
 		next.Layouts.Current == s.last.Layouts.Current {
 		return false

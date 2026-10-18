@@ -388,6 +388,33 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
 }
 
+func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
+	state := privacyState{}
+	if r != nil {
+		state = r.privacy
+	}
+	rows := []*ui.Node{
+		monitorCardTitle("Capture activity", 0),
+		privacyStatusRow("Microphone", state.microphone),
+		privacyStatusRow("Camera", state.camera),
+		privacyStatusRow("Screen sharing", state.screenShare),
+	}
+	card := monitorCard(h.metrics(), rows)
+	card.Height = ccPageH
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
+}
+
+func privacyStatusRow(label string, activity privacyActivity) *ui.Node {
+	status := &ui.Node{Kind: ui.KindText, Text: privacyStatus(activity), Name: privacyStatus(activity)}
+	if activity == privacyUnknown {
+		status.Tone = ui.ToneError
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: label, Name: label},
+		status,
+	}}
+}
+
 func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
 	tr := ccT(h, r)

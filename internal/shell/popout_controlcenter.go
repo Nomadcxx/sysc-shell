@@ -88,6 +88,7 @@ var ccSections = []ccSection{
 	{ID: "home", Label: "Home", Icon: "home", Enabled: true},
 	{ID: "media", Label: "Media", Icon: "music_note", Enabled: true},
 	{ID: "audio", Label: "Audio", Icon: "volume_up", Enabled: true},
+	{ID: "privacy", Label: "Privacy", Icon: "security", Enabled: true},
 	{ID: "monitor", Label: "Monitor", Icon: "desktop_windows", Enabled: true},
 	{ID: "power", Label: "Power", Icon: "power_settings_new", Enabled: true},
 	{ID: "network", Label: "Network", Icon: "wifi", Enabled: true},
@@ -218,13 +219,12 @@ func ccBodyWidth(h *PanelHost) int {
 }
 
 func ccRail(h *PanelHost) *ui.Node {
-	// Eleven 40px destinations and three group spacers have to fit the 532px
-	// the panel leaves inside its padding. The buttons sit on the tight rung so
-	// the MarginM spacers still read as the group breaks.
-	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: theme.MarginXS}
+	// Twelve 40px destinations, three group breaks and 2px row gaps fit the
+	// panel's padded height while preserving the existing target size.
+	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: theme.MarginXXS}
 	for _, section := range ccSections {
 		if section.ID == "media" || section.ID == "network" || section.ID == "weather" {
-			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: theme.MarginM})
+			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: theme.MarginXS})
 		}
 		name := cardT(h.tr, "cc.tab."+section.ID, section.Label)
 		action := "section:" + section.ID
@@ -275,6 +275,8 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 	switch h.section {
 	case "audio":
 		return ccAudio(r, h)
+	case "privacy":
+		return ccPrivacy(r, h)
 	case "media":
 		return mediaBody(r, h)
 	case "monitor":
