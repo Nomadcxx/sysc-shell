@@ -1,12 +1,21 @@
 # Harness for the home-manager module: it proves what the module writes, not
 # what home-manager does with it.
 #
-# Run it against a pinned nixpkgs, for example:
+# Run it against a pinned nixpkgs, for example. The file is a function, so the
+# expression applies it; the argument defaults to <nixpkgs>, which -I names.
 #
-#   nix-instantiate --eval --strict nix/tests/module.nix
+#   nix-instantiate --eval --strict -I nixpkgs=<a nixpkgs tree> \
+#     --expr 'import ./nix/tests/module.nix { }'
 #
-# The flake also exposes it as the `module-harness` check. Every value printed
-# must be true. The module itself needs no new flake input.
+# or through the flake, which pins nixpkgs itself:
+#
+#   nix build .#checks.<system>.module-harness
+#
+# Reading the substituted unit and the plugin manifest means import-from-
+# derivation, so the harness needs a store that can build them: a
+# `nix flake check --no-build` cannot run it.
+#
+# Every value printed must be true. The module itself needs no new flake input.
 
 { pkgs ? import <nixpkgs> { } }:
 
@@ -17,13 +26,29 @@ let
   # matter here.
   stubs = {
     options = {
-      assertions = lib.mkOption {
-        type = lib.types.listOf lib.types.anything;
-        default = [ ];
-      };
       home.homeDirectory = lib.mkOption {
         type = lib.types.str;
         default = "/home/tester";
+      };
+      # Mirrors hm.types.dagOf types.str. The keys are required rather than
+      # defaulted because hm.dag.isEntry takes a value as an entry only when
+      # data, after and before are all present: a missing key must fail here
+      # the way it fails in home-manager, not be filled in silently.
+      home.activation = lib.mkOption {
+        type = lib.types.attrsOf (
+          lib.types.submodule {
+            options = {
+              before = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+              };
+              after = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+              };
+              data = lib.mkOption { type = lib.types.str; };
+            };
+          }
+        );
+        default = { };
       };
       xdg.configFile = lib.mkOption {
         type = lib.types.attrs;
@@ -40,7 +65,6 @@ let
         ({ ... }: extra)
         { config._module.args.pkgs = pkgs; }
       ];
-      check = true;
     };
 
   # Any store package will do: what is under test is that ExecStart becomes a
@@ -79,6 +103,15 @@ let
 in
 {
   disabledWritesNothing = off.config.xdg.configFile == { };
+
+  # The conflict guard must be an activation entry, not an assertion: pure
+  # evaluation cannot see ~/.local/bin, which is how a flake is evaluated.
+  guardRunsAtActivation = builtins.hasAttr "syscShellConflict" on.config.home.activation;
+
+  guardNamesTheInstallerPath = says on.config.home.activation.syscShellConflict.data
+    "/home/tester/.local/bin/sysc-shell";
+
+  guardOffWhenDisabled = !(builtins.hasAttr "syscShellConflict" off.config.home.activation);
 
   enabledStartsAStorePath = says unitText "ExecStart=/nix/store/";
 

@@ -65,16 +65,29 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = !(builtins.pathExists "${config.home.homeDirectory}/.local/bin/sysc-shell");
-        message = ''
-          programs.sysc-shell.enable is set and ~/.local/bin/sysc-shell exists.
-          Two shells would fight over the bar. Remove the installer or AUR copy,
-          or let scripts/deploy own it and disable this option.
-        '';
-      }
-    ];
+    # The conflict guard runs at activation, not at evaluation. In pure
+    # evaluation -- how a flake is evaluated -- builtins.pathExists answers
+    # false for every path outside the store, so an assertion here would never
+    # fire. Activation reads the real home directory, so the guard holds for
+    # flake users and config.nix users alike.
+    #
+    # The entry is written out rather than built with lib.hm.dag.entryAfter
+    # because nix/tests/module.nix evaluates this file against plain nixpkgs
+    # lib. All three keys are required: hm.dag.isEntry takes a value as an
+    # entry only when data, after and before are all present, and merges
+    # anything else as the entry's payload.
+    home.activation.syscShellConflict = {
+      after = [ "writeBoundary" ];
+      before = [ ];
+      data = ''
+        if [[ -e ${lib.escapeShellArg "${config.home.homeDirectory}/.local/bin/sysc-shell"} ]]; then
+          echo "programs.sysc-shell.enable is set and ~/.local/bin/sysc-shell exists." >&2
+          echo "Two shells would fight over the bar. Remove the installer or AUR copy," >&2
+          echo "or let scripts/deploy own it and disable this option." >&2
+          exit 1
+        fi
+      '';
+    };
 
     # The unit is deployed as the repository's own substituted file, because
     # the key/value section model of systemd.user.services cannot carry a whole
