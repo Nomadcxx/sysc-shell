@@ -586,11 +586,14 @@ fi
 		t.Fatalf("right-click mute blocked the owner for %v", d)
 	}
 	start = time.Now()
-	if !bar.onAxis(panelAudioAction, 1) {
+	if !bar.onAxis("bar-scroll:volume", 1) {
 		t.Fatal("wheel step on the volume widget was not handled")
 	}
 	if d := time.Since(start); d > 100*time.Millisecond {
 		t.Fatalf("wheel step blocked the owner for %v", d)
+	}
+	if !bar.onAxis("bar-scroll:brightness", -1) {
+		t.Fatal("wheel step on a brightness-bound widget was not handled")
 	}
 	if err := os.WriteFile(release, []byte("go"), 0o600); err != nil {
 		t.Fatal(err)

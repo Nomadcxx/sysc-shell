@@ -71,16 +71,24 @@ func privacyStateFrom(pipe services.PrivacySnapshot, snapshot niri.Snapshot) pri
 		state.microphone = privacyInactive
 	}
 
-	castNodes := make(map[uint32]struct{}, len(snapshot.Casts))
+	castNodes := make(map[uint32]bool, len(snapshot.Casts))
 	for _, cast := range snapshot.Casts {
-		if cast.HasPWNodeID && privacyCastActive(cast) {
-			castNodes[cast.PWNodeID] = struct{}{}
+		if !cast.HasPWNodeID || !cast.Active || cast.TargetKnown && cast.Target.Kind == "nothing" {
+			continue
+		}
+		if validPrivacyCastTarget(cast) {
+			castNodes[cast.PWNodeID] = true
+		} else if _, exists := castNodes[cast.PWNodeID]; !exists {
+			castNodes[cast.PWNodeID] = false
 		}
 	}
 	cameraActive, cameraUnknown, cameraDetailsMissing := false, false, false
 	var cameraApps []string
 	for _, path := range pipe.VideoPaths {
-		if _, isCast := castNodes[path.SourceNodeID]; isCast {
+		if castKnown, isCast := castNodes[path.SourceNodeID]; isCast {
+			if !castKnown {
+				cameraUnknown = true
+			}
 			continue
 		}
 		if path.Camera {

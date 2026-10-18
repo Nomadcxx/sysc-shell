@@ -63,9 +63,9 @@ func TestPrivacyStateKeepsAmbiguousCaptureUnknownAndCorrelatesCasts(t *testing.T
 			want: privacyState{microphone: privacyInactive, camera: privacyActive, screenShare: privacyInactive, cameraApps: "Cheese"},
 		},
 		{
-			name: "active unknown cast target stays unknown",
+			name: "unknown active cast target with a camera path stays uncertain",
 			pipe: services.PrivacySnapshot{Known: true,
-				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 41}}},
+				VideoPaths: []services.PrivacyVideoPath{{SourceNodeID: 41, Camera: true}}},
 			niri: niri.Snapshot{Casts: []niri.Cast{{StreamID: 2, Active: true, PWNodeID: 41, HasPWNodeID: true}}},
 			want: privacyState{microphone: privacyInactive, camera: privacyUnknown, screenShare: privacyUnknown},
 		},
