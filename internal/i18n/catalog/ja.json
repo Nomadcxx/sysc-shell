@@ -54,6 +54,8 @@
  "bt.unavailable": "Bluetooth は利用できません",
  "cc.brightness": "明るさ",
  "cc.caffeine": "カフェイン",
+ "cc.caffeine.off": "オフ",
+ "cc.caffeine.indefinite": "無期限",
  "cc.calendar_empty": "予定はありません",
  "cc.charge": "充電",
  "cc.cpu": "CPU",

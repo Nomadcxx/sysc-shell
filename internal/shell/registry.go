@@ -253,6 +253,9 @@ type Registry struct {
 	inhibit         io.Closer
 	inhibitWanted   bool
 	inhibitStarting bool
+	inhibitDuration time.Duration
+	inhibitUntil    time.Time
+	inhibitTimer    *time.Timer
 	// idleSvc is the display-power policy. Nil means no idle service is
 	// wired, which is the test and disabled configuration.
 	idleSvc *services.IdleService
@@ -2453,7 +2456,7 @@ func (r *Registry) Close() {
 		}
 		inhibit = r.inhibit
 		r.inhibit = nil
-		r.inhibitWanted = false
+		r.clearCaffeineLocked()
 		r.pushIdleInputsLocked()
 		r.mu.Unlock()
 	}
@@ -2552,6 +2555,7 @@ func (r *Registry) Close() {
 func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	r.mu.Lock()
 	r.now = now
+	caffeineHold, caffeineExpired := r.expireCaffeineLocked(now)
 	expired := r.notify.expireDND(now)
 	if expired && r.toasts != nil {
 		r.toasts.recompute()
@@ -2564,6 +2568,14 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 		if h := r.panelHosts[PanelNotifications]; h != nil {
 			r.rebuildPanel(h)
 			dndCentreOut, dndCentreOpen = h.output, true
+		}
+	}
+	var caffeineSettingsOut uint32
+	caffeineSettingsOpen := false
+	if caffeineExpired {
+		if h := r.panelHosts[PanelSettings]; h != nil && h.section == "Screensaver" {
+			r.rebuildPanel(h)
+			caffeineSettingsOut, caffeineSettingsOpen = h.output, true
 		}
 	}
 	var changed []uint32
@@ -2579,6 +2591,11 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
+	if caffeineHold != nil {
+		if err := caffeineHold.Close(); err != nil {
+			log.Printf("shell: release expired Caffeine inhibit: %v", err)
+		}
+	}
 	r.publish(changed)
 	if r.depthClocks != nil {
 		r.depthClocks.emit(depthEffects)
@@ -2588,6 +2605,9 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	}
 	if dndCentreOpen {
 		r.publishSurface(dndCentreOut, panelSurfaceID(PanelNotifications))
+	}
+	if caffeineSettingsOpen {
+		r.publishSurface(caffeineSettingsOut, panelSurfaceID(PanelSettings))
 	}
 	return changed
 }

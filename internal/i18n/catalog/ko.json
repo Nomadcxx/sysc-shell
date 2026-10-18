@@ -54,6 +54,8 @@
  "bt.unavailable": "블루투스 사용 불가",
  "cc.brightness": "밝기",
  "cc.caffeine": "카페인",
+ "cc.caffeine.off": "끔",
+ "cc.caffeine.indefinite": "무기한",
  "cc.calendar_empty": "예정된 이벤트 없음",
  "cc.charge": "충전",
  "cc.cpu": "CPU",

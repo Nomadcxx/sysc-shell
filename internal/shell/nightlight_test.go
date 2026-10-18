@@ -19,7 +19,7 @@ func TestControlCentreNightLightPillTracksGammaAvailability(t *testing.T) {
 	t.Cleanup(r.Close)
 	h := &PanelHost{id: PanelControlCenter, section: "home", output: 1, theme: DefaultTheme()}
 
-	row := ccHomeToggles(r, 640, false, "", nil)
+	row := ccHomeToggles(r, h, 640, false, "", nil)
 	if len(row.Children) != 4 {
 		t.Fatalf("Home toggle row has %d pills, want the four standard pills", len(row.Children))
 	}
@@ -28,7 +28,7 @@ func TestControlCentreNightLightPillTracksGammaAvailability(t *testing.T) {
 	}
 
 	r.ApplyGammaEvent(wayland.GammaEvent{Global: 1, Connector: "DP-1", State: wayland.GammaFailed})
-	row = ccHomeToggles(r, 640, false, "", nil)
+	row = ccHomeToggles(r, h, 640, false, "", nil)
 	if len(row.Children) != 5 {
 		t.Fatalf("supported Home toggle row has %d pills, want 5", len(row.Children))
 	}
@@ -38,7 +38,7 @@ func TestControlCentreNightLightPillTracksGammaAvailability(t *testing.T) {
 	}
 
 	r.ApplyGammaEvent(wayland.GammaEvent{Global: 1, Connector: "DP-1", State: wayland.GammaReady})
-	night = findByName(ccHomeToggles(r, 640, false, "", nil), "Night")
+	night = findByName(ccHomeToggles(r, h, 640, false, "", nil), "Night")
 	if night == nil || night.Fill != ui.FillAccent {
 		t.Fatalf("active gamma pill = %+v, want accent fill", night)
 	}
@@ -58,7 +58,7 @@ func TestControlCentreHidesNightLightWithoutGamma(t *testing.T) {
 	r := NewRegistry(config.Default())
 	t.Cleanup(r.Close)
 	r.ApplyGammaEvent(wayland.GammaEvent{State: wayland.GammaUnsupported})
-	if got := findByName(ccHomeToggles(r, 640, false, "", nil), "Night"); got != nil {
+	if got := findByName(ccHomeToggles(r, nil, 640, false, "", nil), "Night"); got != nil {
 		t.Fatalf("unsupported night light pill = %+v, want hidden", got)
 	}
 }
