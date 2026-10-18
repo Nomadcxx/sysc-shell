@@ -142,6 +142,137 @@ func TestAudioPanelSurfacesMixerPollFailure(t *testing.T) {
 	}
 }
 
+func TestAudioRouteControlReflectsCurrentOutputAndDisablesUnmappedStreams(t *testing.T) {
+	h := &PanelHost{id: PanelAudio}
+	sinks := []services.AudioNode{
+		{ID: 46, Description: "Headphones", Routeable: true},
+		{ID: 34, Description: "Monitor", Routeable: true},
+		{ID: 77, Description: "Unmapped output"},
+	}
+	stream := services.AudioNode{ID: 82, Description: "Player", Routeable: true, OutputID: 46}
+	control := audioRouteControl(h, stream, sinks)
+	if control.Kind != ui.KindMenu || control.Action != "audio-route:82" || control.Text != "Output: Headphones" {
+		t.Fatalf("route control = %+v, want current Headphones output for stream 82", control)
+	}
+	stream.OutputID = 34
+	if got := audioRouteControl(h, stream, sinks).Text; got != "Output: Monitor" {
+		t.Errorf("refreshed route label = %q, want Output: Monitor", got)
+	}
+	stream.OutputID = 77
+	if got := audioRouteControl(h, stream, sinks).Text; got != "Output: Unmapped output" {
+		t.Errorf("current output label = %q, want the known output even when it cannot be selected", got)
+	}
+	unmapped := audioRouteControl(h, services.AudioNode{ID: 116, Description: "Other"}, sinks)
+	if !unmapped.State.Has(ui.StateDisabled) || unmapped.Action != "" {
+		t.Errorf("unmapped route control = %+v, want disabled with no action", unmapped)
+	}
+}
+
+func TestAudioRouteMenuClosesWhenAnOutputDisappears(t *testing.T) {
+	h := &PanelHost{
+		id:              PanelAudio,
+		menuPath:        "audio-route:82",
+		audioRouteSinks: []services.AudioNode{{ID: 46, Description: "Headphones", Routeable: true}, {ID: 34, Description: "Monitor", Routeable: true}},
+		menu:            NewMenu([]string{"Headphones", "Monitor"}, 0),
+	}
+	h.menu.Open()
+	control := audioRouteControl(h,
+		services.AudioNode{ID: 82, Description: "Player", Routeable: true, OutputID: 46},
+		[]services.AudioNode{{ID: 46, Description: "Headphones", Routeable: true}},
+	)
+	if h.menu != nil && h.menu.Opened() {
+		t.Fatal("route menu stayed open with a destination that disappeared")
+	}
+	if control.Kind != ui.KindMenu || control.Text != "Output: Headphones" {
+		t.Fatalf("route control after output removal = %+v, want a closed menu with the refreshed current output", control)
+	}
+}
+
+func TestAudioRouteMenuClosesWhenSwitchingToDevicesTab(t *testing.T) {
+	h := &PanelHost{
+		id:              PanelAudio,
+		audioTab:        "devices",
+		menuPath:        "audio-route:82",
+		audioRouteSinks: []services.AudioNode{{ID: 46, Description: "Headphones", Routeable: true}},
+		menu:            NewMenu([]string{"Headphones"}, 0),
+	}
+	h.menu.Open()
+
+	r := &Registry{}
+	_ = audioDevicesTree(r, h)
+	if h.keyPress(r, keyEnter) {
+		t.Fatal("Enter was handled by a hidden route menu after switching tabs")
+	}
+	if h.menu != nil || h.menuPath != "" || len(h.audioRouteSinks) != 0 {
+		t.Fatalf("route menu survived entering the Devices tab: menu=%p path=%q sinks=%v", h.menu, h.menuPath, h.audioRouteSinks)
+	}
+}
+
+func TestAudioRouteMenuUsesScheduledMovePath(t *testing.T) {
+	dir := t.TempDir()
+	dump := `[{"id":46,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.main"}}},{"id":34,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.other"}}},{"id":82,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.player"}}}]`
+	inputs := `[{"index":973016,"sink":58,"properties":{"object.id":"82"}}]`
+	sinks := `[{"index":58,"name":"sink.main","properties":{"object.id":"46"}},{"index":86,"name":"sink.other","properties":{"object.id":"34"}}]`
+	for name, value := range map[string]string{
+		"dump.json": dump, "inputs.json": inputs, "sinks.json": sinks,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pw-dump"), []byte("#!/bin/sh\ncat '"+filepath.Join(dir, "dump.json")+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "pactl.log")
+	pactlScript := `#!/bin/sh
+echo "$*" >> '` + logPath + `'
+case "$*" in
+  '-f json list sink-inputs') cat '` + filepath.Join(dir, "inputs.json") + `' ;;
+  '-f json list sinks') cat '` + filepath.Join(dir, "sinks.json") + `' ;;
+  'move-sink-input '*) ;;
+  *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "pactl"), []byte(pactlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	r := &Registry{audio: services.NewAudio(time.Hour, "/bin/true")}
+	h := &PanelHost{
+		id:              PanelAudio,
+		audioRouteSinks: []services.AudioNode{{ID: 46, Description: "Main"}, {ID: 34, Description: "Other"}},
+		menuPath:        "audio-route:82",
+		menu:            NewMenu([]string{"Main", "Other"}, 0),
+	}
+	h.menu.Open()
+	h.menu.Next()
+	h.menu.Select()
+	r.mu.Lock()
+	h.applyMenu(r, h.menuPath)
+	r.mu.Unlock()
+
+	deadline := time.Now().Add(time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(logPath)
+		if err == nil {
+			got = string(data)
+			if strings.Contains(got, "move-sink-input") {
+				break
+			}
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(got, "move-sink-input 973016 86\n") {
+		t.Fatalf("pactl log = %q, want only stream 82 moved to output 34", got)
+	}
+	if strings.Contains(got, "set-default") {
+		t.Fatalf("pactl log = %q, route action changed the default output", got)
+	}
+}
+
 func TestVolumeRowCarriesTheFullContract(t *testing.T) {
 	n := services.AudioNode{ID: 42, Name: "dev", Description: "AD106M High Definition Audio Controller", Level: 51}
 	row := audioVolumeRow(n, "Output", nil, standardMetrics())
