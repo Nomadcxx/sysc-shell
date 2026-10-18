@@ -14,15 +14,17 @@ let
   # substitution: keeping the rest of the file means one install story, and a
   # fix to Restart or KillMode reaches every user of it.
   #
+  # --replace-fail, not --replace: if the committed unit stops naming the
+  # installer path, the module fails here instead of deploying a unit that
+  # starts a binary nobody installed.
+  #
   # The deploy-guard drop-in beside it is deliberately not installed: its job is
   # to refuse a hand-copied binary, and a store path cannot be replaced by hand.
-  unit = pkgs.substituteAll {
-    src = ../packaging/systemd/sysc-shell.service;
-    substitutions = [
-      "%h/.local/bin/sysc-shell"
-      "${lib.getExe cfg.package}"
-    ];
-  };
+  unit = pkgs.runCommand "sysc-shell.service" { } ''
+    install -m 0644 ${../packaging/systemd/sysc-shell.service} $out
+    substituteInPlace $out \
+      --replace-fail '%h/.local/bin/sysc-shell' '${lib.getExe cfg.package}'
+  '';
 
   # A plugin is keyed by the id in its own manifest, because that is what
   # internal/plugin/discovery.go looks up. A system root is a fixed /usr/share
