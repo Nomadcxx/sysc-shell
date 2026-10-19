@@ -591,3 +591,75 @@ ours rather than foreign.
   paths are unit-tested and were live-tested on 2026-09-04 earlier in the day.
 - GIF. gSlapper lists it as an image while the library classifies it as video,
   so the Pause control follows what `query` reports. Not exercised live.
+
+## Repaint ceiling and regional damage
+
+Settings > Appearance > Animation > Maximum repaint rate offers Display, 60, 90 and 120. The value
+is `theme.frame-cap` in the config, and Display is written by omitting the key. A numeric cap limits
+animation-driven publishes; clock ticks, service updates and input still repaint at once. Settled
+bar, panel, toast and OSD changes repaint only the regions that changed. Reveals, slides, the
+control-centre page wash, and trees with menus, scrollers or lazy lists paint full.
+
+Run these checks on the test bench with one traced shell client at a time. Use the existing isolated
+Niri test-bench runner so the active shell and its configuration are restored after the gate. Record
+the Niri version and each output's connector, logical and physical size, scale and refresh.
+
+| # | Action | Passing observation |
+|---|---|---|
+| 1 | Select each cap while a panel reveals and while a toast slides | Motion keeps its duration and lands on its end state; no restart |
+| 2 | Reset the cap, then reload a config with `"frame-cap": "30"` | Reset returns Display; reload is refused and the running cap is kept |
+| 3 | Leave the shell idle with the clock on the bar | One repaint per clock boundary; no frames between |
+| 4 | Step the volume twice and inspect the OSD commits in the trace | Each settled step damages the meter only |
+| 5 | Keep the weather panel open and settled; inspect the trace | Each frame damages the effect box and focus ring, not the whole panel |
+| 6 | Inspect the trace during a panel reveal | Each reveal frame damages the full buffer |
+| 7 | Dismiss a toast between two others, then type in a reply | The gap shows through; no stale card pixels |
+| 8 | Hide and reopen each surface; unplug and replug an output where available | The first frame after each paints full; no stale pixels |
+
+The shell uses the pure Go `sysc-wayland` client. `WAYLAND_DEBUG` does not emit its wire trace;
+`tools/wlspy` records protocol damage. The proxy passes one client connection and its file
+descriptors to the compositor. Its log contains timestamps, surface namespaces, buffer sizes and
+damage rectangles; it skips event payloads.
+
+Build the proxy from the repository root. Start it from the existing isolated test-bench runner,
+with the compositor display as its upstream and a unique name for the proxy socket and log:
+
+```bash
+set -e
+: "${XDG_RUNTIME_DIR:?run inside the Niri test session}"
+: "${WAYLAND_DISPLAY:?run inside the Niri test session}"
+go build -o /tmp/wlspy ./tools/wlspy
+TRACE_DISPLAY="wl-t1spy-$$"
+TRACE_LOG="$XDG_RUNTIME_DIR/$TRACE_DISPLAY.log"
+/tmp/wlspy "$TRACE_DISPLAY" "$WAYLAND_DISPLAY" "$TRACE_LOG" &
+TRACE_PID=$!
+attempt=0
+while [ ! -S "$XDG_RUNTIME_DIR/$TRACE_DISPLAY" ] \
+  && kill -0 "$TRACE_PID" 2>/dev/null \
+  && [ "$attempt" -lt 100 ]; do
+  sleep 0.05
+  attempt=$((attempt + 1))
+done
+if [ ! -S "$XDG_RUNTIME_DIR/$TRACE_DISPLAY" ]; then
+  kill "$TRACE_PID" 2>/dev/null || true
+  echo "wlspy did not start" >&2
+  exit 1
+fi
+```
+
+Start the isolated shell with `WAYLAND_DISPLAY="$TRACE_DISPLAY"`. After it exits, stop the proxy
+and wait for the log to close:
+
+```bash
+kill "$TRACE_PID" 2>/dev/null || true
+wait "$TRACE_PID" 2>/dev/null || true
+```
+
+Inspect the saved trace after the shell exits with `rg 'damage(_buffer)?' "$TRACE_LOG"`. The tool
+handles proxy-socket cleanup when it receives SIGTERM. Keep the trace outside the repository. Use
+the existing `SIGUSR2` diagnostics for same-fixture CPU, wakeups, RSS, paint time and binary size.
+Do not claim savings that the measurements do not show. Two-output and mixed-scale cases need
+hardware that has them; record them as unrun otherwise.
+
+To roll back the setting to a build that predates it, remove only `theme.frame-cap` from the config
+while still on the newer build, keep a backup, and confirm the older build accepts the file before
+deploying it. Older builds reject the key even when its value is Display.
