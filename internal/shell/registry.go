@@ -295,8 +295,10 @@ type Registry struct {
 
 	// clipboard is the daemon-owned metadata projection. Payload bytes never
 	// enter Registry or a bar view.
-	clipboard       clipboardProjection
-	clipboardSender clipboardCommandSender
+	clipboard            clipboardProjection
+	clipboardSender      clipboardCommandSender
+	clipboardCommandMu   sync.Mutex
+	clipboardCompletions []*clipboardCommandCompletion
 
 	// tray is the service-owned tray projection.
 	tray                 *trayState

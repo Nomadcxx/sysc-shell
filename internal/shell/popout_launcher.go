@@ -3,6 +3,7 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -934,24 +935,68 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 	go func() {
 		err := r.activateLauncherService(h, svc, attempt, id, action)
 		r.mu.Lock()
-		defer r.mu.Unlock()
 		host := r.panelHosts[PanelLauncher]
 		if host == nil || host.launcherAttempt != attempt {
+			r.mu.Unlock()
 			return
 		}
 		if err != nil {
 			host.errLabel = err.Error()
 			r.rebuildPanel(host)
 			r.publishSurface(host.output, panelSurfaceID(PanelLauncher))
+			r.mu.Unlock()
 			return
 		}
 		if !closeOnSuccess {
 			// The provider may have changed the panel (a Notes error label).
 			r.publishSurface(host.output, panelSurfaceID(PanelLauncher))
+			r.mu.Unlock()
 			return
 		}
-		r.closePanelLocked(PanelLauncher)
+		pasteClipboard := isLauncherClipboardResult(id)
+		if pasteClipboard {
+			owner, generation, ok := r.roots.current()
+			if ok && owner == panelGroupRoot() {
+				r.roots.closeRoot(generation)
+			} else {
+				r.closePanelLocked(PanelLauncher)
+			}
+		} else {
+			r.closePanelLocked(PanelLauncher)
+		}
+		r.mu.Unlock()
+		if pasteClipboard {
+			r.scheduleClipboardPaste()
+		}
 	}()
+}
+
+const launcherClipboardFocusDelay = 100 * time.Millisecond
+
+func isLauncherClipboardResult(id string) bool {
+	return strings.HasPrefix(id, launcherClipboardResultPrefix)
+}
+
+func (r *Registry) scheduleClipboardPaste() {
+	// ponytail: Niri releases layer focus asynchronously; wait 100 ms. Replace
+	// this delay with an explicit surface-close acknowledgement if available.
+	time.AfterFunc(launcherClipboardFocusDelay, func() {
+		select {
+		case <-r.closed:
+			return
+		default:
+		}
+		r.mu.Lock()
+		_, _, rootOpen := r.roots.current()
+		run := r.runArgv
+		r.mu.Unlock()
+		if rootOpen || run == nil {
+			return
+		}
+		if err := run([]string{"wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"}); err != nil {
+			log.Printf("launcher: paste clipboard history: %v", err)
+		}
+	})
 }
 
 func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, attempt uint64, id, action string) error {
