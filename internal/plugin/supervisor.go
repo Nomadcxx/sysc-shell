@@ -26,6 +26,8 @@ const MaxStderrBytes = 64 << 10
 // Send; closing the pipe below unblocks the write either way.
 const shutdownSendTimeout = 100 * time.Millisecond
 
+const defaultShutdownGrace = 3 * time.Second
+
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
 
@@ -166,7 +168,7 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	cmd.Env = pluginEnvironment()
 	grace := s.ShutdownGrace
 	if grace <= 0 {
-		grace = time.Second
+		grace = defaultShutdownGrace
 	}
 	stderr := newTail(MaxStderrBytes)
 	// Cmd.Wait owns the pipe copy and does not close stderr until it finishes.
@@ -420,7 +422,7 @@ func (s *Session) shutdown() ExitReason {
 
 	grace := s.grace
 	if grace <= 0 {
-		grace = time.Second
+		grace = defaultShutdownGrace
 	}
 	done := make(chan error, 1)
 	go func() { done <- s.cmd.Wait() }()

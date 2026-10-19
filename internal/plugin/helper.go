@@ -59,6 +59,11 @@ func HelperServe(args []string) int {
 		shutdownMarker = p
 		mode = "ok"
 	}
+	shutdownSlowMarker := ""
+	if p, ok := strings.CutPrefix(mode, "shutdown-slow-marker:"); ok {
+		shutdownSlowMarker = p
+		mode = "ok"
+	}
 	if mode == "hold-stderr" {
 		time.Sleep(time.Minute)
 		return 0
@@ -192,6 +197,16 @@ func HelperServe(args []string) int {
 		case *v1.HostShutdown:
 			if shutdownMarker != "" {
 				_ = os.WriteFile(shutdownMarker, []byte("flushed"), 0o600)
+			}
+			if shutdownSlowMarker != "" {
+				_ = os.WriteFile(shutdownSlowMarker, []byte("started"), 0o600)
+				// ponytail: model cleanup exceeding the old one-second grace, not
+				// GSR process semantics; the live gate checks process-tree cleanup.
+				time.Sleep(1500 * time.Millisecond)
+				if err := os.WriteFile(shutdownSlowMarker, []byte("cleaned"), 0o600); err != nil {
+					fmt.Fprintf(os.Stderr, "helper: write cleanup marker: %v\n", err)
+					return 1
+				}
 			}
 			return 0
 		case *v1.ViewOpen:

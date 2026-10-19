@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,15 +17,10 @@ import (
 // capability the host does not support cannot leak in through a fixture.
 var hostCaps = []Capability{CapNotifications, CapPanels, CapSettings, CapState}
 
-// helperGrace is the shutdown grace these tests give a fake plugin.
-//
-// It is far longer than the one-second production value on purpose. The fake
-// plugin is this test binary, and a race-instrumented Go binary costs about a
-// second in runtime start-up and teardown alone: measured, 1.012s against
-// 0.003s for the same program built without -race. A one-second grace would
-// therefore time out on the fixture rather than on anything the supervisor
-// does. What these tests prove is that an orderly shutdown is orderly and a
-// deaf plugin is killed, not that one second is the right number.
+// helperGrace gives these tests room for a fake plugin to start and finish.
+// The helper is this race-instrumented test binary and costs about a second in
+// runtime startup and teardown alone (measured: 1.012s vs 0.003s without -race).
+// TestCloseWaitsForSlowShutdownWithDefaultGrace covers the production default.
 const helperGrace = 5 * time.Second
 
 func supervisor(m Manifest) *Supervisor {
@@ -228,6 +224,25 @@ func TestCloseShutsDownGracefully(t *testing.T) {
 	}
 	if elapsed := time.Since(began); elapsed >= helperGrace {
 		t.Errorf("orderly shutdown took %v; it waited out the whole grace period", elapsed)
+	}
+}
+
+func TestCloseWaitsForSlowShutdownWithDefaultGrace(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "cleanup")
+	s := supervisor(installHelper(t, "shutdown-slow-marker:"+marker))
+	s.ShutdownGrace = 0
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	if reason := sess.Close(); reason.Kind != ExitOrderly {
+		markerState, _ := os.ReadFile(marker)
+		t.Fatalf("exit = %+v, marker = %q; want orderly shutdown after slow cleanup", reason, markerState)
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "cleaned" {
+		t.Fatalf("cleanup marker = %q, err = %v", got, err)
 	}
 }
 
