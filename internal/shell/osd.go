@@ -54,6 +54,10 @@ func (m *OSDManager) Show(v OSDView) {
 		return
 	}
 	m.r.mu.Lock()
+	if v.Kind == osdDND {
+		// A relay can wait here behind another DND change; sample after the lock so an older event cannot overwrite it.
+		_, v.On = m.r.dndStateAt(m.r.clockNow())
+	}
 	aux, pubs, startReveal := m.prepareShow(v)
 	m.r.mu.Unlock()
 	for _, req := range aux {
