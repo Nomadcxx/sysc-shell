@@ -141,6 +141,16 @@ func HelperServe(args []string) int {
 	case "ignore-shutdown":
 		time.Sleep(time.Minute)
 		return 0
+	case "slow-shutdown":
+		msg, err := in.Decode()
+		if err != nil {
+			return 1
+		}
+		if _, ok := msg.(*v1.HostShutdown); !ok {
+			return 1
+		}
+		time.Sleep(2 * time.Second)
+		return 0
 	case "stderr-tail-on-shutdown":
 		msg, err := in.Decode()
 		if err != nil {
