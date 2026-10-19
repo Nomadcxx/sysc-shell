@@ -269,6 +269,9 @@ type PanelHost struct {
 	mediaLease         *services.Lease
 	mediaSeekPending   *int64
 	mediaSeekTrack     string
+	layoutRequested    int
+	layoutRequestSeq   uint64
+	layoutUnavailable  bool
 	networkTab         string
 	manualEntry        bool
 	manualSSID         *ui.Field
@@ -445,6 +448,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelFiles, nil
 	case "onboarding":
 		return PanelOnboarding, nil
+	case "keyboard-layout":
+		return PanelKeyboardLayout, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -1094,6 +1099,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelFiles, true
 	case "onboarding":
 		return PanelOnboarding, true
+	case "keyboard-layout":
+		return PanelKeyboardLayout, true
 	default:
 		return 0, false
 	}
@@ -1384,6 +1391,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		fontFamily:      r.panelFontFamily(output),
 		fontCatalog:     &r.fontCatalog,
 		wallpaperCharge: -1,
+		layoutRequested: -1,
 	}
 	if id == PanelFiles {
 		h.filesOwner = r.files
@@ -1525,6 +1533,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		// Keyboard users land on the primary action, not the Not now button
 		// that happens to be first in the tree.
 		h.focusByName(onbMainLabelFor(h, h.onbPage))
+	}
+	if id == PanelKeyboardLayout {
+		h.focusKeyboardLayout(r.niriSnapshot.Layouts)
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
@@ -3760,6 +3771,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if h.id == PanelAudio && strings.HasPrefix(n.Action, "audio-route:") {
 		return h.activateAudioRoute(r, n)
 	}
+	if h.id == PanelKeyboardLayout {
+		return h.activateKeyboardLayout(r, n)
+	}
 	if h.id == PanelClipboard {
 		return h.activateClipboard(r, n)
 	}
@@ -4259,6 +4273,9 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	if h.id == PanelNotifications {
 		r.syncNotificationsSize(h)
 	}
+	if h.id == PanelKeyboardLayout {
+		h.focusKeyboardLayout(r.niriSnapshot.Layouts)
+	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
@@ -4361,6 +4378,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return r.filesTree(h)
 	case PanelOnboarding:
 		return onboardingTree(r, h)
+	case PanelKeyboardLayout:
+		return keyboardLayoutTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -4418,6 +4437,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 800, H: 650}
 	case PanelOnboarding:
 		return onboardingPanelSize(1920, 1080)
+	case PanelKeyboardLayout:
+		return ui.Rect{W: 360, H: 320}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

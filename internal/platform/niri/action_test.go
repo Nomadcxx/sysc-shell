@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+func TestMarshalSwitchLayoutUsesReportedIndex(t *testing.T) {
+	t.Parallel()
+	got, err := marshalAction(SwitchLayout{Index: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"Action":{"SwitchLayout":{"layout":{"Index":2}}}}`
+	if string(got) != want {
+		t.Fatalf("action = %s, want %s", got, want)
+	}
+}
+
 func TestActionWritesFocusAndClose(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

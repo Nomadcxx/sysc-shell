@@ -37,6 +37,9 @@ type CloseWindow struct {
 	ID uint64 `json:"id"`
 }
 
+// SwitchLayout asks Niri to select one reported keyboard layout index.
+type SwitchLayout struct{ Index uint8 }
+
 // ToggleWindowFloating toggles one exact window ID between floating and tiling.
 type ToggleWindowFloating struct{ ID uint64 }
 
@@ -144,6 +147,10 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"CloseWindow": v}
 	case ToggleWindowFloating:
 		inner = map[string]any{"ToggleWindowFloating": map[string]any{"id": v.ID}}
+	case SwitchLayout:
+		inner = map[string]any{"SwitchLayout": map[string]any{
+			"layout": map[string]any{"Index": v.Index},
+		}}
 	case ScreenshotScreen:
 		inner = map[string]any{"ScreenshotScreen": v}
 	case ScreenshotWindow:
