@@ -2,6 +2,8 @@ package shell
 
 import (
 	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -10,12 +12,13 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestOnboardingPageNavigation(t *testing.T) {
-	seq := []onboardingPage{onbWelcome, onbAppearance, onbRegion, onbIdle, onbReady}
+	seq := []onboardingPage{onbWelcome, onbAppearance, onbRegion, onbIdle, onbPlugins, onbReady}
 	for i, p := range seq {
 		if i < len(seq)-1 && p.next() != seq[i+1] {
 			t.Errorf("page %d next()=%d want %d", i, p.next(), seq[i+1])
@@ -1135,6 +1138,7 @@ func TestOnboardingOfferCentersOnActualFallbackOutput(t *testing.T) {
 func TestOnboardingOutputLossRequeuesOfferAndPage(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	reg := newPanelRegistry(t)
+	attachOnboardingTestPlugins(t, reg)
 	reg.mu.Lock()
 	reg.onboardingPending = false
 	reg.mu.Unlock()
@@ -1143,6 +1147,18 @@ func TestOnboardingOutputLossRequeuesOfferAndPage(t *testing.T) {
 	}
 	reg.mu.Lock()
 	h := reg.panelHosts[PanelOnboarding]
+	h.onbPage = onbPlugins
+	reg.rebuildPanel(h)
+	toggle := byAction(h.root, "onb-plugin:org.example.timer")
+	if toggle == nil {
+		reg.mu.Unlock()
+		t.Fatal("Startup plugins page did not render the installed bar plugin")
+	}
+	h.setFocus(toggle)
+	if !h.activate(reg) {
+		reg.mu.Unlock()
+		t.Fatal("plugin selection was not accepted")
+	}
 	h.onbPage = onbRegion
 	h.draft.Weather.City = "Melbourne"
 	reg.closePanelsOnOutputLocked(7)
@@ -1164,6 +1180,15 @@ func TestOnboardingOutputLossRequeuesOfferAndPage(t *testing.T) {
 	resumed := reg.panelHosts[PanelOnboarding]
 	if resumed.onbPage != onbRegion || resumed.draft.Weather.City != "Melbourne" {
 		t.Fatalf("resumed page=%d city=%q; want region and preserved draft", resumed.onbPage, resumed.draft.Weather.City)
+	}
+	if onboardingContainsString(resumed.draft.Plugins.Enabled, "org.example.timer") ||
+		hasPluginPlacement(resumed.draft.Bar, "org.example.timer", "clock") {
+		t.Fatal("resuming onboarding copied the staged plugin selection into the config draft")
+	}
+	resumed.onbPage = onbPlugins
+	reg.rebuildPanel(resumed)
+	if toggle := byAction(resumed.root, "onb-plugin:org.example.timer"); toggle == nil || toggle.Value == 0 {
+		t.Fatal("resuming onboarding lost the staged plugin selection")
 	}
 }
 
@@ -1310,7 +1335,7 @@ func TestOnboardingActionRowHierarchyAndKeptFocus(t *testing.T) {
 	if next.Fill != ui.FillAccent {
 		t.Fatal("the primary action lost its accent fill")
 	}
-	for _, p := range []onboardingPage{onbAppearance, onbRegion, onbIdle, onbReady} {
+	for _, p := range []onboardingPage{onbAppearance, onbRegion, onbIdle, onbPlugins, onbReady} {
 		nav := byAction(h.root, "onb-next")
 		if nav == nil {
 			t.Fatalf("the Next action vanished before page %d", p)
@@ -1336,7 +1361,7 @@ func TestOnboardingProgressAndDismissalStayClear(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	h := reg.panelHosts[PanelOnboarding]
-	progress := findText(h.root, "// 01 / 05")
+	progress := findText(h.root, "// 01 / 06")
 	if progress == nil || progress.TextRole != theme.RoleMono {
 		t.Fatalf("progress = %+v, want compact mono // label", progress)
 	}
@@ -1367,7 +1392,7 @@ func TestOnboardingRegionLocalizesAndOffersLanguagePreference(t *testing.T) {
 		if wantTitle == onbTitleRegion || findText(h.root, wantTitle) == nil {
 			t.Errorf("region title for %s = %q in tree %q, want translated title", locale, wantTitle, treeText(h.root))
 		}
-		progress := findNode(h.root, func(n *ui.Node) bool { return n.Name == "Setup progress" || n.Text == "// 03 / 05" })
+		progress := findNode(h.root, func(n *ui.Node) bool { return n.Name == "Setup progress" || n.Text == "// 03 / 06" })
 		if progress == nil || progress.Role != "status" || progress.Name == "Setup progress" {
 			t.Errorf("progress accessibility for %s = %+v; want localized status", locale, progress)
 		}
@@ -1563,4 +1588,313 @@ func TestOnboardingExplicitCloseRecordsDismissed(t *testing.T) {
 	if state.Outcome != onboarding.OutcomeDismissed {
 		t.Fatalf("explicit close outcome = %q, want dismissed", state.Outcome)
 	}
+}
+
+func TestOnboardingStartupPluginsPageListsCurrentSelection(t *testing.T) {
+	reg := newPanelRegistry(t)
+	cfg := reg.cfg.Clone()
+	pluginID := "org.example.timer"
+	cfg.Plugins.Enabled = []string{pluginID}
+	cfg.Bar.Right = append(cfg.Bar.Right, config.Item{ID: "plugin", Plugin: pluginID, Entry: "clock", Instance: "timer-1"})
+	setOnboardingTestConfig(t, reg, cfg)
+	attachOnboardingTestPlugins(t, reg)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelOnboarding]
+	h.onbPage = onbReady.prev()
+	reg.rebuildPanel(h)
+	if onbPages != 6 {
+		t.Fatalf("page count = %d, want six including Startup plugins", onbPages)
+	}
+	toggle := byAction(h.root, "onb-plugin:org.example.timer")
+	if toggle == nil || toggle.Kind != ui.KindToggle || toggle.Role != "switch" || toggle.Value == 0 || !toggle.Focusable || toggle.Name != "Place Timer on the bar" {
+		t.Fatalf("installed, enabled and placed plugin control = %+v", toggle)
+	}
+	if !strings.Contains(treeText(h.root), "Enabled · On bar") || !strings.Contains(treeText(h.root), "Bar widget: Clock") {
+		t.Fatalf("plugin row did not show its enabled/placement state and default widget: %q", treeText(h.root))
+	}
+	if byAction(h.root, "onb-plugin:org.example.panel-only") != nil ||
+		byAction(h.root, "onb-plugin:org.example.missing-command") != nil {
+		t.Fatal("onboarding listed a plugin without a startable bar widget")
+	}
+}
+
+func TestOnboardingPluginSelectionIsStagedUntilFinish(t *testing.T) {
+	reg := newPanelRegistry(t)
+	cfg := reg.cfg.Clone()
+	cfg.Plugins = config.Plugins{
+		Enabled:  []string{"org.example.other"},
+		Settings: map[string]map[string]any{"org.example.other": {"theme": "blue"}},
+	}
+	cfg.Bar.Right = append(cfg.Bar.Right, config.Item{ID: "plugin", Plugin: "org.example.keep", Entry: "status", Instance: "keep-1"})
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: cfg.Bar.Clone()}}
+	configPath := setOnboardingTestConfig(t, reg, cfg)
+	attachOnboardingTestPlugins(t, reg)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelOnboarding]
+	h.onbPage = onbReady.prev()
+	reg.rebuildPanel(h)
+	toggle := byAction(h.root, "onb-plugin:org.example.timer")
+	if toggle == nil {
+		reg.mu.Unlock()
+		t.Fatal("Startup plugins page did not render the installed bar plugin")
+	}
+	h.setFocus(toggle)
+	if !h.activate(reg) {
+		reg.mu.Unlock()
+		t.Fatal("plugin selection was not accepted")
+	}
+	if onboardingContainsString(h.draft.Plugins.Enabled, "org.example.timer") ||
+		hasPluginPlacement(h.draft.Bar, "org.example.timer", "clock") ||
+		hasPluginPlacement(h.draft.Outputs[0].Bar, "org.example.timer", "clock") {
+		reg.mu.Unlock()
+		t.Fatal("selecting a plugin mutated the config draft before Finish")
+	}
+	toggle = byAction(h.root, "onb-plugin:org.example.timer")
+	if toggle == nil || toggle.Value == 0 || !strings.Contains(treeText(h.root), "Enabled · On bar") {
+		reg.mu.Unlock()
+		t.Fatal("staged plugin selection was not reflected in the page")
+	}
+	if h.draft.Plugins.Settings["org.example.other"]["theme"] != "blue" ||
+		!reflect.DeepEqual(reg.cfg.Plugins.Enabled, cfg.Plugins.Enabled) {
+		reg.mu.Unlock()
+		t.Fatal("plugin selection changed unrelated plugin settings or live config")
+	}
+	if saved, err := config.LoadRequired(configPath); err != nil {
+		reg.mu.Unlock()
+		t.Fatal(err)
+	} else if onboardingContainsString(saved.Plugins.Enabled, "org.example.timer") ||
+		hasPluginPlacement(saved.Bar, "org.example.timer", "clock") {
+		reg.mu.Unlock()
+		t.Fatal("plugin selection was written before Finish")
+	}
+	reg.mu.Unlock()
+
+	reg.mu.Lock()
+	h = reg.panelHosts[PanelOnboarding]
+	toggle = byAction(h.root, "onb-plugin:org.example.timer")
+	if toggle == nil || toggle.Value == 0 {
+		reg.mu.Unlock()
+		t.Fatal("selected plugin toggle did not reflect the draft")
+	}
+	h.setFocus(toggle)
+	if !h.activate(reg) {
+		reg.mu.Unlock()
+		t.Fatal("plugin deselection was not accepted")
+	}
+	if onboardingContainsString(h.draft.Plugins.Enabled, "org.example.timer") ||
+		hasPluginPlacement(h.draft.Bar, "org.example.timer", "clock") ||
+		hasPluginPlacement(h.draft.Outputs[0].Bar, "org.example.timer", "clock") {
+		reg.mu.Unlock()
+		t.Fatal("deselecting a plugin mutated the config draft before Finish")
+	}
+	toggle = byAction(h.root, "onb-plugin:org.example.timer")
+	if toggle == nil || toggle.Value != 0 || !strings.Contains(treeText(h.root), "Disabled · Not on bar") {
+		reg.mu.Unlock()
+		t.Fatal("staged plugin deselection was not reflected in the page")
+	}
+	if !reflect.DeepEqual(h.draft.Bar.Right, cfg.Bar.Right) || !reflect.DeepEqual(h.draft.Outputs[0].Bar.Right, cfg.Outputs[0].Bar.Right) {
+		reg.mu.Unlock()
+		t.Fatal("deselecting a plugin changed unrelated bar items")
+	}
+	reg.mu.Unlock()
+}
+
+func TestOnboardingFinishSavesAndDismissalDiscardsPluginSelection(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	for _, finish := range []bool{true, false} {
+		name := "dismiss"
+		if finish {
+			name = "finish"
+		}
+		t.Run(name, func(t *testing.T) {
+			reg := newPanelRegistry(t)
+			cfg := reg.cfg.Clone()
+			cfg.Plugins.Settings = map[string]map[string]any{"org.example.keep": {"theme": "blue"}}
+			configPath := setOnboardingTestConfig(t, reg, cfg)
+			attachOnboardingTestPlugins(t, reg)
+			if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+				t.Fatal(err)
+			}
+			reg.mu.Lock()
+			h := reg.panelHosts[PanelOnboarding]
+			h.onbPage = onbReady.prev()
+			reg.rebuildPanel(h)
+			toggle := byAction(h.root, "onb-plugin:org.example.timer")
+			if toggle == nil {
+				reg.mu.Unlock()
+				t.Fatal("Startup plugins page did not render the installed bar plugin")
+			}
+			h.setFocus(toggle)
+			if !h.activate(reg) {
+				reg.mu.Unlock()
+				t.Fatal("plugin selection was not accepted")
+			}
+			if finish {
+				h.onbPage = onbReady
+				reg.rebuildPanel(h)
+				h.setFocus(byAction(h.root, "onb-finish"))
+			} else {
+				h.draft.Weather.Configured = true
+				h.draft.Weather.City = "Pending city"
+				h.writeTimer = time.AfterFunc(time.Hour, func() {})
+				h.setFocus(byAction(h.root, "onb-skip"))
+			}
+			if !h.activate(reg) {
+				reg.mu.Unlock()
+				t.Fatalf("%s was not accepted", name)
+			}
+			reg.mu.Unlock()
+
+			saved, err := config.LoadRequired(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if onboardingContainsString(saved.Plugins.Enabled, "org.example.timer") != finish ||
+				hasPluginPlacement(saved.Bar, "org.example.timer", "clock") != finish {
+				t.Fatalf("finish=%v saved plugin state=%+v bar=%+v", finish, saved.Plugins.Enabled, saved.Bar.Right)
+			}
+			if saved.Plugins.Settings["org.example.keep"]["theme"] != "blue" {
+				t.Fatal("saving plugin selection changed unrelated plugin settings")
+			}
+			if !finish && saved.Weather.City != "Pending city" {
+				t.Fatalf("dismissal saved weather city %q, want Pending city", saved.Weather.City)
+			}
+		})
+	}
+}
+
+func TestOnboardingPluginSelectionIsIdempotentAndRemovesNestedItems(t *testing.T) {
+	pluginID := "org.example.timer"
+	manifest := plugin.Manifest{ID: pluginID, Widgets: []plugin.Widget{{ID: "clock"}}}
+	cfg := config.Default()
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: cfg.Bar.Clone()}}
+	selected, err := onbSetPluginSelected(cfg, manifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, bar := range map[string]config.Bar{"shared": selected.Bar, "DP-2": selected.Outputs[0].Bar} {
+		if !reflect.DeepEqual(bar.Right[:len(cfg.Bar.Right)], cfg.Bar.Right) ||
+			countPluginPlacements(bar, pluginID) != countPluginPlacements(cfg.Bar, pluginID)+1 {
+			t.Errorf("%s bar selection changed existing order or did not add one placement: %+v", name, bar.Right)
+		}
+	}
+	repeated, err := onbSetPluginSelected(selected, manifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, bar := range map[string]config.Bar{"shared": repeated.Bar, "DP-2": repeated.Outputs[0].Bar} {
+		if got := countPluginPlacements(bar, pluginID); got != 1 {
+			t.Errorf("%s bar has %d placements after repeated selection, want one", name, got)
+		}
+	}
+	if !reflect.DeepEqual(selected.Bar.Right, repeated.Bar.Right) {
+		t.Fatal("repeated selection added a duplicate bar placement")
+	}
+
+	nested := selected.Clone()
+	nested.Bar.Center = []config.Item{{ID: "group", Items: []config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "plugin", Plugin: pluginID, Entry: "clock", Instance: "timer-2"},
+	}}}
+	nested.Bar.Left = []config.Item{{ID: "group", Items: []config.Item{
+		{ID: "plugin", Plugin: pluginID, Entry: "clock", Instance: "timer-3"},
+	}}}
+	nested.Plugins.Enabled = append(nested.Plugins.Enabled, "org.example.other")
+	cleared, err := onbSetPluginSelected(nested, manifest, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onbBarHasPluginPlacement(cleared.Bar, pluginID) || onbBarHasPluginPlacement(cleared.Outputs[0].Bar, pluginID) {
+		t.Fatal("deselection kept a nested plugin placement")
+	}
+	if len(cleared.Bar.Center) != 1 || cleared.Bar.Center[0].ID != "group" || len(cleared.Bar.Center[0].Items) != 1 || cleared.Bar.Center[0].Items[0].ID != "clock" {
+		t.Fatalf("deselection did not preserve the other group member: %+v", cleared.Bar.Center)
+	}
+	if len(cleared.Bar.Left) != 0 {
+		t.Fatalf("deselection kept an empty group: %+v", cleared.Bar.Left)
+	}
+	if !reflect.DeepEqual(nested.Bar.Center[0].Items[1], config.Item{ID: "plugin", Plugin: pluginID, Entry: "clock", Instance: "timer-2"}) {
+		t.Fatal("deselection mutated its input config")
+	}
+	if len(cleared.Plugins.Enabled) != 1 || cleared.Plugins.Enabled[0] != "org.example.other" {
+		t.Fatalf("enabled plugins after deselection = %v", cleared.Plugins.Enabled)
+	}
+}
+
+func setOnboardingTestConfig(t *testing.T, reg *Registry, cfg config.Config) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reg.cfg = cfg
+	reg.BindPersist(path, nil)
+	return path
+}
+
+func attachOnboardingTestPlugins(t *testing.T, reg *Registry) {
+	t.Helper()
+	previous := reg.plugins
+	reg.plugins = &pluginHost{r: reg, catalog: plugin.Catalog{Plugins: []plugin.Candidate{
+		{Manifest: plugin.Manifest{ID: "org.example.timer", Name: "Timer", Widgets: []plugin.Widget{
+			{ID: "clock", Label: "Clock"}, {ID: "calendar", Label: "Calendar"},
+		}}},
+		{Manifest: plugin.Manifest{ID: "org.example.panel-only", Name: "Panel only", Panels: []plugin.Panel{{ID: "panel"}}}},
+		{Manifest: plugin.Manifest{ID: "org.example.missing-command", Name: "Missing command", Widgets: []plugin.Widget{{ID: "widget"}}}, MissingCommands: []string{"missing-command"}},
+	}}}
+	t.Cleanup(func() {
+		reg.mu.Lock()
+		reg.plugins = previous
+		reg.mu.Unlock()
+	})
+}
+
+func onboardingContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPluginPlacement(bar config.Bar, pluginID, entryID string) bool {
+	var found bool
+	var visit func([]config.Item)
+	visit = func(items []config.Item) {
+		for _, item := range items {
+			if item.ID == "plugin" && item.Plugin == pluginID && item.Entry == entryID {
+				found = true
+			}
+			visit(item.Items)
+		}
+	}
+	visit(bar.Left)
+	visit(bar.Center)
+	visit(bar.Right)
+	return found
+}
+
+func countPluginPlacements(bar config.Bar, pluginID string) int {
+	count := 0
+	var visit func([]config.Item)
+	visit = func(items []config.Item) {
+		for _, item := range items {
+			if item.ID == "plugin" && item.Plugin == pluginID {
+				count++
+			}
+			visit(item.Items)
+		}
+	}
+	visit(bar.Left)
+	visit(bar.Center)
+	visit(bar.Right)
+	return count
 }

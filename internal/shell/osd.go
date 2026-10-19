@@ -269,10 +269,7 @@ func (m *OSDManager) slidePx() int {
 const osdAnimKey = "osd"
 
 func (m *OSDManager) revealLoop() {
-	// Resolve the cap once, under the lock. m.anim may be nil here, which
-	// frameCap answers with zero: no pacing, one publish per tick.
 	m.r.mu.Lock()
-	frameCap := m.anim.frameCap()
 	stop := m.stopAnim
 	m.r.mu.Unlock()
 	animateSurface(stop, func() bool {
@@ -289,7 +286,13 @@ func (m *OSDManager) revealLoop() {
 		for _, p := range pubs {
 			m.r.publishSurface(p.Global, p.SurfaceID)
 		}
-	}, func() time.Duration { return frameCap })
+	}, func() time.Duration {
+		// Asked per tick, so a reload's cap reaches a reveal in flight. A nil
+		// animator answers zero: no pacing, one publish per tick.
+		m.r.mu.Lock()
+		defer m.r.mu.Unlock()
+		return m.anim.frameCap()
+	})
 }
 
 func osdSurfaceID(global uint32) string { return fmt.Sprintf("osd:%d", global) }

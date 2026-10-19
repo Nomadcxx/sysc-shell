@@ -61,11 +61,12 @@ type Registry struct {
 	// onboardingPending keeps the first-start offer until an interactive,
 	// focused output can host it. Output loss restores the offer and its small
 	// view state for the next usable output.
-	onboardingPending bool
-	onboardingResume  bool
-	onboardingPage    onboardingPage
-	onboardingDraft   config.Config
-	onboardingError   string
+	onboardingPending          bool
+	onboardingResume           bool
+	onboardingPage             onboardingPage
+	onboardingDraft            config.Config
+	onboardingPluginSelections map[string]bool
+	onboardingError            string
 	// effectOutputs names the connectors whose wallpaper is a playing or
 	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
 	effectOutputs map[string]bool
@@ -1828,6 +1829,7 @@ func (r *Registry) tryOpenOnboardingLocked(first uint32) {
 // in-memory resume state. Reopening setup from Settings must not turn a
 // completed install back into a dismissed one.
 func (r *Registry) markOnboardingOutcomeLocked(outcome onboarding.Outcome) error {
+	r.onboardingPluginSelections = nil
 	path := onboarding.StatePath()
 	if outcome == onboarding.OutcomeDismissed {
 		state, err := onboarding.Load(path)
@@ -1853,6 +1855,7 @@ func (r *Registry) preserveOnboardingLocked(h *PanelHost) {
 	r.onboardingResume = true
 	r.onboardingPage = h.onbPage
 	r.onboardingDraft = h.draft
+	r.onboardingPluginSelections = cloneOnboardingPluginSelections(h.onbPluginSelections)
 	r.onboardingError = h.errLabel
 }
 
@@ -2156,6 +2159,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 		Commit: func() {
 			once.Do(func() {
 				r.mu.Lock()
+				pluginsEnabledChanged := !slices.Equal(r.cfg.Plugins.Enabled, cfg.Plugins.Enabled)
 				applicationPreferencesChanged := r.cfg.Applications.DefaultTerminal != cfg.Applications.DefaultTerminal ||
 					!slices.Equal(r.cfg.Applications.Favourites, cfg.Applications.Favourites) ||
 					!slices.Equal(r.cfg.Applications.Hidden, cfg.Applications.Hidden)
@@ -2367,7 +2371,13 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
-					plugins.syncBars()
+					if pluginsEnabledChanged {
+						if err := plugins.syncEnabled(); err != nil {
+							log.Printf("shell: sync enabled plugins after config reload: %v", err)
+						}
+					} else {
+						plugins.syncBars()
+					}
 				}
 				if polkitPolicyChanged || polkitNeedsStart {
 					go r.configurePolkit()

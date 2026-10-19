@@ -21,6 +21,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			BlurRadius: 24,
 			Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 			Elevation:  ElevationSubtle,
+			FrameCap:   RepaintDisplay,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
 			FontScale: 100, FontWeight: 400,
 		}},
@@ -32,6 +33,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			BlurRadius: 24,
 			Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 			Elevation:  ElevationSubtle,
+			FrameCap:   RepaintDisplay,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
 			FontScale: 100, FontWeight: 400,
 		}},
@@ -43,6 +45,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			BlurRadius: 24,
 			Glass:      GlassOff, GlassIntensity: GlassIntensityDefault,
 			Elevation:  ElevationStandard,
+			FrameCap:   RepaintDisplay,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
 			FontScale: 100, FontWeight: 400,
 		}},
@@ -757,6 +760,60 @@ func TestMetricsCarryTheProfileIcon(t *testing.T) {
 		}
 		if m.IconProfile < m.IconSmall {
 			t.Errorf("%s profile icon %d is below the small icon %d", tc.density, m.IconProfile, m.IconSmall)
+		}
+	}
+}
+
+func TestFrameCapDurationsIgnoreSpeed(t *testing.T) {
+	t.Parallel()
+	for _, cap := range []struct {
+		value  RepaintCap
+		period time.Duration
+	}{
+		{RepaintDisplay, BaseMotion.FrameCap},
+		{Repaint60, time.Second / 60},
+		{Repaint90, time.Second / 90},
+		{Repaint120, time.Second / 120},
+	} {
+		for _, speed := range []int{SpeedMin, 100, SpeedMax} {
+			c, _ := PresetComposition(PresetStandard)
+			c.FrameCap, c.MotionSpeed = cap.value, speed
+			if got := c.Durations().FrameCap; got != cap.period {
+				t.Fatalf("cap=%s speed=%d: %s != %s", cap.value, speed, got, cap.period)
+			}
+		}
+	}
+}
+
+func TestFrameCapPresetRebaseKeepsOverride(t *testing.T) {
+	t.Parallel()
+	for _, p := range Presets() {
+		c, _ := PresetComposition(p)
+		if c.FrameCap != RepaintDisplay {
+			t.Fatalf("preset %s frame cap = %q, want display", p, c.FrameCap)
+		}
+	}
+	from, _ := PresetComposition(PresetStandard)
+	to, _ := PresetComposition(PresetExpressive)
+	explicit := from
+	explicit.FrameCap = Repaint60
+	if got := Rebase(explicit, from, to).FrameCap; got != Repaint60 {
+		t.Fatalf("explicit cap after rebase = %q, want 60", got)
+	}
+	inherited := from
+	to.FrameCap = Repaint120
+	if got := Rebase(inherited, from, to).FrameCap; got != Repaint120 {
+		t.Fatalf("inherited cap after rebase = %q, want the new preset's", got)
+	}
+}
+
+func TestFrameCapValidRejectsUnknownAxis(t *testing.T) {
+	t.Parallel()
+	c, _ := PresetComposition(PresetStandard)
+	for _, bad := range []RepaintCap{"", "30", "unlimited"} {
+		c.FrameCap = bad
+		if err := c.Valid(); err == nil || !strings.Contains(err.Error(), "frame-cap") {
+			t.Fatalf("cap %q: Valid() = %v, want a frame-cap refusal", bad, err)
 		}
 	}
 }

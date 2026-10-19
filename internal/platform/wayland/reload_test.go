@@ -78,14 +78,16 @@ func TestReloadConfigSnapshotsGenerationBeforeRead(t *testing.T) {
 	}
 }
 
-func TestReloadRefusesMissingAndMalformedFilesWithoutPreparing(t *testing.T) {
+func TestReloadRefusesUnavailableOrInvalidFilesWithoutPreparing(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		writeFile bool
 		contents  []byte
+		wantError string
 	}{
 		{name: "missing"},
 		{name: "malformed", writeFile: true, contents: []byte("{\n  \"secret\":\"do-not-publish\",\n  @\n}")},
+		{name: "invalid frame cap", writeFile: true, contents: []byte(`{"theme":{"frame-cap":"30"}}`), wantError: "theme.frame-cap"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := config.Default()
@@ -128,6 +130,9 @@ func TestReloadRefusesMissingAndMalformedFilesWithoutPreparing(t *testing.T) {
 			}
 			if len(outcomes) != 1 || outcomes[0] == nil {
 				t.Fatalf("outcomes = %v, want one refusal", outcomes)
+			}
+			if test.wantError != "" && !strings.Contains(outcomes[0].Error(), test.wantError) {
+				t.Fatalf("refusal = %v, want %q error", outcomes[0], test.wantError)
 			}
 			if strings.Contains(outcomes[0].Error(), "do-not-publish") {
 				t.Fatalf("source leaked through refusal: %v", outcomes[0])

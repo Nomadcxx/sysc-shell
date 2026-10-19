@@ -700,6 +700,10 @@ func themeDiff(got Theme) *wireTheme {
 		v := string(got.Elevation)
 		w.Elevation = &v
 	}
+	if got.FrameCap != base.FrameCap {
+		v := string(got.FrameCap)
+		w.FrameCap = &v
+	}
 	if got.BlurBehind != base.BlurBehind {
 		v := got.BlurBehind
 		w.BlurBehind = &v

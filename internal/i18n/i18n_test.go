@@ -132,3 +132,34 @@ func TestCatalogsAreConsistent(t *testing.T) {
 		}
 	}
 }
+
+func TestOnboardingPluginStringsAreLocalized(t *testing.T) {
+	fallbacks := map[string]string{
+		"onboarding.intro.plugins":        "Choose installed bar plugins to enable and place on the bar. Your choices save when you finish; install plugins later in Settings.",
+		"onboarding.plugins.disabled":     "Disabled",
+		"onboarding.plugins.empty":        "No installed bar plugins. Install plugins later in Settings.",
+		"onboarding.plugins.enabled":      "Enabled",
+		"onboarding.plugins.not_on_bar":   "Not on bar",
+		"onboarding.plugins.on_bar":       "On bar",
+		"onboarding.plugins.toggle":       "Place %s on the bar",
+		"onboarding.plugins.widget":       "Bar widget: %s",
+		"onboarding.summary.plugins":      "Startup plugins: %s",
+		"onboarding.summary.plugins_none": "none",
+		"onboarding.title.plugins":        "Startup plugins",
+	}
+	for _, locale := range []string{"es", "pt", "ja", "ko", "ru"} {
+		raw, err := catalogFS.ReadFile("catalog/" + locale + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var catalog map[string]string
+		if err := json.Unmarshal(raw, &catalog); err != nil {
+			t.Fatalf("%s: %v", locale, err)
+		}
+		for key, fallback := range fallbacks {
+			if got, ok := catalog[key]; !ok || got == "" || got == fallback {
+				t.Errorf("%s: %s = %q, want localized text", locale, key, got)
+			}
+		}
+	}
+}

@@ -3,17 +3,20 @@ package shell
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// onboardingPage is the wizard's one linear flow: five short steps, no
+// onboardingPage is the wizard's one linear flow: short steps, no
 // branches. Page math is pure so a table test can pin the navigation.
 type onboardingPage uint8
 
@@ -22,6 +25,7 @@ const (
 	onbAppearance
 	onbRegion
 	onbIdle
+	onbPlugins
 	onbReady
 	onbPages
 )
@@ -47,6 +51,7 @@ const (
 	onbTitleAppearance = "Appearance"
 	onbTitleRegion     = "Region and language"
 	onbTitleIdle       = "When idle"
+	onbTitlePlugins    = "Startup plugins"
 	onbTitleReady      = "You are ready"
 
 	onbIntroWelcome = "Set up the basics for a comfortable start. Changes apply as " +
@@ -57,6 +62,8 @@ const (
 		"your session locale; keyboard layouts stay with the OS."
 	onbIntroIdle = "Choose the action for an idle session, or keep the current " +
 		"behaviour. Timing and availability stay in Settings."
+	onbIntroPlugins = "Choose installed bar plugins to enable and place on the bar. " +
+		"Your choices save when you finish; install plugins later in Settings."
 	onbIntroReady = "Review what applied. Settings holds every control this " +
 		"wizard used, plus the rest of the shell."
 
@@ -87,21 +94,21 @@ func onbMainLabel(p onboardingPage) string {
 }
 
 var onbTitles = [onbPages]string{
-	onbTitleWelcome, onbTitleAppearance, onbTitleRegion, onbTitleIdle, onbTitleReady,
+	onbTitleWelcome, onbTitleAppearance, onbTitleRegion, onbTitleIdle, onbTitlePlugins, onbTitleReady,
 }
 
 var onbTitleKeys = [onbPages]string{
 	"onboarding.title.welcome", "onboarding.title.appearance", "onboarding.title.region",
-	"onboarding.title.idle", "onboarding.title.ready",
+	"onboarding.title.idle", "onboarding.title.plugins", "onboarding.title.ready",
 }
 
 var onbIntros = [onbPages]string{
-	onbIntroWelcome, onbIntroAppearance, onbIntroRegion, onbIntroIdle, onbIntroReady,
+	onbIntroWelcome, onbIntroAppearance, onbIntroRegion, onbIntroIdle, onbIntroPlugins, onbIntroReady,
 }
 
 var onbIntroKeys = [onbPages]string{
 	"onboarding.intro.welcome", "onboarding.intro.appearance", "onboarding.intro.region",
-	"onboarding.intro.idle", "onboarding.intro.ready",
+	"onboarding.intro.idle", "onboarding.intro.plugins", "onboarding.intro.ready",
 }
 
 // onboardingSyscWordmarkRows is the desktop's SYSC.txt art, rendered like
@@ -154,7 +161,7 @@ const onbStepRailWidth = 240
 const onbCardViewportFillPercent = 75
 
 var onbStepKeys = [onbPages]string{
-	"onb-step-welcome", "onb-step-appearance", "onb-step-region", "onb-step-idle", "onb-step-ready",
+	"onb-step-welcome", "onb-step-appearance", "onb-step-region", "onb-step-idle", "onb-step-plugins", "onb-step-ready",
 }
 
 func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
@@ -301,6 +308,8 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 		settingsDimIdle(r, h, body)
 		children = append(children, body)
 		children = append(children, onbCaption(h, onbText(h, "hint.idle", onbIdleHint)))
+	case onbPlugins:
+		children = append(children, onbPluginRows(r, h)...)
 	case onbReady:
 		children = append(children, onbSummary(r, h)...)
 		children = append(children, onbCaption(h, onbText(h, "hint.ready", onbEntryHint)))
@@ -316,6 +325,200 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 		)
 	}
 	return children
+}
+
+func onbPluginRows(r *Registry, h *PanelHost) []*ui.Node {
+	candidates := onbPluginCandidates(r)
+	if len(candidates) == 0 {
+		return []*ui.Node{onbCaption(h, onbText(h, "plugins.empty", "No installed bar plugins. Install plugins later in Settings."))}
+	}
+	view, err := onbPluginSelectionConfig(h.draft, candidates, h.onbPluginSelections)
+	if err != nil {
+		view = h.draft
+	}
+	m := h.metrics()
+	innerWidth := max(onbContentWidth(h)-2*m.CardPadding, 0)
+	var rows []*ui.Node
+	for i, candidate := range candidates {
+		if i > 0 {
+			rows = append(rows, &ui.Node{Kind: ui.KindSeparator, Width: innerWidth})
+		}
+		manifest := candidate.Manifest
+		name := manifest.Name
+		if name == "" {
+			name = manifest.ID
+		}
+		widget := manifest.Widgets[0]
+		widgetLabel := widget.Label
+		if widgetLabel == "" {
+			widgetLabel = widget.ID
+		}
+		enabled := slices.Contains(view.Plugins.Enabled, manifest.ID)
+		placed := onbConfigHasPluginPlacement(view, manifest.ID)
+		value := 0.0
+		if enabled && placed {
+			value = 1
+		}
+		state := onbText(h, "plugins.disabled", "Disabled")
+		if enabled {
+			state = onbText(h, "plugins.enabled", "Enabled")
+		}
+		placement := onbText(h, "plugins.not_on_bar", "Not on bar")
+		if placed {
+			placement = onbText(h, "plugins.on_bar", "On bar")
+		}
+		toggle := &ui.Node{
+			Kind: ui.KindToggle, Action: "onb-plugin:" + manifest.ID, Value: value,
+			Name: fmt.Sprintf(onbText(h, "plugins.toggle", "Place %s on the bar"), name),
+			Role: "switch", Focusable: true, Height: m.StandardControl,
+		}
+		toggleWidth, _, err := ui.Measure(toggle, h.measureText())
+		if err != nil {
+			toggleWidth = m.StandardControl
+		}
+		labelWidth := max(innerWidth-toggleWidth-theme.MarginL, 0)
+		label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelWidth, Children: []*ui.Node{
+			h.wrappedText(name, theme.RoleLabel, ui.ToneNormal, labelWidth, 0),
+			h.wrappedText(fmt.Sprintf(onbText(h, "plugins.widget", "Bar widget: %s"), widgetLabel), theme.RoleCaption, ui.ToneSubtle, labelWidth, 0),
+			h.wrappedText(state+" · "+placement, theme.RoleCaption, ui.ToneSubtle, labelWidth, 0),
+		}}
+		rows = append(rows, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: innerWidth, Gap: theme.MarginL, Children: []*ui.Node{label, toggle}})
+	}
+	return []*ui.Node{{
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
+		Shape: ui.ShapeCard, Width: onbContentWidth(h), Children: []*ui.Node{{
+			Kind: ui.KindColumn, Gap: theme.MarginM, Children: rows,
+		}},
+	}}
+}
+
+func onbPluginCandidates(r *Registry) []plugin.Candidate {
+	if r == nil || r.plugins == nil {
+		return nil
+	}
+	var out []plugin.Candidate
+	for _, candidate := range r.plugins.discovered().Plugins {
+		if candidate.Startable() && len(candidate.Manifest.Widgets) > 0 {
+			out = append(out, candidate)
+		}
+	}
+	return out
+}
+
+func onbPluginSelectionConfig(cfg config.Config, candidates []plugin.Candidate, selections map[string]bool) (config.Config, error) {
+	out := cfg.Clone()
+	for _, candidate := range candidates {
+		selected, changed := selections[candidate.Manifest.ID]
+		if !changed {
+			continue
+		}
+		next, err := onbSetPluginSelected(out, candidate.Manifest, selected)
+		if err != nil {
+			return config.Config{}, err
+		}
+		out = next
+	}
+	return out, nil
+}
+
+func cloneOnboardingPluginSelections(selections map[string]bool) map[string]bool {
+	if len(selections) == 0 {
+		return nil
+	}
+	cloned := make(map[string]bool, len(selections))
+	for id, selected := range selections {
+		cloned[id] = selected
+	}
+	return cloned
+}
+
+func onbConfigHasPluginPlacement(cfg config.Config, pluginID string) bool {
+	if onbBarHasPluginPlacement(cfg.Bar, pluginID) {
+		return true
+	}
+	for _, output := range cfg.Outputs {
+		if onbBarHasPluginPlacement(output.Bar, pluginID) {
+			return true
+		}
+	}
+	return false
+}
+
+func onbBarHasPluginPlacement(bar config.Bar, pluginID string) bool {
+	var has func([]config.Item) bool
+	has = func(items []config.Item) bool {
+		for _, item := range items {
+			if item.ID == "plugin" && item.Plugin == pluginID || has(item.Items) {
+				return true
+			}
+		}
+		return false
+	}
+	return has(bar.Left) || has(bar.Center) || has(bar.Right)
+}
+
+func onbSetPluginSelected(cfg config.Config, manifest plugin.Manifest, selected bool) (config.Config, error) {
+	if manifest.ID == "" || len(manifest.Widgets) == 0 || manifest.Widgets[0].ID == "" {
+		return config.Config{}, fmt.Errorf("plugin has no usable bar widget")
+	}
+	out := cfg.Clone()
+	out.Plugins = out.Plugins.Clone()
+	if selected {
+		if !slices.Contains(out.Plugins.Enabled, manifest.ID) {
+			out.Plugins.Enabled = append(out.Plugins.Enabled, manifest.ID)
+		}
+		minter := config.NewMinter(out)
+		ensurePlacement := func(bar *config.Bar) error {
+			if onbBarHasPluginPlacement(*bar, manifest.ID) {
+				return nil
+			}
+			item := config.Item{ID: "plugin", Plugin: manifest.ID, Entry: manifest.Widgets[0].ID}
+			minter.Ensure(&item)
+			items, err := config.InsertItem(bar.Right, len(bar.Right), item)
+			if err != nil {
+				return err
+			}
+			bar.Right = items
+			return nil
+		}
+		if err := ensurePlacement(&out.Bar); err != nil {
+			return config.Config{}, err
+		}
+		for i := range out.Outputs {
+			if err := ensurePlacement(&out.Outputs[i].Bar); err != nil {
+				return config.Config{}, err
+			}
+		}
+		return out, nil
+	}
+	out.Plugins.Enabled = slices.DeleteFunc(out.Plugins.Enabled, func(id string) bool { return id == manifest.ID })
+	remove := func(bar *config.Bar) {
+		bar.Left = onbRemovePluginItems(bar.Left, manifest.ID)
+		bar.Center = onbRemovePluginItems(bar.Center, manifest.ID)
+		bar.Right = onbRemovePluginItems(bar.Right, manifest.ID)
+	}
+	remove(&out.Bar)
+	for i := range out.Outputs {
+		remove(&out.Outputs[i].Bar)
+	}
+	return out, nil
+}
+
+func onbRemovePluginItems(items []config.Item, pluginID string) []config.Item {
+	out := make([]config.Item, 0, len(items))
+	for _, item := range items {
+		if item.ID == "plugin" && item.Plugin == pluginID {
+			continue
+		}
+		if item.ID == "group" {
+			item.Items = onbRemovePluginItems(item.Items, pluginID)
+			if len(item.Items) == 0 {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func onboardingFontOption(h *PanelHost) []*ui.Node {
@@ -381,12 +584,37 @@ func onbSummary(r *Registry, h *PanelHost) []*ui.Node {
 		fmt.Sprintf(onbText(h, "summary.theme", "Theme: %s, %s"), onbGet(h, "appearance.mode"), onbGet(h, "appearance.source")),
 		fmt.Sprintf(onbText(h, "summary.weather", "Weather location: %s"), weather),
 		fmt.Sprintf(onbText(h, "summary.idle", "Idle: %s"), mode),
+		onbPluginSummary(r, h),
 	}
 	out := make([]*ui.Node, 0, len(lines))
 	for _, l := range lines {
 		out = append(out, h.wrappedText(l, theme.RoleCaption, ui.ToneNormal, onbContentWidth(h), 0))
 	}
 	return out
+}
+
+func onbPluginSummary(r *Registry, h *PanelHost) string {
+	candidates := onbPluginCandidates(r)
+	view, err := onbPluginSelectionConfig(h.draft, candidates, h.onbPluginSelections)
+	if err != nil {
+		view = h.draft
+	}
+	var names []string
+	for _, candidate := range candidates {
+		if !slices.Contains(view.Plugins.Enabled, candidate.Manifest.ID) || !onbConfigHasPluginPlacement(view, candidate.Manifest.ID) {
+			continue
+		}
+		name := candidate.Manifest.Name
+		if name == "" {
+			name = candidate.Manifest.ID
+		}
+		names = append(names, name)
+	}
+	selected := onbText(h, "summary.plugins_none", "none")
+	if len(names) > 0 {
+		selected = strings.Join(names, ", ")
+	}
+	return fmt.Sprintf(onbText(h, "summary.plugins", "Startup plugins: %s"), selected)
 }
 
 func onbGet(h *PanelHost, path string) string {
@@ -572,6 +800,29 @@ func onboardingScrollOffset(root *ui.Node) int {
 // activateOnboarding claims the wizard's own actions and returns false for
 // everything else, so pick:, set: and browse: keep the shared handlers.
 func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
+	if id, ok := strings.CutPrefix(n.Action, "onb-plugin:"); ok {
+		candidates := onbPluginCandidates(r)
+		for _, candidate := range candidates {
+			if candidate.Manifest.ID != id {
+				continue
+			}
+			selections := cloneOnboardingPluginSelections(h.onbPluginSelections)
+			if selections == nil {
+				selections = make(map[string]bool)
+			}
+			selections[id] = n.Value == 0
+			_, err := onbPluginSelectionConfig(h.draft, candidates, selections)
+			if err != nil {
+				h.errLabel = err.Error()
+			} else {
+				h.onbPluginSelections = selections
+				h.errLabel = ""
+			}
+			r.rebuildPanel(h)
+			return true
+		}
+		return false
+	}
 	switch n.Action {
 	case "onb-move":
 		h.onbMoveMode = !h.onbMoveMode
@@ -618,7 +869,13 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 			h.writeTimer.Stop()
 			h.writeTimer = nil
 		}
-		if err := r.writeConfig(h.draft); err != nil {
+		draft, err := onbPluginSelectionConfig(h.draft, onbPluginCandidates(r), h.onbPluginSelections)
+		if err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return true
+		}
+		if err := r.writeConfig(draft); err != nil {
 			h.errLabel = err.Error()
 			r.rebuildPanel(h)
 			return true
