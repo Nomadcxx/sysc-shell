@@ -351,6 +351,49 @@ func TestPluginHostOpensOneBarViewPerOutput(t *testing.T) {
 	}
 }
 
+func TestConfigReloadStartsNewlyEnabledPlugin(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, "org.sysc.timer"), self, "ok", testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = nil
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	if pid := reg.plugins.pid("org.sysc.timer"); pid != 0 {
+		t.Fatalf("disabled plugin started before config selection, pid = %d", pid)
+	}
+
+	candidate := cfg.Clone()
+	candidate.Plugins.Enabled = []string{"org.sysc.timer"}
+	candidate.Bar.Right = []config.Item{{
+		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "org.sysc.timer-1",
+	}}
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 1, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	if pid := reg.plugins.pid("org.sysc.timer"); pid == 0 {
+		t.Fatal("config reload did not start newly enabled plugin")
+	}
+	waitPluginText(t, reg.bars[1], "hello")
+}
+
 func TestPluginHostClosesViewsOnHotUnplug(t *testing.T) {
 	reg := bindTestPlugin(t, "ok")
 	newHosts(t, reg, map[uint32]string{1: "DP-1"})
