@@ -196,17 +196,22 @@ func settingsBodyWidth(h *PanelHost) int {
 // settingsBodyKey and settingsRailKey name the pane's two scrolls, so a lookup
 // for the content does not land on the section list or the other way round.
 const (
-	settingsBodyKey = "settings-body"
-	settingsRailKey = "settings-rail"
+	settingsBodyKey       = "settings-body"
+	settingsSearchBodyKey = "settings-search-body"
+	settingsRailKey       = "settings-rail"
 )
 
 // settingsBody is the one scrolling column the pane's content sits in. It
 // carries the retained offset, so an edit that rebuilds the tree leaves the
 // user where they were rather than at the top.
 func settingsBody(h *PanelHost, gap int, children ...*ui.Node) *ui.Node {
+	key, offset := settingsBodyKey, h.settingsScroll
+	if strings.TrimSpace(h.query) != "" {
+		key, offset = settingsSearchBodyKey, h.settingsSearchScroll
+	}
 	return &ui.Node{
-		Kind: ui.KindScroll, Key: settingsBodyKey, Width: settingsBodyWidth(h), Gap: gap,
-		ScrollOffset: h.settingsScroll, Children: children,
+		Kind: ui.KindScroll, Key: key, Width: settingsBodyWidth(h), Gap: gap,
+		ScrollOffset: offset, Children: children,
 	}
 }
 
@@ -214,16 +219,26 @@ func settingsBody(h *PanelHost, gap int, children ...*ui.Node) *ui.Node {
 // rebuild can restore it. layoutScroll clamps, so an offset left over from a
 // longer list cannot strand the view past the end of a shorter one.
 func settingsScrollOffset(root *ui.Node) int {
+	if out, ok := settingsScrollOffsetFor(root, settingsBodyKey); ok {
+		return out
+	}
+	out, _ := settingsScrollOffsetFor(root, settingsSearchBodyKey)
+	return out
+}
+
+func settingsScrollOffsetFor(root *ui.Node, key string) (int, bool) {
 	var out int
+	found := false
 	var walk func(*ui.Node)
 	walk = func(n *ui.Node) {
-		if n == nil || out != 0 {
+		if n == nil || found {
 			return
 		}
 		// The rail is a scroll too, and it never scrolls; the body's offset is
 		// the one worth restoring.
-		if n.Kind == ui.KindScroll && n.Key == settingsBodyKey {
+		if n.Kind == ui.KindScroll && n.Key == key {
 			out = n.ScrollOffset
+			found = true
 			return
 		}
 		for _, c := range n.Children {
@@ -231,7 +246,7 @@ func settingsScrollOffset(root *ui.Node) int {
 		}
 	}
 	walk(root)
-	return out
+	return out, found
 }
 
 // settingsRail is the section list: search first, then each cluster's
@@ -1091,7 +1106,9 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
 	}
-	return settingsBody(h, theme.MarginXL, groups...)
+	column := settingsBody(h, theme.MarginXL, groups...)
+	settingsDimBarRows(h, column)
+	return column
 }
 
 // settingsSectionColumn lays the whole section out rather than virtualising

@@ -205,6 +205,9 @@ type PanelHost struct {
 	// tree starts at the top, so without this a drag or a remove threw the
 	// user back to the first row and lost their place.
 	settingsScroll int
+	// Search results have their own body and keep a separate scroll offset, so
+	// returning to the page restores the position the user left there.
+	settingsSearchScroll int
 	// settingsPage is the open section's page (settings redesign D1). Empty
 	// means the section's first.
 	settingsPage string
@@ -218,6 +221,9 @@ type PanelHost struct {
 	// settingsScrollTop makes the next rebuild open the body at the top: a
 	// page or section switch. rebuildPanel otherwise carries the old offset.
 	settingsScrollTop bool
+	// settingsSearchScrollTop resets results when the query changes without
+	// moving the retained page offset.
+	settingsSearchScrollTop bool
 	// settingsTreeScale is the scale the settings tree was built at, so a
 	// configure at another scale rebuilds it (its measured widths and the bar
 	// pictures depend on it).
@@ -3531,6 +3537,7 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 	if n.Name == "Search" {
 		if h.id == PanelSettings {
 			h.invalidateSettingsBrowse()
+			h.settingsSearchScrollTop = strings.TrimSpace(f.Text) != ""
 		}
 		h.query = f.Text
 		if h.id == PanelPluginStore {
@@ -4194,9 +4201,17 @@ func (r *Registry) queueFilesPanelImages(h *PanelHost) {
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
 	if h.id == PanelSettings {
-		h.settingsScroll = settingsScrollOffset(h.root)
+		if offset, ok := settingsScrollOffsetFor(h.root, settingsBodyKey); ok {
+			h.settingsScroll = offset
+		}
+		if offset, ok := settingsScrollOffsetFor(h.root, settingsSearchBodyKey); ok {
+			h.settingsSearchScroll = offset
+		}
 		if h.settingsScrollTop {
 			h.settingsScroll, h.settingsScrollTop = 0, false
+		}
+		if h.settingsSearchScrollTop {
+			h.settingsSearchScroll, h.settingsSearchScrollTop = 0, false
 		}
 	}
 	if h.id == PanelOnboarding {

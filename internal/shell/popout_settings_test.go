@@ -464,6 +464,74 @@ func TestSettingsSearchSwapsSidebarForMatches(t *testing.T) {
 	}
 }
 
+func TestSettingsSearchDimsBarControlsThatDoNotApply(t *testing.T) {
+	h := newSettingsHost()
+	h.draft.Bar.Enabled = true
+	h.draft.Bar.Style = "solid"
+	h.set = settings.DefaultFor(h.draft)
+	h.query = "frost"
+
+	root := settingsSearchColumn(h, h.set.Search("frost"))
+	control := findSettingsControl(root, "bar.frost-opacity")
+	if control == nil {
+		t.Fatal("search did not render the frost opacity control")
+	}
+	if control.State&ui.StateDisabled == 0 {
+		t.Fatalf("inapplicable frost control state = %v, want disabled", control.State)
+	}
+	for _, node := range walk(root) {
+		if node.Kind == ui.KindText && node.Text == "Applies to the Frosted style." {
+			return
+		}
+	}
+	t.Fatal("search result did not explain why frost opacity is unavailable")
+}
+
+func TestSettingsSearchPreservesPageScroll(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	if h == nil {
+		t.Fatal("Settings panel did not create a host")
+	}
+	setBodyOffset := func(offset int) {
+		t.Helper()
+		for _, node := range walk(h.root) {
+			if node.Kind == ui.KindScroll && node.Key != settingsRailKey {
+				node.ScrollOffset = offset
+				return
+			}
+		}
+		t.Fatal("Settings tree has no body scroll")
+	}
+
+	setBodyOffset(120)
+	h.settingsSearchScroll = 40
+	h.search = ui.NewField("frost")
+	h.fieldChanged(reg, &ui.Node{Name: "Search"}, h.search)
+	if got := settingsScrollOffset(h.root); got != 0 {
+		t.Fatalf("new search starts at offset %d, want 0", got)
+	}
+
+	setBodyOffset(32)
+	h.search = ui.NewField("frost opacity")
+	h.fieldChanged(reg, &ui.Node{Name: "Search"}, h.search)
+	if got := settingsScrollOffset(h.root); got != 0 {
+		t.Fatalf("changed search starts at offset %d, want 0", got)
+	}
+
+	setBodyOffset(32)
+	h.search = ui.NewField("")
+	h.fieldChanged(reg, &ui.Node{Name: "Search"}, h.search)
+	if got := settingsScrollOffset(h.root); got != 120 {
+		t.Fatalf("page scroll after clearing search = %d, want 120", got)
+	}
+}
+
 func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
@@ -822,7 +890,7 @@ func TestSettingsExternalReloadPreservesViewState(t *testing.T) {
 	}
 	h.setFocus(edge)
 	for _, n := range walk(h.root) {
-		if n.Kind == ui.KindScroll && n.Key == settingsBodyKey {
+		if n.Kind == ui.KindScroll && n.Key == settingsSearchBodyKey {
 			n.ScrollOffset = 48
 			break
 		}
