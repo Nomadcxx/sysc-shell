@@ -1185,6 +1185,12 @@ func TestControlCentreSessionActionRunsWithoutRegistryLock(t *testing.T) {
 		r.mu.Unlock()
 		t.Fatal("control centre did not handle the session action")
 	}
+	select {
+	case ok := <-unlocked:
+		r.mu.Unlock()
+		t.Fatalf("session command ran before the handler released Registry.mu (lock available: %v)", ok)
+	case <-time.After(10 * time.Millisecond):
+	}
 	r.mu.Unlock()
 	select {
 	case ok := <-unlocked:

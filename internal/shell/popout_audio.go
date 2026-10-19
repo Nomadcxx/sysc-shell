@@ -665,6 +665,11 @@ func (r *Registry) scheduleControl(h *PanelHost, run func() error) {
 // place but still invalidates the surface after its worker finishes.
 func (r *Registry) scheduleControlResult(h *PanelHost, run func() (bool, error)) {
 	go func() {
+		// The action handler may have scheduled this work while holding r.mu.
+		// Wait for that handler to finish before running an external command.
+		r.mu.Lock()
+		r.mu.Unlock()
+
 		apply, err := run()
 		r.mu.Lock()
 		if r.panelHosts[h.id] != h {

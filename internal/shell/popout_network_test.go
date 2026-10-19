@@ -103,22 +103,31 @@ func (b *shellNetworkBackend) Watch(wake chan<- struct{}, _ <-chan struct{}) err
 
 // Panel configure, render and handle all run with Registry.mu held. A write
 // that took a bus round trip on that path would stall every bar on the
-// machine, so every network write goes through scheduleControl, which runs it
-// on its own goroutine before re-taking the lock to publish.
-func TestNetworkWriteNeverRunsUnderRegistryLock(t *testing.T) {
+// machine, so every network write goes through scheduleControl and runs after
+// the handler releases the lock.
+func TestNetworkWriteRunsAfterRegistryUnlock(t *testing.T) {
 	r := &Registry{}
 	h := &PanelHost{id: PanelNetwork, networkTab: "wifi"}
-	done := make(chan struct{})
+	unlocked := make(chan bool, 1)
 
 	r.mu.Lock() // held exactly as the panel paths hold it
-	r.scheduleControl(h, func() error { close(done); return nil })
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		r.mu.Unlock()
-		t.Fatal("the control never ran while the lock was held; it is not off-owner")
-	}
+	r.scheduleControl(h, func() error {
+		ok := r.mu.TryLock()
+		if ok {
+			r.mu.Unlock()
+		}
+		unlocked <- ok
+		return nil
+	})
 	r.mu.Unlock()
+	select {
+	case ok := <-unlocked:
+		if !ok {
+			t.Fatal("network write ran while Registry.mu was held")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the network write did not run after the handler released Registry.mu")
+	}
 }
 
 // A bare PanelHost carries the zero Metrics, so a tree test must build against
