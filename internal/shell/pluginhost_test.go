@@ -561,6 +561,79 @@ func TestPluginHostCloseWaitsForStartingPluginToStop(t *testing.T) {
 	}
 }
 
+func TestPluginHostCloseBoundsSyncWaitingForRegistryLock(t *testing.T) {
+	root := t.TempDir()
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = nil
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	var host *pluginHost
+	var registryLocked bool
+	t.Cleanup(func() {
+		if registryLocked {
+			reg.mu.Unlock()
+		}
+		reg.mu.Lock()
+		if reg.plugins == host {
+			reg.plugins = nil
+		}
+		reg.mu.Unlock()
+		reg.Close()
+	})
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	host = reg.plugins
+
+	reg.mu.Lock()
+	registryLocked = true
+	host.syncEnabledAsync()
+	host.syncQueueMu.Lock()
+	running := host.syncQueueRunning
+	host.syncQueueMu.Unlock()
+	if !running {
+		t.Fatal("plugin sync was not queued")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		host.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(closeLockGrace + time.Second):
+		reg.mu.Unlock()
+		registryLocked = false
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("plugin host close remained stuck after Registry.mu was released")
+		}
+		t.Fatal("plugin host close waited for a sync blocked on Registry.mu")
+	}
+
+	reg.plugins = nil
+	reg.mu.Unlock()
+	registryLocked = false
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		host.syncQueueMu.Lock()
+		running = host.syncQueueRunning
+		host.syncQueueMu.Unlock()
+		if !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("blocked sync did not exit after Registry.mu was released")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestPluginSyncKeepsPluginEnabledDuringConcurrentStart(t *testing.T) {
 	self, err := os.Executable()
 	if err != nil {
@@ -646,6 +719,90 @@ func TestPluginSyncKeepsPluginEnabledDuringConcurrentStart(t *testing.T) {
 	}
 	if pid := reg.plugins.pid("org.sysc.timer"); pid != 0 {
 		t.Fatalf("plugin disabled during startup remained active, pid = %d", pid)
+	}
+}
+
+func TestPluginSyncDoesNotStopPluginReenabledAfterRemovalSelection(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	secondID := "org.sysc.second"
+	secondManifest := strings.Replace(testTimerManifest, "org.sysc.timer", secondID, 1)
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, secondID), self, "ok", secondManifest); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = []string{secondID}
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldPID := reg.plugins.pid(secondID)
+	if oldPID == 0 {
+		t.Fatal("initial plugin did not start")
+	}
+
+	selected := make(chan struct{})
+	continueRemoval := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRemoval := func() { releaseOnce.Do(func() { close(continueRemoval) }) }
+	t.Cleanup(releaseRemoval)
+	reg.plugins.syncDropHook = func(id string) {
+		if id == secondID {
+			close(selected)
+			<-continueRemoval
+		}
+	}
+	reg.mu.Lock()
+	disabled := reg.cfg.Clone()
+	disabled.Plugins.Enabled = nil
+	reg.cfg = disabled
+	reg.mu.Unlock()
+	reg.plugins.syncEnabledAsync()
+	select {
+	case <-selected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync never selected the disabled plugin for removal")
+	}
+
+	reg.mu.Lock()
+	reenabled := reg.cfg.Clone()
+	reenabled.Plugins.Enabled = []string{secondID}
+	reg.cfg = reenabled
+	err = reg.plugins.syncEnabledLocked()
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatalf("re-enable plugin while removal was pending: %v", err)
+	}
+	replacementPID := reg.plugins.pid(secondID)
+	if replacementPID == 0 || replacementPID == oldPID {
+		t.Fatalf("re-enable did not start a replacement runtime: old pid = %d, current pid = %d", oldPID, replacementPID)
+	}
+
+	releaseRemoval()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		reg.plugins.syncQueueMu.Lock()
+		running := reg.plugins.syncQueueRunning
+		reg.plugins.syncQueueMu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("old sync did not finish after removal resumed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pid := reg.plugins.pid(secondID); pid != replacementPID {
+		t.Fatalf("old sync stopped or replaced the newer runtime: want pid %d, got %d", replacementPID, pid)
 	}
 }
 
