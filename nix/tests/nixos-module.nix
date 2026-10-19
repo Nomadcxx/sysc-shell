@@ -93,7 +93,7 @@ in
   enabledKeepsTheCommittedUnit = says unitText "graphical-session.target"
     && says unitText "Restart=on-failure"
     && says unitText "KillMode=mixed"
-    && says unitText "TimeoutStopSec=15"
+    && says unitText "TimeoutStopSec=5"
     && says unitText "Slice=session.slice";
 
   # The installer path must not survive the substitution, or the unit would run

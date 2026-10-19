@@ -21,11 +21,11 @@ ExecStart=%h/.local/bin/sysc-shell
 Restart=on-failure
 RestartSec=2
 
-# Give registry and plugin-host cleanup time to drain before systemd escalates.
-# The recorder needs up to 2s to stop gpu-screen-recorder after HostShutdown.
+# The shell releases its layer surfaces on SIGTERM; this only bounds a hang.
+# Let the shell stop its owned wallpaper processes before systemd escalates.
 # gSlapper's SIGTERM cleanup is unsafe while its render thread is active.
 KillMode=mixed
-TimeoutStopSec=15
+TimeoutStopSec=5
 Slice=session.slice
 
 [Install]

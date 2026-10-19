@@ -149,7 +149,7 @@ func HelperServe(args []string) int {
 		if _, ok := msg.(*v1.HostShutdown); !ok {
 			return 1
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(1500 * time.Millisecond)
 		return 0
 	case "stderr-tail-on-shutdown":
 		msg, err := in.Decode()

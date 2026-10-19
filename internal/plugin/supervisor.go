@@ -28,7 +28,7 @@ const shutdownSendTimeout = 100 * time.Millisecond
 
 // defaultShutdownGrace leaves time for plugins to flush state and stop owned
 // child processes before the host kills an unresponsive process.
-const defaultShutdownGrace = 4 * time.Second
+const defaultShutdownGrace = 3 * time.Second
 
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
