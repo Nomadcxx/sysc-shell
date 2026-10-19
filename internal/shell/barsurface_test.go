@@ -73,20 +73,23 @@ func TestFrostFloorIsForty(t *testing.T) {
 	}
 }
 
-// TestPillLiftsTowardTheForeground is D3's lift: a translucent pill moves
-// (1 - alpha) x 0.3 of the way to the foreground so it stays distinct from a
-// translucent ground; an opaque one does not move.
-func TestPillLiftsTowardTheForeground(t *testing.T) {
+// TestPillLiftScalesByWallpaperLuminance keeps dark wallpapers at the maximum
+// lift and lets bright wallpapers use less tint.
+func TestPillLiftScalesByWallpaperLuminance(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	base := ThemeFrom(cfg, cfg.Bar)
 	for _, tc := range []struct {
-		pill int
-		lift float64
-	}{{70, 0.3 * (1 - float64(uint8((70*255+50)/100))/255)}, {100, 0}} {
+		pill      int
+		luminance float64
+		lift      float64
+	}{{70, 0, 0.3 * (1 - float64(uint8((70*255+50)/100))/255)},
+		{70, 0.5, 0.15 * (1 - float64(uint8((70*255+50)/100))/255)},
+		{70, 1, 0}, {100, 0, 0}} {
 		bar := cfg.Bar
 		bar.PillOpacity = tc.pill
 		th := ThemeFrom(cfg, bar).WithCompositor(true)
+		th.WallpaperLuminance = tc.luminance
 		got := barStyle(th).Capsule
 		want := render.LerpColor(base.Capsule, base.Foreground, tc.lift)
 		want.A = th.PillAlpha

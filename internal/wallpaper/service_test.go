@@ -3,6 +3,8 @@ package wallpaper
 import (
 	"context"
 	"errors"
+	"image/color"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -430,6 +432,66 @@ func TestServiceApplyPublishes(t *testing.T) {
 	}
 	if snap.Caps.GSlapper != true {
 		t.Error("the snapshot must carry the engine capabilities for the banner")
+	}
+}
+
+func TestServicePublishesImageLuminancePerOutput(t *testing.T) {
+	dir := t.TempDir()
+	whitePath := filepath.Join(dir, "white.png")
+	blackPath := filepath.Join(dir, "black.png")
+	writeLuminancePNG(t, whitePath, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff})
+	writeLuminancePNG(t, blackPath, color.NRGBA{A: 0xff})
+	engine := newFakeEngine()
+	engine.preview["/w/clip.mp4"] = whitePath
+
+	svc := NewService(ServiceConfig{
+		Engine:      engine,
+		Connectors:  []string{"DP-1", "DP-3", "DP-5"},
+		CacheDir:    filepath.Join(dir, "cache"),
+		PersistPath: filepath.Join(dir, "assignments.json"),
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: whitePath, Kind: KindImage})
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-3", Path: blackPath, Kind: KindImage})
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-5", Path: "/w/clip.mp4", Kind: KindVideo})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		_, white := s.ImageLuminance["DP-1"]
+		_, black := s.ImageLuminance["DP-3"]
+		_, video := s.ImageLuminance["DP-5"]
+		return white && black && video
+	})
+	if got := snap.ImageLuminance["DP-1"]; math.Abs(got-1) > 1e-6 {
+		t.Errorf("DP-1 luminance = %v, want 1", got)
+	}
+	if got := snap.ImageLuminance["DP-3"]; got != 0 {
+		t.Errorf("DP-3 luminance = %v, want 0", got)
+	}
+	if got := snap.ImageLuminance["DP-5"]; math.Abs(got-1) > 1e-6 {
+		t.Errorf("DP-5 video preview luminance = %v, want 1", got)
+	}
+	snap.ImageLuminance["DP-1"] = 0
+	if got := svc.Snapshot().ImageLuminance["DP-1"]; got != 1 {
+		t.Errorf("mutating a published snapshot changed service state: DP-1 luminance = %v", got)
+	}
+}
+
+func TestServiceOmitsLuminanceForAChangedStillPath(t *testing.T) {
+	svc := &Service{
+		imageLuminance: map[string]assignedImageLuminance{
+			"DP-1": {path: "/w/old.png", value: 0.8},
+		},
+	}
+	svc.store.SetConnectors([]string{"DP-1"})
+	job := svc.store.Apply("DP-1", "/w/new.png", KindImage)[0]
+	if !svc.store.Commit(job, "", EngineGSlapper) {
+		t.Fatal("new image assignment did not commit")
+	}
+	svc.recordImageLuminance(imageLuminanceResult{connector: "DP-1", path: "/w/old.png", value: 0.8})
+
+	svc.publish()
+	if got := svc.Snapshot().ImageLuminance; len(got) != 0 {
+		t.Fatalf("luminance for a previous still was published: %v", got)
 	}
 }
 
