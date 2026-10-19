@@ -2486,6 +2486,7 @@ func (r *Registry) Close() {
 	var soundPlayer cuePlayer
 	var depthEffects depthClockEffects
 	var privacySvc *services.Privacy
+	var plugins *pluginHost
 	if locked {
 		if r.polkitHost != nil && r.polkitHost.open_ {
 			r.polkitHost.finishLocked(true)
@@ -2538,6 +2539,8 @@ func (r *Registry) Close() {
 		r.sound = nil
 		privacySvc = r.privacySvc
 		r.privacySvc = nil
+		plugins = r.plugins
+		r.plugins = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -2549,6 +2552,13 @@ func (r *Registry) Close() {
 		r.clearCaffeineLocked()
 		r.pushIdleInputsLocked()
 		r.mu.Unlock()
+	}
+	if !locked {
+		plugins = r.plugins
+		r.plugins = nil
+	}
+	if plugins != nil {
+		plugins.Close()
 	}
 	if polkitCancel != nil {
 		polkitCancel()
@@ -2633,10 +2643,6 @@ func (r *Registry) Close() {
 	}
 	if bluetooth != nil {
 		_ = bluetooth.Close()
-	}
-	if r.plugins != nil {
-		r.plugins.Close()
-		r.plugins = nil
 	}
 }
 

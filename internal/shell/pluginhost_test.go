@@ -25,6 +25,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/walls"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -2746,6 +2747,37 @@ func TestRegistryCloseLetsPluginsFinish(t *testing.T) {
 	reg.Close()
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("plugin never ran its shutdown: %v", err)
+	}
+}
+
+type closeCallbackWallsService struct {
+	*fakeWallsService
+	closeFunc func() error
+}
+
+func (s closeCallbackWallsService) Close() error { return s.closeFunc() }
+
+func TestRegistryCloseStopsPluginsBeforeWallsService(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "flushed")
+	reg := bindTestPlugin(t, "shutdown-marker:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	pluginsStopped := false
+	reg.mu.Lock()
+	reg.wallsService = closeCallbackWallsService{
+		fakeWallsService: newFakeWallsService(walls.Snapshot{}),
+		closeFunc: func() error {
+			_, err := os.Stat(marker)
+			pluginsStopped = err == nil
+			return nil
+		},
+	}
+	reg.mu.Unlock()
+
+	reg.Close()
+	if !pluginsStopped {
+		t.Fatal("walls cleanup started before plugins received HostShutdown")
 	}
 }
 
