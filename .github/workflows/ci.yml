@@ -36,6 +36,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Recorder integration tests build the plugin from this pinned checkout.
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-plugins
+          ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
+          path: testdeps/sysc-plugins
       # Panel layout tests measure text with the configured family
       # (config.Default() names Inter). Installing it keeps runner metrics
       # close to the maintainer's machine instead of the fallback face.
@@ -53,6 +59,8 @@ jobs:
       - name: vet
         run: go vet ./...
       - name: test
+        env:
+          SYSC_PLUGINS_DIR: ${{ github.workspace }}/testdeps/sysc-plugins
         run: go test -race -count=1 ./...
       - name: build
         run: go build ./...

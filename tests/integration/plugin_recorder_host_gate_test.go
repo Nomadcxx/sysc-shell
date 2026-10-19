@@ -1,16 +1,22 @@
 package integration
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 // The screen-recorder plugin and its protocol gate live in the sysc-plugins
@@ -118,6 +124,115 @@ func TestPluginRecorderGateMissingDependencyAndHostDisable(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("disable left pid=%d views=%d", reg2.PluginPID("org.sysc.screen-recorder"), reg2.PluginBarViews("DP-1"))
+}
+
+func TestPluginRecorderShutdownReapsOwnedBackend(t *testing.T) {
+	binDir := t.TempDir()
+	installFakeGSR(t, binDir)
+
+	home := t.TempDir()
+	pidPath := filepath.Join(home, "gsr.pid")
+	pluginDir := filepath.Join(t.TempDir(), "org.sysc.screen-recorder")
+	if err := installBuiltRecorder(t, pluginDir); err != nil {
+		t.Fatal(err)
+	}
+	// The plugin uses HOME for its default output directory; keep the fake
+	// recording entirely inside this test's temporary tree.
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SYSC_FAKE_RECORDER", "1")
+	t.Setenv("SYSC_FAKE_BEHAVIOR", "ignore-int")
+	t.Setenv("SYSC_FAKE_PID", pidPath)
+
+	manifest, err := plugin.LoadManifest(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor := &plugin.Supervisor{
+		Manifest:  manifest,
+		Supported: []plugin.Capability{plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState},
+		Limits:    v1.DefaultLimits,
+	}
+	session, err := supervisor.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readDone := make(chan struct{})
+	stateSets := make(chan struct{}, 4)
+	go func() {
+		defer close(readDone)
+		for {
+			msg, err := session.Recv()
+			if err != nil {
+				return
+			}
+			call, ok := msg.(*v1.HostCall)
+			if !ok {
+				continue
+			}
+			if call.Call == v1.CallStateSet {
+				select {
+				case stateSets <- struct{}{}:
+				default:
+				}
+				continue
+			}
+			result := json.RawMessage(`{}`)
+			if call.Call == v1.CallStateGet {
+				result = json.RawMessage(`{"found":false}`)
+			}
+			_ = session.Send(&v1.HostReply{ID: call.ID, OK: true, Result: result})
+		}
+	}()
+
+	backendPID := 0
+	t.Cleanup(func() {
+		_ = session.Close()
+		<-readDone
+		if backendPID > 0 {
+			_ = syscall.Kill(backendPID, syscall.SIGKILL)
+		}
+	})
+	if err := session.Send(&v1.InputEvent{ViewID: "bar", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(pidPath); err == nil {
+			backendPID, err = strconv.Atoi(string(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if backendPID == 0 {
+		t.Fatal("gpu-screen-recorder did not start")
+	}
+
+	select {
+	case <-stateSets:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recorder ownership state was not written")
+	}
+
+	closed := make(chan plugin.ExitReason, 1)
+	go func() { closed <- session.Close() }()
+	select {
+	case <-stateSets:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not flush pending recorder state")
+	}
+	reason := <-closed
+	<-readDone
+	if err := syscall.Kill(backendPID, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("gpu-screen-recorder pid %d still exists after host shutdown: %v", backendPID, err)
+	}
+	if reason.Kind != plugin.ExitOrderly {
+		t.Fatalf("plugin exit = %s, want orderly shutdown after recorder cleanup", reason)
+	}
 }
 
 var (
