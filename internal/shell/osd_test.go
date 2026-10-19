@@ -58,6 +58,21 @@ func TestOsdTimerResetsOnRepeat(t *testing.T) {
 	}
 }
 
+func TestDNDOSDUsesCurrentStateWhenApplied(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.notify.onDND = nil // Exercise a delayed publication without spawning its callback.
+	reg.setDND(true)
+	reg.OSD().Show(OSDView{Kind: osdDND, On: false})
+
+	reg.mu.Lock()
+	view := reg.osd.view
+	reg.mu.Unlock()
+	if view.Kind != osdDND || !view.On {
+		t.Fatalf("DND OSD = %+v, want the current enabled state", view)
+	}
+}
+
 func TestOsdShownOnEveryOutputWithBar(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
