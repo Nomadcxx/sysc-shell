@@ -1,6 +1,7 @@
 package wallpaper
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1165,6 +1166,73 @@ func TestServiceReportsTheOpenFolderProgress(t *testing.T) {
 	})
 	if snap.ThumbsTotal != 3 {
 		t.Fatalf("library total %d, want 3 files", snap.ThumbsTotal)
+	}
+}
+
+func TestServiceCloseWaitsForThumbnailWorker(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "clip.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(ServiceConfig{CacheDir: t.TempDir()})
+	t.Cleanup(svc.Close)
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+	exited := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWorker := func() { releaseOnce.Do(func() { close(release) }) }
+	svc.thumbs.extract = func(ctx context.Context, _, _ string) error {
+		defer close(exited)
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		<-release
+		return ctx.Err()
+	}
+	svc.thumbs.Enqueue([]Entry{{Name: filepath.Base(source), Path: source, Kind: KindVideo}}, "")
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("thumbnail worker did not start")
+	}
+	t.Cleanup(func() {
+		releaseWorker()
+		select {
+		case <-exited:
+		case <-time.After(2 * time.Second):
+			t.Error("thumbnail worker did not exit")
+		}
+	})
+
+	closed := make(chan struct{})
+	go func() {
+		svc.Close()
+		close(closed)
+	}()
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service close did not cancel thumbnail work")
+	}
+	select {
+	case <-svc.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service loop did not stop")
+	}
+	select {
+	case <-closed:
+		t.Fatal("service close returned while a thumbnail worker was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseWorker()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service close did not return after thumbnail work stopped")
 	}
 }
 

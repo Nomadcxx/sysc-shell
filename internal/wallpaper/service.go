@@ -302,7 +302,11 @@ func NewService(cfg ServiceConfig) *Service {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.stopWork = cancel
 		s.thumbs = NewThumbnailer(cfg.CacheDir)
-		go s.thumbs.Run(ctx)
+		s.work.Add(1)
+		go func() {
+			defer s.work.Done()
+			s.thumbs.Run(ctx)
+		}()
 		s.enqueueThumbs()
 	}
 	go s.run()
@@ -385,7 +389,7 @@ func (s *Service) RefreshTerminalCatalog() {
 	s.Enqueue(Command{Op: OpRefreshTerminalCatalog})
 }
 
-// Close stops the loop and waits for in-flight engine work to report back, so
+// Close stops the loop and waits for in-flight engine and thumbnail work, so
 // no goroutine outlives the service.
 func (s *Service) Close() {
 	s.closing.Do(func() {
