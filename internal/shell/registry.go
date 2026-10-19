@@ -2372,9 +2372,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
 					if pluginsEnabledChanged {
-						if err := plugins.syncEnabled(); err != nil {
-							log.Printf("shell: sync enabled plugins after config reload: %v", err)
-						}
+						plugins.syncEnabledAsync()
 					} else {
 						plugins.syncBars()
 					}

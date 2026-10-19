@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -71,11 +72,18 @@ type pluginHost struct {
 	stop context.CancelFunc
 	prep *plugin.Preparer
 
-	mu        sync.Mutex
-	surfaceMu sync.Mutex
-	slots     map[string]*pluginSlot
-	views     map[string]*hostedView
-	surfaces  map[string]*pluginSurfaceHost
+	mu               sync.Mutex
+	surfaceMu        sync.Mutex
+	syncQueueMu      sync.Mutex
+	syncQueueRunning bool
+	syncQueuePending bool
+	syncQueueClosed  bool
+	syncRuns         sync.WaitGroup
+	starts           sync.WaitGroup
+	closing          bool
+	slots            map[string]*pluginSlot
+	views            map[string]*hostedView
+	surfaces         map[string]*pluginSurfaceHost
 	// swapping holds plugin ids replace has stopped and not yet restarted.
 	// ensure refuses to start one of these: a concurrent syncEnabled must not
 	// resurrect the old copy while its directory is mid-swap.
@@ -149,6 +157,17 @@ func (h *pluginHost) Close() {
 	if h == nil {
 		return
 	}
+	h.syncQueueMu.Lock()
+	h.syncQueueClosed = true
+	h.syncQueuePending = false
+	h.syncQueueMu.Unlock()
+	h.mu.Lock()
+	h.closing = true
+	h.mu.Unlock()
+	// Do not cancel the host context while a launch is completing: the
+	// starting runtime must get a chance to stop cleanly before cancellation.
+	h.syncRuns.Wait()
+	h.starts.Wait()
 	h.settleTextFlush()
 	h.mu.Lock()
 	slots := h.slots
@@ -219,6 +238,44 @@ func (h *pluginHost) syncEnabled() error {
 	return h.finishSyncEnabled(enabled, cat, false)
 }
 
+// syncEnabledAsync keeps config reloads from waiting on plugin discovery and
+// process handshakes on the Wayland owner. A burst becomes one follow-up pass;
+// syncEnabled reads the committed config when each pass starts. syncBars
+// publishes the resulting redraws through the registry's owner channel.
+func (h *pluginHost) syncEnabledAsync() {
+	h.syncQueueMu.Lock()
+	if h.syncQueueClosed {
+		h.syncQueueMu.Unlock()
+		return
+	}
+	if h.syncQueueRunning {
+		h.syncQueuePending = true
+		h.syncQueueMu.Unlock()
+		return
+	}
+	h.syncQueueRunning = true
+	h.syncRuns.Add(1)
+	h.syncQueueMu.Unlock()
+	go h.runSyncEnabledQueue()
+}
+
+func (h *pluginHost) runSyncEnabledQueue() {
+	defer h.syncRuns.Done()
+	for {
+		if err := h.syncEnabled(); err != nil {
+			slog.Error("plugin sync after config reload failed", "err", err)
+		}
+		h.syncQueueMu.Lock()
+		if h.syncQueueClosed || !h.syncQueuePending {
+			h.syncQueueRunning = false
+			h.syncQueueMu.Unlock()
+			return
+		}
+		h.syncQueuePending = false
+		h.syncQueueMu.Unlock()
+	}
+}
+
 // syncEnabledLocked assumes Registry.mu is held (panel handle / enableLocked).
 func (h *pluginHost) syncEnabledLocked() error {
 	cat, err := plugin.Discover(h.opts.Roots...)
@@ -233,15 +290,20 @@ func (h *pluginHost) syncEnabledLocked() error {
 }
 
 func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, registryHeld bool) error {
-	want := map[string]bool{}
 	for _, id := range enabled {
-		want[id] = true
 		if err := h.ensure(id, cat, registryHeld); err != nil {
 			// A plugin that cannot start still occupies its bar slot as a
 			// placeholder; the rest of the bar must stay up.
 			slog.Error("plugin start failed", "plugin", id, "err", err)
 			continue
 		}
+	}
+	if !registryHeld {
+		h.r.mu.Lock()
+	}
+	want := make(map[string]bool, len(h.r.cfg.Plugins.Enabled))
+	for _, id := range h.r.cfg.Plugins.Enabled {
+		want[id] = true
 	}
 	h.mu.Lock()
 	var drop []string
@@ -251,6 +313,9 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 		}
 	}
 	h.mu.Unlock()
+	if !registryHeld {
+		h.r.mu.Unlock()
+	}
 	for _, id := range drop {
 		if registryHeld {
 			h.r.mu.Unlock()
@@ -270,11 +335,13 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 
 func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) error {
 	h.mu.Lock()
-	if h.slots[id] != nil || h.swapping[id] {
+	if h.closing || h.slots[id] != nil || h.swapping[id] {
 		h.mu.Unlock()
 		return nil
 	}
+	h.starts.Add(1)
 	h.mu.Unlock()
+	defer h.starts.Done()
 
 	c, ok := cat.Lookup(id)
 	if !ok {
@@ -303,18 +370,27 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	if h.ensureRaceHook != nil {
 		h.ensureRaceHook(id, rt)
 	}
+	if !registryHeld {
+		h.r.mu.Lock()
+	}
 	h.mu.Lock()
-	if h.swapping[id] || h.slots[id] != nil {
-		// A replace landed while this ensure was starting a runtime against
-		// the pre-swap catalog, or another ensure already won the insert.
+	if h.closing || h.swapping[id] || h.slots[id] != nil || !slices.Contains(h.r.cfg.Plugins.Enabled, id) {
+		// The plugin was disabled, replaced, or closed while this runtime was
+		// starting, or another ensure already won the insert.
 		// Stop what was just started rather than let it occupy the slot.
 		h.mu.Unlock()
+		if !registryHeld {
+			h.r.mu.Unlock()
+		}
 		cancel()
 		rt.Stop()
 		return nil
 	}
 	h.slots[id] = slot
 	h.mu.Unlock()
+	if !registryHeld {
+		h.r.mu.Unlock()
+	}
 	go h.pumpRuntime(slot)
 	if registryHeld {
 		h.pushSettingsLocked(id, rt)
