@@ -159,6 +159,7 @@ func TestPluginRecorderShutdownReapsOwnedBackend(t *testing.T) {
 	}
 
 	readDone := make(chan struct{})
+	stateSets := make(chan struct{}, 4)
 	go func() {
 		defer close(readDone)
 		for {
@@ -168,6 +169,13 @@ func TestPluginRecorderShutdownReapsOwnedBackend(t *testing.T) {
 			}
 			call, ok := msg.(*v1.HostCall)
 			if !ok {
+				continue
+			}
+			if call.Call == v1.CallStateSet {
+				select {
+				case stateSets <- struct{}{}:
+				default:
+				}
 				continue
 			}
 			result := json.RawMessage(`{}`)
@@ -204,7 +212,20 @@ func TestPluginRecorderShutdownReapsOwnedBackend(t *testing.T) {
 		t.Fatal("gpu-screen-recorder did not start")
 	}
 
-	reason := session.Close()
+	select {
+	case <-stateSets:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recorder ownership state was not written")
+	}
+
+	closed := make(chan plugin.ExitReason, 1)
+	go func() { closed <- session.Close() }()
+	select {
+	case <-stateSets:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not flush pending recorder state")
+	}
+	reason := <-closed
 	<-readDone
 	if err := syscall.Kill(backendPID, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("gpu-screen-recorder pid %d still exists after host shutdown: %v", backendPID, err)

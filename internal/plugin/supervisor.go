@@ -26,10 +26,10 @@ const MaxStderrBytes = 64 << 10
 // Send; closing the pipe below unblocks the write either way.
 const shutdownSendTimeout = 100 * time.Millisecond
 
-// defaultShutdownGrace leaves room for plugins to stop bounded child work.
-// ponytail: it covers Screen Recorder's 2s child-stop limit; raise it if a
-// plugin adds a longer cleanup bound.
-const defaultShutdownGrace = 3 * time.Second
+// defaultShutdownGrace covers the recorder's 1s state flush and 2s child-stop
+// bounds, with one second of scheduling margin.
+// ponytail: raise it if a plugin adds a longer cleanup bound.
+const defaultShutdownGrace = 4 * time.Second
 
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
