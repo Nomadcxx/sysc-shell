@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -35,6 +36,18 @@ type pluginSlot struct {
 	// pumpRuntime return.
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type detachedPluginView struct {
+	id      string
+	surface *pluginSurfaceHost
+	pending []v1.InputEvent
+}
+
+type detachedPlugin struct {
+	id    string
+	slot  *pluginSlot
+	views []detachedPluginView
 }
 
 type hostedView struct {
@@ -71,11 +84,18 @@ type pluginHost struct {
 	stop context.CancelFunc
 	prep *plugin.Preparer
 
-	mu        sync.Mutex
-	surfaceMu sync.Mutex
-	slots     map[string]*pluginSlot
-	views     map[string]*hostedView
-	surfaces  map[string]*pluginSurfaceHost
+	mu               sync.Mutex
+	surfaceMu        sync.Mutex
+	syncQueueMu      sync.Mutex
+	syncQueueRunning bool
+	syncQueuePending bool
+	syncQueueClosed  bool
+	syncRuns         sync.WaitGroup
+	starts           sync.WaitGroup
+	closing          bool
+	slots            map[string]*pluginSlot
+	views            map[string]*hostedView
+	surfaces         map[string]*pluginSurfaceHost
 	// swapping holds plugin ids replace has stopped and not yet restarted.
 	// ensure refuses to start one of these: a concurrent syncEnabled must not
 	// resurrect the old copy while its directory is mid-swap.
@@ -100,6 +120,9 @@ type pluginHost struct {
 	// before its slot is inserted. Production leaves it nil; tests use it to
 	// land a concurrent replace's swapping mark inside that window.
 	ensureRaceHook func(id string, rt *plugin.Runtime)
+	// syncDropHook pauses a selected plugin removal before teardown. Tests use
+	// it to interleave a newer config while the old slot is being removed.
+	syncDropHook func(id string)
 }
 
 // The bar and tooltip slots are public because a plugin author needs them to
@@ -149,6 +172,30 @@ func (h *pluginHost) Close() {
 	if h == nil {
 		return
 	}
+	h.syncQueueMu.Lock()
+	h.syncQueueClosed = true
+	h.syncQueuePending = false
+	h.syncQueueMu.Unlock()
+	h.mu.Lock()
+	h.closing = true
+	h.mu.Unlock()
+	// Do not cancel the host context while a launch is completing: the
+	// starting runtime must get a chance to stop cleanly before cancellation.
+	// A worker can be parked on Registry.mu if a handler panic left it locked,
+	// so bound this drain to the same grace period used by Registry.Close.
+	drained := make(chan struct{})
+	go func() {
+		h.syncRuns.Wait()
+		h.starts.Wait()
+		close(drained)
+	}()
+	drainTimer := time.NewTimer(closeLockGrace)
+	select {
+	case <-drained:
+	case <-drainTimer.C:
+		slog.Warn("plugin host shutdown drain timed out; canceling outstanding launches", "grace", closeLockGrace)
+	}
+	drainTimer.Stop()
 	h.settleTextFlush()
 	h.mu.Lock()
 	slots := h.slots
@@ -219,6 +266,44 @@ func (h *pluginHost) syncEnabled() error {
 	return h.finishSyncEnabled(enabled, cat, false)
 }
 
+// syncEnabledAsync keeps config reloads from waiting on plugin discovery and
+// process handshakes on the Wayland owner. A burst becomes one follow-up pass;
+// syncEnabled reads the committed config when each pass starts. syncBars
+// publishes the resulting redraws through the registry's owner channel.
+func (h *pluginHost) syncEnabledAsync() {
+	h.syncQueueMu.Lock()
+	if h.syncQueueClosed {
+		h.syncQueueMu.Unlock()
+		return
+	}
+	if h.syncQueueRunning {
+		h.syncQueuePending = true
+		h.syncQueueMu.Unlock()
+		return
+	}
+	h.syncQueueRunning = true
+	h.syncRuns.Add(1)
+	h.syncQueueMu.Unlock()
+	go h.runSyncEnabledQueue()
+}
+
+func (h *pluginHost) runSyncEnabledQueue() {
+	defer h.syncRuns.Done()
+	for {
+		if err := h.syncEnabled(); err != nil {
+			slog.Error("plugin sync after config reload failed", "err", err)
+		}
+		h.syncQueueMu.Lock()
+		if h.syncQueueClosed || !h.syncQueuePending {
+			h.syncQueueRunning = false
+			h.syncQueueMu.Unlock()
+			return
+		}
+		h.syncQueuePending = false
+		h.syncQueueMu.Unlock()
+	}
+}
+
 // syncEnabledLocked assumes Registry.mu is held (panel handle / enableLocked).
 func (h *pluginHost) syncEnabledLocked() error {
 	cat, err := plugin.Discover(h.opts.Roots...)
@@ -233,9 +318,7 @@ func (h *pluginHost) syncEnabledLocked() error {
 }
 
 func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, registryHeld bool) error {
-	want := map[string]bool{}
 	for _, id := range enabled {
-		want[id] = true
 		if err := h.ensure(id, cat, registryHeld); err != nil {
 			// A plugin that cannot start still occupies its bar slot as a
 			// placeholder; the rest of the bar must stay up.
@@ -244,21 +327,77 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 		}
 	}
 	h.mu.Lock()
-	var drop []string
+	closing := h.closing
+	h.mu.Unlock()
+	if closing {
+		return nil
+	}
+
+	if !registryHeld {
+		h.r.mu.Lock()
+	}
+	want := make(map[string]bool, len(h.r.cfg.Plugins.Enabled))
+	for _, id := range h.r.cfg.Plugins.Enabled {
+		want[id] = true
+	}
+	h.mu.Lock()
+	hasDrop := false
 	for id := range h.slots {
 		if !want[id] {
-			drop = append(drop, id)
+			hasDrop = true
+			break
 		}
 	}
 	h.mu.Unlock()
-	for _, id := range drop {
-		if registryHeld {
+	if !hasDrop {
+		if !registryHeld {
 			h.r.mu.Unlock()
 		}
-		h.stopPlugin(id)
+	} else {
+		// Surface opens take surfaceMu before consulting the runtime slot. Drop
+		// selection must use the same order, so an old open cannot attach a view
+		// after its slot has been detached. Registry.mu is released first when
+		// the caller arrived from a locked handler.
+		h.r.mu.Unlock()
+		h.settleTextFlush()
+		h.surfaceMu.Lock()
+		h.r.mu.Lock()
+
+		want = make(map[string]bool, len(h.r.cfg.Plugins.Enabled))
+		for _, id := range h.r.cfg.Plugins.Enabled {
+			want[id] = true
+		}
+		h.mu.Lock()
+		var detached []detachedPlugin
+		if !h.closing {
+			for id := range h.slots {
+				if !want[id] {
+					detached = append(detached, h.detachPluginLocked(id))
+				}
+			}
+		}
+		closing = h.closing
+		h.mu.Unlock()
+		h.r.mu.Unlock()
+		for _, old := range detached {
+			if h.syncDropHook != nil {
+				h.syncDropHook(old.id)
+			}
+			h.stopDetachedPlugin(old)
+		}
+		h.surfaceMu.Unlock()
 		if registryHeld {
 			h.r.mu.Lock()
 		}
+		if closing {
+			return nil
+		}
+	}
+	h.mu.Lock()
+	closing = h.closing
+	h.mu.Unlock()
+	if closing {
+		return nil
 	}
 	if registryHeld {
 		h.syncBarsLocked()
@@ -270,11 +409,13 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 
 func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) error {
 	h.mu.Lock()
-	if h.slots[id] != nil || h.swapping[id] {
+	if h.closing || h.slots[id] != nil || h.swapping[id] {
 		h.mu.Unlock()
 		return nil
 	}
+	h.starts.Add(1)
 	h.mu.Unlock()
+	defer h.starts.Done()
 
 	c, ok := cat.Lookup(id)
 	if !ok {
@@ -303,18 +444,27 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	if h.ensureRaceHook != nil {
 		h.ensureRaceHook(id, rt)
 	}
+	if !registryHeld {
+		h.r.mu.Lock()
+	}
 	h.mu.Lock()
-	if h.swapping[id] || h.slots[id] != nil {
-		// A replace landed while this ensure was starting a runtime against
-		// the pre-swap catalog, or another ensure already won the insert.
+	if h.closing || h.swapping[id] || h.slots[id] != nil || !slices.Contains(h.r.cfg.Plugins.Enabled, id) {
+		// The plugin was disabled, replaced, or closed while this runtime was
+		// starting, or another ensure already won the insert.
 		// Stop what was just started rather than let it occupy the slot.
 		h.mu.Unlock()
+		if !registryHeld {
+			h.r.mu.Unlock()
+		}
 		cancel()
 		rt.Stop()
 		return nil
 	}
 	h.slots[id] = slot
 	h.mu.Unlock()
+	if !registryHeld {
+		h.r.mu.Unlock()
+	}
 	go h.pumpRuntime(slot)
 	if registryHeld {
 		h.pushSettingsLocked(id, rt)
@@ -368,27 +518,55 @@ func (h *pluginHost) stopPlugin(id string) {
 	defer h.surfaceMu.Unlock()
 
 	h.mu.Lock()
-	slot := h.slots[id]
-	delete(h.slots, id)
-	var drop []string
-	for vid, v := range h.views {
-		if v.Plugin == id {
-			drop = append(drop, vid)
-		}
-	}
+	detached := h.detachPluginLocked(id)
 	h.mu.Unlock()
-	// The slot is already gone from the map so teardown cannot open new
-	// views, but closeViewUsing still has the pointer to Send on.
-	for _, vid := range drop {
-		h.closeViewUsing(vid, slot)
-	}
-	if slot != nil {
-		if slot.cancel != nil {
-			slot.cancel()
+	h.stopDetachedPlugin(detached)
+}
+
+// detachPluginLocked removes a plugin's views and runtime from shared state.
+// h.mu must be held; callers stop the returned runtime after releasing it.
+func (h *pluginHost) detachPluginLocked(id string) detachedPlugin {
+	detached := detachedPlugin{id: id, slot: h.slots[id]}
+	delete(h.slots, id)
+	for viewID, view := range h.views {
+		if view.Plugin != id {
+			continue
 		}
-		slot.rt.Stop()
+		pending := h.textOut.Take(viewID)
+		detached.views = append(detached.views, detachedPluginView{
+			id: viewID, surface: h.surfaces[viewID], pending: pending,
+		})
+		h.inputs = append(h.inputs, pending...)
+		delete(h.views, viewID)
+		delete(h.surfaces, viewID)
+		h.closed = append(h.closed, viewID)
+		if h.panel != nil && h.panel.ID == viewID {
+			h.panel = nil
+		}
 	}
-	h.clearWallpaperMasks(id)
+	return detached
+}
+
+func (h *pluginHost) stopDetachedPlugin(detached detachedPlugin) {
+	for _, view := range detached.views {
+		if view.surface != nil {
+			view.surface.closeWayland()
+		}
+		if detached.slot == nil {
+			continue
+		}
+		for i := range view.pending {
+			_ = detached.slot.rt.Send(&view.pending[i])
+		}
+		_ = detached.slot.rt.Send(&v1.ViewClose{ViewID: view.id})
+	}
+	if detached.slot != nil {
+		if detached.slot.cancel != nil {
+			detached.slot.cancel()
+		}
+		detached.slot.rt.Stop()
+	}
+	h.clearWallpaperMasks(detached.id)
 }
 
 func (h *pluginHost) clearWallpaperMasks(id string) {
