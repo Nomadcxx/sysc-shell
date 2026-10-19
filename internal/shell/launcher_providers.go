@@ -7,6 +7,7 @@ import (
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 
+	clipboardprotocol "github.com/Nomadcxx/sysc-clipboard/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/calc"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/emoji"
@@ -19,7 +20,7 @@ import (
 // of Activate waits without holding Registry.mu, so they may take it.
 func (r *Registry) launcherProviders() []launcher.Provider {
 	providers := []launcher.Provider{
-		r.calcProvider(), r.emojiProvider(), r.notesProvider(), r.sessionProvider(), r.launcherActionProvider(),
+		r.calcProvider(), r.emojiProvider(), r.clipboardProvider(), r.notesProvider(), r.sessionProvider(), r.launcherActionProvider(),
 	}
 	for _, cfg := range r.cfg.Launcher.Providers {
 		cfg := cfg
@@ -241,6 +242,94 @@ func (r *Registry) emojiProvider() launcher.Provider {
 			return out
 		},
 		Activate: func(_, id, _ string) error { return r.launcherCopy(id) },
+	}
+}
+
+const (
+	launcherClipboardPrefix       = "/clip"
+	launcherClipboardResultPrefix = "sysc-clipboard-history:"
+)
+
+func (r *Registry) clipboardProvider() launcher.Provider {
+	return launcher.Provider{
+		Name: "Clipboard History", Prefix: launcherClipboardPrefix, Glyph: "glyph:content_paste",
+		Inline: true, Description: "Search clipboard history · Enter pastes",
+		Query: func(query string) []launcher.Result {
+			query = strings.TrimSpace(query)
+			r.mu.Lock()
+			if !r.clipboard.Connected || r.clipboard.Snapshot.Wayland != clipboardprotocol.WaylandReady {
+				r.mu.Unlock()
+				return nil
+			}
+			entries := make([]launcher.Entry, 0, len(r.clipboard.Snapshot.Entries))
+			for _, item := range r.clipboard.Snapshot.Entries {
+				name := clipboardPreview(item)
+				icon := "glyph:content_paste"
+				if item.Kind == clipboardprotocol.KindImage {
+					name = "Image · " + item.MIME
+					icon = "glyph:image"
+				} else if name == "" {
+					name = "Text · " + item.MIME
+				}
+				entries = append(entries, launcher.Entry{
+					ID: launcherClipboardResultPrefix + item.ID, Name: name,
+					Comment: string(item.Kind) + " · " + item.MIME, IconName: icon,
+				})
+			}
+			r.mu.Unlock()
+
+			if query != "" {
+				return launcherRank(entries, query, nil)
+			}
+			if len(entries) > launcherSearchLimit {
+				entries = entries[:launcherSearchLimit]
+			}
+			rows := make([]launcher.Result, 0, len(entries))
+			for _, entry := range entries {
+				rows = append(rows, launcher.Result{Entry: entry})
+			}
+			return rows
+		},
+		Activate: func(_, id, _ string) error {
+			entryID, ok := strings.CutPrefix(id, launcherClipboardResultPrefix)
+			if !ok || entryID == "" {
+				return errors.New("launcher: unsupported clipboard entry")
+			}
+
+			r.mu.Lock()
+			h := r.panelHosts[PanelLauncher]
+			if h == nil {
+				r.mu.Unlock()
+				return errors.New("launcher closed")
+			}
+			attempt := h.launcherPendingAttempt
+			if attempt == 0 || h.launcherAttempt != attempt {
+				r.mu.Unlock()
+				return errors.New("launcher: clipboard activation is stale")
+			}
+			if !r.clipboard.Connected || r.clipboard.Snapshot.Wayland != clipboardprotocol.WaylandReady {
+				r.mu.Unlock()
+				return errors.New("clipboard daemon unavailable")
+			}
+			if _, exists := clipboardEntryByID(r.clipboard.Snapshot.Entries, entryID); !exists {
+				r.mu.Unlock()
+				return errors.New("clipboard entry no longer exists")
+			}
+			sender, lookPath, run := r.clipboardSender, r.lookPath, r.runArgv
+			r.mu.Unlock()
+
+			if lookPath == nil || run == nil {
+				return errors.New("launcher: paste command unavailable")
+			}
+			if _, err := lookPath("wtype"); err != nil {
+				return errors.New("launcher: install wtype to paste clipboard history")
+			}
+			completion, err := r.enqueueClipboardRestore(sender, entryID)
+			if err != nil {
+				return err
+			}
+			return r.waitClipboardCommand(completion)
+		},
 	}
 }
 

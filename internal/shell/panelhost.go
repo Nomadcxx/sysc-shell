@@ -5070,11 +5070,13 @@ func (r *Registry) sendAuxWait(ctx context.Context, req wayland.AuxRequest) erro
 	case <-r.closed:
 		return errors.New("shell is closing")
 	case <-ctx.Done():
-		// Preserve request order: if open was already dequeued, this close
-		// retires it after the owner finishes handling the open.
-		select {
-		case r.aux <- wayland.AuxRequest{Output: req.Output, ID: req.ID}:
-		case <-r.closed:
+		if req.Open != nil {
+			// Preserve request order: if open was already dequeued, this close
+			// retires it after the owner finishes handling the open.
+			select {
+			case r.aux <- wayland.AuxRequest{Output: req.Output, ID: req.ID}:
+			case <-r.closed:
+			}
 		}
 		return ctx.Err()
 	}

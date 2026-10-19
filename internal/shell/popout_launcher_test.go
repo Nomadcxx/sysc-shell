@@ -1821,7 +1821,7 @@ func TestLauncherOverviewListsProvidersWithGlyphs(t *testing.T) {
 		for _, r := range h.launcherResults {
 			got = append(got, r.Entry.Name+"|"+r.Entry.IconName)
 		}
-		return strings.Join(got, ",") == "Applications|glyph:apps,Calculator|glyph:calculate,Emoji|glyph:mood,Notes|glyph:description,Session|glyph:power_settings_new,Actions|glyph:terminal"
+		return strings.Join(got, ",") == "Applications|glyph:apps,Calculator|glyph:calculate,Emoji|glyph:mood,Clipboard History|glyph:content_paste,Notes|glyph:description,Session|glyph:power_settings_new,Actions|glyph:terminal"
 	})
 }
 
