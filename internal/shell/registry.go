@@ -2474,7 +2474,7 @@ func (r *Registry) Close() {
 	// better than never reporting why we are shutting down at all.
 	locked := r.lockWithin(closeLockGrace)
 	if !locked {
-		log.Printf("shell: closing without r.mu; a handler panic left it held")
+		log.Printf("shell: closing without r.mu; could not acquire r.mu within shutdown grace")
 	}
 	var osdAux []wayland.AuxRequest
 	var leases []*services.Lease
