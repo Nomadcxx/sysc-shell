@@ -231,6 +231,21 @@ func TestCloseShutsDownGracefully(t *testing.T) {
 	}
 }
 
+func TestDefaultShutdownGraceAllowsSlowCleanup(t *testing.T) {
+	s := supervisor(installHelper(t, "slow-shutdown"))
+	s.ShutdownGrace = 0
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	reason := sess.Close()
+	if reason.Kind != ExitOrderly {
+		t.Fatalf("exit = %+v, want orderly after bounded cleanup", reason)
+	}
+}
+
 func TestCloseKillsAPluginThatIgnoresShutdown(t *testing.T) {
 	t.Parallel()
 
