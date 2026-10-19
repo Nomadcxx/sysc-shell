@@ -2156,6 +2156,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 		Commit: func() {
 			once.Do(func() {
 				r.mu.Lock()
+				pluginsEnabledChanged := !slices.Equal(r.cfg.Plugins.Enabled, cfg.Plugins.Enabled)
 				applicationPreferencesChanged := r.cfg.Applications.DefaultTerminal != cfg.Applications.DefaultTerminal ||
 					!slices.Equal(r.cfg.Applications.Favourites, cfg.Applications.Favourites) ||
 					!slices.Equal(r.cfg.Applications.Hidden, cfg.Applications.Hidden)
@@ -2367,7 +2368,13 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
-					plugins.syncBars()
+					if pluginsEnabledChanged {
+						if err := plugins.syncEnabled(); err != nil {
+							log.Printf("shell: sync enabled plugins after config reload: %v", err)
+						}
+					} else {
+						plugins.syncBars()
+					}
 				}
 				if polkitPolicyChanged || polkitNeedsStart {
 					go r.configurePolkit()
