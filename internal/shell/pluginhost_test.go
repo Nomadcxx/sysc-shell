@@ -2749,6 +2749,17 @@ func TestRegistryCloseLetsPluginsFinish(t *testing.T) {
 	}
 }
 
+func TestRegistryCloseWaitsForSlowPluginCleanup(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "flushed")
+	reg := bindTestPlugin(t, "shutdown-delay-marker:2200ms:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	reg.Close()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("plugin did not finish its delayed shutdown cleanup: %v", err)
+	}
+}
+
 // pumpRuntimeIDs reports goroutines inside pluginHost.pumpRuntime. Ids are
 // not reused, so a pump that has returned is absent on the next read.
 func pumpRuntimeIDs() map[string]struct{} {

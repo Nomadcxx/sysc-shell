@@ -53,8 +53,20 @@ func HelperServe(args []string) int {
 		mode = "ok"
 	}
 	// shutdown-marker:<path> serves normally and writes path when asked to
-	// stop: proof the host let it finish its work rather than killing it.
+	// stop; shutdown-delay-marker:<duration>:<path> waits before writing it.
 	shutdownMarker := ""
+	shutdownDelay := time.Duration(0)
+	if p, ok := strings.CutPrefix(mode, "shutdown-delay-marker:"); ok {
+		delayText, marker, found := strings.Cut(p, ":")
+		delay, err := time.ParseDuration(delayText)
+		if !found || marker == "" || err != nil || delay <= 0 {
+			fmt.Fprintln(os.Stderr, "helper: shutdown-delay-marker wants <duration>:<path>")
+			return 2
+		}
+		shutdownDelay = delay
+		shutdownMarker = marker
+		mode = "ok"
+	}
 	if p, ok := strings.CutPrefix(mode, "shutdown-marker:"); ok {
 		shutdownMarker = p
 		mode = "ok"
@@ -190,6 +202,9 @@ func HelperServe(args []string) int {
 		}
 		switch m := msg.(type) {
 		case *v1.HostShutdown:
+			if shutdownDelay > 0 {
+				time.Sleep(shutdownDelay)
+			}
 			if shutdownMarker != "" {
 				_ = os.WriteFile(shutdownMarker, []byte("flushed"), 0o600)
 			}

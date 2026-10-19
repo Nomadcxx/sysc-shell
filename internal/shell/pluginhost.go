@@ -422,8 +422,10 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		return fmt.Errorf("plugin %s is not installed", id)
 	}
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
-		Supported:      hostPluginCaps,
-		Limits:         v1.DefaultLimits,
+		Supported: hostPluginCaps,
+		Limits:    v1.DefaultLimits,
+		// The recorder can spend 2s stopping gpu-screen-recorder.
+		ShutdownGrace:  3 * time.Second,
 		SessionEnded:   func() { h.clearWallpaperMasks(id) },
 		SessionStarted: func() { h.reopenViews(id) },
 	})
