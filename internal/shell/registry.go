@@ -2910,7 +2910,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		Workspace: state.Workspace,
 		Title:     state.Title,
 		Layouts:   niri.KeyboardLayouts{Names: slices.Clone(r.niriSnapshot.Layouts.Names), Current: r.niriSnapshot.Layouts.Current},
-		Locale:    r.cfg.Session.Language,
+		Locale:    i18n.Resolve(r.cfg.Session.Language),
 		Pills:     state.Pills,
 		Metrics:   r.sample,
 		History:   r.historyLocked(),

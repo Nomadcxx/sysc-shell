@@ -1,9 +1,13 @@
 package shell
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -12,6 +16,12 @@ import (
 )
 
 const keyboardLayoutListKey = "keyboard-layouts"
+
+// Niri does not emit a switched event when an accepted request is already
+// active, so an authoritative query bounds that no-op case.
+// ponytail: query once after the event-stream window, without polling; a
+// request-correlated Niri confirmation would remove this fallback.
+const keyboardLayoutConfirmationDelay = 250 * time.Millisecond
 
 func buildKeyboardLayoutWidget() textWidget {
 	node := &ui.Node{
@@ -168,9 +178,72 @@ func (h *PanelHost) activateKeyboardLayout(r *Registry, n *ui.Node) bool {
 	r.sendNiriResultLocked(niri.SwitchLayout{Index: uint8(index)}, func(err error) {
 		if err != nil {
 			h.keyboardLayoutActionFailed(r, index, sequence)
+			return
 		}
+		time.AfterFunc(keyboardLayoutConfirmationDelay, func() {
+			r.mu.Lock()
+			if r.panelHosts[PanelKeyboardLayout] != h || h.layoutRequestSeq != sequence || h.layoutRequested != index {
+				r.mu.Unlock()
+				return
+			}
+			before := r.niriSnapshot.Layouts
+			before.Names = slices.Clone(before.Names)
+			r.mu.Unlock()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			layouts, err := niri.GetKeyboardLayouts(ctx, os.Getenv("NIRI_SOCKET"))
+			h.keyboardLayoutActionQueried(r, index, sequence, before, layouts, err)
+		})
 	})
 	return true
+}
+
+func (h *PanelHost) keyboardLayoutActionQueried(r *Registry, index int, sequence uint64, before, layouts niri.KeyboardLayouts, queryErr error) {
+	r.mu.Lock()
+	if r.panelHosts[PanelKeyboardLayout] != h || h.layoutRequestSeq != sequence || h.layoutRequested != index {
+		r.mu.Unlock()
+		return
+	}
+	if queryErr != nil {
+		r.mu.Unlock()
+		h.keyboardLayoutActionFailed(r, index, sequence)
+		return
+	}
+
+	latest := r.niriSnapshot.Layouts
+	eventAdvanced := latest.Current != before.Current || !slices.Equal(latest.Names, before.Names)
+	requestLayoutsCurrent := slices.Equal(before.Names, layouts.Names)
+	queryConfirmed := requestLayoutsCurrent && layouts.Current == index
+	latestConfirmed := slices.Equal(latest.Names, before.Names) && latest.Current == index
+	previousLayouts := r.layouts
+	previousLayoutsSeen := r.layoutsSeen
+	if !eventAdvanced {
+		layouts.Names = slices.Clone(layouts.Names)
+		r.niriSnapshot.Layouts = layouts
+		r.layouts = layouts
+		if len(layouts.Names) > 0 {
+			r.layoutsSeen = true
+		}
+	}
+	h.layoutRequestSeq++
+	h.layoutRequested = -1
+	h.layoutUnavailable = !latestConfirmed && !queryConfirmed
+	changed := []uint32(nil)
+	var layoutView OSDView
+	showLayout := false
+	if !eventAdvanced {
+		changed = r.applyRunningIconsLocked()
+		layoutView, showLayout = layoutOSD(previousLayouts, layouts, previousLayoutsSeen)
+	}
+	r.rebuildPanel(h)
+	output := h.output
+	r.mu.Unlock()
+	r.publish(changed)
+	r.publishSurface(output, panelSurfaceID(PanelKeyboardLayout))
+	if showLayout {
+		r.OSD().Show(layoutView)
+	}
 }
 
 func (h *PanelHost) keyboardLayoutActionFailed(r *Registry, index int, sequence uint64) {

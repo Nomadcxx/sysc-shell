@@ -1,7 +1,11 @@
 package shell
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -203,6 +207,111 @@ func TestKeyboardLayoutPickerWaitsForTheRequestedIndex(t *testing.T) {
 	}
 	if node := findAction(h.root, "keyboard-layout-select:1"); node == nil || node.Name != "Current layout: German" {
 		t.Fatalf("confirmed layout option = %+v", node)
+	}
+}
+
+func TestKeyboardLayoutPickerConfirmsAcceptedSwitchFromNiriQuery(t *testing.T) {
+	r, h := openKeyboardLayoutPanel(t, 0)
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "niri.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	t.Setenv("NIRI_SOCKET", listener.Addr().String())
+	queryErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			queryErr <- err
+			return
+		}
+		defer conn.Close()
+		scanner := bufio.NewScanner(conn)
+		if !scanner.Scan() {
+			queryErr <- fmt.Errorf("read query: %w", scanner.Err())
+			return
+		}
+		if got := scanner.Text(); got != `"KeyboardLayouts"` {
+			queryErr <- fmt.Errorf("query = %q, want KeyboardLayouts", got)
+			return
+		}
+		_, err = fmt.Fprintln(conn, `{"Ok":{"KeyboardLayouts":{"names":["English (US)","German"],"current_idx":1}}}`)
+		queryErr <- err
+	}()
+	r.niriSend = func(any) error { return nil }
+	node := findAction(h.root, "keyboard-layout-select:1")
+	r.mu.Lock()
+	h.setFocus(node)
+	h.activate(r)
+	r.mu.Unlock()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		resolved := h.layoutRequested == -1
+		r.mu.Unlock()
+		if resolved {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.layoutRequested != -1 || h.layoutUnavailable {
+		t.Fatalf("query confirmation left pending=%d unavailable=%t", h.layoutRequested, h.layoutUnavailable)
+	}
+	if r.niriSnapshot.Layouts.Current != 1 {
+		t.Fatalf("current layout index = %d, want queried index 1", r.niriSnapshot.Layouts.Current)
+	}
+	if node := findAction(h.root, "keyboard-layout-select:1"); node == nil || node.Name != "Current layout: German" {
+		t.Fatalf("queried current layout option = %+v", node)
+	}
+	select {
+	case err := <-queryErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatal("Niri keyboard-layout query was not completed")
+	}
+}
+
+func TestKeyboardLayoutPickerExplainsAcceptedButUnconfirmedSwitch(t *testing.T) {
+	r, h := openKeyboardLayoutPanel(t, 0)
+	r.mu.Lock()
+	h.layoutRequestSeq = 1
+	h.layoutRequested = 1
+	before := r.niriSnapshot.Layouts
+	r.mu.Unlock()
+	queried := niri.KeyboardLayouts{Names: []string{"English (UK)", "German"}, Current: 0}
+	h.keyboardLayoutActionQueried(r, 1, 1, before, queried, nil)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.layoutRequested != -1 || !h.layoutUnavailable {
+		t.Fatalf("unconfirmed query left pending=%d unavailable=%t", h.layoutRequested, h.layoutUnavailable)
+	}
+	if findText(h.root, "Layout switching is unavailable") == nil {
+		t.Fatal("accepted but unconfirmed switch has no unavailable status")
+	}
+	if node := findAction(h.root, "keyboard-layout-select:1"); node == nil || !node.State.Has(ui.StateDisabled) {
+		t.Fatalf("unconfirmed selection remains enabled: %+v", node)
+	}
+}
+
+func TestKeyboardLayoutBarUsesSystemLocaleWhenUnset(t *testing.T) {
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "es_ES.UTF-8")
+	r := newPanelRegistry(t)
+	r.cfg.Session.Language = ""
+	r.mu.Lock()
+	view := r.viewLocked("DP-1")
+	r.mu.Unlock()
+	widgets := buildWidgets([]config.Item{{ID: "keyboard-layout"}}, 6, standardMetrics())
+	view.Layouts = niri.KeyboardLayouts{Names: []string{"English (US)", "German"}, Current: 0}
+	widgets[0].refresh(view)
+	if got := widgets[0].inner.Tooltip; got != "Distribución del teclado" {
+		t.Fatalf("follow-system keyboard tooltip = %q, want Spanish", got)
 	}
 }
 
