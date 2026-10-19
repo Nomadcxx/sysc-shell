@@ -324,9 +324,7 @@ func (r *Registry) clipboardProvider() launcher.Provider {
 			if _, err := lookPath("wtype"); err != nil {
 				return errors.New("launcher: install wtype to paste clipboard history")
 			}
-			completion, err := r.enqueueClipboardCommand(sender, func(sender clipboardCommandSender) error {
-				return sender.Restore(entryID)
-			})
+			completion, err := r.enqueueClipboardRestore(sender, entryID)
 			if err != nil {
 				return err
 			}

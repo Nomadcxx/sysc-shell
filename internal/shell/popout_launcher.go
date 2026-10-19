@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -954,6 +955,7 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 			return
 		}
 		pasteClipboard := isLauncherClipboardResult(id)
+		output := host.output
 		if pasteClipboard {
 			owner, generation, ok := r.roots.current()
 			if ok && owner == panelGroupRoot() {
@@ -966,37 +968,40 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 		}
 		r.mu.Unlock()
 		if pasteClipboard {
-			r.scheduleClipboardPaste()
+			ctx, cancel := context.WithTimeout(context.Background(), launcherClipboardBarrierTimeout)
+			err := r.sendAuxWait(ctx, wayland.AuxRequest{Output: output, Barrier: true})
+			cancel()
+			if err != nil {
+				log.Printf("launcher: wait for panel close before paste: %v", err)
+				return
+			}
+			r.runClipboardPaste()
 		}
 	}()
 }
 
-const launcherClipboardFocusDelay = 100 * time.Millisecond
+const launcherClipboardBarrierTimeout = 2 * time.Second
 
 func isLauncherClipboardResult(id string) bool {
 	return strings.HasPrefix(id, launcherClipboardResultPrefix)
 }
 
-func (r *Registry) scheduleClipboardPaste() {
-	// ponytail: Niri releases layer focus asynchronously; wait 100 ms. Replace
-	// this delay with an explicit surface-close acknowledgement if available.
-	time.AfterFunc(launcherClipboardFocusDelay, func() {
-		select {
-		case <-r.closed:
-			return
-		default:
-		}
-		r.mu.Lock()
-		_, _, rootOpen := r.roots.current()
-		run := r.runArgv
-		r.mu.Unlock()
-		if rootOpen || run == nil {
-			return
-		}
-		if err := run([]string{"wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"}); err != nil {
-			log.Printf("launcher: paste clipboard history: %v", err)
-		}
-	})
+func (r *Registry) runClipboardPaste() {
+	select {
+	case <-r.closed:
+		return
+	default:
+	}
+	r.mu.Lock()
+	_, _, rootOpen := r.roots.current()
+	run := r.runArgv
+	r.mu.Unlock()
+	if rootOpen || run == nil {
+		return
+	}
+	if err := run([]string{"wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"}); err != nil {
+		log.Printf("launcher: paste clipboard history: %v", err)
+	}
 }
 
 func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, attempt uint64, id, action string) error {

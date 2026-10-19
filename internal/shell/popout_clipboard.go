@@ -336,9 +336,7 @@ func requestClipboardThumbnail(r *Registry, h *PanelHost, id string) {
 	if _, ok := h.clipboardThumbnailRequest[id]; ok {
 		return
 	}
-	if _, err := r.enqueueClipboardCommand(r.clipboardSender, func(sender clipboardCommandSender) error {
-		return sender.Thumbnail(id, clipboardThumbnailMaxPX)
-	}); err != nil {
+	if err := r.clipboardSender.Thumbnail(id, clipboardThumbnailMaxPX); err != nil {
 		h.errLabel = err.Error()
 		return
 	}
@@ -578,10 +576,10 @@ func (h *PanelHost) sendClipboard(r *Registry, id string, send func(clipboardCom
 }
 
 func (h *PanelHost) clipboardCommand(r *Registry, id string, send func(clipboardCommandSender, string) error) error {
-	_, err := r.enqueueClipboardCommand(r.clipboardSender, func(sender clipboardCommandSender) error {
-		return send(sender, id)
-	})
-	return err
+	if r.clipboardSender == nil {
+		return fmt.Errorf("clipboard daemon unavailable")
+	}
+	return send(r.clipboardSender, id)
 }
 
 func clipboardImageEntry(entries []clipboardprotocol.Entry, id string) bool {

@@ -170,11 +170,20 @@ func TestClipboardProviderSearchesMetadata(t *testing.T) {
 	}
 }
 
-type launcherClipboardSender struct{ restored chan string }
+type launcherClipboardSender struct {
+	restored   chan string
+	requestIDs map[string]string
+}
 
 func (s launcherClipboardSender) Restore(id string) error {
 	s.restored <- id
 	return nil
+}
+func (s launcherClipboardSender) RestoreWithRequestID(id string) (string, error) {
+	if err := s.Restore(id); err != nil {
+		return "", err
+	}
+	return s.requestIDs[id], nil
 }
 func (launcherClipboardSender) Pin(string, bool) error                   { return nil }
 func (launcherClipboardSender) Delete(string) error                      { return nil }
@@ -182,18 +191,16 @@ func (launcherClipboardSender) Clear(clipboardprotocol.ClearScope) error { retur
 func (launcherClipboardSender) Thumbnail(string, uint16) error           { return nil }
 func (launcherClipboardSender) Resync() error                            { return nil }
 
-func TestClipboardCommandCompletionsFollowSendOrder(t *testing.T) {
+func TestClipboardRestoreCompletionsMatchRequestIDs(t *testing.T) {
 	reg := newPanelRegistry(t)
-	sender := launcherClipboardSender{restored: make(chan string, 2)}
-	first, err := reg.enqueueClipboardCommand(sender, func(sender clipboardCommandSender) error {
-		return sender.Restore("first")
-	})
+	sender := launcherClipboardSender{restored: make(chan string, 2), requestIDs: map[string]string{
+		"first": "request-1", "second": "request-2",
+	}}
+	first, err := reg.enqueueClipboardRestore(sender, "first")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := reg.enqueueClipboardCommand(sender, func(sender clipboardCommandSender) error {
-		return sender.Restore("second")
-	})
+	second, err := reg.enqueueClipboardRestore(sender, "second")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +209,7 @@ func TestClipboardCommandCompletionsFollowSendOrder(t *testing.T) {
 
 	reg.ApplyClipboard(clipboardUpdate{Connected: true, Message: clipboardprotocol.Message{
 		Version: clipboardprotocol.Version, Type: clipboardprotocol.TypeError,
-		Error: &clipboardprotocol.ErrorBody{Code: clipboardprotocol.ErrorUnavailable, Message: "first failed"},
+		Error: &clipboardprotocol.ErrorBody{Code: clipboardprotocol.ErrorUnavailable, RequestID: "request-1", Message: "first failed"},
 	}})
 	if got := <-first.done; got == nil || got.Error() != "first failed" {
 		t.Fatalf("first completion = %v, want first failed", got)
@@ -267,7 +274,7 @@ func TestClipboardLauncherActivationRestoresThenClosesAndPastes(t *testing.T) {
 	reg.clipboard = clipboardProjection{Connected: true, Snapshot: clipboardprotocol.Snapshot{
 		Entries: []clipboardprotocol.Entry{entry}, Wayland: clipboardprotocol.WaylandReady,
 	}}
-	reg.clipboardSender = launcherClipboardSender{restored: make(chan string, 1)}
+	reg.clipboardSender = launcherClipboardSender{restored: make(chan string, 1), requestIDs: map[string]string{entry.ID: "request-1"}}
 	reg.lookPath = func(name string) (string, error) {
 		if name != "wtype" {
 			t.Errorf("looked up %q, want wtype", name)
@@ -323,7 +330,49 @@ func TestClipboardLauncherActivationRestoresThenClosesAndPastes(t *testing.T) {
 
 	reg.ApplyClipboard(clipboardUpdate{Connected: true, Snapshot: reg.clipboard.Snapshot,
 		Message: clipboardprotocol.Message{Version: clipboardprotocol.Version, Type: clipboardprotocol.TypeAck,
+			Ack: &clipboardprotocol.Ack{RequestID: "request-2"}}})
+	select {
+	case got := <-pasted:
+		t.Fatalf("unmatched acknowledgement triggered paste: %+v", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+	reg.mu.Lock()
+	stillOpen = reg.panelHosts[PanelLauncher] != nil
+	reg.mu.Unlock()
+	if !stillOpen {
+		t.Fatal("launcher closed after an unmatched clipboard acknowledgement")
+	}
+
+	reg.ApplyClipboard(clipboardUpdate{Connected: true, Snapshot: reg.clipboard.Snapshot,
+		Message: clipboardprotocol.Message{Version: clipboardprotocol.Version, Type: clipboardprotocol.TypeAck,
 			Ack: &clipboardprotocol.Ack{RequestID: "request-1"}}})
+	var barrier wayland.AuxRequest
+	closedLauncher, closedShield := false, false
+	barrierTimeout := time.NewTimer(2 * time.Second)
+	defer barrierTimeout.Stop()
+	for !barrier.Barrier {
+		select {
+		case req := <-reg.AuxRequests():
+			closedLauncher = closedLauncher || (req.ID == panelSurfaceID(PanelLauncher) && req.Open == nil && req.Update == nil)
+			closedShield = closedShield || (req.ID == panelShieldSurfaceID(7) && req.Open == nil && req.Update == nil)
+			if req.Barrier {
+				barrier = req
+			}
+		case got := <-pasted:
+			t.Fatalf("pasted before the Wayland close barrier: %+v", got)
+		case <-barrierTimeout.C:
+			t.Fatal("launcher paste did not wait for a Wayland close barrier")
+		}
+	}
+	if !closedLauncher || !closedShield || barrier.Reply == nil {
+		t.Fatalf("close requests before barrier: launcher=%v shield=%v barrier=%+v", closedLauncher, closedShield, barrier)
+	}
+	select {
+	case got := <-pasted:
+		t.Fatalf("pasted before the compositor acknowledged the close barrier: %+v", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+	barrier.Reply <- nil
 	select {
 	case got := <-pasted:
 		want := []string{"wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"}

@@ -10,6 +10,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
 // AuxSpec describes one auxiliary layer surface. Callbacks travel with the
@@ -59,9 +60,8 @@ type AuxSpec struct {
 	OnDrop func()
 }
 
-// AuxRequest opens (Open != nil), updates (Update != nil), recaptures
-// (Recapture), or closes (all zero, ID set) one aux surface on the output
-// identified by its wl_registry global.
+// AuxRequest opens, updates, recaptures, or closes one aux surface, or waits at
+// a compositor barrier, on the output identified by its wl_registry global.
 type AuxRequest struct {
 	Output uint32
 	ID     string
@@ -71,7 +71,10 @@ type AuxRequest struct {
 	// surface that opened with AuxSpec.Recapture. It is a no-op for any other
 	// surface, so a request that races a close is safe.
 	Recapture bool
-	Reply     chan error
+	// Barrier replies after the compositor processes earlier requests on this
+	// Wayland connection. It requires Reply and does not name a surface.
+	Barrier bool
+	Reply   chan error
 }
 
 // AuxUpdate changes policy on an already-open auxiliary surface without
@@ -165,6 +168,23 @@ func (o *owner) handleAux(req AuxRequest) {
 		err = o.updateAux(h, req.ID, req.Update)
 	case req.Recapture:
 		err = o.recaptureAux(h, req.ID)
+	case req.Barrier:
+		if req.Reply == nil {
+			return
+		}
+		callback, err := o.display.Sync()
+		if err != nil {
+			if callback != nil {
+				_ = callback.Destroy()
+			}
+			req.Reply <- err
+			return
+		}
+		callback.SetDoneHandler(func(client.CallbackDoneEvent) {
+			_ = callback.Destroy()
+			req.Reply <- nil
+		})
+		return
 	default:
 		// The requester already retired this surface. Echoing its queued close
 		// can retire a replacement that now owns the same ID in the registry.

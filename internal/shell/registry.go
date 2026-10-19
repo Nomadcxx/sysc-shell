@@ -298,7 +298,7 @@ type Registry struct {
 	clipboard            clipboardProjection
 	clipboardSender      clipboardCommandSender
 	clipboardCommandMu   sync.Mutex
-	clipboardCompletions []*clipboardCommandCompletion
+	clipboardCompletions map[string]*clipboardCommandCompletion
 
 	// tray is the service-owned tray projection.
 	tray                 *trayState
