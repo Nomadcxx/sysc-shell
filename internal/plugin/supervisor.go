@@ -26,9 +26,8 @@ const MaxStderrBytes = 64 << 10
 // Send; closing the pipe below unblocks the write either way.
 const shutdownSendTimeout = 100 * time.Millisecond
 
-// defaultShutdownGrace covers the recorder's 1s state flush and 2s child-stop
-// bounds, with one second of scheduling margin.
-// ponytail: raise it if a plugin adds a longer cleanup bound.
+// defaultShutdownGrace leaves time for plugins to flush state and stop owned
+// child processes before the host kills an unresponsive process.
 const defaultShutdownGrace = 4 * time.Second
 
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
