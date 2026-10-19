@@ -49,9 +49,8 @@ func TestEffectBehindDropsFrostToTheFloor(t *testing.T) {
 	}
 }
 
-// Only the output playing the effect changes, and returning it to a still
-// restores the configured frost.
-func TestWallpaperEffectRethemesOnlyItsOutputsBar(t *testing.T) {
+// Wallpaper snapshots retheme only bars whose effect or luminance changed.
+func TestWallpaperVisualsRethemeOnlyTheirOutputsBars(t *testing.T) {
 	reg := newPanelRegistry(t)
 	reg.mu.Lock()
 	reg.caps.Blur = true
@@ -71,7 +70,8 @@ func TestWallpaperEffectRethemesOnlyItsOutputsBar(t *testing.T) {
 
 	snap := func(state wallpaper.State) wallpaper.Snapshot {
 		return wallpaper.Snapshot{
-			Connectors: []string{"DP-1", "DP-3"},
+			Connectors:     []string{"DP-1", "DP-3"},
+			ImageLuminance: map[string]float64{"DP-3": 0.6},
 			Assignments: map[string]wallpaper.Assignment{
 				"DP-1": {Kind: wallpaper.KindEffect, Effect: "matrix", Theme: "nord"},
 				"DP-3": {Kind: wallpaper.KindImage, Path: "/w/a.png"},
@@ -80,10 +80,14 @@ func TestWallpaperEffectRethemesOnlyItsOutputsBar(t *testing.T) {
 		}
 	}
 	reg.mu.Lock()
-	changed := reg.noteEffectOutputsLocked(snap(wallpaper.StatePlaying))
+	changed := reg.noteWallpaperVisualsLocked(snap(wallpaper.StatePlaying))
 	reg.mu.Unlock()
-	if len(changed) != 1 || changed[0] != 7 {
-		t.Fatalf("rethemed outputs %v, want only DP-1's bar", changed)
+	changedSet := map[uint32]bool{}
+	for _, global := range changed {
+		changedSet[global] = true
+	}
+	if len(changedSet) != 2 || !changedSet[7] || !changedSet[8] {
+		t.Fatalf("rethemed outputs %v, want DP-1 effect and DP-3 luminance", changed)
 	}
 	if got := dp1.themeSnapshot().Surfaces.Bar; got != floor {
 		t.Fatalf("DP-1 ground %#x while its effect plays, want the floor %#x", got, floor)
@@ -91,14 +95,23 @@ func TestWallpaperEffectRethemesOnlyItsOutputsBar(t *testing.T) {
 	if got := dp3.themeSnapshot().Surfaces.Bar; got != configured {
 		t.Fatalf("DP-3 ground %#x, want its configured %#x", got, configured)
 	}
-	// A config reload re-resolves every bar; the effect must survive it.
+	if got := dp3.themeSnapshot().WallpaperLuminance; got != 0.6 {
+		t.Fatalf("DP-3 wallpaper luminance = %v, want 0.6", got)
+	}
+	// A config reload re-resolves every bar and must retain both output states.
+	reg.mu.Lock()
 	cfg, tokens := reg.effectiveThemeLocked()
-	if th := reg.panelThemeForState(7, cfg, tokens); th.Surfaces.Bar != floor {
-		t.Fatalf("re-resolved DP-1 ground %#x, want the floor %#x", th.Surfaces.Bar, floor)
+	_, _ = reg.paintThemeLocked(cfg, tokens, "", true)
+	reg.mu.Unlock()
+	if got := dp3.themeSnapshot().WallpaperLuminance; got != 0.6 {
+		t.Fatalf("re-resolved DP-3 luminance = %v, want 0.6", got)
+	}
+	if got := dp1.themeSnapshot().Surfaces.Bar; got != floor {
+		t.Fatalf("re-resolved DP-1 ground %#x, want the floor %#x", got, floor)
 	}
 
 	reg.mu.Lock()
-	changed = reg.noteEffectOutputsLocked(snap(wallpaper.StateStatic))
+	changed = reg.noteWallpaperVisualsLocked(snap(wallpaper.StateStatic))
 	reg.mu.Unlock()
 	if len(changed) != 1 || dp1.themeSnapshot().Surfaces.Bar != configured {
 		t.Fatalf("after the still returned: changed %v, DP-1 ground %#x, want %#x", changed, dp1.themeSnapshot().Surfaces.Bar, configured)

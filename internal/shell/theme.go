@@ -118,6 +118,9 @@ type Theme struct {
 	// PillAlpha is the alpha of the bar's capsules. Surfaces.Bar is the
 	// ground's.
 	PillAlpha uint8
+	// WallpaperLuminance is the assigned still's average relative luminance.
+	// Zero also means no readable still was available, preserving the old lift.
+	WallpaperLuminance float64
 	// barSolid, frostOpacity and pillOpacity are what WithCompositor derives
 	// the ground and pills from, kept so a capability change can re-derive
 	// them without resolving the whole theme again.

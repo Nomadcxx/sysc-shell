@@ -139,10 +139,13 @@ type Snapshot struct {
 	Library     *Library
 	Connectors  []string
 	Assignments map[string]Assignment
-	Runtime     map[string]Runtime
-	Caps        Capabilities
-	Seed        string
-	Err         string
+	// ImageLuminance is the computed relative luminance of each assigned still.
+	// An absent connector means no readable still was available.
+	ImageLuminance map[string]float64
+	Runtime        map[string]Runtime
+	Caps           Capabilities
+	Seed           string
+	Err            string
 	// ThumbsDone and ThumbsTotal report preview generation over the library;
 	// the Folder counts cover ThumbsFolder, the folder the picker had open
 	// when the walk started, which is generated first. Without them a first
@@ -209,23 +212,27 @@ type Service struct {
 	roots       []string
 	persistPath string
 
-	cmds          chan Command
-	cycleUpdates  chan CyclePolicy
-	cycleUpdateMu sync.Mutex
-	results       chan engineResult
-	updates       chan Snapshot
-	quit          chan struct{}
-	done          chan struct{}
-	closing       sync.Once
-	work          sync.WaitGroup
+	cmds             chan Command
+	cycleUpdates     chan CyclePolicy
+	cycleUpdateMu    sync.Mutex
+	results          chan engineResult
+	luminanceResults chan imageLuminanceResult
+	updates          chan Snapshot
+	quit             chan struct{}
+	done             chan struct{}
+	closing          sync.Once
+	work             sync.WaitGroup
 
 	coverage func() (map[string]string, error)
 	thumbs   *Thumbnailer
 	stopWork context.CancelFunc
 
-	// store, lib, caps, and covered are touched only by the loop goroutine.
-	store Store
-	lib   *Library
+	// Store, library, capabilities, coverage, and luminance are touched only by
+	// the loop goroutine.
+	store           Store
+	lib             *Library
+	imageLuminance  map[string]assignedImageLuminance
+	luminanceBudget *decodeBudget
 	// thumbFolder is the folder the picker has open; its previews go first.
 	thumbFolder string
 	caps        Capabilities
@@ -256,23 +263,26 @@ type Service struct {
 func NewService(cfg ServiceConfig) *Service {
 	cycleNow := time.Now()
 	s := &Service{
-		engine:         cfg.Engine,
-		cyclePolicy:    cfg.CyclePolicy,
-		cycleStart:     cycleNow,
-		cycleDate:      dailyCycleBaseline(cycleNow, cfg.CyclePolicy.Time),
-		restarted:      make(map[string]bool),
-		auto:           make(map[string]Reasons),
-		paused:         make(map[string]bool),
-		fps:            make(map[string]int),
-		fpsUnsupported: make(map[string]bool),
-		set:            cfg.Settings,
-		roots:          slices.Clone(cfg.Roots),
-		persistPath:    cfg.PersistPath,
-		coverage:       cfg.Coverage,
-		cfgHook:        cfg.ConfigHook,
-		cmds:           make(chan Command, 32),
-		cycleUpdates:   make(chan CyclePolicy, 1),
-		results:        make(chan engineResult, 32),
+		engine:           cfg.Engine,
+		cyclePolicy:      cfg.CyclePolicy,
+		cycleStart:       cycleNow,
+		cycleDate:        dailyCycleBaseline(cycleNow, cfg.CyclePolicy.Time),
+		restarted:        make(map[string]bool),
+		auto:             make(map[string]Reasons),
+		paused:           make(map[string]bool),
+		fps:              make(map[string]int),
+		fpsUnsupported:   make(map[string]bool),
+		set:              cfg.Settings,
+		roots:            slices.Clone(cfg.Roots),
+		persistPath:      cfg.PersistPath,
+		coverage:         cfg.Coverage,
+		cfgHook:          cfg.ConfigHook,
+		cmds:             make(chan Command, 32),
+		cycleUpdates:     make(chan CyclePolicy, 1),
+		results:          make(chan engineResult, 32),
+		luminanceResults: make(chan imageLuminanceResult, 32),
+		imageLuminance:   make(map[string]assignedImageLuminance),
+		luminanceBudget:  newDecodeBudget(thumbDecodeBudget),
 		// One slot, coalescing: a picker that is closed or slow must never
 		// block an apply.
 		updates: make(chan Snapshot, 1),
@@ -302,6 +312,7 @@ func NewService(cfg ServiceConfig) *Service {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.stopWork = cancel
 		s.thumbs = NewThumbnailer(cfg.CacheDir)
+		s.luminanceBudget = s.thumbs.budget
 		s.work.Add(1)
 		go func() {
 			defer s.work.Done()
@@ -420,6 +431,8 @@ func (s *Service) run() {
 			s.updateCyclePolicy(policy, time.Now())
 		case r := <-s.results:
 			s.finish(r)
+		case r := <-s.luminanceResults:
+			s.recordImageLuminance(r)
 		case <-ticker.C:
 			s.supervise()
 			s.runCycle(time.Now())
@@ -662,6 +675,9 @@ func (s *Service) finish(r engineResult) {
 	}
 	s.persist()
 	s.refreshCoverage()
+	if a, ok := s.store.Assignment(r.job.Connector); ok {
+		s.queueImageLuminance(r.job.Connector, a)
+	}
 	s.publish()
 	s.notifySeed(s.store.SeedPath())
 }
@@ -848,10 +864,19 @@ func (s *Service) persist() {
 // publish rebuilds the snapshot and offers it to the updates channel,
 // replacing an unread one rather than blocking on a closed picker.
 func (s *Service) publish() {
+	assignments := s.store.All()
+	imageLuminance := make(map[string]float64)
+	for connector, assignment := range assignments {
+		cached, ok := s.imageLuminance[connector]
+		if ok && cached.path == stillFor(assignment) {
+			imageLuminance[connector] = cached.value
+		}
+	}
 	snap := Snapshot{
 		Library:        s.lib,
 		Connectors:     s.store.Connectors(),
-		Assignments:    s.store.All(),
+		Assignments:    assignments,
+		ImageLuminance: imageLuminance,
 		Runtime:        s.store.AllRuntime(),
 		Caps:           s.caps,
 		Seed:           s.store.SeedPath(),
@@ -904,6 +929,7 @@ func cloneSnapshot(s Snapshot) Snapshot {
 	out := s
 	out.Connectors = slices.Clone(s.Connectors)
 	out.Assignments = maps.Clone(s.Assignments)
+	out.ImageLuminance = maps.Clone(s.ImageLuminance)
 	out.Runtime = maps.Clone(s.Runtime)
 	out.Covered = maps.Clone(s.Covered)
 	out.PausedBy = maps.Clone(s.PausedBy)

@@ -69,17 +69,18 @@ type Registry struct {
 	onboardingError            string
 	// effectOutputs names the connectors whose wallpaper is a playing or
 	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
-	effectOutputs map[string]bool
-	leases        map[uint32][]*services.Lease
-	niriSnapshot  niri.Snapshot
-	privacyPipe   services.PrivacySnapshot
-	privacy       privacyState
-	privacySvc    *services.Privacy
-	privacyOSD    chan []privacyChange
-	now           time.Time
-	focused       string
-	layouts       niri.KeyboardLayouts
-	layoutsSeen   bool
+	effectOutputs      map[string]bool
+	wallpaperLuminance map[string]float64
+	leases             map[uint32][]*services.Lease
+	niriSnapshot       niri.Snapshot
+	privacyPipe        services.PrivacySnapshot
+	privacy            privacyState
+	privacySvc         *services.Privacy
+	privacyOSD         chan []privacyChange
+	now                time.Time
+	focused            string
+	layouts            niri.KeyboardLayouts
+	layoutsSeen        bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -1388,6 +1389,7 @@ func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens t
 	if err != nil {
 		return DefaultTheme()
 	}
+	t.WallpaperLuminance = r.wallpaperLuminance[connector]
 	return t
 }
 
@@ -1882,6 +1884,7 @@ func (r *Registry) adoptBar(
 	// build cannot install a bar with stale colors.
 	cfg, tokens := r.effectiveThemeLocked()
 	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector]); err == nil {
+		next.WallpaperLuminance = r.wallpaperLuminance[connector]
 		bar.retheme(next)
 	}
 	r.attachRunningIconsAtLocked(bar.scale120())
@@ -2994,11 +2997,13 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 	policy := cfg.ForConnector(connector)
 	r.mu.Lock()
 	blur, effect := r.caps.Blur, r.effectOutputs[connector]
+	luminance := r.wallpaperLuminance[connector]
 	r.mu.Unlock()
 	th, err := resolveOutputTheme(cfg, connector, tok, blur, effect)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
+	th.WallpaperLuminance = luminance
 	text, err := r.textRenderer(policy.FontFamily)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -117,7 +118,7 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 				r.rebuildPanel(h)
 				hosts = append(hosts, h)
 			}
-			bars := r.noteEffectOutputsLocked(snap)
+			bars := r.noteWallpaperVisualsLocked(snap)
 			var surfacePubs []wayland.Invalidation
 			if len(bars) > 0 {
 				// Panels attached to a rethemed bar share its ground.
@@ -141,10 +142,11 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 	}
 }
 
-// noteEffectOutputsLocked records which outputs play a terminal effect and
-// rethemes each bar whose answer changed, returning those bars' outputs.
+// noteWallpaperVisualsLocked records per-output effect and image state, then
+// rethemes each bar whose appearance changed.
 // Paused counts: the frozen frame is still the wallpaper behind the bar.
-func (r *Registry) noteEffectOutputsLocked(snap wallpaper.Snapshot) []uint32 {
+func (r *Registry) noteWallpaperVisualsLocked(snap wallpaper.Snapshot) []uint32 {
+	r.wallpaperLuminance = maps.Clone(snap.ImageLuminance)
 	next := map[string]bool{}
 	for _, connector := range snap.Connectors {
 		state := snap.Runtime[connector].State
@@ -156,10 +158,15 @@ func (r *Registry) noteEffectOutputsLocked(snap wallpaper.Snapshot) []uint32 {
 	var changed []uint32
 	for global, bar := range r.bars {
 		connector := bar.connector()
-		if next[connector] == r.effectOutputs[connector] {
+		th := bar.themeSnapshot()
+		luminance := snap.ImageLuminance[connector]
+		effectChanged := next[connector] != r.effectOutputs[connector]
+		luminanceChanged := luminance != th.WallpaperLuminance
+		if !effectChanged && !luminanceChanged {
 			continue
 		}
-		bar.retheme(bar.themeSnapshot().WithEffectBehind(next[connector], r.caps.Blur))
+		th.WallpaperLuminance = luminance
+		bar.retheme(th.WithEffectBehind(next[connector], r.caps.Blur))
 		changed = append(changed, global)
 	}
 	r.effectOutputs = next
@@ -1855,6 +1862,7 @@ func (r *Registry) paintThemeLocked(cfg config.Config, tokens theme.Tokens, them
 			}
 			return nil, nil
 		}
+		next.WallpaperLuminance = r.wallpaperLuminance[bar.connector()]
 		nextBars[bar] = next
 	}
 	if commit {
