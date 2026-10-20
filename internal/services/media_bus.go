@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -25,6 +26,10 @@ type bus interface {
 	// Set writes one org.mpris.MediaPlayer2.Player property through the
 	// standard D-Bus Properties interface.
 	Set(busName, iface, prop string, value any) error
+	// Overflowed reports whether the event queue dropped a change since the
+	// last call, and clears the flag. A reader that sees it true reconciles
+	// from scratch rather than trusting the stream.
+	Overflowed() bool
 	Close()
 }
 
@@ -47,8 +52,12 @@ type sessionBus struct {
 	// MPRIS name it currently owns. PropertiesChanged and Seeked carry only
 	// the unique name, so this is how their events find their player. pump
 	// and initial ListNames lookup share it under ownersMu.
-	owners    map[string]string
-	ownersMu  sync.Mutex
+	owners   map[string]string
+	ownersMu sync.Mutex
+	// overflow records a change emit gave up on, so a reader can reconcile
+	// instead of trusting a stream it knows has gaps. It is atomic because
+	// emit runs on the pump goroutine and the reader runs on the watch one.
+	overflow  atomic.Bool
 	stop      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
@@ -131,12 +140,24 @@ func (b *sessionBus) pump(signals <-chan *dbus.Signal) {
 	}
 }
 
-// emit forwards one event, giving up if the bus closes first.
+// emit forwards one event, giving up if the bus closes first. It never waits
+// for a reader: with nobody draining, a waiting emit would stop the pump from
+// reading its signal channel, and godbus would then park one goroutine per
+// signal until somebody read again.
 func (b *sessionBus) emit(ch nameChange) {
 	select {
 	case b.changes <- ch:
 	case <-b.stop:
+	default:
+		b.overflow.Store(true)
 	}
+}
+
+// Overflowed reports whether emit gave up on an event since the last call,
+// and clears the flag. It swaps, so a reader that reconciles cannot
+// enumerate again for the same drop.
+func (b *sessionBus) Overflowed() bool {
+	return b.overflow.Swap(false)
 }
 
 // positionOnly reports whether a PropertiesChanged payload carried nothing
@@ -250,6 +271,7 @@ func (unavailableBus) NameChanges() <-chan nameChange          { return nil }
 func (unavailableBus) Get(string, string, string) (any, error) { return nil, nil }
 func (unavailableBus) Call(string, string, ...any) error       { return errNoMediaBus }
 func (unavailableBus) Set(string, string, string, any) error   { return errNoMediaBus }
+func (unavailableBus) Overflowed() bool                        { return false }
 func (unavailableBus) Close()                                  {}
 
 var errNoMediaBus = errors.New("services: session bus is not available")
