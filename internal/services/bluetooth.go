@@ -1372,7 +1372,7 @@ func (r *bluetoothReducer) state() BluetoothState {
 			device.RSSI = &rssi
 		}
 		if battery := object[batteryInterface]; battery != nil {
-			if percentage, ok := uint8Property(battery, "Percentage"); ok {
+			if percentage, ok := uint8Property(battery, "Percentage"); ok && percentage <= 100 {
 				device.Battery = &percentage
 			}
 		}
@@ -1457,10 +1457,19 @@ func uint8Property(properties map[string]dbus.Variant, name string) (uint8, bool
 	case uint8:
 		return number, true
 	case uint16:
+		if number > 255 {
+			return 0, false
+		}
 		return uint8(number), true
 	case uint32:
+		if number > 255 {
+			return 0, false
+		}
 		return uint8(number), true
 	case int:
+		if number < 0 || number > 255 {
+			return 0, false
+		}
 		return uint8(number), true
 	default:
 		return 0, false
