@@ -22,7 +22,7 @@ func fillInvalidations(r *Registry) {
 // to be free before it: otherwise one stalled invalidation freezes every
 // goroutine of the Registry behind this one mutex.
 func TestScheduleControlLeavesRegistryMuFreeWhileItsPublishBlocks(t *testing.T) {
-	r := newPanelRegistry(t)
+	r := newPanelRegistryWithoutBridge(t)
 	withTestBar(t, r, 7, r.cfg)
 	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
 		t.Fatal(err)

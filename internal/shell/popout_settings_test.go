@@ -555,7 +555,7 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 
 func TestSettingsExternalReloadRefreshesOpenControl(t *testing.T) {
 	t.Parallel()
-	reg := newPanelRegistry(t)
+	reg := newPanelRegistryWithoutBridge(t)
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
