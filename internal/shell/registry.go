@@ -2079,8 +2079,8 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 
 func (r *Registry) toggleNotifyDND() {
 	r.mu.Lock()
-	_, on := r.notify.dndState(r.now)
-	r.notify.setDND(!on)
+	_, on := r.notify.dndState(time.Now())
+	r.setDND(!on)
 	if r.toasts != nil {
 		r.toasts.recompute()
 	}

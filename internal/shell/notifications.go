@@ -30,10 +30,19 @@ type notifyState struct {
 
 	// outputs is the set of configured connector names the projection
 	// projects to. Zero outputs means everything is suppressed.
-	outputs    []string
-	dnd        bool
-	dndUntil   time.Time
-	centerOpen bool
+	outputs                     []string
+	dnd                         bool
+	dndUntil                    time.Time
+	dndSince                    time.Time
+	centerOpen                  bool
+	centerOpenSince             time.Time
+	pendingSuppressionIntervals []notifySuppressionInterval
+}
+
+type notifySuppressionInterval struct {
+	start time.Time
+	end   time.Time
+	dnd   bool
 }
 
 func newNotifyState() *notifyState {
@@ -168,6 +177,45 @@ func (s *notifyState) applyNotify(m notifyclient.Message) {
 	}
 }
 
+func (s *notifyState) rememberSuppressionLocked(start, end time.Time, dnd bool) {
+	if start.IsZero() || !end.After(start) {
+		return
+	}
+	s.pendingSuppressionIntervals = append(s.pendingSuppressionIntervals, notifySuppressionInterval{start: start, end: end, dnd: dnd})
+}
+
+// suppressionIntervals returns completed intervals plus any suppression
+// still active at now. Deltas can arrive after the interval that created them.
+func (s *notifyState) suppressionIntervals(now time.Time) []notifySuppressionInterval {
+	s.expireDND(now)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.suppressionIntervalsLocked(now)
+}
+
+// takeSuppressionIntervals returns and clears completed intervals since the
+// previous service snapshot. A reconnect or resync snapshot can distinguish
+// suppressed arrivals from later ones.
+func (s *notifyState) takeSuppressionIntervals(now time.Time) []notifySuppressionInterval {
+	s.expireDND(now)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intervals := s.suppressionIntervalsLocked(now)
+	s.pendingSuppressionIntervals = nil
+	return intervals
+}
+
+func (s *notifyState) suppressionIntervalsLocked(now time.Time) []notifySuppressionInterval {
+	intervals := append([]notifySuppressionInterval(nil), s.pendingSuppressionIntervals...)
+	if s.dndActiveLocked(now) && !s.dndSince.IsZero() {
+		intervals = append(intervals, notifySuppressionInterval{start: s.dndSince, end: s.dndUntil, dnd: true})
+	}
+	if s.centerOpen && !s.centerOpenSince.IsZero() {
+		intervals = append(intervals, notifySuppressionInterval{start: s.centerOpenSince})
+	}
+	return intervals
+}
+
 func (s *notifyState) activeIDs() []uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -248,6 +296,12 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 	r.mu.Lock()
 	if arrived {
 		r.cueNotificationLocked()
+		if r.toasts != nil && m.Delta.Notification != nil {
+			r.toasts.suppressArrival(*m.Delta.Notification)
+		}
+	}
+	if m.Kind == notifyclient.KindSnapshot && r.toasts != nil {
+		r.toasts.suppressSnapshotArrivals(m.Snapshot.Active)
 	}
 	if notificationMessageRetiresImages(m) {
 		r.pruneNotificationRastersLocked()

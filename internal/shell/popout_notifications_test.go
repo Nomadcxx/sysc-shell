@@ -297,8 +297,8 @@ func TestCenterScheduleShowsDurationPresets(t *testing.T) {
 
 func TestCenterPresetOneHourMatchesSetDNDPresetAt(t *testing.T) {
 	r := NewRegistry(config.Default())
-	now := time.Unix(1_756_000_000, 0)
-	r.now = now
+	staleClock := time.Unix(1_756_000_000, 0)
+	r.now = staleClock
 	r.applyNotify(snap(1))
 	h := &PanelHost{id: PanelNotifications, notifyMenu: true}
 	r.rebuildPanel(h)
@@ -309,9 +309,12 @@ func TestCenterPresetOneHourMatchesSetDNDPresetAt(t *testing.T) {
 			break
 		}
 	}
-	end, on := r.dndStateAt(now)
-	if !on || !end.Equal(now.Add(time.Hour)) {
-		t.Fatalf("end = %v on=%v, want now+1h", end, on)
+	r.notify.mu.Lock()
+	start := r.notify.dndSince
+	r.notify.mu.Unlock()
+	end, on := r.dndStateAt(time.Now())
+	if !on || !start.After(staleClock) || !end.Equal(start.Add(time.Hour)) {
+		t.Fatalf("start = %v, end = %v on=%v, want a current start and end one hour later", start, end, on)
 	}
 }
 
