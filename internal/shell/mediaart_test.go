@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -219,5 +220,150 @@ func TestMediaArtTimeoutPublishesNilOnce(t *testing.T) {
 		if err == nil {
 			_ = file.Close()
 		}
+	}
+}
+
+// mediaArtClock stands in for time.Now so the retry window can be crossed
+// without sleeping.
+type mediaArtClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newMediaArtClock() *mediaArtClock {
+	return &mediaArtClock{now: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
+}
+
+func (c *mediaArtClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *mediaArtClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// A cover that failed once must be retried after the window, not held negative
+// for the rest of the session.
+func TestMediaArtRetriesAfterTransientFailure(t *testing.T) {
+	data := testMediaArtPNG(t)
+	var hits atomic.Int32
+	server := newMediaArtTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	clock := newMediaArtClock()
+	results := make(chan *ui.Image, 2)
+	art := newMediaArtWorker(func(_ icons.Key, image *ui.Image) { results <- image })
+	art.now = clock.Now
+	defer art.Close()
+
+	source := server.URL + "/flaky.png"
+	if _, queued := art.Request(source, 16); !queued {
+		t.Fatal("first request did not queue")
+	}
+	select {
+	case image := <-results:
+		if image != nil {
+			t.Fatalf("503 produced %+v, want no image", image)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first request did not publish")
+	}
+
+	if _, queued := art.Request(source, 16); queued {
+		t.Fatal("request inside the retry window queued again")
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("server hits inside the retry window = %d, want 1", got)
+	}
+
+	clock.Advance(mediaArtRetryAfter + time.Second)
+	if _, queued := art.Request(source, 16); !queued {
+		t.Fatal("request after the retry window did not queue")
+	}
+	select {
+	case image := <-results:
+		if image == nil || image.Width != 16 || image.Height != 16 {
+			t.Fatalf("retried image = %+v, want a decoded 16x16 raster", image)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retried request did not publish")
+	}
+}
+
+// The failure set is bounded: a player that rotates through broken covers must
+// not grow it for the life of the process.
+func TestMediaArtFailedSetIsBounded(t *testing.T) {
+	art := newMediaArtWorker(nil)
+	defer art.Close()
+	for i := 0; i < 1_000; i++ {
+		key := icons.Key{Name: fmt.Sprintf("missing-%d.png", i), W: 16, H: 16}
+		job := &mediaArtJob{key: key, artKey: key.Name, done: make(chan struct{}), cancel: func() {}}
+		art.mu.Lock()
+		art.jobs[key] = job
+		art.mu.Unlock()
+		art.finish(job, nil, true)
+	}
+	art.mu.Lock()
+	got := len(art.failed)
+	art.mu.Unlock()
+	if got > mediaArtMaxFailed {
+		t.Fatalf("failed set holds %d entries, want at most %d", got, mediaArtMaxFailed)
+	}
+}
+
+// A watchdog timeout on a slow network is transient: once the window passes the
+// same ArtKey is fetched again instead of staying blank.
+func TestMediaArtWatchdogTimeoutIsRetryable(t *testing.T) {
+	data := testMediaArtPNG(t)
+	var hits atomic.Int32
+	server := newMediaArtTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			time.Sleep(300 * time.Millisecond)
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	clock := newMediaArtClock()
+	results := make(chan *ui.Image, 2)
+	art := newMediaArtWorker(func(_ icons.Key, image *ui.Image) { results <- image })
+	art.now = clock.Now
+	art.watchdog = 30 * time.Millisecond
+	defer art.Close()
+
+	source := server.URL + "/slow.png"
+	if _, queued := art.Request(source, 16); !queued {
+		t.Fatal("first request did not queue")
+	}
+	select {
+	case image := <-results:
+		if image != nil {
+			t.Fatalf("timed-out request produced %+v, want no image", image)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed-out request did not publish")
+	}
+
+	clock.Advance(mediaArtRetryAfter + time.Second)
+	if _, queued := art.Request(source, 16); !queued {
+		t.Fatal("request after a watchdog timeout was not retried")
+	}
+	select {
+	case image := <-results:
+		if image == nil {
+			t.Fatal("retried request published no image")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("retried request did not publish")
 	}
 }
