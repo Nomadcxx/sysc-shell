@@ -311,6 +311,8 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Tone = ui.ToneSubtle
 	case v1.ToneAccent:
 		out.Tone = ui.ToneAccent
+	case v1.ToneWarning:
+		out.Tone = ui.ToneActivity
 	}
 
 	if n.Fill != "" {

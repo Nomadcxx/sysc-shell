@@ -336,6 +336,7 @@ func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 		{Kind: v1.KindText, Text: "ok"},
 		{Kind: v1.KindText, Text: "broken", Tone: v1.ToneError},
 		{Kind: v1.KindText, Text: "caption", Tone: v1.ToneSubtle},
+		{Kind: v1.KindText, Text: "pairing", Tone: v1.ToneWarning},
 	}}
 	got, err := Convert(root, v1.ViewPanel)
 	if err != nil {
@@ -349,6 +350,9 @@ func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 	}
 	if got.Children[2].Tone != ui.ToneSubtle {
 		t.Errorf("subtle tone = %v", got.Children[2].Tone)
+	}
+	if got.Children[3].Tone != ui.ToneActivity {
+		t.Errorf("warning tone = %v, want activity tone %v", got.Children[3].Tone, ui.ToneActivity)
 	}
 }
 

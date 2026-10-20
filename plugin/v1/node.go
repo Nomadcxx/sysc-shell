@@ -177,6 +177,9 @@ const (
 	// ToneAccent paints emphasized text -- a running countdown, the active
 	// player's name -- in the theme accent at full contrast.
 	ToneAccent Tone = "accent"
+	// ToneWarning marks a pending or cautionary state without reporting a
+	// failure. The host maps it to its noncritical activity role.
+	ToneWarning Tone = "warning"
 )
 
 // ViewKind names where a tree is going to be shown. The same vocabulary is not
@@ -397,7 +400,9 @@ var knownKinds = map[NodeKind]bool{
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true, ViewFloating: true}
 
-var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true, ToneSubtle: true, ToneAccent: true}
+var knownTones = map[Tone]bool{
+	ToneNormal: true, ToneError: true, ToneSubtle: true, ToneAccent: true, ToneWarning: true,
+}
 
 var knownFills = map[string]bool{
 	"surface": true, "accent": true, "container": true, "error": true,
