@@ -70,6 +70,19 @@ func HelperServe(args []string) int {
 		recordInput = p
 		mode = "ok"
 	}
+	// The spawn-child fixtures leave a descendant behind so a test can check
+	// what a forced stop does to it. The pid lands in the named file; the mode
+	// the plugin serves afterwards is the part before the colon.
+	spawnChild := ""
+	if p, ok := strings.CutPrefix(mode, "spawn-child:"); ok {
+		spawnChild, mode = p, "ok"
+	}
+	if p, ok := strings.CutPrefix(mode, "spawn-child-slow-shutdown:"); ok {
+		spawnChild, mode = p, "slow-shutdown"
+	}
+	if p, ok := strings.CutPrefix(mode, "spawn-child-silent:"); ok {
+		spawnChild, mode = p, "silent"
+	}
 	out := v1.NewEncoder(os.Stdout)
 	in := v1.NewDecoder(os.Stdin, v1.ToPlugin)
 
@@ -97,6 +110,21 @@ func HelperServe(args []string) int {
 		Protocol:     protocol,
 		Plugin:       hello.Plugin,
 		Capabilities: hello.Capabilities,
+	}
+	if spawnChild != "" {
+		// A descendant in the plugin's own group, the shape of a plugin that
+		// shells out to a recorder, a poll loop or a CLI. It writes nothing
+		// and reads nothing, so it stays alive until something kills it.
+		child := exec.Command(os.Args[0], HelperFlag, "hold-stderr")
+		child.Stdin, child.Stdout, child.Stderr = nil, nil, nil
+		if err := child.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "helper: start descendant: %v\n", err)
+			return 1
+		}
+		if err := os.WriteFile(spawnChild, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "helper: record descendant: %v\n", err)
+			return 1
+		}
 	}
 	switch mode {
 	case "silent":
@@ -168,6 +196,11 @@ func HelperServe(args []string) int {
 		}
 		_ = out.Encode(&v1.ViewSnapshot{ViewID: "stderr-child", Revision: 1,
 			Root: &v1.Node{Kind: v1.KindText, Text: strconv.Itoa(child.Process.Pid)}})
+		// Stay alive holding the pipe. A plugin that exits here would leave
+		// the test racing the grace against the pipe copy; going deaf on
+		// purpose guarantees the host has to bound the wait and stop the
+		// group itself.
+		time.Sleep(time.Minute)
 		return 0
 	case "flood":
 		// More frames than any sane budget allows, written in one burst so

@@ -30,6 +30,12 @@ const shutdownSendTimeout = 100 * time.Millisecond
 // child processes before the host kills an unresponsive process.
 const defaultShutdownGrace = 4 * time.Second
 
+// killGroupSoftWait is how long a forced stop gives the group to act on SIGTERM
+// before SIGKILL. It is short on purpose: this is the arm a plugin reached only
+// after ignoring the whole shutdown grace, so nothing is waiting on a
+// cooperative exit any more.
+const killGroupSoftWait = 250 * time.Millisecond
+
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
 
@@ -164,6 +170,15 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	cmd := exec.CommandContext(ctx, s.Manifest.ExecPath)
 	cmd.Args = []string{s.Manifest.ExecPath}
 	cmd.Dir = s.Manifest.Dir
+	// A plugin gets its own process group. It inherits the shell's group
+	// otherwise, and a plugin that forks would then share one with the shell
+	// and the compositor: signalling the group to stop a plugin would reach
+	// both, which is why the forced paths below signal the group at all.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Cancelling the host context is a forced stop, so it takes the same group
+	// signal a grace expiry does rather than killing the leader alone and
+	// leaving the plugin's children reparented to the user manager.
+	cmd.Cancel = func() error { return killGroup(cmd, syscall.SIGKILL) }
 	// GH #11: a third-party process gets the handful of variables it needs to
 	// find the compositor and its own config, not the whole session
 	// environment (which can carry tokens, proxy credentials, search paths).
@@ -212,6 +227,10 @@ func (s *Supervisor) reap(sess *Session) {
 	pid := sess.PID()
 	sess.Close()
 	if sess.cmd.ProcessState == nil {
+		// Close already signalled the group; if the leader is still unreaped
+		// something survived the kill, so insist once before recording it as
+		// stray rather than leaving it to the user manager.
+		_ = killGroup(sess.cmd, syscall.SIGKILL)
 		s.lastStrayPID = pid
 	}
 }
@@ -436,10 +455,39 @@ func (s *Session) shutdown() ExitReason {
 	case err := <-done:
 		return classify(err)
 	case <-timer.C:
-		_ = s.cmd.Process.Kill()
+		// The plugin did not take host.shutdown. Ask the whole group once,
+		// briefly, then insist: descendants that survived the leader would
+		// otherwise outlive the session in the user manager's care.
+		_ = killGroup(s.cmd, syscall.SIGTERM)
+		select {
+		case <-done:
+			return ExitReason{Kind: ExitKilled}
+		case <-time.After(killGroupSoftWait):
+		}
+		_ = killGroup(s.cmd, syscall.SIGKILL)
 		<-done
 		return ExitReason{Kind: ExitKilled}
 	}
+}
+
+// killGroup signals a plugin's whole process group, falling back to the leader.
+//
+// Cmd.Cancel and the grace-expiry arm both call it. A negative pid addresses
+// the group Setpgid gave the plugin, so a forced stop reaches the children the
+// plugin forked; a signal to the leader alone leaves them reparented and
+// running after the user disabled the plugin, after an automatic restart, and
+// after the shell exits. When there is no group left to signal — because every
+// member is gone, or because the leader moved out of it — the leader is the
+// last place to look, and signalling a finished process reports
+// os.ErrProcessDone rather than a spurious failure.
+func killGroup(cmd *exec.Cmd, sig syscall.Signal) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil {
+		return cmd.Process.Signal(sig)
+	}
+	return nil
 }
 
 // classify turns a Wait error into a reason a user can read.

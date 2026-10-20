@@ -9,6 +9,20 @@
 // does guarantee is that a misbehaving plugin cannot make the shell
 // unresponsive, unbounded, or wrong: every input is bounded before it is
 // parsed and validated before it reaches presentation.
+//
+// # Process lifetime
+//
+// A plugin runs in its own process group, not the shell's. An orderly exit is
+// the plugin's responsibility: it answers host.shutdown and stops the children
+// it owns, and the host leaves any process that outlives it alone, so a plugin
+// may hand an editor or a browser to the session on purpose.
+//
+// A forced stop — the grace after host.shutdown expiring, a rejected
+// handshake, or the host context being cancelled — signals that whole group,
+// because the host cannot tell a plugin's own helpers from something the user
+// should keep. A process meant to outlive a plugin therefore has to leave the
+// group: start it through the open-url host call, which goes through the
+// session's own launcher, or with setsid if it is the plugin's own binary.
 package plugin
 
 import (

@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -441,6 +444,13 @@ func TestCloseBoundsStderrPipeHeldByChild(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Close did not bound the inherited stderr pipe")
 	}
+	// The child shares the plugin's group, so the forced stop ends it too; the
+	// deferred kill in the cleanup above is a no-op when this holds. The pid
+	// can still answer for an instant after the kill, so poll briefly rather
+	// than race the process's death.
+	if !waitForExit(t, pid, time.Second) {
+		t.Errorf("stderr child %d outlived the forced stop", pid)
+	}
 }
 
 func TestSessionCarriesMessagesInEachDirection(t *testing.T) {
@@ -560,5 +570,154 @@ func TestRecvStopsAPluginThatFloods(t *testing.T) {
 	}
 	if accepted < 10 {
 		t.Fatalf("accepted only %d messages, want the burst to be allowed", accepted)
+	}
+}
+
+// waitForExit waits until the pid is gone or the deadline passes, and reports
+// whether it left.
+func waitForExit(t *testing.T, pid int, within time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+}
+
+// readChildPID reads the pid the spawn-child fixtures wrote.
+func readChildPID(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read descendant pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		t.Fatalf("descendant pid = %q, err = %v", data, err)
+	}
+	return pid
+}
+
+// killIfAlive is cleanup for a descendant a test expects to survive; the
+// grammar the shell promises is that only a plugin that stopped orderly may
+// leave one behind, so the test owns ending it.
+func killIfAlive(pid int) {
+	if !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+func TestCloseKillsPluginDescendantsWhenGraceExpires(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "child.pid")
+	s := supervisor(installHelper(t, "spawn-child-slow-shutdown:"+pidPath))
+	s.ShutdownGrace = 100 * time.Millisecond
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	child := readChildPID(t, pidPath)
+	defer killIfAlive(child)
+
+	began := time.Now()
+	reason := sess.Close()
+	if reason.Kind != ExitKilled {
+		t.Fatalf("exit = %+v, want a kill after the grace expired", reason)
+	}
+	if !waitForExit(t, child, time.Second) {
+		t.Fatalf("descendant %d survived the forced stop", child)
+	}
+	// The grace is what bounds the forced path; a group kill must not add
+	// waiting of its own.
+	if elapsed := time.Since(began); elapsed > 3*time.Second {
+		t.Fatalf("Close took %v, want it bounded by the grace period", elapsed)
+	}
+}
+
+func TestCancelContextKillsPluginDescendants(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "child.pid")
+	s := supervisor(installHelper(t, "spawn-child:"+pidPath))
+	ctx, cancel := context.WithCancel(context.Background())
+
+	sess, err := s.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sess.Close()
+	child := readChildPID(t, pidPath)
+	defer killIfAlive(child)
+
+	// Cancelling the context is the path a shell shutdown takes: the command
+	// is cancelled rather than closed, which used to signal only the plugin.
+	cancel()
+	if !waitForExit(t, child, time.Second) {
+		t.Fatalf("descendant %d survived context cancellation", child)
+	}
+}
+
+func TestOrderlyExitLeavesADetachedChild(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "child.pid")
+	sess := startHelper(t, "spawn-child:"+pidPath)
+	child := readChildPID(t, pidPath)
+	defer killIfAlive(child)
+
+	reason := sess.Close()
+	if reason.Kind != ExitOrderly {
+		t.Fatalf("exit = %+v, want an orderly one", reason)
+	}
+	// A plugin that handled host.shutdown may have started a user-visible
+	// process on purpose, so the host leaves that decision with the plugin.
+	if errors.Is(syscall.Kill(child, 0), syscall.ESRCH) {
+		t.Fatalf("descendant %d was killed on an orderly exit", child)
+	}
+}
+
+func TestPluginRunsInItsOwnProcessGroup(t *testing.T) {
+	t.Parallel()
+
+	sess := startHelper(t, "ok")
+	plugPGID, err := syscall.Getpgid(sess.PID())
+	if err != nil {
+		t.Fatalf("Getpgid(plugin): %v", err)
+	}
+	if plugPGID == syscall.Getpgrp() {
+		t.Fatalf("plugin pgid %d is the shell's own group; a group signal would reach the shell", plugPGID)
+	}
+	if plugPGID != sess.PID() {
+		t.Fatalf("plugin pgid = %d, want its own pid %d as the group leader", plugPGID, sess.PID())
+	}
+}
+
+func TestRejectedHandshakeLeavesNoDescendants(t *testing.T) {
+	t.Parallel()
+
+	pidPath := filepath.Join(t.TempDir(), "child.pid")
+	s := supervisor(installHelper(t, "spawn-child-silent:"+pidPath))
+	s.HandshakeTimeout = 100 * time.Millisecond
+	s.ShutdownGrace = 100 * time.Millisecond
+
+	if _, err := s.Start(context.Background()); err == nil {
+		t.Fatal("Start succeeded without a handshake")
+	}
+	// A plugin that never answered is killed along with the children it
+	// brought up; the shell never agreed to host it.
+	child := readChildPID(t, pidPath)
+	defer killIfAlive(child)
+	if !waitForExit(t, child, time.Second) {
+		t.Fatalf("descendant %d outlived its rejected handshake", child)
+	}
+	if s.lastStrayPID != 0 {
+		t.Fatalf("process %d outlived its failed handshake", s.lastStrayPID)
 	}
 }
