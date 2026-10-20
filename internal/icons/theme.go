@@ -11,9 +11,10 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // rasterExtensions are the formats searched for by name inside an icon theme,
@@ -37,10 +38,51 @@ var decodableExtensions = []string{".png", ".xpm", ".jpg", ".jpeg", ".gif", ".bm
 // otherwise walk forever.
 const maxInheritDepth = 8
 
+// themeRecheckInterval bounds how often the index revalidates itself. A theme
+// installed, updated or removed while the shell runs is noticed within this
+// window, while a lookup pays nothing for it.
+const themeRecheckInterval = 5 * time.Second
+
 // Resolver finds icon files in the XDG icon themes.
+//
+// The theme tree is indexed once and reused: opening the launcher asks for
+// every visible row, and a walk of the whole tree per row cost milliseconds and
+// roughly 1,400 stats each time on a real theme.
 type Resolver struct {
 	theme string
 	dirs  []string
+
+	// mu guards the index and what it was built from. The index is immutable
+	// once built; a rebuild replaces it, so a resolve can take a snapshot and
+	// finish without the lock.
+	mu         sync.Mutex
+	themes     []string
+	index      map[string]*themeIndex
+	watched    []watchedDirectory
+	checkedAt  time.Time
+	generation uint64
+	now        func() time.Time
+}
+
+// iconCandidate is one file the index found for an icon name.
+type iconCandidate struct {
+	path   string
+	size   int
+	vector bool
+}
+
+// themeIndex maps an icon name to every file a theme offers for it, in search
+// directory order.
+type themeIndex struct {
+	byName map[string][]iconCandidate
+}
+
+// watchedDirectory is a directory whose modification time invalidates the
+// index. A file added to a category changes that category's time, not the
+// theme root's, so every directory read while indexing is remembered.
+type watchedDirectory struct {
+	path string
+	mod  time.Time
 }
 
 // NewResolver builds a resolver over the standard search path. An empty theme
@@ -56,7 +98,7 @@ func NewResolver(theme string, dirs []string) *Resolver {
 	if dirs == nil {
 		dirs = SearchDirs()
 	}
-	return &Resolver{theme: theme, dirs: dirs}
+	return &Resolver{theme: theme, dirs: dirs, now: time.Now}
 }
 
 // SearchDirs reports the icon directories in XDG precedence order.
@@ -151,10 +193,8 @@ func (r *Resolver) resolve(name string, size int, vectors bool) (string, bool) {
 	if strings.ContainsRune(name, filepath.Separator) {
 		return "", false
 	}
-	for _, theme := range r.chain() {
-		if path, ok := r.findInTheme(theme, name, size, vectors); ok {
-			return path, true
-		}
+	if path, ok := r.resolveThemed(name, size, vectors); ok {
+		return path, true
 	}
 	for _, dir := range r.dirs {
 		for _, extension := range rasterExtensions {
@@ -175,8 +215,247 @@ func (r *Resolver) resolve(name string, size int, vectors bool) (string, bool) {
 	return "", false
 }
 
-// chain reports the theme and everything it inherits, hicolor last.
-func (r *Resolver) chain() []string {
+// resolveThemed answers from the index: the chain, then one map lookup per
+// theme.
+func (r *Resolver) resolveThemed(name string, size int, vectors bool) (string, bool) {
+	r.mu.Lock()
+	r.ensureIndexLocked()
+	themes, index := r.themes, r.index
+	r.mu.Unlock()
+	for _, theme := range themes {
+		if themed := index[theme]; themed != nil {
+			if path, ok := themed.resolve(name, size, vectors); ok {
+				return path, true
+			}
+		}
+	}
+	return "", false
+}
+
+// Invalidate drops the index, so the next resolve re-reads the theme tree. A
+// worker over this resolver forgets its remembered misses at the same time.
+func (r *Resolver) Invalidate() {
+	r.mu.Lock()
+	r.index = nil
+	r.themes = nil
+	r.watched = nil
+	r.generation++
+	r.mu.Unlock()
+}
+
+// GenerationReporter is a resolver whose index can be rebuilt. A caller that
+// remembers a failure records the generation it saw, so a rebuild retries what
+// it remembered instead of serving a stale miss.
+type GenerationReporter interface {
+	Generation() uint64
+}
+
+// Generation counts index rebuilds.
+func (r *Resolver) Generation() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.generation
+}
+
+func (r *Resolver) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+// ensureIndexLocked rebuilds the index when it is missing, or when one of the
+// directories it was built from has changed since the last recheck.
+func (r *Resolver) ensureIndexLocked() {
+	if r.index != nil {
+		if r.clock().Sub(r.checkedAt) < themeRecheckInterval {
+			return
+		}
+		if r.unchangedLocked() {
+			r.checkedAt = r.clock()
+			return
+		}
+	}
+	r.rebuildLocked()
+}
+
+func (r *Resolver) unchangedLocked() bool {
+	for _, watched := range r.watched {
+		info, err := os.Stat(watched.path)
+		if err != nil || !info.ModTime().Equal(watched.mod) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Resolver) rebuildLocked() {
+	themes := r.computeChain()
+	index := make(map[string]*themeIndex, len(themes))
+	watched := make(map[string]time.Time, len(r.dirs))
+	watch := func(path string) {
+		if _, done := watched[path]; done {
+			return
+		}
+		if info, err := os.Stat(path); err == nil {
+			watched[path] = info.ModTime()
+		}
+	}
+	// The search directories are watched so a theme installed or removed while
+	// the shell runs is noticed even when its root did not exist before.
+	for _, dir := range r.dirs {
+		watch(dir)
+	}
+	for _, theme := range themes {
+		index[theme] = r.indexTheme(theme, watch)
+	}
+	stamps := make([]watchedDirectory, 0, len(watched))
+	for path, mod := range watched {
+		stamps = append(stamps, watchedDirectory{path: path, mod: mod})
+	}
+	r.themes = themes
+	r.index = index
+	r.watched = stamps
+	r.checkedAt = r.clock()
+	r.generation++
+}
+
+// indexTheme records every icon file a theme offers. Each directory is read
+// once, rather than statting a name in every size and category directory for
+// every lookup.
+func (r *Resolver) indexTheme(theme string, watch func(string)) *themeIndex {
+	index := &themeIndex{byName: map[string][]iconCandidate{}}
+	for _, dir := range r.dirs {
+		root := filepath.Join(dir, theme)
+		watch(root)
+		sizes, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, size := range sizes {
+			if !size.IsDir() {
+				continue
+			}
+			at := directorySize(size.Name())
+			sizeDir := filepath.Join(root, size.Name())
+			watch(sizeDir)
+			categories, err := os.ReadDir(sizeDir)
+			if err != nil {
+				continue
+			}
+			for _, category := range categories {
+				if !category.IsDir() {
+					continue
+				}
+				categoryDir := filepath.Join(sizeDir, category.Name())
+				watch(categoryDir)
+				files, err := os.ReadDir(categoryDir)
+				if err != nil {
+					continue
+				}
+				for _, file := range files {
+					if file.IsDir() {
+						continue
+					}
+					name, vector, ok := iconName(file.Name())
+					if !ok {
+						continue
+					}
+					index.byName[name] = append(index.byName[name], iconCandidate{
+						path:   filepath.Join(categoryDir, file.Name()),
+						size:   at,
+						vector: vector,
+					})
+				}
+			}
+		}
+	}
+	return index
+}
+
+// iconName splits an icon file into the name a lookup uses and whether the file
+// is a vector. Anything the decoder cannot read is not an icon.
+func iconName(file string) (string, bool, bool) {
+	extension := strings.ToLower(filepath.Ext(file))
+	switch {
+	case contains(rasterExtensions, extension):
+		return strings.TrimSuffix(file, filepath.Ext(file)), false, true
+	case contains(vectorExtensions, extension):
+		return strings.TrimSuffix(file, filepath.Ext(file)), true, true
+	default:
+		return "", false, false
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+// resolve picks the best file the theme offers and confirms it is still
+// readable. The index records names without statting every file, so a zero-byte
+// or newly removed candidate is skipped here and the next one is tried.
+func (idx *themeIndex) resolve(name string, size int, vectors bool) (string, bool) {
+	candidates := idx.byName[name]
+	if len(candidates) == 0 {
+		return "", false
+	}
+	skip := map[string]struct{}(nil)
+	for {
+		candidate, ok := idx.pick(candidates, size, vectors, skip)
+		if !ok {
+			return "", false
+		}
+		if candidate.vector {
+			if isVectorFile(candidate.path) {
+				return candidate.path, true
+			}
+		} else if isRasterFile(candidate.path) {
+			return candidate.path, true
+		}
+		if skip == nil {
+			skip = make(map[string]struct{}, 1)
+		}
+		skip[candidate.path] = struct{}{}
+	}
+}
+
+// pick applies the tiers unchanged: an exact-size raster, then a vector, then
+// the raster nearest the request.
+func (idx *themeIndex) pick(candidates []iconCandidate, size int, vectors bool, skip map[string]struct{}) (iconCandidate, bool) {
+	var best iconCandidate
+	haveBest := false
+	firstVector := -1
+	for i := range candidates {
+		candidate := candidates[i]
+		if _, skipped := skip[candidate.path]; skipped {
+			continue
+		}
+		if candidate.vector {
+			if vectors && firstVector < 0 {
+				firstVector = i
+			}
+			continue
+		}
+		if !haveBest || (candidate.size != best.size && betterSize(candidate.size, best.size, size)) {
+			best, haveBest = candidate, true
+		}
+	}
+	if haveBest && best.size == size {
+		return best, true
+	}
+	if firstVector >= 0 {
+		return candidates[firstVector], true
+	}
+	return best, haveBest
+}
+
+// computeChain reports the theme and everything it inherits, hicolor last.
+func (r *Resolver) computeChain() []string {
 	seen := map[string]struct{}{}
 	var order []string
 	var walk func(theme string, depth int)
@@ -233,63 +512,6 @@ func parseInherits(file *os.File) []string {
 	return nil
 }
 
-// findInTheme picks the best file a theme offers for a name: an exact-size
-// raster, then a vector, then the raster nearest the request — the smallest
-// icon at least as large wins, because scaling down keeps more detail than
-// scaling up.
-func (r *Resolver) findInTheme(theme, name string, size int, vectors bool) (string, bool) {
-	type candidate struct {
-		path string
-		size int
-	}
-	var rasters, vectorsFound []candidate
-	for _, dir := range r.dirs {
-		root := filepath.Join(dir, theme)
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			at := directorySize(entry.Name())
-			for _, category := range subdirectories(filepath.Join(root, entry.Name())) {
-				for _, extension := range rasterExtensions {
-					path := filepath.Join(category, name+extension)
-					if isRasterFile(path) {
-						rasters = append(rasters, candidate{path: path, size: at})
-					}
-				}
-				if !vectors {
-					continue
-				}
-				for _, extension := range vectorExtensions {
-					path := filepath.Join(category, name+extension)
-					if isVectorFile(path) {
-						vectorsFound = append(vectorsFound, candidate{path: path, size: at})
-					}
-				}
-			}
-		}
-	}
-	if len(rasters) > 0 {
-		sort.SliceStable(rasters, func(i, j int) bool {
-			return betterSize(rasters[i].size, rasters[j].size, size)
-		})
-		if rasters[0].size == size {
-			return rasters[0].path, true
-		}
-	}
-	if len(vectorsFound) > 0 {
-		return vectorsFound[0].path, true
-	}
-	if len(rasters) > 0 {
-		return rasters[0].path, true
-	}
-	return "", false
-}
-
 // betterSize orders candidates: exact first, then the smallest that is large
 // enough, then the largest of those that are too small.
 func betterSize(a, b, want int) bool {
@@ -308,20 +530,6 @@ func betterSize(a, b, want int) bool {
 	default:
 		return a > b
 	}
-}
-
-func subdirectories(path string) []string {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return nil
-	}
-	paths := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			paths = append(paths, filepath.Join(path, entry.Name()))
-		}
-	}
-	return paths
 }
 
 // directorySize reads the leading pixel size of a theme directory such as
