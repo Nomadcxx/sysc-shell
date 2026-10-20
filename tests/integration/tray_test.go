@@ -738,3 +738,67 @@ func TestTrayCloseReleasesEverySurface(t *testing.T) {
 		t.Fatal("shutdown did not release the service's menu state")
 	}
 }
+
+// A stale-item reply means the service replaced the key under a click that was
+// already in flight. The shell drops the request and reprojects, and it keeps
+// serving: the reply must not wedge the registry.
+func TestTrayStaleItemReplyReprojectsWithoutDeadlock(t *testing.T) {
+	h := newHarness(t, barOnly(), map[uint32]string{7: "DP-1"})
+	mail := item("org.mail", "/item/1", "mail", "Mail", 1)
+	h.reg.ApplyTray(snapshot(1, mail))
+	h.sweep(t, 7, buttonLeft, func() bool { return h.service.count(tray.CommandActivate) > 0 })
+	before := len(h.service.commands())
+
+	stale := trayclient.Message{
+		Generation: 1, Kind: trayclient.KindReply, RequestID: h.service.lastID(),
+		Reply: tray.Reply{Error: &tray.ProtocolError{Code: tray.ErrorStaleItem}},
+	}
+	done := make(chan struct{})
+	go func() { h.reg.ApplyTray(stale); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ApplyTray(stale-item reply) did not return")
+	}
+	if got := len(h.service.commands()); got != before {
+		t.Fatalf("a stale reply produced %d extra commands", got-before)
+	}
+
+	// The shell is still serving: the bar projects the live item, and a
+	// further click reaches the service under the key the projection holds.
+	live := item("org.mail", "/item/1", "mail", "Mail", 2)
+	h.reg.ApplyTray(snapshot(2, live))
+	h.service.reset()
+	h.sweep(t, 7, buttonLeft, func() bool { return h.service.count(tray.CommandActivate) > 0 })
+	commands := h.service.commands()
+	if commands[0].Item != live.Key {
+		t.Fatalf("activated %+v, want %+v", commands[0].Item, live.Key)
+	}
+}
+
+// The same reply to a menu.open clears the pending menu and leaves the shell
+// serving. The menu that request asked for never opens.
+func TestTrayStaleItemReplyToAMenuRequestLeavesNoMenu(t *testing.T) {
+	h := newHarness(t, barOnly(), map[uint32]string{7: "DP-1"})
+	mail := item("org.mail", "/item/1", "mail", "Mail", 1)
+	h.reg.ApplyTray(snapshot(1, mail))
+	h.sweep(t, 7, buttonRight, func() bool { return h.service.count(tray.CommandMenuOpen) > 0 })
+
+	stale := trayclient.Message{
+		Generation: 1, Kind: trayclient.KindReply, RequestID: h.service.lastID(),
+		Reply: tray.Reply{Error: &tray.ProtocolError{Code: tray.ErrorStaleItem}},
+	}
+	done := make(chan struct{})
+	go func() { h.reg.ApplyTray(stale); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ApplyTray(stale-item reply) did not return")
+	}
+
+	h.reg.ApplyTray(trayclient.Message{Generation: 1, Kind: trayclient.KindMenuUpdated,
+		Menu: tray.MenuUpdate{Key: mail.Key, Menu: flatMenu(1, "Open")}})
+	if _, ok := h.compositor.outputOf("tray-menu"); ok {
+		t.Fatal("a menu opened after its request had failed with a stale item")
+	}
+}

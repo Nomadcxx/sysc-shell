@@ -40,17 +40,19 @@ func (r *Registry) traySend(s trayCommandSender, c tray.Command) {
 
 // trayReplyTracker correlates replies with the request that produced them.
 // A reply is acted on exactly once and then forgotten: a stale or replayed
-// reply for a finished request is dropped. Only ErrorStaleItem retriggers —
-// the shell re-reads the current key for that item — because every other
-// failure is terminal for the click that caused it.
+// reply for a finished request is dropped. Only ErrorStaleItem asks for a
+// reprojection — the shell re-reads the current key for that item — because
+// every other failure is terminal for the click that caused it.
+//
+// The tracker decides; it never acts. It runs under the registry lock, and
+// the reprojection it would trigger takes that lock again.
 type trayReplyTracker struct {
 	mu      sync.Mutex
 	pending map[uint64]tray.ItemKey
-	retry   func(tray.ItemKey)
 }
 
-func newTrayReplyTracker(_ *Registry, retry func(tray.ItemKey)) *trayReplyTracker {
-	return &trayReplyTracker{pending: map[uint64]tray.ItemKey{}, retry: retry}
+func newTrayReplyTracker() *trayReplyTracker {
+	return &trayReplyTracker{pending: map[uint64]tray.ItemKey{}}
 }
 
 // note remembers the key one request ID was sent for.
@@ -60,20 +62,22 @@ func (t *trayReplyTracker) note(requestID uint64, key tray.ItemKey) {
 	t.pending[requestID] = key
 }
 
-// apply consumes one reply. Exactly-once: the request is forgotten before
-// the retry fires, so a replayed reply finds nothing.
-func (t *trayReplyTracker) apply(m trayclient.Message) {
+// apply consumes one reply and reports what the caller has to do about it:
+// the key the request was sent for, and whether the service answered with a
+// stale item, so the shell must reproject before the next command.
+//
+// Exactly-once: the request is forgotten before the decision, so a replayed
+// reply finds nothing.
+func (t *trayReplyTracker) apply(m trayclient.Message) (tray.ItemKey, bool) {
 	if m.Kind != trayclient.KindReply {
-		return
+		return tray.ItemKey{}, false
 	}
 	t.mu.Lock()
 	key, ok := t.pending[m.RequestID]
 	delete(t.pending, m.RequestID)
 	t.mu.Unlock()
 	if !ok || m.Reply.OK || m.Reply.Error == nil {
-		return
+		return tray.ItemKey{}, false
 	}
-	if m.Reply.Error.Code == tray.ErrorStaleItem {
-		t.retry(key)
-	}
+	return key, m.Reply.Error.Code == tray.ErrorStaleItem
 }

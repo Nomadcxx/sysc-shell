@@ -414,7 +414,7 @@ func TestCentreOpenMarksNewHistorySeen(t *testing.T) {
 // The bar badge reads unread history, so a notify message that changes it
 // must repaint the bar rather than wait for the next clock tick.
 func TestNotifyMessageRepaintsTheBarBadge(t *testing.T) {
-	r := newPanelRegistry(t)
+	r := newPanelRegistryWithoutBridge(t)
 	withTestBar(t, r, 7, config.Default())
 	r.applyNotify(snap(1))
 	for len(r.invalidations) > 0 {

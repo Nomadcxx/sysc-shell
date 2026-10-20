@@ -217,7 +217,7 @@ func TestConfigReloadOSDIsNotSuppressedByDND(t *testing.T) {
 }
 
 func TestConfigReloadOSDUsesReducedMotion(t *testing.T) {
-	reg := newPanelRegistry(t)
+	reg := newPanelRegistryWithoutBridge(t)
 	withTestBar(t, reg, 7, reg.cfg)
 	reg.RecordConfigReload(&config.Diagnostic{Field: "bar.height", Message: "value is not positive"})
 	m := reg.OSD()
