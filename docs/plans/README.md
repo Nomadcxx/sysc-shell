@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-10-06.
+Last updated: 2026-10-20.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -623,6 +623,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-18-privacy-indicators-design.md](2026-10-18-privacy-indicators-design.md) | design | Reliable PipeWire capture links, Niri cast events, visible unknown state, grouped bar symbols, Control Centre details, and transition OSDs. |
 | [2026-10-18-privacy-indicators.md](2026-10-18-privacy-indicators.md) | plan | Test-first implementation covering Niri casts, bounded PipeWire snapshots, registry lifecycle, bar and OSD behavior, and the laptop live gate. |
+
+## Bluetooth peripheral battery (2026-10-20)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-20-sysc-1408-bluetooth-widget-battery.md](2026-10-20-sysc-1408-bluetooth-widget-battery.md) | plan | `sysc-1408`: lowest connected BlueZ Battery1 percentage beside the Bluetooth bar glyph, with reducer validation and focused widget/service checks. |
 
 ## Sibling repositories
 

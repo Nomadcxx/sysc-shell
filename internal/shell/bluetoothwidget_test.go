@@ -6,6 +6,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -44,22 +45,36 @@ func TestBluetoothWidgetBuildsFromConfigAndRefreshes(t *testing.T) {
 	if widgets[0].tooltip != "Bluetooth" {
 		t.Fatalf("tooltip = %q, want Bluetooth", widgets[0].tooltip)
 	}
-	if !refreshBluetoothWidget(widgets[0].inner, barView{Bluetooth: services.BluetoothState{
+	if widgets[0].inner.Kind != ui.KindRow || len(widgets[0].inner.Children) != 2 {
+		t.Fatalf("Bluetooth row = %+v, want icon and text", widgets[0].inner)
+	}
+	icon, percentage := widgets[0].inner.Children[0], widgets[0].inner.Children[1]
+	if !widgets[0].refresh(barView{Bluetooth: services.BluetoothState{
 		Available: true, Adapter: services.BluetoothAdapter{Powered: true},
 	}}) {
 		t.Fatal("first Bluetooth refresh must report a change")
 	}
-	if got := widgets[0].inner.Icon; got != "bluetooth" {
+	if got := icon.Icon; got != "bluetooth" {
 		t.Fatalf("idle icon = %q, want bluetooth", got)
 	}
-	if refreshBluetoothWidget(widgets[0].inner, barView{Bluetooth: services.BluetoothState{
+	if widgets[0].inner.Gap != 0 {
+		t.Fatalf("empty battery row gap = %d, want 0", widgets[0].inner.Gap)
+	}
+	connected := barView{Bluetooth: services.BluetoothState{
 		Available: true, Adapter: services.BluetoothAdapter{Powered: true},
 		Devices: []services.BluetoothDevice{{Connected: true}},
-	}}) == false {
+	}}
+	if !widgets[0].refresh(connected) {
 		t.Fatal("connected state must report a glyph change")
 	}
-	if got := widgets[0].inner.Icon; got != "bluetooth_connected" {
+	if got := icon.Icon; got != "bluetooth_connected" {
 		t.Fatalf("connected icon = %q, want bluetooth_connected", got)
+	}
+	if percentage.Text != "" {
+		t.Fatalf("missing battery rendered %q, want empty", percentage.Text)
+	}
+	if widgets[0].refresh(connected) {
+		t.Fatal("unchanged Bluetooth state reported a change")
 	}
 }
 
@@ -71,10 +86,74 @@ func TestBluetoothWidgetGlyphsAreInTheSubset(t *testing.T) {
 	}
 }
 
-func TestBluetoothWidgetUsesAnIconNode(t *testing.T) {
+func TestBluetoothWidgetShowsLowestConnectedBatteryAndHidesUnavailableValues(t *testing.T) {
+	w := buildBluetoothWidget()
+	if w.node.Kind != ui.KindRow || len(w.node.Children) != 2 {
+		t.Fatalf("Bluetooth widget node = %+v, want icon-and-text row", w.node)
+	}
+	icon, percentage := w.node.Children[0], w.node.Children[1]
+	if icon.Kind != ui.KindIcon || percentage.Kind != ui.KindText || !percentage.Tabular {
+		t.Fatalf("Bluetooth row children = %+v, want icon and tabular text", w.node.Children)
+	}
+	if w.node.Action != panelBluetoothAction || w.node.Name != "Bluetooth" || w.node.Role != "button" {
+		t.Fatalf("Bluetooth action/accessibility = %+v, want panel action on named row", w.node)
+	}
+
+	low, high, disconnected := uint8(24), uint8(66), uint8(3)
+	connected := services.BluetoothState{
+		Available: true, Adapter: services.BluetoothAdapter{Powered: true},
+		Devices: []services.BluetoothDevice{
+			{Connected: true, Battery: &high},
+			{Connected: true, Battery: &low},
+			{Connected: false, Battery: &disconnected},
+		},
+	}
+	if !w.refresh(barView{Bluetooth: connected}) {
+		t.Fatal("connected device batteries did not invalidate the widget")
+	}
+	if icon.Icon != "bluetooth_connected" || percentage.Text != "24%" {
+		t.Fatalf("connected row = %q %q, want bluetooth_connected 24%%", icon.Icon, percentage.Text)
+	}
+	if w.node.Gap != theme.MarginXS {
+		t.Fatalf("connected row gap = %d, want %d", w.node.Gap, theme.MarginXS)
+	}
+
+	zero := uint8(0)
+	if !w.refresh(barView{Bluetooth: services.BluetoothState{
+		Available: true, Adapter: services.BluetoothAdapter{Powered: true},
+		Devices: []services.BluetoothDevice{{Connected: true, Battery: &zero}},
+	}}) {
+		t.Fatal("zero battery percentage did not invalidate the widget")
+	}
+	if percentage.Text != "0%" {
+		t.Fatalf("zero battery rendered %q, want 0%%", percentage.Text)
+	}
+
+	if !w.refresh(barView{}) {
+		t.Fatal("unavailable Bluetooth state did not invalidate the widget")
+	}
+	if icon.Icon != "bluetooth_disabled" || percentage.Text != "" {
+		t.Fatalf("unavailable row = %q %q, want disabled icon and no percentage", icon.Icon, percentage.Text)
+	}
+	if w.node.Gap != 0 {
+		t.Fatalf("unavailable row gap = %d, want 0", w.node.Gap)
+	}
+
+	w.refresh(barView{Bluetooth: services.BluetoothState{
+		Available: true, Devices: []services.BluetoothDevice{{Connected: true, Battery: &low}},
+	}})
+	if percentage.Text != "" {
+		t.Fatalf("powered-off Bluetooth rendered %q, want no percentage", percentage.Text)
+	}
+}
+
+func TestBluetoothWidgetUsesAnIconAndTextRow(t *testing.T) {
 	widgets := buildWidgets([]config.Item{{ID: "bluetooth"}}, 6, standardMetrics())
-	if len(widgets) == 0 || widgets[0].inner == nil || widgets[0].inner.Kind != ui.KindIcon {
-		t.Fatalf("Bluetooth widget inner node = %+v, want icon", widgets)
+	if len(widgets) == 0 || widgets[0].inner == nil || widgets[0].inner.Kind != ui.KindRow {
+		t.Fatalf("Bluetooth widget inner node = %+v, want row", widgets)
+	}
+	if len(widgets[0].inner.Children) != 2 || widgets[0].inner.Children[0].Kind != ui.KindIcon || widgets[0].inner.Children[1].Kind != ui.KindText {
+		t.Fatalf("Bluetooth row children = %+v, want icon and text", widgets[0].inner.Children)
 	}
 }
 
