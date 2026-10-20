@@ -483,6 +483,7 @@ func TestUnreadBadgeCountsUnseenHistory(t *testing.T) {
 
 func TestDNDBoundsPresetsToOneEndTime(t *testing.T) {
 	r := NewRegistry(config.Default())
+	r.notify.onDND = nil // Keep the test's fixed clock separate from OSD callbacks.
 	now := time.Unix(1_756_000_000, 0)
 	r.setDNDPresetAt(now, time.Hour)
 
