@@ -462,11 +462,6 @@ type OutputOverride struct {
 	Bar       Bar
 }
 
-// Weather is the process-wide weather source. Coordinates live here rather
-// than on the item because one service serves every bar.
-//
-// Configured distinguishes a supplied block from the zero value, which is what
-// lets a weather widget with no block fail with a useful message.
 // Wallpaper is the picker's two library roots plus the gSlapper playback
 // settings. Assignments are not here: what is on which output is state, not
 // configuration, and lives under $XDG_STATE_HOME (D19).
@@ -539,18 +534,22 @@ var (
 	wallpaperCycleModes = map[string]bool{"interval": true, "time": true}
 )
 
+// Weather is the process-wide forecast source. Coordinates live here rather
+// than on the item because one service serves every bar.
 type Weather struct {
 	Latitude  float64
 	Longitude float64
 	Unit      string
 	Interval  time.Duration
 	// City is an optional place name the shell resolves to coordinates
-	// through the forecast provider's geocoding. Exactly one of city or
-	// latitude+longitude is accepted.
+	// through the forecast provider's geocoding. When configured, exactly one of
+	// city or latitude+longitude is accepted.
 	City string
-	// Location is an optional display label for the place the coordinates
-	// name. It never feeds the request; the coordinates do that alone.
-	Location   string
+	// Location is an optional display label for the place. It never feeds the
+	// request; the city or coordinates do that alone.
+	Location string
+	// Configured is true only when a city or complete coordinate pair exists;
+	// preference-only weather settings leave it false.
 	Configured bool
 }
 

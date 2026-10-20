@@ -498,6 +498,41 @@ func TestWeatherPlaceIsOneWayOrTheOther(t *testing.T) {
 	}
 }
 
+func TestWeatherPreferencesPersistBeforeAPlaceIsSet(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path, value, wantUnit string
+		wantInterval                time.Duration
+	}{
+		{"unit", "weather.unit", "fahrenheit", "fahrenheit", 15 * time.Minute},
+		{"interval", "weather.interval", "30m", "celsius", 30 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := Default()
+			cfg := config.Default()
+			if err := r.ByPath(tc.path).Set(&cfg, tc.value); err != nil {
+				t.Fatalf("set %s: %v", tc.path, err)
+			}
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(path, cfg); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			back, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if back.Weather.Unit != tc.wantUnit || back.Weather.Interval != tc.wantInterval {
+				t.Fatalf("weather preferences = %q/%v, want %q/%v", back.Weather.Unit, back.Weather.Interval, tc.wantUnit, tc.wantInterval)
+			}
+			if back.Weather.Configured || back.Weather.City != "" || back.Weather.Latitude != 0 || back.Weather.Longitude != 0 {
+				t.Fatalf("preferences configured a place: %+v", back.Weather)
+			}
+		})
+	}
+}
+
 // TestBoundsRejectWhatTheLoaderWouldReject keeps the numeric entries from
 // writing a file that cannot be read back.
 func TestBoundsRejectWhatTheLoaderWouldReject(t *testing.T) {

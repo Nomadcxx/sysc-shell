@@ -633,9 +633,8 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Path: "weather.unit", Label: "Unit", Section: "Weather", Group: "Forecast", Kind: KindEnum,
 			Describe: "Temperature scale.",
 			Options:  weatherUnits,
-			// Weather is written only once a place is set, so an unconfigured
-			// block reports the value the loader would supply rather than the
-			// empty zero value, which no option matches.
+			// A zero-value weather config reports the loader's default rather
+			// than the empty value, which no option matches.
 			Get: func(c config.Config) string {
 				if c.Weather.Unit == "" {
 					return defaultWeatherUnit

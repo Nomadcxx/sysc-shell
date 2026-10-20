@@ -163,7 +163,9 @@ func toWire(c Config) wireConfig {
 			Order:   append([]string(nil), c.Tray.Order...),
 		}
 	}
-	if c.Weather.Configured {
+	if c.Weather.Configured ||
+		(c.Weather.Unit != "" && c.Weather.Unit != defaultWeatherUnit) ||
+		(c.Weather.Interval > 0 && c.Weather.Interval != defaultWeatherInterval) {
 		w.Weather = weatherWire(c.Weather)
 	}
 	if n := nightLightDiff(c.NightLight, d.NightLight); n != nil {
@@ -656,12 +658,18 @@ func panelsDiff(got, base Panels) *wirePanels {
 
 func weatherWire(w Weather) *wireWeather {
 	out := &wireWeather{}
-	if w.City != "" {
-		v := w.City
-		out.City = &v
-	} else {
-		lat, lon := w.Latitude, w.Longitude
-		out.Latitude, out.Longitude = &lat, &lon
+	if w.Configured {
+		if w.City != "" {
+			v := w.City
+			out.City = &v
+		} else {
+			lat, lon := w.Latitude, w.Longitude
+			out.Latitude, out.Longitude = &lat, &lon
+		}
+		if w.Location != "" {
+			v := w.Location
+			out.Location = &v
+		}
 	}
 	if w.Unit != "" {
 		v := w.Unit
@@ -670,10 +678,6 @@ func weatherWire(w Weather) *wireWeather {
 	if w.Interval > 0 {
 		v := w.Interval.String()
 		out.Interval = &v
-	}
-	if w.Location != "" {
-		v := w.Location
-		out.Location = &v
 	}
 	return out
 }

@@ -883,13 +883,12 @@ func applyTrayPreferences(w wireTrayPreferences) (TrayPreferences, error) {
 	return TrayPreferences{Enabled: enabled, Hidden: hidden, Pinned: pinned, Order: order}, nil
 }
 
-// applyWeather resolves and validates the weather block. A block names its
-// place exactly one way: a city the shell geocodes, or explicit coordinates.
+// applyWeather validates weather preferences and, when present, one place:
+// a city the shell geocodes or explicit coordinates.
 func applyWeather(w wireWeather, path string) (Weather, error) {
 	out := Weather{
-		Unit:       defaultWeatherUnit,
-		Interval:   defaultWeatherInterval,
-		Configured: true,
+		Unit:     defaultWeatherUnit,
+		Interval: defaultWeatherInterval,
 	}
 
 	if w.City != nil && *w.City != "" {
@@ -901,7 +900,8 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		if w.Latitude != nil || w.Longitude != nil {
 			return Weather{}, pathErr(path+".city", "cannot be set together with latitude and longitude")
 		}
-	} else {
+		out.Configured = true
+	} else if w.Latitude != nil || w.Longitude != nil {
 		if w.Latitude == nil {
 			return Weather{}, pathErr(path+".latitude", "is required")
 		}
@@ -917,6 +917,9 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 			return Weather{}, pathErr(path+".longitude", "%v is outside -180 through 180", *w.Longitude)
 		}
 		out.Longitude = *w.Longitude
+		out.Configured = true
+	} else if w.Unit == nil && w.Interval == nil {
+		return Weather{}, pathErr(path+".latitude", "is required")
 	}
 
 	if w.Unit != nil {
@@ -939,6 +942,9 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		label, err := weatherPlaceLabel(*w.Location, path+".location")
 		if err != nil {
 			return Weather{}, err
+		}
+		if label != "" && !out.Configured {
+			return Weather{}, pathErr(path+".location", "requires a configured city or coordinates")
 		}
 		out.Location = label
 	}
