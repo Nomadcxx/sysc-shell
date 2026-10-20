@@ -205,6 +205,11 @@ type PanelHost struct {
 	// tree starts at the top, so without this a drag or a remove threw the
 	// user back to the first row and lost their place.
 	settingsScroll int
+	// settingsRailScroll retains the section list's offset across a rebuild.
+	settingsRailScroll int
+	// settingsRailRevealPending is a section that must be brought into view on
+	// the next layout, including when an IPC open arrives before configure.
+	settingsRailRevealPending string
 	// Search results have their own body and keep a separate scroll offset, so
 	// returning to the page restores the position the user left there.
 	settingsSearchScroll int
@@ -2550,8 +2555,39 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	} else {
 		err = ui.LayoutColumn(h.root, box, h.measureText())
 	}
-	if err != nil || h.id != PanelPluginStore {
+	if err != nil {
 		return err
+	}
+	if h.id == PanelSettings {
+		if h.settingsRailRevealPending != "" {
+			rail := keyedScroll(h.root, settingsRailKey)
+			var section *ui.Node
+			for _, candidate := range ui.Focusables(rail) {
+				if candidate.Action == "section:"+h.settingsRailRevealPending {
+					section = candidate
+					break
+				}
+			}
+			if rail != nil && section != nil {
+				if scrollNodeIntoView(rail, section) {
+					if h.root != nil && h.root.Kind == ui.KindRow {
+						err = ui.Layout(h.root, box, h.measureText())
+					} else {
+						err = ui.LayoutColumn(h.root, box, h.measureText())
+					}
+					if err != nil {
+						return err
+					}
+				}
+				h.settingsRailScroll = rail.ScrollOffset
+				h.settingsRailRevealPending = ""
+			}
+		} else if offset, ok := settingsScrollOffsetFor(h.root, settingsRailKey); ok {
+			h.settingsRailScroll = offset
+		}
+	}
+	if h.id != PanelPluginStore {
+		return nil
 	}
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
@@ -4133,6 +4169,9 @@ func (r *Registry) clearVisible(h *PanelHost) {
 }
 
 func (h *PanelHost) afterFocusChange(r *Registry) {
+	if h.id == PanelSettings {
+		h.revealFocusedSettingsSection()
+	}
 	if h.id == PanelMonitor {
 		r.rebuildPanel(h)
 		if revealFocusedProcess(h) && h.logicalW > 0 {
@@ -4146,6 +4185,42 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 	if h.id == PanelFiles {
 		h.revealFocusedRow()
 	}
+}
+
+func (h *PanelHost) revealFocusedSettingsSection() {
+	n := h.focused()
+	if n == nil || !strings.HasPrefix(n.Action, "section:") {
+		return
+	}
+	rail := keyedScroll(h.root, settingsRailKey)
+	if !scrollNodeIntoView(rail, n) {
+		return
+	}
+	h.settingsRailScroll = rail.ScrollOffset
+	if h.logicalW > 0 && h.logicalH > 0 {
+		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+	}
+}
+
+func scrollNodeIntoView(view, node *ui.Node) bool {
+	if view == nil || node == nil || view.Bounds.H <= 0 || node.Bounds.H <= 0 {
+		return false
+	}
+	previous, offset := view.ScrollOffset, view.ScrollOffset
+	switch {
+	case node.Bounds.Y < view.Bounds.Y:
+		offset -= view.Bounds.Y - node.Bounds.Y
+	case node.Bounds.Y+node.Bounds.H > view.Bounds.Y+view.Bounds.H:
+		offset += node.Bounds.Y + node.Bounds.H - view.Bounds.Y - view.Bounds.H
+	default:
+		return false
+	}
+	if offset == view.ScrollOffset {
+		return false
+	}
+	view.ScrollOffset = offset
+	ui.ScrollBy(view, 0)
+	return view.ScrollOffset != previous
 }
 
 // focusFilesEntry moves roving focus onto a files list row and scrolls it into
@@ -4168,25 +4243,13 @@ func (h *PanelHost) revealFocusedRow() {
 		return
 	}
 	n := h.focused()
-	if n == nil || n.Bounds.H <= 0 {
+	if n == nil {
 		return
 	}
 	s := scrollBody(h.root)
-	if s == nil || s.Bounds.H <= 0 {
-		return
+	if scrollNodeIntoView(s, n) {
+		h.scrollTo(s.ScrollOffset)
 	}
-	top, bottom := n.Bounds.Y, n.Bounds.Y+n.Bounds.H
-	viewTop, viewBottom := s.Bounds.Y, s.Bounds.Y+s.Bounds.H
-	off := s.ScrollOffset
-	switch {
-	case top < viewTop:
-		off -= viewTop - top
-	case bottom > viewBottom:
-		off += bottom - viewBottom
-	default:
-		return
-	}
-	h.scrollTo(off)
 }
 
 // queueFilesPanelImages fills the files panel's image nodes from the plugin
@@ -4201,6 +4264,9 @@ func (r *Registry) queueFilesPanelImages(h *PanelHost) {
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
 	if h.id == PanelSettings {
+		if offset, ok := settingsScrollOffsetFor(h.root, settingsRailKey); ok {
+			h.settingsRailScroll = offset
+		}
 		if offset, ok := settingsScrollOffsetFor(h.root, settingsBodyKey); ok {
 			h.settingsScroll = offset
 		}

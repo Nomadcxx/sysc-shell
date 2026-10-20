@@ -193,8 +193,7 @@ func settingsBodyWidth(h *PanelHost) int {
 	return max(panelWidth-2*pad-settingsRailWidth-theme.MarginXL, 0)
 }
 
-// settingsBodyKey and settingsRailKey name the pane's two scrolls, so a lookup
-// for the content does not land on the section list or the other way round.
+// settingsBodyKey and settingsRailKey name the pane's two independent scrolls.
 const (
 	settingsBodyKey       = "settings-body"
 	settingsSearchBodyKey = "settings-search-body"
@@ -234,8 +233,7 @@ func settingsScrollOffsetFor(root *ui.Node, key string) (int, bool) {
 		if n == nil || found {
 			return
 		}
-		// The rail is a scroll too, and it never scrolls; the body's offset is
-		// the one worth restoring.
+		// The pane has independent scrolls for its section rail and body.
 		if n.Kind == ui.KindScroll && n.Key == key {
 			out = n.ScrollOffset
 			found = true
@@ -267,7 +265,7 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 	// Bounded like the content column: a tall font, a short pane or a long
 	// section list scrolls the rail instead of pushing its last tab past the
 	// pane's content edge.
-	rail := &ui.Node{Kind: ui.KindScroll, Key: settingsRailKey, Width: settingsRailWidth, Height: settingsContentHeight(h, head), Gap: settingsRailGap(), Children: []*ui.Node{search}}
+	rail := &ui.Node{Kind: ui.KindScroll, Key: settingsRailKey, Width: settingsRailWidth, Height: settingsContentHeight(h, head), Gap: settingsRailGap(), ScrollOffset: h.settingsRailScroll, Children: []*ui.Node{search}}
 	item, itemPad := settingsRailItemHeight(h, search)
 	locale := settingsLocale(h)
 	for _, c := range settings.SectionClusters() {

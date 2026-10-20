@@ -490,10 +490,12 @@ func paletteFileReason(p theme.PaletteInfo) string {
 }
 
 // settingsSectionChangingLocked runs before Settings moves to another section,
-// by the rail, IPC or a deep link alike: leaving Palettes ends the editor and
-// its preview (P16, any route), and entering it re-reads the directory (R2).
+// by the rail, keyboard, IPC or a deep link alike: it keeps the new tab in view,
+// leaving Palettes ends the editor and its preview (P16), and entering it
+// re-reads the directory (R2).
 // Registry.mu is held.
 func (r *Registry) settingsSectionChangingLocked(h *PanelHost, section string) {
+	h.settingsRailRevealPending = section
 	if section == "Terminal Art" && h.section != section {
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			svc.RefreshTerminalCatalog()
