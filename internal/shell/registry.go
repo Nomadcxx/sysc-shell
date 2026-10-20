@@ -2559,8 +2559,14 @@ func (r *Registry) Close() {
 		r.mu.Unlock()
 	}
 	if !locked {
+		// r.mu is stranded: a handler panicked between Lock and Unlock, and a
+		// render can hold that lock mid-read of r.plugins right now. Close the
+		// host through a local copy and leave the field alone, the way
+		// r.launcherSvc below is only nil'd under the lock. A closed host
+		// renders the same as a nil one -- frames() is internally
+		// synchronized and Close has emptied its views -- so nothing is lost
+		// by keeping the pointer stable.
 		plugins = r.plugins
-		r.plugins = nil
 	}
 	if plugins != nil {
 		plugins.Close()
