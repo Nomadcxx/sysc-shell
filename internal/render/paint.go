@@ -640,7 +640,9 @@ func dimmedControl(n *ui.Node, style Style) Style {
 		c.A = uint8(math.Round(float64(c.A) * disabledForeground))
 		return c
 	}
+	accentForeground := fade(style.onAccent())
 	style.Track, style.Accent, style.AccentOn, style.Foreground = fade(style.Track), fade(style.Accent), fade(style.AccentOn), fade(style.Foreground)
+	style.OnAccent = accentForeground
 	return style
 }
 
@@ -655,9 +657,7 @@ func paintToggle(c *Canvas, n *ui.Node, style Style) {
 	knob := style.Foreground
 	if n.Value != 0 {
 		track = style.accent()
-		if style.AccentOn.A != 0 {
-			knob = style.AccentOn
-		}
+		knob = style.onAccent()
 	}
 	c.FillRounded(box, min(box.H/2, style.Scale120.Physical(10)), track)
 	knobH := style.Scale120.Physical(ui.ToggleKnob)
