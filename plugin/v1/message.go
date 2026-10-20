@@ -14,7 +14,8 @@ const (
 	// Minor 15 adds masked text inputs, for a password the plugin needs.
 	// Minor 16 adds files.browse, the host-owned file browser.
 	// Minor 17 adds stepped sliders and compact images inside bar buttons.
-	ProtocolMinor = 17
+	// Minor 18 adds a warning tone for noncritical status text.
+	ProtocolMinor = 18
 )
 
 // The version-one message names. Every line on the wire carries one of these
