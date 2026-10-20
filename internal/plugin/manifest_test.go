@@ -506,6 +506,45 @@ func TestLoadManifestRejectsInvalidSettingSchemas(t *testing.T) {
 	}
 }
 
+func TestLoadManifestAcceptsASecretStringSetting(t *testing.T) {
+	t.Parallel()
+
+	dir := writePlugin(t, edit(t, "settings", []any{
+		map[string]any{"key": "steamgriddb_key", "type": "string", "label": "SteamGridDB API key", "secret": true},
+	}), "bin/sysc-plugin-timer")
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("a secret string setting was rejected: %v", err)
+	}
+	if len(m.Settings) != 1 || !m.Settings[0].Secret {
+		t.Fatalf("settings = %+v, want one secret setting", m.Settings)
+	}
+}
+
+func TestLoadManifestRejectsSecretOnANonStringSetting(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		setting map[string]any
+	}{
+		{"int", map[string]any{"key": "x", "type": "int", "label": "X", "default": 5, "secret": true}},
+		{"bool", map[string]any{"key": "x", "type": "bool", "label": "X", "secret": true}},
+		{"select", map[string]any{"key": "x", "type": "select", "label": "X", "default": "a", "secret": true,
+			"options": []any{map[string]any{"value": "a", "label": "A"}}}},
+		{"file", map[string]any{"key": "x", "type": "file", "label": "X", "secret": true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dir := writePlugin(t, edit(t, "settings", []any{c.setting}), "bin/sysc-plugin-timer")
+			if err := loadErr(t, dir); err == nil {
+				t.Fatalf("accepted a secret %s setting", c.name)
+			}
+		})
+	}
+}
+
 func TestLoadManifestRejectsDuplicateSettingKeys(t *testing.T) {
 	t.Parallel()
 
