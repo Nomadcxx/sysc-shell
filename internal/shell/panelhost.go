@@ -4031,8 +4031,8 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 		case rest == "close":
 			r.closePanelLocked(h.id)
 		case rest == "dnd":
-			_, on := r.notify.dndState(r.clockNow())
-			r.notify.setDND(!on)
+			_, on := r.notify.dndState(time.Now())
+			r.setDND(!on)
 			if r.toasts != nil {
 				r.toasts.recompute()
 			}
@@ -4058,12 +4058,12 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 			}
 		case strings.HasPrefix(rest, "preset:"):
 			id := strings.TrimPrefix(rest, "preset:")
-			now := r.clockNow()
+			now := time.Now()
 			if d, untilOff, ok := dndPresetDuration(id, now); ok {
 				if untilOff {
-					r.notify.setDND(true)
+					r.setDND(true)
 				} else {
-					r.notify.setDNDPreset(now, d)
+					r.setDNDPresetAt(now, d)
 				}
 				if r.toasts != nil {
 					r.toasts.recompute()

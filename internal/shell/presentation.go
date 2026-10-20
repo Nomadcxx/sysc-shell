@@ -1,6 +1,10 @@
 package shell
 
-import "github.com/Nomadcxx/sysc-notify/protocol"
+import (
+	"time"
+
+	"github.com/Nomadcxx/sysc-notify/protocol"
+)
 
 // presentationView is one record's placement across outputs at one instant:
 // which outputs hover it, which show it, which queue it.
@@ -76,13 +80,19 @@ func (r *Registry) outputsForTest(outputs []string) {
 }
 
 func (r *Registry) setDNDForTest(dnd bool) {
-	r.notify.mu.Lock()
-	r.notify.dnd = dnd
-	r.notify.mu.Unlock()
+	r.notify.setDNDAt(dnd, r.clockNow())
 }
 
-func (r *Registry) setCenterOpen(open bool) {
+func (r *Registry) setCenterOpen(open bool) { r.setCenterOpenAt(open, time.Now()) }
+
+func (r *Registry) setCenterOpenAt(open bool, now time.Time) {
 	r.notify.mu.Lock()
+	if open && !r.notify.centerOpen {
+		r.notify.centerOpenSince = now
+	} else if !open && r.notify.centerOpen {
+		r.notify.rememberSuppressionLocked(r.notify.centerOpenSince, now, false)
+		r.notify.centerOpenSince = time.Time{}
+	}
 	r.notify.centerOpen = open
 	r.notify.mu.Unlock()
 	if r.toasts != nil {
@@ -91,5 +101,5 @@ func (r *Registry) setCenterOpen(open bool) {
 }
 
 func (r *Registry) setCenterOpenForTest(open bool) {
-	r.setCenterOpen(open)
+	r.setCenterOpenAt(open, r.clockNow())
 }

@@ -34,10 +34,14 @@ type toastHost struct {
 	// toast surface open.
 	outputs map[string]uint32
 	// visible and queued are the last computed placement per output.
-	visible           map[string][]uint32
-	queued            map[string][]uint32
-	hovered           map[string]map[uint32]bool
-	expanded          map[uint32]bool
+	visible  map[string][]uint32
+	queued   map[string][]uint32
+	hovered  map[string]map[uint32]bool
+	expanded map[uint32]bool
+	// noReplay holds active IDs that arrived while DND or the notification
+	// centre suppressed their toast. Existing cards can return when suppression
+	// ends; these records remain in the centre without becoming new toasts.
+	noReplay          map[uint32]struct{}
 	fullscreenFocused bool
 
 	// geometry is the size each output's surface was configured at. Until a
@@ -127,6 +131,7 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 		queued:          map[string][]uint32{},
 		hovered:         map[string]map[uint32]bool{},
 		expanded:        map[uint32]bool{},
+		noReplay:        map[uint32]struct{}{},
 		shown:           map[string]map[uint32]ui.Rect{},
 		geometry:        map[string]toastGeometry{},
 		scale120:        map[string]int{},
@@ -154,6 +159,45 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	}
 	h.resolver = newNotifyResolver(h)
 	return h
+}
+
+func (h *toastHost) suppressArrival(n protocol.Notification) {
+	for _, interval := range h.r.notify.suppressionIntervals(time.Now()) {
+		if notificationArrivedDuringSuppression(n, interval) {
+			h.markNoReplay(n.ID)
+			return
+		}
+	}
+}
+
+// Snapshot records are a baseline, so use their service timestamp to identify
+// notifications created during an active suppression interval. Older active
+// records remain eligible to return when DND or the centre closes.
+func (h *toastHost) suppressSnapshotArrivals(active []protocol.Notification) {
+	s := h.r.notify
+	intervals := s.takeSuppressionIntervals(h.r.clockNow())
+	for _, n := range active {
+		for _, interval := range intervals {
+			if notificationArrivedDuringSuppression(n, interval) {
+				h.markNoReplay(n.ID)
+				break
+			}
+		}
+	}
+}
+
+func notificationArrivedDuringSuppression(n protocol.Notification, interval notifySuppressionInterval) bool {
+	if interval.dnd && n.Urgency == protocol.UrgencyCritical {
+		return false
+	}
+	return !n.Timestamp.Before(interval.start) && (interval.end.IsZero() || n.Timestamp.Before(interval.end))
+}
+
+func (h *toastHost) markNoReplay(id uint32) {
+	if h.noReplay == nil {
+		h.noReplay = make(map[uint32]struct{})
+	}
+	h.noReplay[id] = struct{}{}
 }
 
 // restyleLocked rebinds the cached layout style to the published palette and
@@ -1105,15 +1149,24 @@ func (h *toastHost) recompute() {
 	s.mu.Lock()
 	dnd := s.dndActiveLocked(h.r.clockNow())
 	centerOpen := s.centerOpen
+	connected := s.generation != 0
 	records := make([]uint32, 0, len(s.active))
 	active := make(map[uint32]struct{}, len(s.active))
 	for id, n := range s.active {
 		active[id] = struct{}{}
-		if !notificationSuppressed(dnd, centerOpen, fullscreen, n.Urgency) {
+		_, noReplay := h.noReplay[id]
+		if !noReplay && !notificationSuppressed(dnd, centerOpen, fullscreen, n.Urgency) {
 			records = append(records, id)
 		}
 	}
 	s.mu.Unlock()
+	if connected {
+		for id := range h.noReplay {
+			if _, ok := active[id]; !ok {
+				delete(h.noReplay, id)
+			}
+		}
+	}
 	for id := range h.expanded {
 		if _, ok := active[id]; !ok {
 			delete(h.expanded, id)

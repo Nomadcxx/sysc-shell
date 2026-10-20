@@ -634,6 +634,310 @@ func TestCriticalToastBypassesDNDButOrdinaryToastDoesNot(t *testing.T) {
 	}
 }
 
+func TestDNDDoesNotReplayNotificationsAddedWhileSuppressed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		dnd        bool
+		centerOpen bool
+	}{
+		{name: "DND", dnd: true},
+		{name: "centre", centerOpen: true},
+		{name: "DND and centre", dnd: true, centerOpen: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, h, _ := wiredToast(t)
+			prior := note(1, "before suppression")
+			r.applyNotify(snap(1, prior))
+			if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{prior.ID}) {
+				t.Fatalf("visible before suppression = %v, want prior notification %d", got, prior.ID)
+			}
+
+			r.setDNDForTest(tc.dnd)
+			r.setCenterOpenForTest(tc.centerOpen)
+			h.recompute()
+			arrivedWhileSuppressed := note(2, "during suppression")
+			arrivedWhileSuppressed.Timestamp = time.Now()
+			r.applyNotify(delta(1, 2, protocol.Delta{
+				Kind: protocol.DeltaAdded, Notification: &arrivedWhileSuppressed,
+				Lifetime: &protocol.Lifetime{ID: arrivedWhileSuppressed.ID, DurationMS: 5000, RemainingMS: 5000, Running: true},
+			}))
+			if got := h.visible["eDP-1"]; len(got) != 0 {
+				t.Fatalf("visible while suppressed = %v, want none", got)
+			}
+
+			r.setDNDForTest(false)
+			r.setCenterOpenForTest(false)
+			h.recompute()
+			if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{prior.ID}) {
+				t.Fatalf("visible after suppression clears = %v, want only prior notification %d", got, prior.ID)
+			}
+		})
+	}
+}
+
+func TestSnapshotDoesNotReplayNotificationsAddedDuringSuppression(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		dnd        bool
+		centerOpen bool
+	}{
+		{name: "DND", dnd: true},
+		{name: "centre", centerOpen: true},
+		{name: "DND and centre", dnd: true, centerOpen: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, h, _ := wiredToast(t)
+			prior := note(1, "before suppression")
+			prior.Timestamp = time.Now().Add(-time.Minute)
+			r.applyNotify(snap(1, prior))
+			drainInvalidations(r)
+			if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{prior.ID}) {
+				t.Fatalf("visible before suppression = %v, want prior notification %d", got, prior.ID)
+			}
+
+			r.setDNDForTest(tc.dnd)
+			r.setCenterOpenForTest(tc.centerOpen)
+			h.recompute()
+			drainInvalidations(r)
+			if got := h.visible["eDP-1"]; len(got) != 0 {
+				t.Fatalf("visible while suppressed = %v, want none", got)
+			}
+
+			arrivedDuringSuppression := note(2, "during suppression")
+			arrivedDuringSuppression.Timestamp = time.Now().Add(time.Second)
+			r.applyNotify(notifyclient.Message{Generation: 1, Kind: notifyclient.KindDisconnected})
+			drainInvalidations(r)
+			r.applyNotify(snap(2, prior, arrivedDuringSuppression))
+			drainInvalidations(r)
+
+			r.setDNDForTest(false)
+			h.recompute()
+			drainInvalidations(r)
+			if tc.centerOpen {
+				if got := h.visible["eDP-1"]; len(got) != 0 {
+					t.Fatalf("visible while centre remains open = %v, want none", got)
+				}
+				r.setCenterOpenForTest(false)
+				drainInvalidations(r)
+			}
+			if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{prior.ID}) {
+				t.Fatalf("visible after suppression clears = %v, want only prior notification %d", got, prior.ID)
+			}
+		})
+	}
+}
+
+func TestReconnectSnapshotDoesNotReplayNotificationsReceivedDuringCompletedSuppression(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		dnd        bool
+		centerOpen bool
+	}{
+		{name: "DND", dnd: true},
+		{name: "centre", centerOpen: true},
+		{name: "DND and centre", dnd: true, centerOpen: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, h, _ := wiredToast(t)
+			start := time.Now()
+			end := start.Add(time.Second)
+			r.UpdateClock(start)
+			if tc.dnd {
+				r.notify.setDNDAt(true, start)
+			}
+			if tc.centerOpen {
+				r.setCenterOpenForTest(true)
+			}
+
+			r.applyNotify(notifyclient.Message{Generation: 1, Kind: notifyclient.KindDisconnected})
+			drainInvalidations(r)
+			r.UpdateClock(end)
+			if tc.dnd {
+				r.notify.setDNDAt(false, end)
+			}
+			if tc.centerOpen {
+				r.setCenterOpenForTest(false)
+			}
+
+			during := note(1, "received during suppression")
+			during.Timestamp = start.Add(time.Millisecond)
+			after := note(2, "received after suppression")
+			after.Timestamp = end.Add(time.Millisecond)
+			r.applyNotify(snap(2, during, after))
+			drainInvalidations(r)
+
+			if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{after.ID}) {
+				t.Fatalf("visible after reconnect = %v, want only notification %d received after suppression", got, after.ID)
+			}
+		})
+	}
+}
+
+func TestReconnectKeepsKnownSuppressedNotificationIDs(t *testing.T) {
+	r, h, _ := wiredToast(t)
+	prior := note(1, "before suppression")
+	prior.Timestamp = time.Now().Add(-time.Minute)
+	r.applyNotify(snap(1, prior))
+
+	r.setDNDForTest(true)
+	during := note(2, "received during DND")
+	during.Timestamp = time.Now()
+	r.applyNotify(delta(1, 2, protocol.Delta{
+		Kind: protocol.DeltaAdded, Notification: &during,
+		Lifetime: &protocol.Lifetime{ID: during.ID, DurationMS: 5000, RemainingMS: 5000, Running: true},
+	}))
+	r.setDNDForTest(false)
+	r.applyNotify(notifyclient.Message{Generation: 1, Kind: notifyclient.KindDisconnected})
+	drainInvalidations(r)
+
+	after := note(3, "received after DND")
+	after.Timestamp = time.Now().Add(time.Second)
+	r.applyNotify(snap(2, prior, during, after))
+	drainInvalidations(r)
+	if got, want := h.visible["eDP-1"], []uint32{after.ID, prior.ID}; !slices.Equal(got, want) {
+		t.Fatalf("visible after reconnect = %v, want %v", got, want)
+	}
+}
+
+func TestResyncSnapshotDoesNotReplayNotificationsReceivedDuringCompletedSuppression(t *testing.T) {
+	r, h, _ := wiredToast(t)
+	prior := note(1, "before suppression")
+	prior.Timestamp = time.Now().Add(-time.Minute)
+	r.applyNotify(snap(1, prior))
+
+	start := time.Now()
+	r.notify.setDNDAt(true, start)
+	during := note(2, "received during DND")
+	during.Timestamp = start.Add(time.Millisecond)
+	r.notify.setDNDAt(false, start.Add(time.Second))
+	after := note(3, "received after DND")
+	after.Timestamp = start.Add(time.Second + time.Millisecond)
+
+	// A same-generation snapshot repairs the active set after a dropped delta.
+	resync := snap(2, prior, during, after)
+	resync.Generation = 1
+	r.applyNotify(resync)
+	drainInvalidations(r)
+	if got, want := h.visible["eDP-1"], []uint32{after.ID, prior.ID}; !slices.Equal(got, want) {
+		t.Fatalf("visible after resync = %v, want %v", got, want)
+	}
+}
+
+func TestSuppressionStartsUseCurrentTimeInsteadOfCachedRegistryClock(t *testing.T) {
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	stale := time.Now().Add(-time.Minute)
+	r.mu.Lock()
+	r.now = stale
+	r.mu.Unlock()
+
+	r.setDND(true)
+	r.notify.mu.Lock()
+	dndSince := r.notify.dndSince
+	r.notify.mu.Unlock()
+	if !dndSince.After(stale) {
+		t.Fatalf("DND start = %v, want current time after cached clock %v", dndSince, stale)
+	}
+	r.setDND(false)
+
+	r.mu.Lock()
+	r.now = stale
+	r.mu.Unlock()
+	r.setCenterOpen(true)
+	r.notify.mu.Lock()
+	centerOpenSince := r.notify.centerOpenSince
+	r.notify.mu.Unlock()
+	if !centerOpenSince.After(stale) {
+		t.Fatalf("centre start = %v, want current time after cached clock %v", centerOpenSince, stale)
+	}
+}
+
+func TestDelayedNotificationDeltasUseTheirServiceTimestamp(t *testing.T) {
+	for _, suppression := range []struct {
+		name  string
+		start func(*Registry, time.Time)
+		end   func(*Registry, time.Time)
+	}{
+		{
+			name:  "DND",
+			start: func(r *Registry, at time.Time) { r.notify.setDNDAt(true, at) },
+			end:   func(r *Registry, at time.Time) { r.notify.setDNDAt(false, at) },
+		},
+		{
+			name:  "centre",
+			start: func(r *Registry, at time.Time) { r.setCenterOpenAt(true, at) },
+			end:   func(r *Registry, at time.Time) { r.setCenterOpenAt(false, at) },
+		},
+	} {
+		for _, tc := range []struct {
+			name           string
+			deliveredAfter bool
+			wantVisible    bool
+		}{
+			{name: "created during suppression and delivered after it ends", deliveredAfter: true},
+			{name: "created before suppression and delivered during it", wantVisible: true},
+		} {
+			t.Run(suppression.name+"/"+tc.name, func(t *testing.T) {
+				r, h, _ := wiredToast(t)
+				r.applyNotify(snap(1))
+
+				start := time.Now().Add(-2 * time.Second)
+				end := start.Add(time.Second)
+				suppression.start(r, start)
+				during := note(1, "delayed arrival")
+				if tc.deliveredAfter {
+					during.Timestamp = start.Add(time.Millisecond)
+					suppression.end(r, end)
+				} else {
+					during.Timestamp = start.Add(-time.Millisecond)
+				}
+				r.applyNotify(delta(1, 2, protocol.Delta{
+					Kind: protocol.DeltaAdded, Notification: &during,
+					Lifetime: &protocol.Lifetime{ID: during.ID, DurationMS: 5000, RemainingMS: 5000, Running: true},
+				}))
+				if !tc.deliveredAfter {
+					if got := h.visible["eDP-1"]; len(got) != 0 {
+						t.Fatalf("visible during suppression = %v, want none", got)
+					}
+					suppression.end(r, end)
+					h.recompute()
+				}
+
+				got := h.visible["eDP-1"]
+				if tc.wantVisible && !slices.Equal(got, []uint32{during.ID}) {
+					t.Fatalf("visible after suppression = %v, want notification %d", got, during.ID)
+				}
+				if !tc.wantVisible && len(got) != 0 {
+					t.Fatalf("visible after suppression = %v, want none", got)
+				}
+			})
+		}
+	}
+}
+
+func TestArrivalAfterTimedDNDEndUsesTheServiceTimestamp(t *testing.T) {
+	r, h, _ := wiredToast(t)
+	r.applyNotify(snap(1))
+
+	start := time.Now().Add(-2 * time.Second)
+	end := start.Add(time.Second)
+	r.mu.Lock()
+	r.now = start.Add(time.Millisecond)
+	r.mu.Unlock()
+	r.notify.setDNDPreset(start, time.Second)
+
+	after := note(1, "after DND")
+	after.Timestamp = end.Add(time.Millisecond)
+	r.applyNotify(delta(1, 2, protocol.Delta{
+		Kind: protocol.DeltaAdded, Notification: &after,
+		Lifetime: &protocol.Lifetime{ID: after.ID, DurationMS: 5000, RemainingMS: 5000, Running: true},
+	}))
+	r.UpdateClock(time.Now())
+	if got := h.visible["eDP-1"]; !slices.Equal(got, []uint32{after.ID}) {
+		t.Fatalf("visible after the timed DND expired = %v, want notification %d", got, after.ID)
+	}
+}
+
 func TestFullscreenFocusedWindowHoldsToastsUntilFocusLeaves(t *testing.T) {
 	r, h, sender := wiredToast(t)
 	t.Cleanup(r.Close)
@@ -762,7 +1066,9 @@ func TestTimedDNDPresetLiftsSuppressionWhenItEnds(t *testing.T) {
 	now := time.Unix(1_756_000_000, 0)
 	r.UpdateClock(now)
 	r.setDNDPresetAt(now, time.Minute)
-	r.applyNotify(snap(1, note(1, "a")))
+	prior := note(1, "a")
+	prior.Timestamp = now.Add(-time.Second)
+	r.applyNotify(snap(1, prior))
 
 	r.mu.Lock()
 	during := len(h.cards["eDP-1"])
