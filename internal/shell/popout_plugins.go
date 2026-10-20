@@ -165,6 +165,33 @@ func pluginSettingStoreKey(action string) string {
 	return pluginID + "." + key
 }
 
+// pluginSecretKeySuffixes are the endings a credential is named with. A key
+// that reads like a credential is masked even when the manifest does not
+// declare it, so a manifest written before the declaration existed still
+// keeps its key off the screen.
+var pluginSecretKeySuffixes = []string{
+	"_api_key", "_key", "_token", "_secret", "_password", "_cookie",
+}
+
+// pluginSettingIsSecret reports whether a plugin setting holds a credential.
+// A declared secret is one; a name that reads as a credential is the other,
+// because the mask is the only thing standing between a stored key and a
+// screen share.
+func pluginSettingIsSecret(s plugin.Setting) bool {
+	if s.Secret {
+		return true
+	}
+	if s.Type != plugin.SettingString {
+		return false
+	}
+	for _, suffix := range pluginSecretKeySuffixes {
+		if strings.HasSuffix(s.Key, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setting) *ui.Node {
 	raw := ""
 	if r != nil && r.cfg.Plugins.Settings != nil {
@@ -342,7 +369,7 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 				h.fields[store] = f
 			}
 		}
-		f.Masked = strings.HasSuffix(s.Key, "_api_key")
+		f.Masked = pluginSettingIsSecret(s)
 		n := f.Node(s.Label)
 		n.Action = action
 		n.Width = 200
