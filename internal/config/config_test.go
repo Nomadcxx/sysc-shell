@@ -856,6 +856,17 @@ func TestWeatherPreferencesLoadWithoutAPlace(t *testing.T) {
 	}
 }
 
+func TestWeatherLocationLabelRequiresAPlace(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"weather":{"unit":"fahrenheit","location":"Living room"}}`))
+	if err == nil {
+		t.Fatal("a weather location label without a place was accepted")
+	}
+	if !strings.Contains(err.Error(), "weather.location") {
+		t.Fatalf("error %q does not name the location field", err)
+	}
+}
+
 // The configuration's first cross-section check. Without it the widget would
 // render an error forever because of a block the user was never told about.
 func TestAWeatherWidgetWithoutCoordinatesIsRejected(t *testing.T) {

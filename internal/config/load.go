@@ -943,6 +943,9 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		if err != nil {
 			return Weather{}, err
 		}
+		if label != "" && !out.Configured {
+			return Weather{}, pathErr(path+".location", "requires a configured city or coordinates")
+		}
 		out.Location = label
 	}
 	return out, nil
