@@ -636,6 +636,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-20-sysc-331-weather-settings-persistence.md](2026-10-20-sysc-331-weather-settings-persistence.md) | plan | Preserve non-default weather unit and refresh interval without configuring a location or inventing coordinates. |
 
+## Notification lead-image precedence (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1490-notification-image-precedence.md](2026-10-21-sysc-1490-notification-image-precedence.md) | plan | `sysc-1490`: keep a decoded `image-data` as the card lead in toasts, the centre and history, with the desktop-entry `Icon=` restored to the fallback role FDO gives it. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not

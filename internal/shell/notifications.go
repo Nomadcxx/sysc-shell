@@ -56,11 +56,17 @@ func (r *Registry) notificationRasterLocked(img *protocol.Image) *ui.Image {
 	return r.notificationImages.get(img)
 }
 
+// notificationLeadImageLocked picks the card's lead image in FDO precedence:
+// a decoded image-data beats the app_icon hint, which beats the Icon= key of
+// the desktop entry the notification names. sysc-notify keeps DesktopEntry on
+// the wire and clears AppIcon when it decodes an image, so asking for the icon
+// first would let the desktop entry take over as soon as the icon worker
+// answers, one frame after the picture was drawn. GH #380.
 func (r *Registry) notificationLeadImageLocked(appIcon, desktopEntry string, img *protocol.Image) *ui.Image {
-	if icon := r.notifyIcon(appIcon, desktopEntry); icon != nil {
-		return icon
+	if raster := r.notificationRasterLocked(img); raster != nil {
+		return raster
 	}
-	return r.notificationRasterLocked(img)
+	return r.notifyIcon(appIcon, desktopEntry)
 }
 
 func (r *Registry) pruneNotificationRastersLocked() {
