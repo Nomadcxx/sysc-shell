@@ -12,7 +12,7 @@ import (
 // is the second gate, because a panel rebuild costs a render and a compositor
 // round trip (#140).
 func TestApplyManagedSnapshotIgnoresIdenticalState(t *testing.T) {
-	reg := newPanelRegistry(t)
+	reg := newPanelRegistryWithoutBridge(t)
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
@@ -37,6 +38,11 @@ const (
 	// MaxCacheEntries and MaxCacheBytes bound the result cache.
 	MaxCacheEntries = 256
 	MaxCacheBytes   = 32 << 20
+	// missTTL is how long a failed lookup is remembered before it is retried.
+	// A rebuild asks for every visible row, so an absent icon would otherwise
+	// be walked again on each one; the window keeps an icon installed later
+	// from staying invisible for the session.
+	missTTL = 60 * time.Second
 )
 
 // ErrBusy reports a full job queue.
@@ -82,6 +88,14 @@ type Worker struct {
 	bytes    int
 	inFlight map[Key]struct{}
 
+	// failed remembers lookups that produced nothing, so a rebuild of the row
+	// or card that asked does not pay for the theme walk again. It is cleared
+	// when the resolver's index is rebuilt, which is the only event that can
+	// change the answer for the same key.
+	failed         map[Key]time.Time
+	missGeneration uint64
+	now            func() time.Time
+
 	// svgFailed memoises paths whose SVG failed to rasterise, so one bad
 	// document logs once rather than on every repaint. Touched only on the
 	// worker goroutine.
@@ -94,6 +108,8 @@ func NewWorker(resolver PathResolver, publish func(Key, *ui.Image)) *Worker {
 		jobs:      make(chan Key, MaxQueue),
 		cache:     make(map[Key]*ui.Image),
 		inFlight:  make(map[Key]struct{}),
+		failed:    make(map[Key]time.Time),
+		now:       time.Now,
 		svgFailed: make(map[string]bool),
 	}
 }
@@ -112,12 +128,18 @@ func (w *Worker) Request(key Key) (*ui.Image, bool, error) {
 	if key.Name == "" || key.W <= 0 || key.H <= 0 {
 		return nil, false, errors.New("icons: request has no name or no target box")
 	}
+	generation := w.resolverGeneration()
 	w.mu.Lock()
+	w.refreshGenerationLocked(generation)
 	if cached, ok := w.cache[key]; ok {
 		w.mu.Unlock()
 		return cached, true, nil
 	}
 	if _, pending := w.inFlight[key]; pending {
+		w.mu.Unlock()
+		return nil, false, nil
+	}
+	if w.rememberedMissLocked(key) {
 		w.mu.Unlock()
 		return nil, false, nil
 	}
@@ -133,6 +155,72 @@ func (w *Worker) Request(key Key) (*ui.Image, bool, error) {
 		w.mu.Unlock()
 		return nil, false, ErrBusy
 	}
+}
+
+// refreshGenerationLocked forgets remembered misses when the resolver has
+// rebuilt. A rebuild changes what the tree offers, so a miss from the previous
+// index says nothing about the next one.
+func (w *Worker) refreshGenerationLocked(generation uint64) {
+	if generation == w.missGeneration {
+		return
+	}
+	clear(w.failed)
+	w.missGeneration = generation
+}
+
+func (w *Worker) resolverGeneration() uint64 {
+	reporter, ok := w.resolver.(GenerationReporter)
+	if !ok {
+		return 0
+	}
+	return reporter.Generation()
+}
+
+// rememberedMissLocked reports whether this key failed recently enough that it
+// is not worth another theme walk.
+//
+// An absolute path is exempt: the file may be written a moment after the
+// request, and a blank preview for a minute is worse than one repeated stat.
+func (w *Worker) rememberedMissLocked(key Key) bool {
+	if filepath.IsAbs(key.Name) || filepath.IsAbs(key.Overlay) {
+		return false
+	}
+	at, ok := w.failed[key]
+	if !ok {
+		return false
+	}
+	if w.clock().Sub(at) < missTTL {
+		return true
+	}
+	delete(w.failed, key)
+	return false
+}
+
+// recordMissLocked remembers a failure for missTTL, bounded like the result
+// cache so a source rotating through broken names cannot grow it.
+func (w *Worker) recordMissLocked(key Key) {
+	if filepath.IsAbs(key.Name) || filepath.IsAbs(key.Overlay) {
+		return
+	}
+	if _, known := w.failed[key]; !known && len(w.failed) >= MaxCacheEntries {
+		var oldest Key
+		var at time.Time
+		first := true
+		for candidate, seen := range w.failed {
+			if first || seen.Before(at) {
+				oldest, at, first = candidate, seen, false
+			}
+		}
+		delete(w.failed, oldest)
+	}
+	w.failed[key] = w.clock()
+}
+
+func (w *Worker) clock() time.Time {
+	if w.now != nil {
+		return w.now()
+	}
+	return time.Now()
 }
 
 // Run decodes queued jobs until the context is cancelled.
@@ -152,10 +240,18 @@ func (w *Worker) Run(ctx context.Context) error {
 // never fails a card.
 func (w *Worker) decode(ctx context.Context, key Key) {
 	result := w.raster(ctx, key)
+	generation := w.resolverGeneration()
 	w.mu.Lock()
 	delete(w.inFlight, key)
+	if generation != w.missGeneration {
+		clear(w.failed)
+		w.missGeneration = generation
+	}
 	if result != nil {
 		w.store(key, result)
+		delete(w.failed, key)
+	} else if ctx.Err() == nil {
+		w.recordMissLocked(key)
 	}
 	w.mu.Unlock()
 	if w.publish != nil {
