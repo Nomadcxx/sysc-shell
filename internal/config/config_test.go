@@ -842,16 +842,35 @@ func TestTheWeatherBlockDefaults(t *testing.T) {
 	}
 }
 
+func TestWeatherPreferencesLoadWithoutAPlace(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"weather":{"unit":"fahrenheit","interval":"30m"}}`))
+	if err != nil {
+		t.Fatalf("Parse preference-only block: %v", err)
+	}
+	if cfg.Weather.Configured || cfg.Weather.City != "" || cfg.Weather.Latitude != 0 || cfg.Weather.Longitude != 0 {
+		t.Fatalf("preference-only block configured a place: %+v", cfg.Weather)
+	}
+	if cfg.Weather.Unit != "fahrenheit" || cfg.Weather.Interval != 30*time.Minute {
+		t.Fatalf("weather preferences = %q/%v, want fahrenheit/30m", cfg.Weather.Unit, cfg.Weather.Interval)
+	}
+}
+
 // The configuration's first cross-section check. Without it the widget would
 // render an error forever because of a block the user was never told about.
 func TestAWeatherWidgetWithoutCoordinatesIsRejected(t *testing.T) {
 	t.Parallel()
-	_, err := Parse([]byte(`{"bar":{"items":{"right":[{"id":"weather"}]}}}`))
-	if err == nil {
-		t.Fatal("a weather widget with no weather block was accepted")
-	}
-	if !strings.Contains(err.Error(), "weather.latitude") {
-		t.Fatalf("error %q does not name the missing field", err)
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"weather"}]}}}`,
+		`{"weather":{"unit":"fahrenheit"},"bar":{"items":{"right":[{"id":"weather"}]}}}`,
+	} {
+		_, err := Parse([]byte(body))
+		if err == nil {
+			t.Fatalf("a weather widget without a place was accepted: %s", body)
+		}
+		if !strings.Contains(err.Error(), "weather.latitude") {
+			t.Fatalf("error %q does not name the missing field", err)
+		}
 	}
 }
 
@@ -882,17 +901,27 @@ func TestOutOfRangeCoordinatesAreRejected(t *testing.T) {
 
 func TestAnInvalidWeatherUnitIsRejected(t *testing.T) {
 	t.Parallel()
-	err := errFromParse(t, `{"weather":{"latitude":0,"longitude":0,"unit":"kelvin"}}`)
-	if !strings.Contains(err.Error(), "weather.unit") {
-		t.Fatalf("error %q does not name the unit field", err)
+	for _, body := range []string{
+		`{"weather":{"latitude":0,"longitude":0,"unit":"kelvin"}}`,
+		`{"weather":{"unit":"kelvin"}}`,
+	} {
+		err := errFromParse(t, body)
+		if !strings.Contains(err.Error(), "weather.unit") {
+			t.Fatalf("error %q does not name the unit field", err)
+		}
 	}
 }
 
 func TestANonPositiveWeatherIntervalIsRejected(t *testing.T) {
 	t.Parallel()
-	err := errFromParse(t, `{"weather":{"latitude":0,"longitude":0,"interval":"0s"}}`)
-	if !strings.Contains(err.Error(), "weather.interval") {
-		t.Fatalf("error %q does not name the interval field", err)
+	for _, body := range []string{
+		`{"weather":{"latitude":0,"longitude":0,"interval":"0s"}}`,
+		`{"weather":{"interval":"0s"}}`,
+	} {
+		err := errFromParse(t, body)
+		if !strings.Contains(err.Error(), "weather.interval") {
+			t.Fatalf("error %q does not name the interval field", err)
+		}
 	}
 }
 
@@ -1490,8 +1519,13 @@ func TestTheWeatherCityAndCoordinatesAreMutuallyExclusive(t *testing.T) {
 
 func TestTheWeatherStillNeedsCityOrCoordinates(t *testing.T) {
 	t.Parallel()
-	if _, err := Parse([]byte(`{"weather":{}}`)); err == nil {
-		t.Fatal("a weather block with neither city nor coordinates was accepted")
+	for _, body := range []string{
+		`{"weather":{}}`,
+		`{"weather":{"latitude":0,"unit":"fahrenheit"}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("invalid weather block was accepted: %s", body)
+		}
 	}
 }
 

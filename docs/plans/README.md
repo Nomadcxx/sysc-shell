@@ -630,6 +630,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-20-sysc-1408-bluetooth-widget-battery.md](2026-10-20-sysc-1408-bluetooth-widget-battery.md) | plan | `sysc-1408`: lowest connected BlueZ Battery1 percentage beside the Bluetooth bar glyph, with reducer validation and focused widget/service checks. |
 
+## Weather settings persistence (2026-10-20)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-20-sysc-331-weather-settings-persistence.md](2026-10-20-sysc-331-weather-settings-persistence.md) | plan | Preserve non-default weather unit and refresh interval without configuring a location or inventing coordinates. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not

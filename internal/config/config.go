@@ -545,8 +545,8 @@ type Weather struct {
 	Unit      string
 	Interval  time.Duration
 	// City is an optional place name the shell resolves to coordinates
-	// through the forecast provider's geocoding. Exactly one of city or
-	// latitude+longitude is accepted.
+	// through the forecast provider's geocoding. When configured, exactly one of
+	// city or latitude+longitude is accepted.
 	City string
 	// Location is an optional display label for the place the coordinates
 	// name. It never feeds the request; the coordinates do that alone.
