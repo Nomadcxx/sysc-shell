@@ -603,6 +603,13 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 			return fmt.Errorf("unknown section %q", requested)
 		}
 		if h.section == section && settingsCurrentPage(h, section) == page {
+			h.settingsRailRevealPending = section
+			if h.logicalW > 0 && h.logicalH > 0 {
+				if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
+					return err
+				}
+			}
+			r.publishSurface(h.output, panelSurfaceID(id))
 			return nil
 		}
 		h.settingsScrollTop = true

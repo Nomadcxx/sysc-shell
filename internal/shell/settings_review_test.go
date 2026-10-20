@@ -172,6 +172,81 @@ func TestSettingsRailKeepsTheDeepLinkedSectionVisible(t *testing.T) {
 	assertSettingsRailSectionVisible(t, h, "Sounds")
 }
 
+func TestSettingsRailRevealsAnAlreadySelectedSection(t *testing.T) {
+	reg, h := openSettingsForPreview(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	prepareOverflowSettingsRail(t, reg, h)
+	if err := reg.selectPanelSectionLocked(PanelSettings, "Sounds"); err != nil {
+		t.Fatal(err)
+	}
+
+	const section = "Sounds"
+	rail := keyedScroll(h.root, settingsRailKey)
+	if rail == nil {
+		t.Fatal("Settings rail is missing")
+	}
+	wasOffscreen := false
+	for _, delta := range []int{rail.ContentH, -rail.ContentH} {
+		ui.ScrollBy(rail, delta)
+		if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
+			t.Fatal(err)
+		}
+		tab := findAction(h.root, "section:"+section)
+		if tab == nil {
+			t.Fatalf("section tab %q is missing", section)
+		}
+		if tab.Bounds.Y < rail.Bounds.Y || tab.Bounds.Y+tab.Bounds.H > rail.Bounds.Y+rail.Bounds.H {
+			wasOffscreen = true
+			break
+		}
+	}
+	if !wasOffscreen {
+		t.Fatalf("fixture could not scroll selected section %q out of view", section)
+	}
+	if err := reg.selectPanelSectionLocked(PanelSettings, section); err != nil {
+		t.Fatal(err)
+	}
+	assertSettingsRailSectionVisible(t, h, section)
+}
+
+func TestSettingsRailRevealsAlreadySelectedSectionOnFirstConfigure(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1280, OutH: 720}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	h.theme = settingsRailTheme(theme.DensitySpacious, theme.FontScaleMax)
+	h.place.Panel = settingsPanelSize(1280, 720)
+	h.logicalW, h.logicalH, h.scale120 = 0, 0, 180
+	h.settingsRailScroll = 0
+	h.settingsRailRevealPending = ""
+	h.root = settingsTree(reg, h)
+	tabs := byRole(h.root, "tab")
+	if len(tabs) == 0 {
+		t.Fatal("Settings rail has no tabs")
+	}
+	section := tabs[len(tabs)-1].Name
+	_, page, ok := settingsAddress(section)
+	if !ok {
+		t.Fatalf("last Settings tab %q has no address", section)
+	}
+	h.section, h.settingsPage = section, page
+	h.root = settingsTree(reg, h)
+	if err := reg.selectPanelSectionLocked(PanelSettings, section); err != nil {
+		t.Fatal(err)
+	}
+	w, height := h.surfaceSize()
+	if err := h.configure(w, height, h.scale120); err != nil {
+		t.Fatal(err)
+	}
+	assertSettingsRailSectionVisible(t, h, section)
+}
+
 func TestSettingsRailRevealsDeepLinkOnFirstConfigure(t *testing.T) {
 	reg := newPanelRegistry(t)
 	withTestBar(t, reg, 7, reg.cfg)
