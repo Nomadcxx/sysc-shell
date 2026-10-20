@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -197,10 +198,7 @@ func (r *Registry) BindTray(sender trayCommandSender) {
 	r.trayMenu = newTrayMenuHost(r, nil)
 	r.trayDrawer = newTrayDrawerHost(r, nil)
 	r.trayDrawer.itemAction = r.drawerItemAction
-	// A stale-item reply means the service replaced the key under a click that
-	// was already in flight. The projection is authoritative, so the retry is
-	// to reproject: the next command carries the live key or is not sent.
-	r.trayReplies = newTrayReplyTracker(r, func(tray.ItemKey) { r.reprojectTray() })
+	r.trayReplies = newTrayReplyTracker()
 	workerContext, cancel := context.WithCancel(context.Background())
 	r.trayIconCancel = cancel
 	r.trayIcons = icons.NewWorker(icons.NewResolver("", nil), r.applyTrayIcon)
@@ -240,7 +238,16 @@ func (r *Registry) ApplyTray(m trayclient.Message) {
 		r.resumePendingTrayMenuLocked(m.Menu.Key)
 	case trayclient.KindReply:
 		if r.trayReplies != nil {
-			r.trayReplies.apply(m)
+			// A stale-item reply means the service replaced the key under a
+			// click that was already in flight. The projection is
+			// authoritative, so the shell recovers by reprojecting: the next
+			// command carries the live key or is not sent. Every message
+			// ends with that reprojection, so the tracker only has to
+			// decide — it must not act, because it runs under the lock this
+			// method holds and the reprojection takes that lock again.
+			if key, stale := r.trayReplies.apply(m); stale {
+				log.Printf("tray: item %s went stale; reprojecting", key.ObjectPath)
+			}
 		}
 		if r.pendingTrayMenu.active && r.pendingTrayMenu.requestID == m.RequestID && !m.Reply.OK {
 			// The menu will never arrive for this request.
