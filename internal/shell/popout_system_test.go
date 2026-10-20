@@ -147,7 +147,7 @@ func TestClosingTheMonitorForgetsUsernames(t *testing.T) {
 
 // Icons arriving together rebuild the open monitor once, not once each.
 func TestArrivingIconsRebuildTheMonitorOnce(t *testing.T) {
-	reg := newPanelRegistry(t)
+	reg := newPanelRegistryWithoutBridge(t)
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}

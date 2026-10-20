@@ -129,7 +129,7 @@ fi
 
 func TestOsdReducedMotionFadesWithoutMoving(t *testing.T) {
 	t.Parallel()
-	reg := newPanelRegistry(t) // already reduced-motion
+	reg := newPanelRegistryWithoutBridge(t) // already reduced-motion
 	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	drainInvalidations(reg)
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 20})

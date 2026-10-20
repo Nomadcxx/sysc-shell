@@ -920,7 +920,22 @@ func TestClosingDuringRevealStopsTicker(t *testing.T) {
 	}
 }
 
+// newPanelRegistry builds a Registry with a stand-in for the owner's bridge:
+// its invalidations channel is kept drained, so a test that publishes more than
+// the cap-8 buffer holds cannot stall the suite. A test that must read those
+// invalidations builds its registry with newPanelRegistryWithoutBridge instead.
 func newPanelRegistry(t *testing.T) *Registry {
+	t.Helper()
+	reg := newPanelRegistryWithoutBridge(t)
+	keepInvalidationsDrained(t, reg)
+	return reg
+}
+
+// newPanelRegistryWithoutBridge is newPanelRegistry without the stand-in
+// bridge. Its invalidations channel is left undrained so the test can read it,
+// and such a test must consume the channel itself: publish blocks on a full
+// buffer rather than dropping (GH #4).
+func newPanelRegistryWithoutBridge(t *testing.T) *Registry {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
@@ -928,6 +943,26 @@ func newPanelRegistry(t *testing.T) *Registry {
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	return reg
+}
+
+// A fixture built by newPanelRegistry cannot stall the suite. publishSurface
+// blocks on the cap-8 channel and only a consumer releases it, which is how CI
+// hung in TestEdgeReloadRetainsOpenPanels: that fixture published seven and had
+// one slot of headroom (sysc-1494).
+func TestPanelRegistryFixtureDrainsInvalidations(t *testing.T) {
+	reg := newPanelRegistry(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i <= cap(reg.invalidations); i++ {
+			reg.publishSurface(7, "probe")
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(asyncTestWait):
+		t.Fatal("publishSurface blocked: nothing drains the fixture's invalidations")
+	}
 }
 
 // newBatteryPanelRegistry is newPanelRegistry on a bar that carries a battery
@@ -941,6 +976,7 @@ func newBatteryPanelRegistry(t *testing.T) *Registry {
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	keepInvalidationsDrained(t, reg)
 	return reg
 }
 
