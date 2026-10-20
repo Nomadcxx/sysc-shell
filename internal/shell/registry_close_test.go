@@ -67,8 +67,8 @@ func TestCloseWithoutTheLockLeavesPluginsStable(t *testing.T) {
 	// those reads are still running.
 	reading := make(chan struct{})
 	readDone := make(chan struct{})
-	r.mu.Lock()
 	go func() {
+		r.mu.Lock()
 		close(reading)
 		deadline := time.Now().Add(closeLockGrace + 250*time.Millisecond)
 		for time.Now().Before(deadline) {
@@ -91,6 +91,7 @@ func TestCloseWithoutTheLockLeavesPluginsStable(t *testing.T) {
 	}
 	<-readDone
 
+	// Ordered after the reader and after Close, so this read needs no lock.
 	if r.plugins != installed {
 		t.Fatalf("Close rewrote r.plugins without r.mu: got %p, want %p", r.plugins, installed)
 	}
