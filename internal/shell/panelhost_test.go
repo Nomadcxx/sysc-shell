@@ -920,6 +920,50 @@ func TestClosingDuringRevealStopsTicker(t *testing.T) {
 	}
 }
 
+// A tick that was already in flight when the panel closed must not publish a
+// frame for a surface that is gone. The frame loop checks the stop channel
+// before it publishes, but a tick that passed that check waits for the
+// registry lock, which the close holds. It used to publish after the close
+// had already removed the panel, so the count depended on where the tick
+// landed: on a loaded machine the frame arrived inside the counting window
+// and the ticker looked like it was still running.
+func TestCloseDropsTheFrameInFlight(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSession]
+
+	reg.ClosePanel(PanelSession)
+	waitSurfaceFramesStopped(t, h)
+	drainInvalidations(reg)
+
+	// The tick that was in flight when the panel closed runs its publish
+	// after the close removed the host.
+	reg.publishPanelFrame(h)
+	if got := countSurfaceInvalidations(reg, 50*time.Millisecond); got != 0 {
+		t.Fatalf("a tick in flight published %d frames after the close", got)
+	}
+}
+
+// waitSurfaceFramesStopped waits for the panel's frame loop to leave, so a
+// test can drive the publish of a tick that was in flight without the loop
+// publishing beside it.
+func waitSurfaceFramesStopped(t *testing.T, h *PanelHost) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for h.anim.running.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("the frame loop did not stop")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // newPanelRegistry builds a Registry with a stand-in for the owner's bridge:
 // its invalidations channel is kept drained, so a test that publishes more than
 // the cap-8 buffer holds cannot stall the suite. A test that must read those
