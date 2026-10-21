@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 func TestRunDrainsInvalidationsDuringConnect(t *testing.T) {
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "wayland")
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	t.Setenv("WAYLAND_DISPLAY", "wayland-test")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "wayland-test"), Net: "unix"})

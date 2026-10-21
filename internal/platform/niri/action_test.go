@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 func TestMarshalSwitchLayoutUsesReportedIndex(t *testing.T) {
@@ -77,7 +79,7 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			socket := filepath.Join(t.TempDir(), "niri.sock")
+			socket := filepath.Join(sockpath.Dir(t, "niri"), "niri.sock")
 			ln, err := net.Listen("unix", socket)
 			if err != nil {
 				t.Fatal(err)

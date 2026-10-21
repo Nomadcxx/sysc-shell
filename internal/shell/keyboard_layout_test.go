@@ -12,6 +12,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -212,7 +213,7 @@ func TestKeyboardLayoutPickerWaitsForTheRequestedIndex(t *testing.T) {
 
 func TestKeyboardLayoutPickerConfirmsAcceptedSwitchFromNiriQuery(t *testing.T) {
 	r, h := openKeyboardLayoutPanel(t, 0)
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "niri.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "niri"), "niri.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

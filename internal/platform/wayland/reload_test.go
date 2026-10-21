@@ -11,6 +11,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
@@ -249,7 +250,7 @@ func TestReloadSuccessReportsAfterCommitAndEmptyPathDoesNothing(t *testing.T) {
 }
 
 func TestReloadApplyTransportFailureDoesNotReportSuccess(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wayland.sock")
+	path := filepath.Join(sockpath.Dir(t, "wayland"), "wayland.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
