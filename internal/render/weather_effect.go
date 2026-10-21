@@ -149,10 +149,10 @@ func blendWeatherRow(c *Canvas, box ui.Rect, mask *image.Alpha, y, x0, x1 int, c
 	if !ok {
 		return
 	}
-	if y < box.Y || y >= boxBottom || y < 0 || y >= c.Height {
+	if y < box.Y || y >= boxBottom || y < c.Oy || y >= c.Oy+c.Height {
 		return
 	}
-	lo, hi := max(max(x0, box.X), 0), min(min(x1, boxRight), c.Width)
+	lo, hi := max(max(x0, box.X), c.Ox), min(min(x1, boxRight), c.Ox+c.Width)
 	if c.restrict.W > 0 && c.restrict.H > 0 {
 		restrictRight, rightOK := checkedEffectAdd(c.restrict.X, c.restrict.W)
 		restrictBottom, bottomOK := checkedEffectAdd(c.restrict.Y, c.restrict.H)
@@ -172,13 +172,10 @@ func blendWeatherRow(c *Canvas, box ui.Rect, mask *image.Alpha, y, x0, x1 int, c
 	if lo >= hi {
 		return
 	}
-	if c.Stride <= 0 || len(c.Pix) < 4 || y > (len(c.Pix)-4)/c.Stride {
+	if c.Stride <= 0 || c.Width <= 0 || c.Height <= 0 {
 		return
 	}
-	rowOffset := y * c.Stride
-	if hi-1 > (len(c.Pix)-rowOffset-4)/4 {
-		return
-	}
+	rowOffset := (y - c.Oy) * c.Stride
 	base := col.premultiply()
 	maskRow := (my - b.Min.Y) * mask.Stride
 	for x := lo; x < hi; x++ {
@@ -196,7 +193,7 @@ func blendWeatherRow(c *Canvas, box ui.Rect, mask *image.Alpha, y, x0, x1 int, c
 				src[i] = byte(uint32(src[i]) * coverage / 255)
 			}
 		}
-		offset := rowOffset + x*4
+		offset := rowOffset + (x-c.Ox)*4
 		blendPixel(c.Pix[offset:offset+4], src, alpha)
 	}
 }
@@ -215,8 +212,7 @@ func blendWeatherPixel(c *Canvas, box ui.Rect, mask *image.Alpha, x, y int, col 
 	if !ok {
 		return
 	}
-	if x < box.X || y < box.Y || x >= boxRight || y >= boxBottom ||
-		x < 0 || y < 0 || x >= c.Width || y >= c.Height {
+	if x < box.X || y < box.Y || x >= boxRight || y >= boxBottom || !c.contains(x, y) {
 		return
 	}
 	if c.restrict.W > 0 && c.restrict.H > 0 {
@@ -242,14 +238,7 @@ func blendWeatherPixel(c *Canvas, box ui.Rect, mask *image.Alpha, x, y int, col 
 	for i := range src {
 		src[i] = byte(uint32(src[i]) * combined / 255)
 	}
-	if c.Stride <= 0 || len(c.Pix) < 4 || y > (len(c.Pix)-4)/c.Stride {
-		return
-	}
-	rowOffset := y * c.Stride
-	if x > (len(c.Pix)-rowOffset-4)/4 {
-		return
-	}
-	offset := rowOffset + x*4
+	offset := c.at(x, y)
 	blendPixel(c.Pix[offset:offset+4], src, alpha)
 }
 

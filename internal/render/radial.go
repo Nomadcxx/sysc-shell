@@ -77,13 +77,17 @@ func blendCoverage(c *Canvas, x, y int, col Color, coverage float64) {
 		(x < c.restrict.X || y < c.restrict.Y || x >= c.restrict.X+c.restrict.W || y >= c.restrict.Y+c.restrict.H) {
 		return
 	}
+	if !c.contains(x, y) {
+		return
+	}
 	coverage = min(coverage, 1)
 	src := col.premultiply()
 	for i := range src {
 		src[i] = byte(math.Round(float64(src[i]) * coverage))
 	}
 	alpha := uint32(math.Round(float64(col.A) * coverage))
-	blendPixel(c.Pix[y*c.Stride+x*4:y*c.Stride+x*4+4], src, alpha)
+	at := c.at(x, y)
+	blendPixel(c.Pix[at:at+4], src, alpha)
 }
 
 func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
