@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -50,6 +51,56 @@ func startHelper(t *testing.T, mode string) *Session {
 	}
 	t.Cleanup(func() { _ = sess.Close() })
 	return sess
+}
+
+// TestStartWaitsOutABusyProgram proves the supervisor starts a program the
+// kernel still refuses to exec.
+//
+// The kernel refuses to exec a file that is open for writing: the file stays
+// busy until every process that inherited the write handle is gone. A plugin
+// installed a moment ago lands in that state, and so does a fixture that
+// writes a script and starts it back to back.
+func TestStartWaitsOutABusyProgram(t *testing.T) {
+	t.Parallel()
+
+	m := installHelper(t, "ok")
+	script, err := os.ReadFile(m.ExecPath)
+	if err != nil {
+		t.Fatalf("read helper script: %v", err)
+	}
+	// Rewrite the script and keep the write handle open: the program is busy
+	// for as long as this handle is.
+	f, err := os.OpenFile(m.ExecPath, os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		t.Fatalf("open helper script: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	if _, err := f.Write(script); err != nil {
+		t.Fatalf("write helper script: %v", err)
+	}
+
+	// The program is busy right now, which is the state the start has to
+	// survive.
+	if err := exec.Command(m.ExecPath).Run(); !errors.Is(err, syscall.ETXTBSY) {
+		t.Fatalf("expected the program to be busy, got %v", err)
+	}
+
+	// The handle closes shortly after, the way a writer that is done with the
+	// file lets it go.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = f.Close()
+	}()
+
+	s := supervisor(m)
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+	if sess.PID() <= 0 {
+		t.Error("session reports no process")
+	}
 }
 
 func TestStartCompletesTheHandshake(t *testing.T) {

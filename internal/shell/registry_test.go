@@ -131,6 +131,7 @@ func TestAttachedPanelKeepsItsOwnAlphaOnceItHasABackdrop(t *testing.T) {
 	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
 
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.tokens = theme.Fallback
 	bar, leases, _, err := reg.buildBar(cfg, "DP-2", reg.tokens)

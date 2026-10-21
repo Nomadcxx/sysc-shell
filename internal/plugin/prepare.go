@@ -69,6 +69,11 @@ type Preparer struct {
 	// runs no periodic timer at all.
 	wake *time.Timer
 
+	// wakeCount counts how many times the workers returned from their wait.
+	// A pool with nothing to do must not wake itself, and this is the pool's
+	// own record of what it did: nothing else in the machine can change it.
+	wakeCount int64
+
 	done chan struct{}
 	wg   sync.WaitGroup
 }
@@ -257,6 +262,7 @@ func (p *Preparer) next() (Job, bool) {
 		// broadcasts rather than signals.
 		p.arm(wait, held)
 		p.cond.Wait()
+		p.wakeCount++
 	}
 }
 

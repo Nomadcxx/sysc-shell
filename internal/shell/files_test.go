@@ -32,6 +32,7 @@ func TestFilesPanelFitsAtTargetAndLaptopSize(t *testing.T) {
 	}
 	cfg := config.Default()
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.mu.Lock()
 	reg.files = &filesSession{root: root, cwd: root, title: "Files", mode: files.ModeOpen, entries: ents}
@@ -126,6 +127,7 @@ func TestFilesActivateEntersOpensAndPicks(t *testing.T) {
 
 	cfg := config.Default()
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	ents, err := files.List(root, root)
 	if err != nil {
@@ -388,6 +390,7 @@ func TestFilesCrossOutputReopenKeepsNewSession(t *testing.T) {
 func TestFilesStaleContextDoesNotCloseNewerPanel(t *testing.T) {
 	root := t.TempDir()
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	go func() {
 		for range reg.AuxRequests() {
@@ -522,6 +525,7 @@ func TestFilesChooseDuringLoadPicksPendingDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	go func() {
 		for range reg.AuxRequests() {
@@ -580,6 +584,7 @@ func TestFilesUpDuringLoadTargetsPendingParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	go func() {
 		for range reg.AuxRequests() {
@@ -892,6 +897,7 @@ func TestFilesEscapeClearsSelectionFirst(t *testing.T) {
 	sess := filesSessionWithTwo(t)
 	sess.pointerOnEntry(0, 0, 1)
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.mu.Lock()
 	reg.files = sess
@@ -1053,6 +1059,7 @@ func TestFilesEscapeCancelsRenameFirst(t *testing.T) {
 	sess := filesSessionWithTwo(t)
 	sess.pointerOnEntry(0, 0, 1)
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.mu.Lock()
 	reg.files = sess

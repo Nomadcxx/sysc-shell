@@ -15,6 +15,7 @@ func TestGateAccessibleNamesAndRoles(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Session.Locker = "swaylock"
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	for _, id := range []PanelID{PanelClock, PanelMonitor, PanelSession} {
@@ -39,6 +40,7 @@ func TestGateKeyboardOnlyCoversControls(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Session.Locker = "swaylock"
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {

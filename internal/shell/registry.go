@@ -626,6 +626,13 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.launcherServiceLocked()
 		r.mu.Unlock()
 	}
+	// The mono role's verdict rests on a scan of the system fonts, and the
+	// first scan in a process costs real time. Every theme resolution runs
+	// under the registry lock, so a scan that happened there would stall
+	// every other registry user for the length of the scan: the panel frame
+	// loop, the bar, the tray. The scan happens here, while the registry is
+	// still private to this goroutine and no lock is held.
+	monospaceFamily.Get()(cfg.Theme.Composition.MonoFontFamily, theme.DefaultMonoFamily)
 	return r
 }
 

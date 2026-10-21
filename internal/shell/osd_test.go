@@ -140,11 +140,51 @@ func TestOsdReducedMotionFadesWithoutMoving(t *testing.T) {
 	if got := reg.OSD().slidePx(); got != 0 {
 		t.Errorf("OSD slid %d px under reduced motion, want an opacity-only change", got)
 	}
-	if got := countSurfaceInvalidations(reg, reducedPanelCap+50*time.Millisecond); got == 0 {
+	// The OSD shares the panel scheduling path, so it must also stop asking
+	// for frames once its value settles rather than running a timer of its
+	// own.
+	//
+	// The frame loop publishes its settling frame on the tick that first
+	// sees the animation settled, and that tick lands after the fade's
+	// nominal length plus the tick grid plus whatever delay the scheduler
+	// adds. A loaded runner can miss a tick by more than the margin a fixed
+	// window leaves, and the settling frame then arrives inside the quiet
+	// window and reads as a leak. The check waits for the reveal loop to
+	// retire instead, and drains the invalidation channel while it waits so
+	// a full buffer cannot hold the loop open past the fade.
+	reg.mu.Lock()
+	osdAnim := reg.OSD().anim
+	reg.mu.Unlock()
+	if osdAnim == nil {
+		t.Fatal("the OSD has no animator")
+	}
+	seen := 0
+	drain := func() {
+		for {
+			select {
+			case inv := <-reg.Invalidations():
+				if inv.SurfaceID != "" {
+					seen++
+				}
+			default:
+				return
+			}
+		}
+	}
+	fadeDeadline := time.Now().Add(5 * time.Second)
+	for osdAnim.running.Load() {
+		drain()
+		if time.Now().After(fadeDeadline) {
+			t.Fatal("the OSD reveal loop outlived its fade")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// The loop publishes its settling frame before it retires, so what
+	// arrived with it is already in the channel once the flag is down.
+	drain()
+	if seen == 0 {
 		t.Fatal("reduced motion produced no invalidations; the OSD never appeared")
 	}
-	// The OSD shares the panel scheduling path, so it must also stop asking for
-	// frames once its value settles rather than running a timer of its own.
 	if got := countSurfaceInvalidations(reg, 100*time.Millisecond); got != 0 {
 		t.Fatalf("OSD still invalidating %d times after the fade settled", got)
 	}

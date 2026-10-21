@@ -5,9 +5,17 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+// monospaceFamily picks the family the mono role renders with. It is a seam
+// because the first call in a process scans the system fonts: a test that
+// swapped an unguarded variable would race with a production goroutine
+// reading it, and the scan is the one cost a theme resolution cannot afford
+// under the registry lock.
+var monospaceFamily = seam.New(render.MonospaceFamily)
 
 // Color is the painter's colour type, re-exported so components name one type.
 type Color = render.Color
@@ -287,7 +295,7 @@ func resolveType(comp theme.Composition, bar config.Bar) render.TypeSet {
 		family = bar.FontFamily
 	}
 	// The mono role must land on a face whose advances really are equal.
-	mono := render.MonospaceFamily(comp.MonoFontFamily, theme.DefaultMonoFamily)
+	mono := monospaceFamily.Get()(comp.MonoFontFamily, theme.DefaultMonoFamily)
 	set := render.TypeSet{Family: family, MonoFamily: mono}
 	for role := range set.Roles {
 		r := theme.TextRole(role)

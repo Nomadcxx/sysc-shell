@@ -15,6 +15,7 @@ func TestGateExclusiveZoneUnchangedByPanels(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	reg := shell.NewRegistry(cfg)
 	t.Cleanup(reg.Close)
+	keepInvalidationsDrained(t, reg)
 	height := cfg.Bar.Height
 	if err := reg.OpenPanel(shell.PanelSession, 7, shell.Trigger{BarEdge: "top", BarZone: 40}); err != nil {
 		t.Fatal(err)

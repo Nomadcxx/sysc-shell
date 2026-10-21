@@ -88,11 +88,23 @@ func TestMediaStripPeekOpensOneSurfaceAndPinAddsTheShield(t *testing.T) {
 	}
 }
 
+// openStripForTest opens the strip and reports the failure when it did not
+// open. The call reports whether the strip opened, and a test that discards
+// that cannot tell an open strip from one that never opened: a closed pinned
+// strip then reads as a hover grace that closed it, and a strip that never
+// opened reads as a clean close.
+func openStripForTest(t *testing.T, strip *mediaStripHost, local ui.Rect, pinned bool) {
+	t.Helper()
+	if !strip.openLocked(7, local, pinned) {
+		t.Fatal("the media strip did not open: the media state was unavailable")
+	}
+}
+
 func TestMediaStripPeekDoesNotCloseAPinnedStrip(t *testing.T) {
 	r, strip, _ := stripTestRegistry(t, services.MediaState{Available: true, Title: "Track"})
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	strip.openLocked(7, ui.Rect{X: 800, W: 160, H: 32}, true)
+	openStripForTest(t, strip, ui.Rect{X: 800, W: 160, H: 32}, true)
 	strip.closePeekLocked()
 	if !strip.open_ {
 		t.Fatal("a hover grace closed the pinned strip")
@@ -103,7 +115,7 @@ func TestMediaStripClosesWhenThePlayerGoes(t *testing.T) {
 	r, strip, _ := stripTestRegistry(t, services.MediaState{Available: true, Title: "Track"})
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	strip.openLocked(7, ui.Rect{X: 800, W: 160, H: 32}, false)
+	openStripForTest(t, strip, ui.Rect{X: 800, W: 160, H: 32}, false)
 	r.mediaState = services.MediaState{}
 	if _, open := strip.refreshLocked(); open || strip.open_ {
 		t.Fatal("strip stayed open with no player")
@@ -113,7 +125,7 @@ func TestMediaStripClosesWhenThePlayerGoes(t *testing.T) {
 func TestMediaStripReplacesAndIsReplacedByOtherRoots(t *testing.T) {
 	r, strip, _ := stripTestRegistry(t, services.MediaState{Available: true, Title: "Track"})
 	r.mu.Lock()
-	strip.openLocked(7, ui.Rect{X: 800, W: 160, H: 32}, false)
+	openStripForTest(t, strip, ui.Rect{X: 800, W: 160, H: 32}, false)
 	r.mu.Unlock()
 	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
 		t.Fatal(err)
@@ -128,7 +140,7 @@ func TestMediaStripReplacesAndIsReplacedByOtherRoots(t *testing.T) {
 func TestMediaStripKeysAndRelease(t *testing.T) {
 	r, strip, _ := stripTestRegistry(t, services.MediaState{Available: true, Title: "Track", CanSeek: false, CanPause: true})
 	r.mu.Lock()
-	strip.openLocked(7, ui.Rect{X: 800, W: 160, H: 32}, true)
+	openStripForTest(t, strip, ui.Rect{X: 800, W: 160, H: 32}, true)
 	before := strip.seekPending
 	strip.handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyRight})
 	if strip.seekPending != before {

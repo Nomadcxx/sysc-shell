@@ -75,7 +75,7 @@ func TestDefaultInputListAndExitCodes(t *testing.T) {
 	// document set as seen from there.
 	t.Chdir(filepath.Join("..", ".."))
 	paths := defaultPaths()
-	want := []string{"README.md"}
+	want := []string{"README.md", "AGENTS.md"}
 	matches, err := filepath.Glob(filepath.Join("docs", "*.md"))
 	if err != nil {
 		t.Fatal(err)
