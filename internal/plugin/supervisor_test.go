@@ -835,11 +835,18 @@ func TestRejectedHandshakeLeavesNoDescendants(t *testing.T) {
 
 	pidPath := filepath.Join(t.TempDir(), "child.pid")
 	s := supervisor(installHelper(t, "spawn-child-silent:"+pidPath))
-	s.HandshakeTimeout = 100 * time.Millisecond
+	// The helper brings its descendant up before it answers, and the host
+	// stops the group once the handshake runs out, so the plugin needs room
+	// to record the descendant first. Two seconds is the bound the host
+	// gives any plugin; a shorter one races the plugin's own start and
+	// fails this test for a reason that has nothing to do with the stop.
+	s.HandshakeTimeout = 2 * time.Second
 	s.ShutdownGrace = 100 * time.Millisecond
 
 	if _, err := s.Start(context.Background()); err == nil {
 		t.Fatal("Start succeeded without a handshake")
+	} else if !errors.Is(err, ErrHandshakeTimeout) {
+		t.Fatalf("Start: %v, want a handshake timeout", err)
 	}
 	// A plugin that never answered is killed along with the children it
 	// brought up; the shell never agreed to host it.
