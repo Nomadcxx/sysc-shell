@@ -451,9 +451,11 @@ type TrayPreferences struct {
 	// Enabled controls whether the shell projects tray items into bars. The
 	// tray service remains available so the projection can be re-enabled.
 	Enabled bool
-	Hidden  []string
-	Pinned  []string
-	Order   []string
+	// ShowPassive includes tray items with a passive status. It defaults to false.
+	ShowPassive bool
+	Hidden      []string
+	Pinned      []string
+	Order       []string
 }
 
 // OutputOverride adjusts the bar on one connector.

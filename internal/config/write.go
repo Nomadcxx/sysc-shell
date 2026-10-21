@@ -35,8 +35,8 @@ func Write(path string, c Config) error {
 		return fmt.Errorf("config: empty write path")
 	}
 	if _, err := applyTrayPreferences(wireTrayPreferences{
-		Enabled: &c.Tray.Enabled,
-		Hidden:  c.Tray.Hidden, Pinned: c.Tray.Pinned, Order: c.Tray.Order,
+		Enabled: &c.Tray.Enabled, ShowPassive: &c.Tray.ShowPassive,
+		Hidden: c.Tray.Hidden, Pinned: c.Tray.Pinned, Order: c.Tray.Order,
 	}); err != nil {
 		return err
 	}
@@ -154,13 +154,13 @@ func toWire(c Config) wireConfig {
 	if p := panelsDiff(c.Panels, d.Panels); p != nil {
 		w.Panels = p
 	}
-	if c.Tray.Enabled || len(c.Tray.Hidden) > 0 || len(c.Tray.Pinned) > 0 || len(c.Tray.Order) > 0 {
-		enabled := c.Tray.Enabled
+	if c.Tray.Enabled || c.Tray.ShowPassive || len(c.Tray.Hidden) > 0 || len(c.Tray.Pinned) > 0 || len(c.Tray.Order) > 0 {
+		enabled, showPassive := c.Tray.Enabled, c.Tray.ShowPassive
 		w.Tray = &wireTrayPreferences{
-			Enabled: &enabled,
-			Hidden:  append([]string(nil), c.Tray.Hidden...),
-			Pinned:  append([]string(nil), c.Tray.Pinned...),
-			Order:   append([]string(nil), c.Tray.Order...),
+			Enabled: &enabled, ShowPassive: &showPassive,
+			Hidden: append([]string(nil), c.Tray.Hidden...),
+			Pinned: append([]string(nil), c.Tray.Pinned...),
+			Order:  append([]string(nil), c.Tray.Order...),
 		}
 	}
 	if c.Weather.Configured ||

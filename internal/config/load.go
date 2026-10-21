@@ -178,10 +178,11 @@ type wirePanels struct {
 }
 
 type wireTrayPreferences struct {
-	Enabled *bool    `json:"enabled,omitempty"`
-	Hidden  []string `json:"hidden,omitempty"`
-	Pinned  []string `json:"pinned,omitempty"`
-	Order   []string `json:"order,omitempty"`
+	Enabled     *bool    `json:"enabled,omitempty"`
+	ShowPassive *bool    `json:"show-passive,omitempty"`
+	Hidden      []string `json:"hidden,omitempty"`
+	Pinned      []string `json:"pinned,omitempty"`
+	Order       []string `json:"order,omitempty"`
 }
 
 type wireOutput struct {
@@ -880,7 +881,11 @@ func applyTrayPreferences(w wireTrayPreferences) (TrayPreferences, error) {
 	if w.Enabled != nil {
 		enabled = *w.Enabled
 	}
-	return TrayPreferences{Enabled: enabled, Hidden: hidden, Pinned: pinned, Order: order}, nil
+	showPassive := false
+	if w.ShowPassive != nil {
+		showPassive = *w.ShowPassive
+	}
+	return TrayPreferences{Enabled: enabled, ShowPassive: showPassive, Hidden: hidden, Pinned: pinned, Order: order}, nil
 }
 
 // applyWeather validates weather preferences and, when present, one place:

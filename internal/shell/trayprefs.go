@@ -79,7 +79,7 @@ func arrangeTray(items []tray.Item, prefs config.TrayPreferences, available, ite
 	hidden := stringSet(prefs.Hidden)
 	pinned := stringSet(prefs.Pinned)
 	for i, item := range items {
-		if item.Status == tray.StatusPassive {
+		if item.Status == tray.StatusPassive && !prefs.ShowPassive {
 			continue
 		}
 		token := tokens[i]
