@@ -414,6 +414,62 @@ func TestCrashBehindAChildHoldingThePipesIsDetected(t *testing.T) {
 	}
 }
 
+// TestCloseAfterContextCancelDoesNotTouchTheCommand closes a session whose
+// process has already left while the command context is done.
+//
+// os/exec's watchCtx goroutine reads Cmd.WaitDelay as soon as the context
+// reports done, so a shutdown that assigned the field would race that read.
+// The session must still report the crash and return without waiting out the
+// shutdown grace.
+func TestCloseAfterContextCancelDoesNotTouchTheCommand(t *testing.T) {
+	t.Parallel()
+
+	children := filepath.Join(t.TempDir(), "children")
+	s := supervisor(installHelper(t, "crash-with-child:"+children))
+	ctx, cancel := context.WithCancel(context.Background())
+	sess, err := s.Start(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	defer cancel()
+	defer sess.Close()
+	defer func() { killChildren(findChildPIDs(t, children)) }()
+
+	gone := make(chan error, 1)
+	go func() {
+		_, err := sess.Recv()
+		gone <- err
+	}()
+	select {
+	case err := <-gone:
+		if err == nil {
+			t.Fatal("Recv succeeded while a descendant held the pipe open")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Recv did not return after the plugin process exited")
+	}
+	if !sess.Exited() {
+		t.Fatal("Exited is false after the process left")
+	}
+
+	// Cancelling is what wakes the command's watcher, so do it before the
+	// close and let both paths run against the same session. The pause lets
+	// the watcher reach its read of the command's fields; a close that then
+	// assigned one of them would be reported here.
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	reason := sess.Close()
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Errorf("Close took %v, want well under the %v grace", elapsed, s.ShutdownGrace)
+	}
+	if reason.Kind != ExitCrashed || reason.Code != 4 {
+		t.Fatalf("exit = %+v, want a crash with code 4", reason)
+	}
+}
+
 func TestStderrKeepsTheMostRecentBytes(t *testing.T) {
 	t.Parallel()
 

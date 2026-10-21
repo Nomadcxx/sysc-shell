@@ -654,6 +654,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-21-sysc-1496-ipc-listener-race.md](2026-10-21-sysc-1496-ipc-listener-race.md) | plan | `sysc-1496`: route every read and write of the server's listener field through the existing mutex, so `Listen` and `Close` no longer race when the shell shuts down while serving. |
 
+## Plugin shutdown I/O bound (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1532-shutdown-waitdelay-race.md](2026-10-21-sysc-1532-shutdown-waitdelay-race.md) | plan | `sysc-1532`: fix the command's I/O bound once before `Start` instead of assigning `Cmd.WaitDelay` at close time, which raced `os/exec`'s context watcher and let a dead plugin's descendant hold the close for a whole grace period. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not
