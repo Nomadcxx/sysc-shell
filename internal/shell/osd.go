@@ -118,6 +118,13 @@ func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []wa
 		m.stopAnim = make(chan struct{})
 		m.stopOnce = sync.Once{}
 		startReveal = !m.anim.Settled()
+		if startReveal {
+			// The reveal loop marks the animator as running before it
+			// starts, so a reader never sees an idle animator while the
+			// reveal is still in flight. The panel path keeps the same flag
+			// for the same reason.
+			m.anim.running.Store(true)
+		}
 	}
 	return aux, pubs, startReveal
 }
@@ -275,7 +282,14 @@ const osdAnimKey = "osd"
 func (m *OSDManager) revealLoop() {
 	m.r.mu.Lock()
 	stop := m.stopAnim
+	anim := m.anim
 	m.r.mu.Unlock()
+	if anim != nil {
+		// The reveal ends when this loop retires, so the flag clears only
+		// after the settling frame has been published. A reader that waits
+		// for the flag to fall therefore waits for the last frame too.
+		defer anim.running.Store(false)
+	}
 	animateSurface(stop, func() bool {
 		m.r.mu.Lock()
 		defer m.r.mu.Unlock()
