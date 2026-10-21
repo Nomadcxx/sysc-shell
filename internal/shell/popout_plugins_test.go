@@ -242,6 +242,57 @@ func TestPluginSettingRowRendersIntAsSlider(t *testing.T) {
 	}
 }
 
+// pluginSettingFields maps every generated text field of a settings form to
+// the key it edits.
+func pluginSettingFields(nodes []*ui.Node, pluginID string) map[string]*ui.Node {
+	fields := map[string]*ui.Node{}
+	prefix := "plugin-set:" + pluginID + ":"
+	var visit func(*ui.Node)
+	visit = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindTextField && strings.HasPrefix(n.Action, prefix) {
+			fields[strings.TrimPrefix(n.Action, prefix)] = n
+		}
+		for _, child := range n.Children {
+			visit(child)
+		}
+	}
+	for _, n := range nodes {
+		visit(n)
+	}
+	return fields
+}
+
+func TestPluginCredentialSettingsAreMasked(t *testing.T) {
+	h := &PanelHost{}
+	schema := []plugin.Setting{
+		{Key: "steamgriddb_key", Type: plugin.SettingString, Label: "SteamGridDB API key"},
+		{Key: "provider_token", Type: plugin.SettingString, Label: "Provider token", Secret: true},
+		{Key: "notes", Type: plugin.SettingString, Label: "Notes"},
+		{Key: "directory", Type: plugin.SettingFolder, Label: "Output directory"},
+	}
+	fields := pluginSettingFields(pluginPanelSettings(nil, h, "org.sysc.games", schema), "org.sysc.games")
+	for _, key := range []string{"steamgriddb_key", "provider_token", "notes", "directory"} {
+		if fields[key] == nil {
+			t.Fatalf("no field generated for %q", key)
+		}
+	}
+	if !fields["steamgriddb_key"].Masked {
+		t.Error("a credential key that ends in _key is drawn in plain text")
+	}
+	if !fields["provider_token"].Masked {
+		t.Error("a setting declared secret is drawn in plain text")
+	}
+	if fields["notes"].Masked {
+		t.Error("an ordinary string setting is masked")
+	}
+	if fields["directory"].Masked {
+		t.Error("a folder setting is masked")
+	}
+}
+
 func TestPluginSettingRowRendersFolderAsTextField(t *testing.T) {
 	h := &PanelHost{}
 	s := plugin.Setting{

@@ -46,3 +46,53 @@ func TestCloseGivesUpOnAStrandedLock(t *testing.T) {
 		t.Fatal("Close returned without closing r.closed")
 	}
 }
+
+// TestCloseWithoutTheLockLeavesPluginsStable pins the plugin teardown when
+// r.mu is stranded. viewLocked reads r.plugins under the lock, so a fallback
+// that gives up on the lock must not write the field: that write is the data
+// race. The host is closed through a local copy instead, which is also what
+// leaves a later render seeing no plugin frames.
+func TestCloseWithoutTheLockLeavesPluginsStable(t *testing.T) {
+	r := NewRegistry(config.Config{})
+	installed := &pluginHost{r: r}
+	r.plugins = installed
+
+	var diagnostic bytes.Buffer
+	previousLogWriter := log.Writer()
+	log.SetOutput(&diagnostic)
+	defer log.SetOutput(previousLogWriter)
+
+	// A render holds r.mu and reads r.plugins. Hold the lock past
+	// closeLockGrace so Close gives up and takes the fallback path while
+	// those reads are still running.
+	reading := make(chan struct{})
+	readDone := make(chan struct{})
+	go func() {
+		r.mu.Lock()
+		close(reading)
+		deadline := time.Now().Add(closeLockGrace + 250*time.Millisecond)
+		for time.Now().Before(deadline) {
+			_ = r.plugins
+		}
+		r.mu.Unlock()
+		close(readDone)
+	}()
+	<-reading
+
+	closed := make(chan struct{})
+	go func() {
+		r.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2*closeLockGrace + 5*time.Second):
+		t.Fatal("Close stayed blocked beyond its lock-acquisition grace with r.mu held")
+	}
+	<-readDone
+
+	// Ordered after the reader and after Close, so this read needs no lock.
+	if r.plugins != installed {
+		t.Fatalf("Close rewrote r.plugins without r.mu: got %p, want %p", r.plugins, installed)
+	}
+}

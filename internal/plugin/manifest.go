@@ -227,6 +227,11 @@ type Setting struct {
 	Max         *float64
 	Options     []SettingOption
 	VisibleWhen *VisibleWhen
+	// Secret marks a string setting as a credential. The shell draws it
+	// masked, so the value never appears on screen, in a screenshot or in a
+	// screen share. A plugin that names a credential anything else declares
+	// it, instead of relying on how the key is spelled.
+	Secret bool
 }
 
 // Grants reports whether the manifest requested a capability.
@@ -340,6 +345,7 @@ type wireSetting struct {
 	Max         *float64         `json:"max,omitempty"`
 	Options     []wireOption     `json:"options,omitempty"`
 	VisibleWhen *wireVisibleWhen `json:"visible_when,omitempty"`
+	Secret      bool             `json:"secret,omitempty"`
 }
 
 type wireOption struct {
@@ -730,6 +736,13 @@ func setting(e wireSetting, path string) (Setting, error) {
 	}
 
 	s := Setting{Key: e.Key, Type: t, Label: e.Label, Description: e.Description, Min: e.Min, Max: e.Max}
+
+	if e.Secret {
+		if t != SettingString {
+			return Setting{}, fmt.Errorf("%s: only a string setting can be secret", path)
+		}
+		s.Secret = true
+	}
 
 	if !t.numeric() && (e.Min != nil || e.Max != nil) {
 		return Setting{}, fmt.Errorf("%s: a %s setting has no numeric bounds", path, t)

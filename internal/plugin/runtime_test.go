@@ -168,6 +168,41 @@ func TestRuntimeRefusesToStartARejectedCandidate(t *testing.T) {
 	}
 }
 
+// TestRuntimeRestartsAPluginThatDiesBehindADescendant is the runtime-level half
+// of the exit watcher: the process leaves, a descendant holds the pipes, and
+// the runtime must still spend its restart budget instead of reporting the
+// plugin as running for the rest of the session.
+func TestRuntimeRestartsAPluginThatDiesBehindADescendant(t *testing.T) {
+	t.Parallel()
+
+	children := filepath.Join(t.TempDir(), "children")
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "crash-with-child:"+children)}, helperOptions())
+	defer r.Stop()
+	defer func() { killChildren(findChildPIDs(t, children)) }()
+
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.Status().State == StateFailed {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	st := r.Status()
+	if st.State != StateFailed {
+		t.Fatalf("state = %q, want %q after the budget ran out", st.State, StateFailed)
+	}
+	if st.Starts != MaxAutoStarts {
+		t.Errorf("starts = %d, want the %d the budget allows", st.Starts, MaxAutoStarts)
+	}
+	if st.Failure == "" {
+		t.Error("a failed plugin carries no reason")
+	}
+}
+
 func TestRuntimeFailsAfterExhaustingItsRestartBudget(t *testing.T) {
 	t.Parallel()
 

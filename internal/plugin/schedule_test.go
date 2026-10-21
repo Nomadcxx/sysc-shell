@@ -29,6 +29,50 @@ func TestSchedulePublishesAtMostThirtyHz(t *testing.T) {
 	}
 }
 
+func TestScheduleNextDueReportsTheTimeLeft(t *testing.T) {
+	now := time.Unix(0, 0)
+	s := NewSchedule(func() time.Time { return now })
+
+	// A view that has never published is due now.
+	if got := s.NextDue("a"); got != 0 {
+		t.Fatalf("unknown view NextDue = %v, want 0", got)
+	}
+
+	// NextDue records nothing, so it does not itself gate the view.
+	for range 3 {
+		if got := s.NextDue("a"); got != 0 {
+			t.Fatalf("unknown view NextDue = %v, want 0 until it publishes", got)
+		}
+	}
+	if !s.Due("a") {
+		t.Fatal("NextDue must not reserve a publish")
+	}
+
+	tests := []struct {
+		name string
+		at   time.Duration
+		want time.Duration
+	}{
+		{"same instant", 0, publishInterval},
+		{"a millisecond in", time.Millisecond, publishInterval - time.Millisecond},
+		{"just before the boundary", publishInterval - time.Millisecond, time.Millisecond},
+		{"exactly on the boundary", publishInterval, 0},
+		{"long past the interval", time.Second, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			now = time.Unix(0, 0).Add(tc.at)
+			if got := s.NextDue("a"); got != tc.want {
+				t.Fatalf("NextDue at %v = %v, want %v", tc.at, got, tc.want)
+			}
+		})
+	}
+
+	if got := s.NextDue("b"); got != 0 {
+		t.Fatalf("a second view must not inherit view a's clock, got %v", got)
+	}
+}
+
 func TestPluginEnvironmentIsAllowlisted(t *testing.T) {
 	t.Setenv("PATH", "/bin")
 	t.Setenv("WAYLAND_DISPLAY", "wayland-1")

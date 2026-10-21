@@ -307,6 +307,36 @@ func TestCloseReturnsWhenThePluginStopsReading(t *testing.T) {
 	}
 }
 
+// findChildPIDs reads back the descendant pids the crash-with-child helper
+// leaves behind, so a test can end them.
+func findChildPIDs(t *testing.T, path string) []int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		t.Fatalf("read child pid file: %v", err)
+	}
+	var pids []int
+	for _, line := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(line)
+		if err != nil {
+			t.Fatalf("child pid %q: %v", line, err)
+		}
+		pids = append(pids, pid)
+	}
+	return pids
+}
+
+// killChildren ends every descendant the helper recorded. It is test cleanup,
+// not an assertion about the kill path: stopping descendants is #378.
+func killChildren(pids []int) {
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
 func TestCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -334,6 +364,107 @@ func TestSessionReportsACrashAfterTheHandshake(t *testing.T) {
 		t.Fatal("Recv succeeded after the plugin exited")
 	}
 	reason := sess.Close()
+	if reason.Kind != ExitCrashed || reason.Code != 4 {
+		t.Fatalf("exit = %+v, want a crash with code 4", reason)
+	}
+}
+
+// TestCrashBehindAChildHoldingThePipesIsDetected is the shape of a script
+// entry point that runs `helper &` and then execs the real binary. The plugin
+// is gone immediately, but the descendant keeps both pipes open, so end of
+// stream never arrives on its own.
+func TestCrashBehindAChildHoldingThePipesIsDetected(t *testing.T) {
+	t.Parallel()
+
+	children := filepath.Join(t.TempDir(), "children")
+	s := supervisor(installHelper(t, "crash-with-child:"+children))
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sess.Close()
+	defer func() { killChildren(findChildPIDs(t, children)) }()
+
+	// The host must notice the process is gone without waiting for the pipe.
+	gone := make(chan error, 1)
+	go func() {
+		_, err := sess.Recv()
+		gone <- err
+	}()
+	select {
+	case err := <-gone:
+		if err == nil {
+			t.Fatal("Recv succeeded while a descendant held the pipe open")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Recv did not return after the plugin process exited")
+	}
+	if !sess.Exited() {
+		t.Fatal("Exited is false after the process left")
+	}
+
+	// Already-gone plugins must not cost the caller the shutdown grace.
+	start := time.Now()
+	reason := sess.Close()
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Errorf("Close took %v, want well under the %v grace", elapsed, s.ShutdownGrace)
+	}
+	if reason.Kind != ExitCrashed || reason.Code != 4 {
+		t.Fatalf("exit = %+v, want a crash with code 4", reason)
+	}
+}
+
+// TestCloseAfterContextCancelDoesNotTouchTheCommand closes a session whose
+// process has already left while the command context is done.
+//
+// os/exec's watchCtx goroutine reads Cmd.WaitDelay as soon as the context
+// reports done, so a shutdown that assigned the field would race that read.
+// The session must still report the crash and return without waiting out the
+// shutdown grace.
+func TestCloseAfterContextCancelDoesNotTouchTheCommand(t *testing.T) {
+	t.Parallel()
+
+	children := filepath.Join(t.TempDir(), "children")
+	s := supervisor(installHelper(t, "crash-with-child:"+children))
+	ctx, cancel := context.WithCancel(context.Background())
+	sess, err := s.Start(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	defer cancel()
+	defer sess.Close()
+	defer func() { killChildren(findChildPIDs(t, children)) }()
+
+	gone := make(chan error, 1)
+	go func() {
+		_, err := sess.Recv()
+		gone <- err
+	}()
+	select {
+	case err := <-gone:
+		if err == nil {
+			t.Fatal("Recv succeeded while a descendant held the pipe open")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Recv did not return after the plugin process exited")
+	}
+	if !sess.Exited() {
+		t.Fatal("Exited is false after the process left")
+	}
+
+	// Cancelling is what wakes the command's watcher, so do it before the
+	// close and let both paths run against the same session. The pause lets
+	// the watcher reach its read of the command's fields; a close that then
+	// assigned one of them would be reported here.
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	reason := sess.Close()
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Errorf("Close took %v, want well under the %v grace", elapsed, s.ShutdownGrace)
+	}
 	if reason.Kind != ExitCrashed || reason.Code != 4 {
 		t.Fatalf("exit = %+v, want a crash with code 4", reason)
 	}

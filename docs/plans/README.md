@@ -636,6 +636,30 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-20-sysc-331-weather-settings-persistence.md](2026-10-20-sysc-331-weather-settings-persistence.md) | plan | Preserve non-default weather unit and refresh interval without configuring a location or inventing coordinates. |
 
+## Notification lead-image precedence (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1490-notification-image-precedence.md](2026-10-21-sysc-1490-notification-image-precedence.md) | plan | `sysc-1490`: keep a decoded `image-data` as the card lead in toasts, the centre and history, with the desktop-entry `Icon=` restored to the fallback role FDO gives it. |
+
+## Banded stroke blend (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1480-stroke-banded-blend.md](2026-10-21-sysc-1480-stroke-banded-blend.md) | plan | `sysc-1480`: `StrokeRounded` blends only the band a ring can cover, byte-identically, for about 21% off the Settings and control-centre frames at 2x. |
+
+## IPC listener race (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1496-ipc-listener-race.md](2026-10-21-sysc-1496-ipc-listener-race.md) | plan | `sysc-1496`: route every read and write of the server's listener field through the existing mutex, so `Listen` and `Close` no longer race when the shell shuts down while serving. |
+
+## Plugin shutdown I/O bound (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1532-shutdown-waitdelay-race.md](2026-10-21-sysc-1532-shutdown-waitdelay-race.md) | plan | `sysc-1532`: fix the command's I/O bound once before `Start` instead of assigning `Cmd.WaitDelay` at close time, which raced `os/exec`'s context watcher and let a dead plugin's descendant hold the close for a whole grace period. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not

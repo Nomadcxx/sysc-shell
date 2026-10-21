@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"image/color"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -226,6 +230,131 @@ func TestNotificationHistoryReAddKeepsOneEntryPerID(t *testing.T) {
 }
 
 func ptr(n protocol.Notification) *protocol.Notification { return &n }
+
+// A decoded image-data beats the desktop-entry Icon= that arrives beside it.
+// sysc-notify keeps DesktopEntry on the wire and clears AppIcon when it decodes
+// an image, so the desktop-entry fallback would otherwise take over as soon as
+// the icon worker answers. GH #380.
+func TestNotificationImageOutranksTheDesktopEntryIcon(t *testing.T) {
+	root := t.TempDir()
+	writeLauncherPNG(t, filepath.Join(root, "chatapp.png"))
+	dir := filepath.Join(t.TempDir(), "applications")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "[Desktop Entry]\nName=Chat\nIcon=chatapp\n"
+	if err := os.WriteFile(filepath.Join(dir, "chatapp.desktop"), []byte(entry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", filepath.Dir(dir))
+	t.Setenv("XDG_DATA_DIRS", "")
+
+	worker := icons.NewWorker(icons.NewResolver("hicolor", []string{root}), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = worker.Run(ctx) }()
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.trayIcons = worker
+	n := note(41, "new message")
+	n.DesktopEntry = "chatapp"
+	n.Image = notificationTestImage(t, 2, 2, color.RGBA{R: 0x90, G: 0x40, A: 0xff})
+	r.applyNotify(snap(1, n))
+
+	lead := func() *ui.Image {
+		t.Helper()
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.notificationLeadImageLocked(n.AppIcon, n.DesktopEntry, n.Image)
+	}
+	raster := func() *ui.Image {
+		t.Helper()
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.notificationRasterLocked(n.Image)
+	}
+	want := raster()
+	if want == nil {
+		t.Fatal("notification image did not decode")
+	}
+	if got := lead(); got != want {
+		t.Fatal("first frame drew the desktop-entry icon instead of the notification image")
+	}
+
+	// Let the icon worker resolve the desktop entry's Icon=, which is what a
+	// later repaint sees. The image must still win.
+	key := icons.Square("chatapp", notifyIconRaster)
+	if _, _, err := worker.Request(key); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if img, ok := worker.Lookup(key); ok && img != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("desktop-entry icon never resolved")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := lead(); got != want {
+		t.Fatal("cached desktop-entry icon replaced the notification image")
+	}
+}
+
+// The desktop-entry fallback still serves a notification with no image at all,
+// which is the behaviour #31 asked for.
+func TestNotificationWithoutAnImageFallsBackToTheDesktopEntryIcon(t *testing.T) {
+	root := t.TempDir()
+	writeLauncherPNG(t, filepath.Join(root, "chatapp.png"))
+	dir := filepath.Join(t.TempDir(), "applications")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "[Desktop Entry]\nName=Chat\nIcon=chatapp\n"
+	if err := os.WriteFile(filepath.Join(dir, "chatapp.desktop"), []byte(entry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", filepath.Dir(dir))
+	t.Setenv("XDG_DATA_DIRS", "")
+
+	worker := icons.NewWorker(icons.NewResolver("hicolor", []string{root}), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = worker.Run(ctx) }()
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.trayIcons = worker
+	n := note(42, "no artwork")
+	n.DesktopEntry = "chatapp"
+	r.applyNotify(snap(1, n))
+
+	key := icons.Square("chatapp", notifyIconRaster)
+	if _, _, err := worker.Request(key); err != nil {
+		t.Fatal(err)
+	}
+	var want *ui.Image
+	deadline := time.Now().Add(2 * time.Second)
+	for want == nil {
+		if img, ok := worker.Lookup(key); ok && img != nil {
+			want = img
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("desktop-entry icon never resolved")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	r.mu.Lock()
+	got := r.notificationLeadImageLocked(n.AppIcon, n.DesktopEntry, n.Image)
+	r.mu.Unlock()
+	if got != want {
+		t.Fatal("a notification with no image lost the desktop-entry fallback")
+	}
+}
 
 type pluginToastRecorder struct {
 	mu   sync.Mutex

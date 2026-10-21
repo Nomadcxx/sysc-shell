@@ -64,6 +64,11 @@ type Preparer struct {
 	degraded map[string]bool
 	closed   bool
 
+	// wake returns the pool to work when the earliest held-back view comes
+	// due. It is armed only while such a view is waiting, so an idle shell
+	// runs no periodic timer at all.
+	wake *time.Timer
+
 	done chan struct{}
 	wg   sync.WaitGroup
 }
@@ -94,11 +99,10 @@ func NewPreparer(workers int, measure ui.MeasureText) *Preparer {
 	// now for a fake clock moves the publish gate with it.
 	p.schedule = NewSchedule(func() time.Time { return p.now() })
 	p.cond = sync.NewCond(&p.mu)
-	p.wg.Add(workers + 1)
+	p.wg.Add(workers)
 	for i := 0; i < workers; i++ {
 		go p.work()
 	}
-	go p.tick()
 	return p
 }
 
@@ -150,6 +154,10 @@ func (p *Preparer) Close() {
 		return
 	}
 	p.closed = true
+	if p.wake != nil {
+		p.wake.Stop()
+		p.wake = nil
+	}
 	p.pending = nil
 	p.waiting = nil
 	p.plugins = nil
@@ -161,21 +169,32 @@ func (p *Preparer) Close() {
 	close(p.results)
 }
 
-// tick wakes the workers on the publish interval. A view held back by the
-// rate gate is prepared as soon as it is due, even when no further update
-// arrives to signal the condition.
-func (p *Preparer) tick() {
-	defer p.wg.Done()
-	t := time.NewTicker(publishInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-p.done:
-			return
-		case <-t.C:
-			p.cond.Broadcast()
-		}
+// arm arranges a single wakeup for the earliest held-back view, so the pool
+// sleeps exactly as long as that view is gated instead of waking on a fixed
+// interval. When nothing is held back any leftover timer is dropped and the
+// pool waits for Submit alone. The timer broadcasts rather than signals: the
+// view that comes due has to reach an idle worker, not whichever one happens
+// to be looking.
+//
+// The callback takes the mutex before waking anyone. next() holds it from
+// before this call until cond.Wait releases it, so a callback that has to
+// acquire the lock cannot fire in that gap and be lost.
+func (p *Preparer) arm(wait time.Duration, held bool) {
+	if p.wake != nil {
+		p.wake.Stop()
+		p.wake = nil
 	}
+	if !held {
+		return
+	}
+	p.wake = time.AfterFunc(wait, func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.closed {
+			return
+		}
+		p.cond.Broadcast()
+	})
 }
 
 // work takes the oldest waiting view and prepares whatever its newest job is.
@@ -201,6 +220,10 @@ func (p *Preparer) next() (Job, bool) {
 		if p.closed {
 			return Job{}, false
 		}
+		var (
+			wait time.Duration
+			held bool
+		)
 		for i, plugin := range p.plugins {
 			ids := p.waiting[plugin]
 			if len(ids) == 0 {
@@ -209,9 +232,12 @@ func (p *Preparer) next() (Job, bool) {
 			id := ids[0]
 			// One view commits at most once per publish interval. A view
 			// that is not due stays pending, so the newest job is the one
-			// that eventually goes out; the ticker wakes the pool when it
-			// comes due.
+			// that eventually goes out; a timer armed for the earliest of
+			// them wakes the pool when it comes due.
 			if !p.schedule.Due(id) {
+				if d := p.schedule.NextDue(id); !held || d < wait {
+					wait, held = d, true
+				}
 				continue
 			}
 			p.plugins = append(p.plugins[:i], p.plugins[i+1:]...)
@@ -225,6 +251,11 @@ func (p *Preparer) next() (Job, bool) {
 			delete(p.pending, id)
 			return j, true
 		}
+		// Nothing is ready: sleep exactly as long as the earliest held-back
+		// view, not a fixed interval. Waking a worker is not enough, because
+		// the view that comes due must reach an idle one, so the timer
+		// broadcasts rather than signals.
+		p.arm(wait, held)
 		p.cond.Wait()
 	}
 }

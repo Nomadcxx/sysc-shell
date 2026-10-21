@@ -83,6 +83,13 @@ func HelperServe(args []string) int {
 	if p, ok := strings.CutPrefix(mode, "spawn-child-silent:"); ok {
 		spawnChild, mode = p, "silent"
 	}
+	// crash-with-child:<path> writes the pid of the descendant it leaves
+	// behind, so the test that started this can clean up after itself.
+	crashWithChild := ""
+	if p, ok := strings.CutPrefix(mode, "crash-with-child:"); ok {
+		crashWithChild = p
+		mode = "crash-with-child"
+	}
 	out := v1.NewEncoder(os.Stdout)
 	in := v1.NewDecoder(os.Stdin, v1.ToPlugin)
 
@@ -153,6 +160,27 @@ func HelperServe(args []string) int {
 	case "malformed-after-hello":
 		fmt.Fprintln(os.Stdout, `{"type":"view.snapshot","unexpected":true}`)
 	case "crash-after-hello":
+		return 4
+	case "crash-with-child":
+		// A descendant that inherits both pipes: the shape of a script entry
+		// point that runs `helper &` and then execs the real binary. The
+		// plugin itself is gone the moment this returns, but the pipes stay
+		// open in the child.
+		child := exec.Command(os.Args[0], HelperFlag, "hold-stderr")
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			return 1
+		}
+		if crashWithChild != "" {
+			// Append: a runtime that restarts leaves one descendant per
+			// attempt, and a test wants to end all of them.
+			f, err := os.OpenFile(crashWithChild, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err == nil {
+				_, _ = fmt.Fprintf(f, "%d\n", child.Process.Pid)
+				_ = f.Close()
+			}
+		}
 		return 4
 	case "ignore-shutdown":
 		time.Sleep(time.Minute)

@@ -2,6 +2,7 @@ package services
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -10,16 +11,20 @@ import (
 // deterministic, needs no running player, and cannot be affected by whatever
 // happens to be playing on the developer's desktop.
 type fakeBus struct {
-	// mu guards every field below except names and nameCh: the service's
-	// watch goroutine calls Get/Call/Set while tests mutate property tables
-	// and read recorded calls, so unguarded access is a data race.
+	// mu guards every field below except names, nameCh and overflow: the
+	// service's watch goroutine calls Get/Call/Set while tests mutate
+	// property tables and read recorded calls, so unguarded access is a data
+	// race.
 	mu     sync.Mutex
 	names  []string
 	props  map[string]map[string]any
 	calls  []string
 	sets   []fakeSet
 	closes int
+	lists  int
 	nameCh chan nameChange
+	// overflow stands in for the real bus's dropped-event flag.
+	overflow atomic.Bool
 }
 
 type fakeSet struct {
@@ -31,8 +36,21 @@ func newFakeBus(names ...string) *fakeBus {
 	return &fakeBus{names: names, props: map[string]map[string]any{}, nameCh: make(chan nameChange, 8)}
 }
 
-func (f *fakeBus) ListNames() ([]string, error)   { return f.names, nil }
+func (f *fakeBus) ListNames() ([]string, error) {
+	f.mu.Lock()
+	f.lists++
+	f.mu.Unlock()
+	return f.names, nil
+}
 func (f *fakeBus) NameChanges() <-chan nameChange { return f.nameCh }
+func (f *fakeBus) Overflowed() bool               { return f.overflow.Swap(false) }
+
+// enumerations counts the times the service re-read the bus.
+func (f *fakeBus) enumerations() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lists
+}
 
 func (f *fakeBus) Get(busName, iface, prop string) (any, error) {
 	f.mu.Lock()
