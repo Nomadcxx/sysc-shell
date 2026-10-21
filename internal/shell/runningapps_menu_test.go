@@ -18,6 +18,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -223,7 +224,7 @@ func TestRunningAppsFloatingToggleUnknownOutcomeWaitsForSnapshot(t *testing.T) {
 }
 
 func TestRunningAppsFloatingToggleAmbiguousFailureRefreshesWindowState(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "niri.sock")
+	socket := filepath.Join(sockpath.Dir(t, "niri"), "niri.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)

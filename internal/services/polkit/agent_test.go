@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 func TestAgentDoesNotConnectOrRegisterWithoutHelper(t *testing.T) {
@@ -43,7 +45,7 @@ func TestAgentDoesNotConnectOrRegisterWithoutHelper(t *testing.T) {
 }
 
 func TestAgentRunRetriesAfterHelperFailure(t *testing.T) {
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "polkit")
 	listener, err := net.Listen("unix", filepath.Join(dir, "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +146,7 @@ func TestAgentRunRetriesAfterHelperFailure(t *testing.T) {
 }
 
 func TestAgentRunStopsAfterThreeHelperFailures(t *testing.T) {
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "polkit")
 	listener, err := net.Listen("unix", filepath.Join(dir, "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -297,7 +299,7 @@ func TestAgentReportsExistingAuthenticationAgent(t *testing.T) {
 	if err := owner.Export(authority, authorityPath, authorityIface); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "polkit")
 	socketPath := filepath.Join(dir, "helper.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -417,7 +419,7 @@ func TestAgentStopsWhenRegistrationReplyStalls(t *testing.T) {
 	if err := owner.Export(authority, authorityPath, authorityIface); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "polkit")
 	listener, err := net.Listen("unix", filepath.Join(dir, "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -461,7 +463,7 @@ func TestAgentStopsWhenRegistrationReplyStalls(t *testing.T) {
 }
 
 func TestAgentClosesQueueWhenContextEndsBeforeConnection(t *testing.T) {
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "polkit"), "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +495,7 @@ func TestAgentClosesQueueWhenContextEndsBeforeConnection(t *testing.T) {
 }
 
 func TestAgentClosesQueueWhenContextEndsDuringReconnectBackoff(t *testing.T) {
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "polkit"), "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +540,7 @@ func TestAgentRejectsAuthenticationDuringShutdown(t *testing.T) {
 	if err := owner.Export(authority, authorityPath, authorityIface); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "polkit"), "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,7 +647,7 @@ func TestAgentReregistersWhenAuthorityChangesDuringRegistration(t *testing.T) {
 	if err := firstOwner.Export(firstAuthority, authorityPath, authorityIface); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "polkit")
 	listener, err := net.Listen("unix", filepath.Join(dir, "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -733,7 +735,7 @@ func TestAgentIgnoresForgedAuthorityOwnerChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = attacker.Close() })
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "polkit"), "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -858,7 +860,7 @@ func TestAgentReconnectsWhenSystemBusCloses(t *testing.T) {
 	if err := owner.Export(authority, authorityPath, authorityIface); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "polkit")
 	listener, err := net.Listen("unix", filepath.Join(dir, "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -943,7 +945,7 @@ func TestAgentBeginAuthenticationUsesPolkitIdentityAndHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "polkit")
 	socketPath := dir + "/helper.sock"
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
