@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,8 @@ import (
 	_ "golang.org/x/image/webp"
 
 	xdraw "golang.org/x/image/draw"
+
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 )
 
 // Bounds on one thumbnail job.
@@ -264,7 +267,7 @@ func (t *Thumbnailer) ensure(ctx context.Context, entry Entry) (bool, error) {
 		}
 		err = t.extract(ctx, entry.Path, dst)
 	} else {
-		err = t.renderStill(entry.Path, dst)
+		err = t.renderStill(ctx, entry.Path, dst)
 	}
 	if err != nil && ctx.Err() == nil && !errors.Is(err, errNoExtractor) {
 		// The file itself cannot be previewed. Recording it keeps a rescan
@@ -334,9 +337,25 @@ func (b *decodeBudget) release(n int64) {
 	b.cond.Broadcast()
 }
 
+// decodeImage decodes one image from r. It is a seam so a test can hold a
+// single item in flight and watch what the generator does when the cancel
+// lands on it, without waiting for a real decode to finish.
+//
+// The context is part of the seam because the decode is the one stretch of
+// the work a cancel cannot interrupt from the outside.
+var decodeImage = seam.New(func(ctx context.Context, r io.Reader) (image.Image, error) {
+	img, _, err := image.Decode(r)
+	return img, err
+})
+
 // renderStill decodes one image and writes a cover-cropped preview. The
 // decode holds its share of the budget until the preview is scaled.
-func (t *Thumbnailer) renderStill(src, dst string) error {
+//
+// The context ends the work at every point where it can still be dropped. A
+// cancelled scan must not spend the rest of its time on a preview nobody
+// will look at, so a cancel that lands during the decode skips the scale and
+// the write, and one that lands before the decode skips the decode itself.
+func (t *Thumbnailer) renderStill(ctx context.Context, src, dst string) error {
 	file, err := os.Open(src)
 	if err != nil {
 		return err
@@ -359,18 +378,24 @@ func (t *Thumbnailer) renderStill(src, dst string) error {
 		config.Width > thumbMaxDimension || config.Height > thumbMaxDimension {
 		return fmt.Errorf("wallpaper: %s is %dx%d", src, config.Width, config.Height)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, err := file.Seek(0, 0); err != nil {
 		return err
 	}
 	cost := int64(config.Width) * int64(config.Height) * 4
 	t.budget.acquire(cost)
-	source, _, err := image.Decode(file)
+	source, err := decodeImage.Get()(ctx, file)
 	var preview *image.RGBA
-	if err == nil {
+	if err == nil && ctx.Err() == nil {
 		preview = coverScale(source)
 	}
 	t.budget.release(cost)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return writeJPEG(dst, preview)
