@@ -76,6 +76,59 @@ func TestTrayArrangementKeepsHiddenItemsRecoverable(t *testing.T) {
 	}
 }
 
+func TestTrayPassiveVisibilityDefaultsOffAndHonorsPreferences(t *testing.T) {
+	items := []tray.Item{
+		preferenceItem("a", "A", 1),
+		preferenceItem("p", "Passive", 1),
+		preferenceItem("h", "Hidden passive", 1),
+		preferenceItem("b", "B", 1),
+		preferenceItem("q", "Ordered passive", 1),
+	}
+	items[1].Status = tray.StatusPassive
+	items[2].Status = tray.StatusPassive
+	items[4].Status = tray.StatusPassive
+
+	tests := []struct {
+		name       string
+		config     string
+		wantBar    []string
+		wantHidden []string
+		wantPinned bool
+	}{
+		{
+			name:       "hidden by default",
+			config:     `{"tray":{"pinned":["id:p"],"hidden":["id:h"],"order":["id:b","id:a","id:q","id:p"]}}`,
+			wantBar:    []string{"b", "a"},
+			wantHidden: nil,
+		},
+		{
+			name:       "shown items retain pinned, hidden and saved order",
+			config:     `{"tray":{"show-passive":true,"pinned":["id:p"],"hidden":["id:h"],"order":["id:q","id:b","id:a","id:p"]}}`,
+			wantBar:    []string{"p", "q", "b", "a"},
+			wantHidden: []string{"h"},
+			wantPinned: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.Parse([]byte(tt.config))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := arrangeTray(items, cfg.Tray, 100, 20, 4)
+			if ids := itemIDs(got.Bar); !slices.Equal(ids, tt.wantBar) {
+				t.Fatalf("bar = %v, want %v", ids, tt.wantBar)
+			}
+			if ids := itemIDs(got.Hidden); !slices.Equal(ids, tt.wantHidden) {
+				t.Fatalf("hidden = %v, want %v", ids, tt.wantHidden)
+			}
+			if tt.wantPinned && !got.Pinned[items[1].Key] {
+				t.Fatal("passive item is not pinned")
+			}
+		})
+	}
+}
+
 func TestTrayTokenCollisionIgnoresEveryPreferenceForThatToken(t *testing.T) {
 	first := preferenceItem("shared", "One", 1)
 	second := preferenceItem("shared", "Two", 2)

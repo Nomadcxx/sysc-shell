@@ -1490,6 +1490,12 @@ func (r *Registry) Search(q string) []Entry {
 // list editor: each is keyed by an item the tray host enumerates, and a token
 // whose item is absent is kept and shown rather than quietly dropped.
 func (r *Registry) addTrayEntries(cfg config.Config) {
+	r.entries = append(r.entries, Entry{
+		Path: "tray.show-passive", Label: "Show passive items", Section: "Tray", Group: "Visibility",
+		Describe: "Include passive tray items in the bar and drawer.", Kind: KindBool,
+		Get: getBool(func(c config.Config) bool { return c.Tray.ShowPassive }),
+		Set: setBool("tray.show-passive", func(c *config.Config, b bool) { c.Tray.ShowPassive = b }),
+	})
 	for _, token := range unionOf(cfg.Tray.Hidden, cfg.Tray.Pinned, cfg.Tray.Order) {
 		r.entries = append(r.entries,
 			Entry{

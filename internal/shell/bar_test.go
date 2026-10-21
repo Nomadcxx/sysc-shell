@@ -65,6 +65,20 @@ func TestBarSuppressesTrayWhenProjectionIsDisabled(t *testing.T) {
 	}
 }
 
+func TestBarSetTrayPreservesPassiveVisibility(t *testing.T) {
+	items := []tray.Item{
+		preferenceItem("a", "Active", 1),
+		preferenceItem("p", "Passive", 1),
+	}
+	items[1].Status = tray.StatusPassive
+	bar := &Bar{trayAvailable: 100}
+	bar.setTray(items, config.TrayPreferences{Enabled: true, ShowPassive: true}, nil)
+
+	if got := itemIDs(bar.trayArrangement().Bar); len(got) != 2 || got[0] != "a" || got[1] != "p" {
+		t.Fatalf("bar items = %v, want [a p]", got)
+	}
+}
+
 func newTestBar(t *testing.T) *Bar {
 	t.Helper()
 	p, err := New("DP-9")

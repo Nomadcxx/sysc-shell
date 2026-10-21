@@ -3194,14 +3194,13 @@ func TestControlCentreShortcutReachesEverySection(t *testing.T) {
 	}
 }
 
-// TestEmptySectionSaysWhy covers the two sections that build their entries
-// from what the configuration already names. A user who has never pinned a
-// tray item or overridden an output opens Tray or Displays and, before this,
-// saw an empty column: indistinguishable from a section that failed to build.
+// TestEmptySectionSaysWhy covers Displays, whose entries come from configured
+// output overrides. With none configured, the section still needs an empty
+// state that distinguishes it from a section that failed to build.
 func TestEmptySectionSaysWhy(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
-	for _, section := range []string{"Tray", "Displays"} {
+	for _, section := range []string{"Displays"} {
 		if got := h.set.Section(section); len(got) != 0 {
 			t.Fatalf("%s built %d entries from a default configuration; "+
 				"this test no longer covers the empty case", section, len(got))
