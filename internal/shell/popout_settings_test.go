@@ -24,6 +24,46 @@ import (
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
+// newSettingsRegistry builds the registry the settings tests use: the config
+// the test controls, no external program to look up, and a consumer for the
+// invalidations a registry without a bridge would never receive. A Registry
+// blocks its publisher once the bounded invalidation queue is full (GH #4),
+// and the background republishes fill that queue on their own, so a fixture
+// that does not drain it blocks the settings commit for good and hangs the
+// package instead of failing (sysc-1531).
+func newSettingsRegistry(t *testing.T, cfg config.Config) *Registry {
+	t.Helper()
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	keepInvalidationsDrained(t, reg)
+	return reg
+}
+
+// TestSettingsFixtureDrainsItsInvalidations pins the fixture contract the
+// settings tests depend on. The queue the background republishes fill holds a
+// handful of entries, so a fixture that does not drain it blocks its publisher
+// and the settings commit never returns.
+func TestSettingsFixtureDrainsItsInvalidations(t *testing.T) {
+	t.Parallel()
+	reg := newSettingsRegistry(t, config.Default())
+
+	filled := make(chan struct{})
+	go func() {
+		defer close(filled)
+		// One more than the queue holds: the last send is the one that
+		// blocks when nothing drains the queue.
+		for i := 0; i <= cap(reg.invalidations); i++ {
+			reg.publishSurface(7, "probe")
+		}
+	}()
+	select {
+	case <-filled:
+	case <-time.After(asyncTestWait):
+		t.Fatal("publishing blocked on the invalidation queue: the fixture does not drain it")
+	}
+}
+
 func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
@@ -660,9 +700,7 @@ func TestSettingsExternalReloadClosesPickerWhenItBecomesAField(t *testing.T) {
 	previous := config.Default()
 	previous.ThemeGen.Source = "stock"
 	previous.ThemeGen.Seed = theme.StockNames()[0]
-	reg := NewRegistry(previous)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
+	reg := newSettingsRegistry(t, previous)
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
@@ -816,9 +854,7 @@ func TestSettingsExternalReloadClosesPathBrowserWhenDirectoryChanges(t *testing.
 	const path = "wallpaper.image-directory"
 	previous := config.Default()
 	previous.Wallpaper.ImageDirectory = oldRoot
-	reg := NewRegistry(previous)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
+	reg := newSettingsRegistry(t, previous)
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
@@ -2012,9 +2048,7 @@ func TestSettingsDebouncedWriteDoesNotOverwriteReloadedConfig(t *testing.T) {
 	base := config.Default()
 	base.Accessibility.ReducedMotion = true
 	base.Session.Locker = "old-locker"
-	reg := NewRegistry(base)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
+	reg := newSettingsRegistry(t, base)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -2104,28 +2138,10 @@ written:
 	}
 }
 
-// startTestInvalidationDrain models the production Wayland bridge. A Registry
-// blocks publishers when its bounded queue fills, and tests have no owner to
-// receive those invalidations unless they provide one.
-func startTestInvalidationDrain(reg *Registry) {
-	go func() {
-		for {
-			select {
-			case <-reg.closed:
-				return
-			case <-reg.invalidations:
-			}
-		}
-	}()
-}
-
 func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
-	reg := NewRegistry(base)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
-	startTestInvalidationDrain(reg)
+	reg := newSettingsRegistry(t, base)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -2197,10 +2213,7 @@ func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
 func TestSettingsExternalReloadAfterWriteRetiresWriterSnapshot(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
-	reg := NewRegistry(base)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
-	startTestInvalidationDrain(reg)
+	reg := newSettingsRegistry(t, base)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -2268,10 +2281,7 @@ func TestSettingsExternalReloadAfterWriteRetiresWriterSnapshot(t *testing.T) {
 func TestSettingsStaleReloadCommitKeepsLaterWriteSnapshot(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
-	reg := NewRegistry(base)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
-	startTestInvalidationDrain(reg)
+	reg := newSettingsRegistry(t, base)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -2374,10 +2384,7 @@ func TestSettingsStaleReloadCommitKeepsLaterWriteSnapshot(t *testing.T) {
 func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
-	reg := NewRegistry(base)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
-	startTestInvalidationDrain(reg)
+	reg := newSettingsRegistry(t, base)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
@@ -2452,9 +2459,7 @@ func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *test
 func TestSettingsStaleTimerDoesNotHideReplacementFromFlush(t *testing.T) {
 	base := config.Default()
 	base.Session.Locker = "old-locker"
-	reg := NewRegistry(base)
-	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(reg.Close)
+	reg := newSettingsRegistry(t, base)
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Write(path, base); err != nil {
