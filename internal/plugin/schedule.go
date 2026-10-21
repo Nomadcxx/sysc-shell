@@ -27,3 +27,19 @@ func (s *Schedule) Due(id string) bool {
 	s.last[id] = t
 	return true
 }
+
+// NextDue reports how long view id has left of its interval, zero when it may
+// publish now. It records nothing: only Due reserves a publish. A caller uses
+// the duration to sleep exactly as long as the view is held back, rather than
+// waking on the interval whether or not anything is waiting.
+func (s *Schedule) NextDue(id string) time.Duration {
+	prev, ok := s.last[id]
+	if !ok {
+		return 0
+	}
+	left := publishInterval - s.now().Sub(prev)
+	if left < 0 {
+		return 0
+	}
+	return left
+}
