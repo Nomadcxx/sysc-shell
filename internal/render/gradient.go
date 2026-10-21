@@ -82,7 +82,7 @@ func fillRectGradient(c *Canvas, r ui.Rect, stops []gradientStop, angle, offset 
 	}
 	axis := gradientAxisForDegrees(angle)
 	for y := y0; y < y1; y++ {
-		row := c.Pix[y*c.Stride:]
+		row := c.row(y)
 		uy := (float64(y-r.Y) + 0.5) / float64(r.H)
 		for x := x0; x < x1; x++ {
 			var col Color
@@ -94,7 +94,8 @@ func fillRectGradient(c *Canvas, r ui.Rect, stops []gradientStop, angle, offset 
 			if col.A == 0 {
 				continue
 			}
-			blendPixel(row[x*4:x*4+4], col.premultiply(), uint32(col.A))
+			at := (x - c.Ox) * 4
+			blendPixel(row[at:at+4], col.premultiply(), uint32(col.A))
 		}
 	}
 }
@@ -111,7 +112,7 @@ func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientS
 	}
 	axis := gradientAxisForDegrees(angle)
 	for py := y0; py < y1; py++ {
-		row := c.Pix[py*c.Stride:]
+		row := c.row(py)
 		coverage := coverageRow(mask, py, y)
 		uy := (float64(py-box.Y) + 0.5) / float64(box.H)
 		for px := x0; px < x1; px++ {
@@ -134,7 +135,8 @@ func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientS
 			for i := range src {
 				s[i] = byte(uint32(src[i]) * cov / 255)
 			}
-			blendPixel(row[px*4:px*4+4], s, alpha)
+			at := (px - c.Ox) * 4
+			blendPixel(row[at:at+4], s, alpha)
 		}
 	}
 }

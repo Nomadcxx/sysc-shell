@@ -204,7 +204,8 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 		c = &clipped
 		x0, y0, x1, y1 := c.clip(region)
 		for y := y0; y < y1; y++ {
-			clear(c.Pix[y*c.Stride+x0*4 : y*c.Stride+x1*4])
+			at := (y-c.Oy)*c.Stride + (x0-c.Ox)*4
+			clear(c.Pix[at : at+(x1-x0)*4])
 		}
 	}
 	box := style.Scale120.PhysicalRect(style.Body)
@@ -318,7 +319,11 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		defer func() { c.restrict = previous }()
 	}
 	if n.Opacity > 0 && n.Opacity < 100 {
-		return paintNodeOpacity(c, n, text, style, size)
+		x0, y0, x1, y1 := c.clip(style.Scale120.PhysicalRect(n.Bounds))
+		if x0 >= x1 || y0 >= y1 {
+			return nil
+		}
+		return paintNodeOpacity(c, n, text, style, size, x0, y0, x1, y1)
 	}
 	return paintNodeContent(c, n, text, style, size)
 }
@@ -326,24 +331,35 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 // paintNodeOpacity renders one subtree into a transparent frame and applies
 // its alpha once. Group compositing keeps overlapping foreground children from
 // multiplying opacity against one another.
-func paintNodeOpacity(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
-	offscreen, err := NewCanvas(make([]byte, len(c.Pix)), c.Width, c.Height, c.Stride)
+//
+// The frame covers only the node's clipped box, not the whole surface: a
+// surface-sized buffer cost 6.3 MiB and 1.5 ms a frame for one node on the
+// control-centre media page at 2x, and it was paid even by a partial paint
+// whose damage missed the node. Painting the subtree into a box-sized buffer
+// with an origin produces the same pixels because the composite below only ever
+// reads that box, so anything the subtree painted elsewhere was discarded
+// anyway. Group opacity consequently clips to the node's box.
+func paintNodeOpacity(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size, x0, y0, x1, y1 int) error {
+	w, h := x1-x0, y1-y0
+	offscreen, err := text.takeScratch(w, h)
 	if err != nil {
 		return err
 	}
+	// The offscreen keeps the surface's coordinates, so every painter inside it
+	// works exactly as it would have on the surface: only the byte offset moved.
+	offscreen.Ox, offscreen.Oy = x0, y0
 	offscreen.restrict = c.restrict
 	if err := paintNodeContent(offscreen, n, text, style, size); err != nil {
+		text.putScratch(offscreen)
 		return err
 	}
-	box := style.Scale120.PhysicalRect(n.Bounds)
-	x0, y0, x1, y1 := c.clip(box)
 	opacity := uint32(n.Opacity)
+	stride := offscreen.Stride
 	for y := y0; y < y1; y++ {
+		srcRow := (y - y0) * stride
+		dstBase := (y - c.Oy) * c.Stride
 		for x := x0; x < x1; x++ {
-			srcAt := y*offscreen.Stride + x*4
-			if srcAt+4 > len(offscreen.Pix) {
-				continue
-			}
+			srcAt := srcRow + (x-x0)*4
 			alpha := (uint32(offscreen.Pix[srcAt+3])*opacity + 50) / 100
 			if alpha == 0 {
 				continue
@@ -352,12 +368,13 @@ func paintNodeOpacity(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 			for i := range src {
 				src[i] = byte((uint32(offscreen.Pix[srcAt+i])*opacity + 50) / 100)
 			}
-			dstAt := y*c.Stride + x*4
+			dstAt := dstBase + (x-c.Ox)*4
 			if dstAt+4 <= len(c.Pix) {
 				blendPixel(c.Pix[dstAt:dstAt+4], src, alpha)
 			}
 		}
 	}
+	text.putScratch(offscreen)
 	return nil
 }
 
@@ -2001,20 +2018,21 @@ func fillEdgeFade(c *Canvas, r ui.Rect, surface Color, axis ui.Axis) {
 		span = r.H - 1
 	}
 	for y := y0; y < y1; y++ {
-		row := c.Pix[y*c.Stride:]
+		row := c.row(y)
 		for x := x0; x < x1; x++ {
-			at := x - r.X
+			fade := x - r.X
 			if axis == ui.Vertical {
-				at = y - r.Y
+				fade = y - r.Y
 			}
 			col := surface
 			if span > 0 {
-				col.A = uint8(uint32(surface.A) * uint32(at) / uint32(span))
+				col.A = uint8(uint32(surface.A) * uint32(fade) / uint32(span))
 			}
 			if col.A == 0 {
 				continue
 			}
-			blendPixel(row[x*4:x*4+4], col.premultiply(), uint32(col.A))
+			at := (x - c.Ox) * 4
+			blendPixel(row[at:at+4], col.premultiply(), uint32(col.A))
 		}
 	}
 }
