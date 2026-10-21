@@ -398,7 +398,47 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	if err := quiet.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countSurfaceInvalidations(quiet, reducedPanelCap+50*time.Millisecond); got == 0 {
+	quiet.mu.Lock()
+	quietHost := quiet.panelHosts[PanelSession]
+	quiet.mu.Unlock()
+	if quietHost == nil {
+		t.Fatal("the panel host is not registered")
+	}
+	// The fade ends when the frame loop retires, not at a fixed elapsed time.
+	// The loop publishes its settling frame on the tick that first sees the
+	// animation settled, and that tick lands after the fade's nominal length
+	// plus the tick grid plus whatever delay the scheduler adds. A loaded
+	// runner can miss a tick by more than the margin a fixed window leaves,
+	// and the settling frame then arrives inside the quiet window and reads
+	// as a leak.
+	//
+	// The channel is drained while waiting, because a full buffer blocks the
+	// publish and would hold the loop open past the fade.
+	seen := 0
+	drain := func() {
+		for {
+			select {
+			case inv := <-quiet.Invalidations():
+				if inv.SurfaceID != "" {
+					seen++
+				}
+			default:
+				return
+			}
+		}
+	}
+	fadeDeadline := time.Now().Add(5 * time.Second)
+	for quietHost.anim.running.Load() {
+		drain()
+		if time.Now().After(fadeDeadline) {
+			t.Fatal("the frame loop outlived its fade")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// The loop publishes its settling frame before it retires, so what arrived
+	// with it is already in the channel once the running flag is down.
+	drain()
+	if seen == 0 {
 		t.Fatal("reduced motion produced no invalidations; the panel never appeared")
 	}
 	if got := countSurfaceInvalidations(quiet, 100*time.Millisecond); got != 0 {
