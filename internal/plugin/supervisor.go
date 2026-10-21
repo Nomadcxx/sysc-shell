@@ -23,6 +23,18 @@ import (
 // are the ones that explain it.
 const MaxStderrBytes = 64 << 10
 
+// startBusyAttempts and startBusyDelay bound how long the supervisor keeps
+// trying to exec a program the kernel still refuses to start.
+//
+// The kernel refuses to exec a file that was written a moment ago: the file
+// stays busy until every process that inherited the write handle is gone.
+// That is a question of milliseconds for a plugin installed seconds ago, and
+// it is not a fault in the plugin, so a start is retried rather than failed.
+const (
+	startBusyAttempts = 100
+	startBusyDelay    = 10 * time.Millisecond
+)
+
 // shutdownSendTimeout bounds the best-effort host.shutdown write. A plugin
 // that stopped reading its standard input must not be able to hold Close in
 // Send; closing the pipe below unblocks the write either way.
@@ -188,6 +200,34 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 			s.Manifest.ID, missing, plural(len(missing), "is", "are"))
 	}
 
+	sess, err := s.startSession(ctx)
+	if err != nil {
+		// A program the kernel still considers busy is not a broken plugin.
+		// The file stays busy until every process that inherited the write
+		// handle is gone, which for a plugin installed a moment ago is a
+		// question of milliseconds. Wait for it and try again.
+		for attempt := 0; isProgramBusy(err) && attempt < startBusyAttempts; attempt++ {
+			if ctx.Err() != nil {
+				break
+			}
+			time.Sleep(startBusyDelay)
+			sess, err = s.startSession(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := s.handshake(ctx, sess); err != nil {
+		s.reap(sess)
+		return nil, err
+	}
+	return sess, nil
+}
+
+// startSession builds the plugin process and starts it. The handshake belongs
+// to the caller: this is the part that can fail because of the program itself.
+func (s *Supervisor) startSession(ctx context.Context) (*Session, error) {
 	// An explicit empty argument array: the host passes nothing the manifest
 	// could have chosen, and starts the executable directly rather than
 	// through a command shell.
@@ -243,12 +283,13 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 		exited:  make(chan struct{}),
 	}
 	sess.watchExit(stdout)
-
-	if err := s.handshake(ctx, sess); err != nil {
-		s.reap(sess)
-		return nil, err
-	}
 	return sess, nil
+}
+
+// isProgramBusy reports whether the kernel refused to exec a program because
+// the file was still open for writing.
+func isProgramBusy(err error) bool {
+	return errors.Is(err, syscall.ETXTBSY)
 }
 
 // watchExit notices the process leaving without reaping it, so cmd.Wait stays
