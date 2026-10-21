@@ -32,6 +32,7 @@ func (r *Registry) cueNotificationLocked() {
 	}
 	if r.sound == nil {
 		r.sound = r.newSoundPlayer()
+		r.shutdown.sound.store(r.sound)
 	}
 	r.sound.SetVolume(r.cfg.Sounds.Volume)
 	_, _ = r.sound.Tone(sound.NotificationCue)
@@ -46,5 +47,6 @@ func (r *Registry) syncSoundLocked() {
 	}
 	player := r.sound
 	r.sound = nil
+	r.shutdown.sound.store(nil)
 	go func() { _ = player.Close() }()
 }

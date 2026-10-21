@@ -412,6 +412,7 @@ func (r *Registry) setPrivacyService(p *services.Privacy) {
 	old := r.privacySvc
 	previous := r.privacy
 	r.privacySvc = p
+	r.shutdown.privacy.store(p)
 	r.privacyPipe = services.PrivacySnapshot{}
 	if p != nil {
 		r.privacyPipe = p.Snapshot()

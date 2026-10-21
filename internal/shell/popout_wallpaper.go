@@ -1554,6 +1554,7 @@ func (r *Registry) wallpaperThumbsLocked() *icons.Worker {
 	if r.wallpaperThumbs == nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		r.wallpaperThumbCancel = cancel
+		r.shutdown.thumbCancel.store(cancel)
 		r.wallpaperThumbs = icons.NewWorker(icons.NewResolver("", nil), r.applyWallpaperThumb)
 		go func() { _ = r.wallpaperThumbs.Run(ctx) }()
 	}
@@ -1672,6 +1673,7 @@ func (r *Registry) wallpaperStartLocked() *wallpaper.Service {
 		// to hear it, and the palette would sit at its defaults all session.
 		ConfigHook: r.setWallpaperSeed,
 	})
+	r.shutdown.wallpaper.store(r.wallpaperSvc)
 	go r.relayWallpaper(r.wallpaperSvc)
 	return r.wallpaperSvc
 }

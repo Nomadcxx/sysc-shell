@@ -164,6 +164,7 @@ func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 	r.mu.Lock()
 	old := r.plugins
 	r.plugins = h
+	r.shutdown.plugins.store(h)
 	r.mu.Unlock()
 	if old != nil {
 		old.Close()
