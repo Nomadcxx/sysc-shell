@@ -947,6 +947,7 @@ func TestReloadKeepsOpenPanels(t *testing.T) {
 func TestClosingDuringRevealStopsTicker(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
@@ -970,6 +971,7 @@ func TestClosingDuringRevealStopsTicker(t *testing.T) {
 func TestCloseDropsTheFrameInFlight(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
@@ -2262,6 +2264,7 @@ func TestOutputScaleConfigureRefitsOpenSettings(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Bar.Edge = "right"
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	bar := withTestBar(t, reg, 7, cfg)
@@ -2384,6 +2387,7 @@ func TestFloatingSettingsUsesStableOutputAnchor(t *testing.T) {
 			cfg := config.Default()
 			cfg.Bar.Edge = edge
 			reg := NewRegistry(cfg)
+			keepInvalidationsDrained(t, reg)
 			t.Cleanup(reg.Close)
 			withTestBar(t, reg, 7, cfg).setOutputSize(1536, 864)
 			reg.mu.Lock()

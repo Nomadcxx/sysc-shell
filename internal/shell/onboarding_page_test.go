@@ -334,6 +334,7 @@ func TestOnboardingWrapsJapaneseCopyWithConfiguredShaper(t *testing.T) {
 	cfg.Session.Language = "ja"
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 800, OutH: 500}); err != nil {
@@ -467,6 +468,7 @@ func TestOnboardingPaintsItsCapturedBackdrop(t *testing.T) {
 	cfg.Theme.PanelOpacity = 60
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
@@ -751,6 +753,7 @@ func TestOnboardingGlassRespectsBlurAndHighContrastSettings(t *testing.T) {
 			cfg.Accessibility.HighContrast = tc.highContrast
 			cfg.Accessibility.ReducedMotion = true
 			reg := NewRegistry(cfg)
+			keepInvalidationsDrained(t, reg)
 			reg.caps.Blur = true
 			reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 			t.Cleanup(reg.Close)
