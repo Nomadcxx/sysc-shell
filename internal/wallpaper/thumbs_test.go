@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,12 +190,13 @@ func TestThumbStopsOnCancel(t *testing.T) {
 
 	inFlight := make(chan struct{})
 	release := make(chan struct{})
+	// The generator runs more than one worker, so the decoder is entered
+	// more than once. Only the first entry says that an item is in flight,
+	// and a select with a default branch does not say it once: two workers
+	// can take the default branch and close the channel twice.
+	signal := sync.OnceFunc(func() { close(inFlight) })
 	restore := decodeImage.Swap(func(ctx context.Context, r io.Reader) (image.Image, error) {
-		select {
-		case <-inFlight:
-		default:
-			close(inFlight)
-		}
+		signal()
 		<-release
 		return image.NewRGBA(image.Rect(0, 0, 64, 36)), nil
 	})
