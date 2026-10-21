@@ -337,7 +337,7 @@ func centreSectionLabel(text string) *ui.Node {
 
 // linksAllowed reports whether notification bodies can launch a bounded web
 // URL through the desktop handler.
-func (r *Registry) linksAllowed() bool { return openNotificationURL != nil }
+func (r *Registry) linksAllowed() bool { return openNotificationURL.Get() != nil }
 
 func (r *Registry) clockNow() time.Time {
 	if r != nil && !r.now.IsZero() {

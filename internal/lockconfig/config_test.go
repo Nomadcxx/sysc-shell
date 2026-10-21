@@ -85,9 +85,9 @@ func TestLockConfigReplaceFailureKeepsOldFile(t *testing.T) {
 	if err := os.WriteFile(p, old, 0600); err != nil {
 		t.Fatal(err)
 	}
-	previous := atomicReplace
-	t.Cleanup(func() { atomicReplace = previous })
-	atomicReplace = func(string, string) error { return errors.New("replace failed") }
+	t.Cleanup(atomicReplace.Swap(func(string, string) error {
+		return errors.New("replace failed")
+	}))
 	if err := Save(p, Default()); err == nil {
 		t.Fatal("accepted failed replacement")
 	}

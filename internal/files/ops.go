@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 )
 
 // ponytail: one-shot copy under the lock's caller; worker+progress if a tree
@@ -119,7 +121,7 @@ func transferOne(root, cwd, src string, cut bool, filesN *int, bytesN *int64) (s
 	}
 	dest := filepath.Join(cwd, name)
 	if cut {
-		err := renameFn(entry, dest)
+		err := renameFn.Get()(entry, dest)
 		if err == nil {
 			return dest, nil
 		}
@@ -162,7 +164,7 @@ func moveLink(cwd, entry, base string) (string, error) {
 		return "", fmt.Errorf("files: no unique name for %s", base)
 	}
 	dest := filepath.Join(cwd, name)
-	err := renameFn(entry, dest)
+	err := renameFn.Get()(entry, dest)
 	if err == nil {
 		return dest, nil
 	}
@@ -184,8 +186,9 @@ func moveLink(cwd, entry, base string) (string, error) {
 }
 
 // renameFn is os.Rename; tests substitute it to force the cross-filesystem
-// path without mounting anything.
-var renameFn = os.Rename
+// path without mounting anything. The guard keeps a test's swap from racing a
+// concurrent transfer.
+var renameFn = seam.New(os.Rename)
 
 type dirMode struct {
 	path string

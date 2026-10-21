@@ -905,7 +905,7 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		return true
 	case "onb-docs":
 		go func() {
-			err := openURL("https://nomadcxx.github.io/sysc/docs/")
+			err := openURL.Get()("https://nomadcxx.github.io/sysc/docs/")
 			if err == nil {
 				return
 			}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/files"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -44,8 +45,9 @@ var errFilesCancelled = errors.New("cancelled")
 // filesOpenPath launches the desktop handler. Tests replace it. Start, not
 // Run: callers launch it off the Registry lock. report receives every
 // failure — including the handler's exit code, non-zero when no application
-// claims the file — and nothing on success.
-var filesOpenPath = func(path string, report func(error)) {
+// claims the file — and nothing on success. The guard keeps a test's swap
+// from racing the Registry goroutine that reads it.
+var filesOpenPath = seam.New(func(path string, report func(error)) {
 	cmd := exec.Command("xdg-open", path)
 	if err := cmd.Start(); err != nil {
 		report(err)
@@ -56,7 +58,7 @@ var filesOpenPath = func(path string, report func(error)) {
 			report(err)
 		}
 	}()
-}
+})
 
 func (r *Registry) openFilesBrowser(ctx context.Context, p v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
 	if err := ctx.Err(); err != nil {
@@ -534,7 +536,7 @@ func (r *Registry) openFilesTargetLocked(sess *filesSession, e files.Entry, targ
 	case files.ModePickFile:
 		r.finishFilesPickLocked(sess, target, nil)
 	case files.ModeOpen:
-		go filesOpenPath(target, func(err error) {
+		go filesOpenPath.Get()(target, func(err error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			if err == nil || r.files != sess {
