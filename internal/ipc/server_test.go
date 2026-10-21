@@ -244,6 +244,31 @@ func TestListenHoldsEarlyConnectionsUntilServe(t *testing.T) {
 	}
 }
 
+// TestCloseDuringListenIsRaceFree covers the shutdown order the helpers above
+// create: startServer serves on a goroutine and t.Cleanup closes the server,
+// so Close can run while Serve is still inside Listen. The listener field is
+// shared across those goroutines and has to be synchronised rather than read
+// and written plainly; the race detector reports the pair when it is not.
+func TestCloseDuringListenIsRaceFree(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for i := 0; i < 64; i++ {
+		sock := filepath.Join(dir, fmt.Sprintf("ipc.%d.sock", i))
+		srv := NewServer(sock, Handlers{})
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = srv.Serve(ctx)
+		}()
+		// No waitSock: Close must be safe while Serve is still binding the
+		// socket, which is exactly what the harness cleanup does.
+		_ = srv.Close()
+		cancel()
+		<-done
+	}
+}
+
 func TestOsdStepDispatches(t *testing.T) {
 	t.Parallel()
 	var kind, action string
