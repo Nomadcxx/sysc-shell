@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	clipboardclient "github.com/Nomadcxx/sysc-clipboard/client"
 	clipboardprotocol "github.com/Nomadcxx/sysc-clipboard/protocol"
@@ -37,6 +38,123 @@ type clipboardCommandSender interface {
 	Clear(clipboardprotocol.ClearScope) error
 	Thumbnail(string, uint16) error
 	Resync() error
+}
+
+type clipboardCommandCompletion struct {
+	requestID string
+	done      chan error
+}
+
+const clipboardCommandTimeout = 6 * time.Second
+
+// ponytail: cap pending restore confirmations at 16; activation reports an
+// error on overflow instead of letting a stalled client grow this map.
+const clipboardCompletionLimit = 16
+
+// enqueueClipboardRestore tracks only the response for this restore. The client
+// can drop updates when its bounded queue fills, so FIFO position cannot
+// identify a response after a dropped update.
+func (r *Registry) enqueueClipboardRestore(sender clipboardCommandSender, id string) (*clipboardCommandCompletion, error) {
+	if sender == nil {
+		return nil, fmt.Errorf("clipboard daemon unavailable")
+	}
+	restoreSender, ok := sender.(interface {
+		RestoreWithRequestID(string) (string, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("clipboard restore confirmations are unavailable")
+	}
+	completion := &clipboardCommandCompletion{done: make(chan error, 1)}
+	r.clipboardCommandMu.Lock()
+	defer r.clipboardCommandMu.Unlock()
+	if len(r.clipboardCompletions) >= clipboardCompletionLimit {
+		return nil, fmt.Errorf("clipboard command confirmations are pending")
+	}
+	requestID, err := restoreSender.RestoreWithRequestID(id)
+	if err != nil {
+		return nil, err
+	}
+	if requestID == "" {
+		return nil, fmt.Errorf("clipboard restore returned no request ID")
+	}
+	if r.clipboardCompletions == nil {
+		r.clipboardCompletions = make(map[string]*clipboardCommandCompletion)
+	}
+	if _, exists := r.clipboardCompletions[requestID]; exists {
+		return nil, fmt.Errorf("clipboard restore returned a duplicate request ID")
+	}
+	completion.requestID = requestID
+	r.clipboardCompletions[requestID] = completion
+	return completion, nil
+}
+
+func (r *Registry) waitClipboardCommand(completion *clipboardCommandCompletion) error {
+	if completion == nil {
+		return fmt.Errorf("clipboard restore was not queued")
+	}
+	timer := time.NewTimer(clipboardCommandTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-completion.done:
+		return err
+	case <-timer.C:
+		r.forgetClipboardCommand(completion)
+		return fmt.Errorf("clipboard restore timed out")
+	case <-r.closed:
+		r.forgetClipboardCommand(completion)
+		return fmt.Errorf("clipboard restore interrupted")
+	}
+}
+
+func (r *Registry) forgetClipboardCommand(completion *clipboardCommandCompletion) {
+	r.clipboardCommandMu.Lock()
+	if r.clipboardCompletions[completion.requestID] == completion {
+		delete(r.clipboardCompletions, completion.requestID)
+	}
+	r.clipboardCommandMu.Unlock()
+}
+
+func (r *Registry) completeClipboardCommand(update clipboardUpdate) {
+	var completed []*clipboardCommandCompletion
+	var result error
+	r.clipboardCommandMu.Lock()
+	switch update.Message.Type {
+	case clipboardprotocol.TypeAck, clipboardprotocol.TypeThumbnail:
+		requestID := update.Message.RequestID
+		if update.Message.Ack != nil {
+			requestID = update.Message.Ack.RequestID
+		}
+		if completion := r.clipboardCompletions[requestID]; completion != nil {
+			completed = append(completed, completion)
+			delete(r.clipboardCompletions, requestID)
+		}
+	case clipboardprotocol.TypeError:
+		requestID := update.Message.RequestID
+		if update.Message.Error != nil {
+			requestID = update.Message.Error.RequestID
+		}
+		if completion := r.clipboardCompletions[requestID]; completion != nil {
+			completed = append(completed, completion)
+			delete(r.clipboardCompletions, requestID)
+			if update.Message.Error != nil && update.Message.Error.Message != "" {
+				result = fmt.Errorf("%s", update.Message.Error.Message)
+			} else {
+				result = fmt.Errorf("clipboard command failed")
+			}
+		}
+	case clipboardprotocol.TypeSnapshot:
+		if !update.Connected {
+			for requestID, completion := range r.clipboardCompletions {
+				completed = append(completed, completion)
+				delete(r.clipboardCompletions, requestID)
+			}
+			result = fmt.Errorf("clipboard daemon disconnected before the command completed")
+		}
+	}
+	r.clipboardCommandMu.Unlock()
+	for _, completion := range completed {
+		completion.done <- result
+	}
 }
 
 func newClipboardProjection() clipboardProjection {
@@ -127,6 +245,7 @@ func (r *Registry) BindClipboard(sender clipboardCommandSender) {
 // ApplyClipboard applies one client update and invalidates only bars whose
 // metadata projection changed.
 func (r *Registry) ApplyClipboard(update clipboardUpdate) []uint32 {
+	r.completeClipboardCommand(update)
 	next := clipboardProjection{Snapshot: cloneClipboardSnapshot(update.Snapshot), Connected: update.Connected}
 	var thumbnail *ui.Image
 	if update.Message.Type == clipboardprotocol.TypeThumbnail && update.Message.Thumbnail != nil {

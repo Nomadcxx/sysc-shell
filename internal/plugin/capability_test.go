@@ -47,21 +47,21 @@ func TestNarrowGrantsAdmitOnlyTheirCalls(t *testing.T) {
 		call  v1.CallKind
 		admit bool
 	}{
-		{"state-read reads", env(17, CapStateRead), v1.CallStateGet, true},
-		{"state-read lists", env(17, CapStateRead), v1.CallStateList, true},
-		{"state-read cannot write", env(17, CapStateRead), v1.CallStateSet, false},
-		{"state-write writes", env(17, CapStateWrite), v1.CallStateSet, true},
-		{"state-write cannot read", env(17, CapStateWrite), v1.CallStateGet, false},
+		{"state-read reads", env(19, CapStateRead), v1.CallStateGet, true},
+		{"state-read lists", env(19, CapStateRead), v1.CallStateList, true},
+		{"state-read cannot write", env(19, CapStateRead), v1.CallStateSet, false},
+		{"state-write writes", env(19, CapStateWrite), v1.CallStateSet, true},
+		{"state-write cannot read", env(19, CapStateWrite), v1.CallStateGet, false},
 		{"legacy state still writes", env(16, CapState), v1.CallStateSet, true},
-		{"wallpaper-read snapshots", env(17, CapWallpaperRead), v1.CallWallpaperSnapshot, true},
-		{"wallpaper-read cannot set a mask", env(17, CapWallpaperRead), v1.CallWallpaperMaskSet, false},
-		{"screenshot-read reads the directory", env(17, CapScreenshotRead), v1.CallScreenshotDirectory, true},
-		{"screenshot-read cannot capture", env(17, CapScreenshotRead), v1.CallScreenshotStart, false},
-		{"outputs-read reads output context", env(17, CapOutputsRead), v1.CallOutputContext, true},
-		{"output context is gated at minor 17", env(17, CapNotifications), v1.CallOutputContext, false},
-		{"panels still read output context", env(17, CapPanels), v1.CallOutputContext, true},
-		{"output context stays open below minor 17", env(16, CapNotifications), v1.CallOutputContext, true},
-		{"files:browser browses", env(17, CapFilesBrowser), v1.CallFilesBrowse, true},
+		{"wallpaper-read snapshots", env(19, CapWallpaperRead), v1.CallWallpaperSnapshot, true},
+		{"wallpaper-read cannot set a mask", env(19, CapWallpaperRead), v1.CallWallpaperMaskSet, false},
+		{"screenshot-read reads the directory", env(19, CapScreenshotRead), v1.CallScreenshotDirectory, true},
+		{"screenshot-read cannot capture", env(19, CapScreenshotRead), v1.CallScreenshotStart, false},
+		{"outputs-read reads output context", env(19, CapOutputsRead), v1.CallOutputContext, true},
+		{"output context is gated at minor 19", env(19, CapNotifications), v1.CallOutputContext, false},
+		{"panels still read output context", env(19, CapPanels), v1.CallOutputContext, true},
+		{"output context stays open below minor 19", env(18, CapNotifications), v1.CallOutputContext, true},
+		{"files:browser browses", env(19, CapFilesBrowser), v1.CallFilesBrowse, true},
 	} {
 		if got := tc.env.allows(classOf(tc.call)); got != tc.admit {
 			t.Errorf("%s: allows = %v, want %v", tc.name, got, tc.admit)
@@ -76,9 +76,9 @@ func TestRefusalNamesTheDeclarationThePluginCanMake(t *testing.T) {
 		call  v1.CallKind
 		want  []string
 	}{
-		{17, v1.CallStateSet, []string{`"state.set"`, `"state-write"`, "manifest.json", `{"capabilities":["state-write"]}`}},
+		{19, v1.CallStateSet, []string{`"state.set"`, `"state-write"`, "manifest.json", `{"capabilities":["state-write"]}`}},
 		{16, v1.CallStateSet, []string{`"state.set"`, `"state"`, `{"capabilities":["state"]}`}},
-		{17, v1.CallNotify, []string{`"notify"`, `{"capabilities":["notifications"]}`}},
+		{19, v1.CallNotify, []string{`"notify"`, `{"capabilities":["notifications"]}`}},
 	} {
 		reply := NewDispatcher(CallEnv{Protocol: v1.Version{Major: 1, Minor: tc.minor}}).
 			Handle(context.Background(), &v1.HostCall{ID: "x", Call: tc.call})
@@ -100,14 +100,14 @@ func TestNarrowNamesNeedTheirProtocolMinor(t *testing.T) {
 		caps  []string
 		err   string
 	}{
-		{16, []string{"state-read"}, `"state-read" requires protocol minor 17`},
-		{16, []string{"files:browser"}, `"files:browser" requires protocol minor 17`},
-		{17, []string{"state-read", "panels"}, ""},
-		{17, []string{"files:browser"}, ""},
-		{17, []string{"files:root"}, `scope "root"`},
-		{17, []string{"files:"}, `scope ""`},
-		{17, []string{"state:x"}, `takes no scope`},
-		{17, []string{"state-reader"}, "not one this shell offers"},
+		{16, []string{"state-read"}, `"state-read" requires protocol minor 19`},
+		{16, []string{"files:browser"}, `"files:browser" requires protocol minor 19`},
+		{19, []string{"state-read", "panels"}, ""},
+		{19, []string{"files:browser"}, ""},
+		{19, []string{"files:root"}, `scope "root"`},
+		{19, []string{"files:"}, `scope ""`},
+		{19, []string{"state:x"}, `takes no scope`},
+		{19, []string{"state-reader"}, "not one this shell offers"},
 		{16, []string{"state", "files"}, ""},
 	} {
 		var document map[string]any
@@ -173,7 +173,7 @@ func TestTheHostSpeaksTheMinorThatIntroducedTheNarrowNames(t *testing.T) {
 		t.Fatalf("host speaks minor %d; the narrowed names need %d", HostProtocolMinor, NarrowCapabilityMinor)
 	}
 	m, err := ParseManifest([]byte(`{"schema":1,"id":"org.example.probe","name":"Probe","version":"1.0.0",
-"protocol":{"major":1,"minor":17},"exec":"bin/probe","capabilities":["state-read","outputs-read"]}`))
+"protocol":{"major":1,"minor":19},"exec":"bin/probe","capabilities":["state-read","outputs-read"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

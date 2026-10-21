@@ -8,12 +8,14 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // atomicReplace is os.Rename except in tests that force a failure after the
-// temp file exists.
-var atomicReplace = os.Rename
+// temp file exists. The guard keeps a test's swap from racing a concurrent
+// write: the config writer runs on whichever goroutine asked for the save.
+var atomicReplace = seam.New(os.Rename)
 
 // Write encodes c as a wire document sparse relative to its selected preset.
 // The preset itself is always recorded so a current default is distinguishable
@@ -25,6 +27,12 @@ func Write(path string, c Config) error {
 	if c.TerminalArt.Blur < 0 || c.TerminalArt.Blur > 64 {
 		return fmt.Errorf("config: terminal-art.blur must be in 0..64")
 	}
+	if _, err := applyLauncher(wireLauncher{
+		Providers: launcherCommandProvidersWire(c.Launcher.Providers),
+		Actions:   launcherActionsWire(c.Launcher.Actions),
+	}, "launcher"); err != nil {
+		return err
+	}
 	if path == "" {
 		return fmt.Errorf("config: empty write path")
 	}
@@ -35,6 +43,16 @@ func Write(path string, c Config) error {
 		return err
 	}
 	if _, err := applyMedia(wireMedia{Preferred: &c.Media.Preferred, Blacklist: c.Media.Blacklist}, "media"); err != nil {
+		return err
+	}
+	applications := wireApplicationPreferences{
+		Favourites: c.Applications.Favourites,
+		Hidden:     c.Applications.Hidden,
+	}
+	if c.Applications.DefaultTerminal != "" {
+		applications.DefaultTerminal = &c.Applications.DefaultTerminal
+	}
+	if _, err := applyApplicationPreferences(applications, "applications"); err != nil {
 		return err
 	}
 	if _, err := applyMonitor(*monitorWire(c.Monitor), "monitor"); err != nil {
@@ -78,7 +96,7 @@ func Write(path string, c Config) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("config: close temp: %w", err)
 	}
-	if err := atomicReplace(tmp, path); err != nil {
+	if err := atomicReplace.Get()(tmp, path); err != nil {
 		return fmt.Errorf("config: replace %s: %w", path, err)
 	}
 	ok = true
@@ -112,6 +130,12 @@ func toWire(c Config) wireConfig {
 		locker, language := c.Session.Locker, c.Session.Language
 		w.Session = &wireSession{Locker: &locker, Language: &language}
 	}
+	if len(c.Launcher.Providers) > 0 || len(c.Launcher.Actions) > 0 {
+		w.Launcher = &wireLauncher{
+			Providers: launcherCommandProvidersWire(c.Launcher.Providers),
+			Actions:   launcherActionsWire(c.Launcher.Actions),
+		}
+	}
 	if c.Session.PolkitAgent != "" && c.Session.PolkitAgent != d.Session.PolkitAgent {
 		v := c.Session.PolkitAgent
 		if w.Session == nil {
@@ -141,7 +165,9 @@ func toWire(c Config) wireConfig {
 			Order:   append([]string(nil), c.Tray.Order...),
 		}
 	}
-	if c.Weather.Configured {
+	if c.Weather.Configured ||
+		(c.Weather.Unit != "" && c.Weather.Unit != defaultWeatherUnit) ||
+		(c.Weather.Interval > 0 && c.Weather.Interval != defaultWeatherInterval) {
 		w.Weather = weatherWire(c.Weather)
 	}
 	if n := nightLightDiff(c.NightLight, d.NightLight); n != nil {
@@ -152,6 +178,16 @@ func toWire(c Config) wireConfig {
 		if c.Media.Preferred != "" {
 			preferred := c.Media.Preferred
 			w.Media.Preferred = &preferred
+		}
+	}
+	if len(c.Applications.Favourites) > 0 || len(c.Applications.Hidden) > 0 || c.Applications.DefaultTerminal != "" {
+		w.Applications = &wireApplicationPreferences{
+			Favourites: append([]string(nil), c.Applications.Favourites...),
+			Hidden:     append([]string(nil), c.Applications.Hidden...),
+		}
+		if c.Applications.DefaultTerminal != "" {
+			v := c.Applications.DefaultTerminal
+			w.Applications.DefaultTerminal = &v
 		}
 	}
 	if c.Monitor != defaultMonitor() {
@@ -177,6 +213,30 @@ func toWire(c Config) wireConfig {
 	}
 	w.Plugins = pluginsDiff(c.Plugins)
 	return w
+}
+
+func launcherActionsWire(actions []LauncherAction) []wireLauncherAction {
+	wire := make([]wireLauncherAction, 0, len(actions))
+	for _, action := range actions {
+		wire = append(wire, wireLauncherAction{
+			ID: action.ID, Label: action.Label, Comment: action.Comment,
+			Argv: append([]string(nil), action.Argv...), Dangerous: action.Dangerous,
+			AllowDangerous: action.AllowDangerous,
+		})
+	}
+	return wire
+}
+
+func launcherCommandProvidersWire(providers []LauncherCommandProvider) []wireLauncherCommandProvider {
+	wire := make([]wireLauncherCommandProvider, 0, len(providers))
+	for _, provider := range providers {
+		wire = append(wire, wireLauncherCommandProvider{
+			Name: provider.Name, Prefix: provider.Prefix, Glyph: provider.Glyph,
+			Description: provider.Description, Command: append([]string(nil), provider.Command...),
+			OnSelect: append([]string(nil), provider.OnSelect...),
+		})
+	}
+	return wire
 }
 
 func nightLightDiff(got, base NightLight) *wireNightLight {
@@ -333,6 +393,7 @@ func itemsEqual(a, b []Item) bool {
 	for i := range a {
 		x, y := a[i], b[i]
 		x.Boundary, y.Boundary = 0, 0
+		x.Scroll, y.Scroll = x.EffectiveScrollAction(), y.EffectiveScrollAction()
 		// An Item carries group members, so it is no longer comparable with
 		// ==. Members are compared recursively and then cleared so the
 		// remaining scalar fields compare as before.
@@ -357,6 +418,10 @@ func encodeItems(items []Item) []wireItem {
 
 func encodeItem(it Item) wireItem {
 	w := wireItem{ID: it.ID}
+	if scroll := it.EffectiveScrollAction(); scroll != (Item{ID: it.ID}).EffectiveScrollAction() {
+		v := string(scroll)
+		w.Scroll = &v
+	}
 	// An instance id is emitted for whatever carries one, not only for a
 	// placement. Without this the editor mints an id, the write drops it, and
 	// the next load hands back anonymous widgets -- the identity model inert.
@@ -538,6 +603,22 @@ func wallpaperDiff(got, base Wallpaper) *wireWallpaper {
 		v := got.Hidden
 		w.Hidden = &v
 	}
+	if got.CycleEnabled != base.CycleEnabled {
+		v := got.CycleEnabled
+		w.CycleEnabled = &v
+	}
+	if got.CycleMode != base.CycleMode {
+		v := got.CycleMode
+		w.CycleMode = &v
+	}
+	if got.CycleInterval != base.CycleInterval {
+		v := got.CycleInterval.String()
+		w.CycleInterval = &v
+	}
+	if got.CycleTime != base.CycleTime {
+		v := got.CycleTime
+		w.CycleTime = &v
+	}
 	if got.PauseCovered != base.PauseCovered {
 		v := got.PauseCovered
 		w.PauseCovered = &v
@@ -579,12 +660,18 @@ func panelsDiff(got, base Panels) *wirePanels {
 
 func weatherWire(w Weather) *wireWeather {
 	out := &wireWeather{}
-	if w.City != "" {
-		v := w.City
-		out.City = &v
-	} else {
-		lat, lon := w.Latitude, w.Longitude
-		out.Latitude, out.Longitude = &lat, &lon
+	if w.Configured {
+		if w.City != "" {
+			v := w.City
+			out.City = &v
+		} else {
+			lat, lon := w.Latitude, w.Longitude
+			out.Latitude, out.Longitude = &lat, &lon
+		}
+		if w.Location != "" {
+			v := w.Location
+			out.Location = &v
+		}
 	}
 	if w.Unit != "" {
 		v := w.Unit
@@ -593,10 +680,6 @@ func weatherWire(w Weather) *wireWeather {
 	if w.Interval > 0 {
 		v := w.Interval.String()
 		out.Interval = &v
-	}
-	if w.Location != "" {
-		v := w.Location
-		out.Location = &v
 	}
 	return out
 }
@@ -622,6 +705,10 @@ func themeDiff(got Theme) *wireTheme {
 	if got.Elevation != base.Elevation {
 		v := string(got.Elevation)
 		w.Elevation = &v
+	}
+	if got.FrameCap != base.FrameCap {
+		v := string(got.FrameCap)
+		w.FrameCap = &v
 	}
 	if got.BlurBehind != base.BlurBehind {
 		v := got.BlurBehind

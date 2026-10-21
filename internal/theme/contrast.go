@@ -40,14 +40,23 @@ func (c Color) Hex() string {
 	return fmt.Sprintf("#%02x%02x%02x%02x", c.R, c.G, c.B, c.A)
 }
 
-// channel converts one sRGB byte to its linear-light value.
-func channel(v uint8) float64 {
-	f := float64(v) / 255
-	if f <= 0.04045 {
-		return f / 12.92
+// The transfer curve is exact for all 8-bit sRGB inputs. Caching its 256
+// values keeps full-image luminance scans from repeating three powers per pixel.
+var linearSRGB = func() [256]float64 {
+	var values [256]float64
+	for i := range values {
+		f := float64(i) / 255
+		if f <= 0.04045 {
+			values[i] = f / 12.92
+		} else {
+			values[i] = math.Pow((f+0.055)/1.055, 2.4)
+		}
 	}
-	return math.Pow((f+0.055)/1.055, 2.4)
-}
+	return values
+}()
+
+// channel converts one sRGB byte to its linear-light value.
+func channel(v uint8) float64 { return linearSRGB[v] }
 
 // Luminance is the WCAG relative luminance of the colour's sRGB channels.
 // Alpha is not part of the definition: callers compare colours as they will be

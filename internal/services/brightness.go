@@ -607,10 +607,11 @@ func enumerateBacklights(root, bin string) []brightnessDevice {
 	}
 	var out []brightnessDevice
 	for _, e := range ents {
-		if !e.IsDir() {
+		dir := filepath.Join(root, e.Name())
+		info, err := os.Stat(dir) // Follow the symlink used by /sys/class/backlight.
+		if err != nil || !info.IsDir() {
 			continue
 		}
-		dir := filepath.Join(root, e.Name())
 		if _, err := readIntFile(filepath.Join(dir, "brightness")); err != nil {
 			continue
 		}
@@ -656,7 +657,12 @@ func (d *sysfsDev) Step(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	_, err := runCmd(d.bin, "-d", d.name, "set", fmt.Sprintf("%+d%%", delta))
+	value := fmt.Sprintf("%+d%%", delta)
+	if delta < 0 {
+		// brightnessctl writes a downward percentage delta as N%-.
+		value = fmt.Sprintf("%d%%-", -delta)
+	}
+	_, err := runCmd(d.bin, "-d", d.name, "set", value)
 	return err
 }
 
@@ -668,12 +674,14 @@ type ddcDev struct {
 	max       int
 	devRoot   string
 
-	mu      sync.Mutex
-	cache   int
-	cacheAt time.Time
-	pending int
-	hasPend bool
-	timer   *time.Timer
+	mu          sync.Mutex
+	cache       int
+	cacheAt     time.Time
+	pending     int
+	hasPend     bool
+	inFlight    int
+	hasInFlight bool
+	timer       *time.Timer
 }
 
 func (d *ddcDev) ID() string    { return "ddc:" + d.connector }
@@ -710,38 +718,76 @@ func (d *ddcDev) Read() (int, error) {
 // the same trailing-edge pattern DMS uses: a dragged slider produces one bus
 // transaction, not one per pixel.
 func (d *ddcDev) Set(percent int) error {
-	percent = min(max(percent, 0), 100)
 	d.mu.Lock()
-	d.pending, d.hasPend = percent, true
-	if d.timer == nil {
-		d.timer = time.AfterFunc(ddcWriteDebounce, d.writePending)
-	} else {
-		d.timer.Reset(ddcWriteDebounce)
-	}
+	d.queueWriteLocked(percent)
 	d.mu.Unlock()
 	return nil
 }
 
-func (d *ddcDev) writePending() {
+func (d *ddcDev) queueWriteLocked(percent int) {
+	percent = min(max(percent, 0), 100)
+	d.pending, d.hasPend = percent, true
+	d.scheduleWriteLocked()
+}
+
+func (d *ddcDev) scheduleWriteLocked() {
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(ddcWriteDebounce, func() { d.writePending(timer) })
+	d.timer = timer
+}
+
+func (d *ddcDev) writePending(timer *time.Timer) {
+	d.writePendingFor(timer, func(percent int) error {
+		fd, err := openI2C(d.path())
+		if err != nil {
+			slog.Warn("brightness: ddc write open failed", "connector", d.connector, "err", err)
+			return err
+		}
+		defer closeI2C(fd)
+		if err := ddcSetVCP(fd, ddcVCPBright, ddcPercentToValue(percent, d.max)); err != nil {
+			slog.Warn("brightness: ddc write failed", "connector", d.connector, "err", err)
+			return err
+		}
+		return nil
+	})
+}
+
+func (d *ddcDev) writePendingWith(write func(int) error) {
 	d.mu.Lock()
-	percent, ok := d.pending, d.hasPend
-	d.hasPend, d.timer = false, nil
+	timer := d.timer
 	d.mu.Unlock()
-	if !ok {
-		return
-	}
-	fd, err := openI2C(d.path())
-	if err != nil {
-		slog.Warn("brightness: ddc write open failed", "connector", d.connector, "err", err)
-		return
-	}
-	defer closeI2C(fd)
-	if err := ddcSetVCP(fd, ddcVCPBright, ddcPercentToValue(percent, d.max)); err != nil {
-		slog.Warn("brightness: ddc write failed", "connector", d.connector, "err", err)
-		return
-	}
+	d.writePendingFor(timer, write)
+}
+
+func (d *ddcDev) writePendingFor(timer *time.Timer, write func(int) error) {
 	d.mu.Lock()
-	d.cache, d.cacheAt = percent, time.Now()
+	if d.timer != timer {
+		d.mu.Unlock()
+		return
+	}
+	d.timer = nil
+	if d.hasInFlight || !d.hasPend {
+		d.mu.Unlock()
+		return
+	}
+	percent := d.pending
+	d.hasPend = false
+	d.inFlight, d.hasInFlight = percent, true
+	d.mu.Unlock()
+
+	err := write(percent)
+
+	d.mu.Lock()
+	d.inFlight, d.hasInFlight = 0, false
+	if err == nil {
+		d.cache, d.cacheAt = percent, time.Now()
+	}
+	if d.hasPend && d.timer == nil {
+		d.scheduleWriteLocked()
+	}
 	d.mu.Unlock()
 }
 
@@ -749,11 +795,32 @@ func (d *ddcDev) Step(delta int) error {
 	if delta == 0 {
 		return nil
 	}
+	d.mu.Lock()
+	if d.hasPend {
+		d.queueWriteLocked(d.pending + delta)
+		d.mu.Unlock()
+		return nil
+	}
+	if d.hasInFlight {
+		d.queueWriteLocked(d.inFlight + delta)
+		d.mu.Unlock()
+		return nil
+	}
+	d.mu.Unlock()
+
 	level, err := d.Read()
 	if err != nil {
 		return err
 	}
-	return d.Set(level + delta)
+	d.mu.Lock()
+	if d.hasPend {
+		level = d.pending
+	} else if d.hasInFlight {
+		level = d.inFlight
+	}
+	d.queueWriteLocked(level + delta)
+	d.mu.Unlock()
+	return nil
 }
 
 func openI2C(path string) (int, error) {

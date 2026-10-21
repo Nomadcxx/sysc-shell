@@ -2,12 +2,14 @@ package shell
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os/exec"
 	"slices"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
@@ -56,18 +58,43 @@ func (op *pluginStorePendingOp) status(l store.Listing) string {
 	}
 }
 
-var openURL = openURLDefault
+// openURL opens a link the user asked for. Tests replace it. The guard keeps
+// a test's swap from racing the panel goroutine that reads it.
+var openURL = seam.New(openURLDefault)
 
 func openURLDefault(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
 		return fmt.Errorf("only https URLs can be opened")
 	}
-	cmd := exec.Command("xdg-open", parsed.String())
+	return launchURL(parsed.String(), nil)
+}
+
+// openNotificationURL opens a link from a notification. Tests replace it. The
+// guard keeps a test's swap from racing the toast host goroutine that reads
+// it.
+var openNotificationURL = seam.New(openNotificationURLDefault)
+
+func openNotificationURLDefault(raw string) error {
+	target, ok := notificationURL(raw)
+	if !ok {
+		return fmt.Errorf("only bounded HTTP(S) notification links can be opened")
+	}
+	return launchURL(target, func(err error) {
+		log.Printf("shell: notification link opener: %v", err)
+	})
+}
+
+func launchURL(raw string, reportExitError func(error)) error {
+	cmd := exec.Command("xdg-open", raw)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		if err := cmd.Wait(); err != nil && reportExitError != nil {
+			reportExitError(err)
+		}
+	}()
 	return nil
 }
 
@@ -458,7 +485,7 @@ func (h *PanelHost) pluginStoreOpenLink(r *Registry, action string) {
 	}
 	key := h.pluginStoreDetail
 	go func() {
-		err := openURL(link)
+		err := openURL.Get()(link)
 		if err == nil {
 			return
 		}

@@ -9,7 +9,9 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -53,6 +55,21 @@ func TestOsdTimerResetsOnRepeat(t *testing.T) {
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 45})
 	if !reg.OSD().Visible() {
 		t.Fatal("timer must reset on repeated change")
+	}
+}
+
+func TestDNDOSDUsesCurrentStateWhenApplied(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.notify.onDND = nil // Exercise a delayed publication without spawning its callback.
+	reg.setDND(true)
+	reg.OSD().Show(OSDView{Kind: osdDND, On: false})
+
+	reg.mu.Lock()
+	view := reg.osd.view
+	reg.mu.Unlock()
+	if view.Kind != osdDND || !view.On {
+		t.Fatalf("DND OSD = %+v, want the current enabled state", view)
 	}
 }
 
@@ -112,7 +129,7 @@ fi
 
 func TestOsdReducedMotionFadesWithoutMoving(t *testing.T) {
 	t.Parallel()
-	reg := newPanelRegistry(t) // already reduced-motion
+	reg := newPanelRegistryWithoutBridge(t) // already reduced-motion
 	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	drainInvalidations(reg)
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 20})
@@ -123,11 +140,51 @@ func TestOsdReducedMotionFadesWithoutMoving(t *testing.T) {
 	if got := reg.OSD().slidePx(); got != 0 {
 		t.Errorf("OSD slid %d px under reduced motion, want an opacity-only change", got)
 	}
-	if got := countSurfaceInvalidations(reg, reducedPanelCap+50*time.Millisecond); got == 0 {
+	// The OSD shares the panel scheduling path, so it must also stop asking
+	// for frames once its value settles rather than running a timer of its
+	// own.
+	//
+	// The frame loop publishes its settling frame on the tick that first
+	// sees the animation settled, and that tick lands after the fade's
+	// nominal length plus the tick grid plus whatever delay the scheduler
+	// adds. A loaded runner can miss a tick by more than the margin a fixed
+	// window leaves, and the settling frame then arrives inside the quiet
+	// window and reads as a leak. The check waits for the reveal loop to
+	// retire instead, and drains the invalidation channel while it waits so
+	// a full buffer cannot hold the loop open past the fade.
+	reg.mu.Lock()
+	osdAnim := reg.OSD().anim
+	reg.mu.Unlock()
+	if osdAnim == nil {
+		t.Fatal("the OSD has no animator")
+	}
+	seen := 0
+	drain := func() {
+		for {
+			select {
+			case inv := <-reg.Invalidations():
+				if inv.SurfaceID != "" {
+					seen++
+				}
+			default:
+				return
+			}
+		}
+	}
+	fadeDeadline := time.Now().Add(5 * time.Second)
+	for osdAnim.running.Load() {
+		drain()
+		if time.Now().After(fadeDeadline) {
+			t.Fatal("the OSD reveal loop outlived its fade")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// The loop publishes its settling frame before it retires, so what
+	// arrived with it is already in the channel once the flag is down.
+	drain()
+	if seen == 0 {
 		t.Fatal("reduced motion produced no invalidations; the OSD never appeared")
 	}
-	// The OSD shares the panel scheduling path, so it must also stop asking for
-	// frames once its value settles rather than running a timer of its own.
 	if got := countSurfaceInvalidations(reg, 100*time.Millisecond); got != 0 {
 		t.Fatalf("OSD still invalidating %d times after the fade settled", got)
 	}
@@ -189,6 +246,32 @@ func TestOsdRenderReflectsMeterLevel(t *testing.T) {
 		}
 	}
 	t.Fatal("meter rendered identically at zero and full level")
+}
+
+func TestConfigErrorOSDLayoutsAtUnitAndFractionalScale(t *testing.T) {
+	reg := newPanelRegistry(t)
+	m := newOSDManager(reg, 0)
+	reg.mu.Lock()
+	m.theme = reg.panelTheme()
+	reg.mu.Unlock()
+	for _, scale120 := range []int{120, 150} {
+		w, h := osdWidth*scale120/120, osdHeight*scale120/120
+		pixels := make([]byte, w*h*4)
+		m.view = OSDView{Kind: osdConfigError}
+		if err := m.render(pixels, w, h, w*4); err != nil {
+			t.Fatalf("scale %d render: %v", scale120, err)
+		}
+		painted := false
+		for i := 3; i < len(pixels); i += 4 {
+			if pixels[i] != 0 {
+				painted = true
+				break
+			}
+		}
+		if !painted {
+			t.Fatalf("scale %d config-error OSD painted no content", scale120)
+		}
+	}
 }
 
 func TestOsdRevealPublishesMultipleFrames(t *testing.T) {
@@ -343,5 +426,80 @@ func TestOsdSizesAgainstTheLogicalOutput(t *testing.T) {
 	}
 	if spec.InputRects == nil || len(spec.InputRects) != 0 {
 		t.Fatalf("input rects = %v, want none so bar widgets keep their clicks", spec.InputRects)
+	}
+}
+
+// A theme change reaches the OSD animator even while the OSD is hidden, and a
+// running reveal keeps the capped fade under reduced motion.
+func TestOSDRethemeAppliesMotion(t *testing.T) {
+	t.Parallel()
+	m := &OSDManager{theme: DefaultTheme()}
+	m.anim = newAnimator(nil, false, m.theme.Motion)
+	anim := m.anim
+	m.anim.Target("osd:1", animVisible, 1)
+
+	next := DefaultTheme()
+	next.Motion = render.MotionSet{
+		Durations: theme.BaseMotion.AtSpeed(25),
+		Reduced:   true,
+	}
+	m.retheme(next)
+
+	if m.anim != anim {
+		t.Fatal("retheme replaced the OSD animator")
+	}
+	if !m.anim.reduced {
+		t.Fatal("reduced motion did not reach the OSD animator")
+	}
+	v := m.anim.values[animKey{node: "osd:1", channel: animVisible}]
+	if v.spring != nil {
+		t.Fatal("reduced motion kept a spring on OSD visibility")
+	}
+	if v.dur > reducedPanelCap {
+		t.Fatalf("OSD fade = %v, want the reduced cap", v.dur)
+	}
+}
+
+// The reveal loop asks for the cap on every tick, so a theme reload that
+// changes it reaches a reveal already in flight. The animator clock is frozen,
+// so the reveal can neither settle nor publish a terminal frame: a second
+// publish can only come from the reloaded cap.
+func TestOSDRevealUsesReloadedCap(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = false
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
+	m := reg.OSD()
+	frozen := time.Unix(500, 0)
+	reg.mu.Lock()
+	m.hideFor = time.Hour // the hide timer must not supply a frame of its own
+	_, _, _ = m.prepareShow(OSDView{Kind: osdAudio, Level: 20})
+	m.anim.now = func() time.Time { return frozen }
+	m.anim.Target(osdAnimKey, animVisible, 0)
+	m.anim.Target(osdAnimKey, animVisible, 1)
+	m.anim.motion.FrameCap = time.Hour
+	stop := m.stopAnim
+	reg.mu.Unlock()
+	drainAuxQueue(reg)
+	drainInvalidations(reg)
+
+	done := make(chan struct{})
+	go func() { defer close(done); m.revealLoop() }()
+	t.Cleanup(func() {
+		m.stopOnce.Do(func() { close(stop) })
+		<-done
+	})
+	if got := awaitSurfaceInvalidations(reg, 1, 2*time.Second); got != 1 {
+		t.Fatalf("opening frame: %d invalidations", got)
+	}
+	reg.mu.Lock()
+	next := reg.panelTheme()
+	next.Motion.Durations.FrameCap = time.Second / 120
+	_ = m.retheme(next)
+	reg.mu.Unlock()
+	if got := awaitSurfaceInvalidations(reg, 1, 2*time.Second); got != 1 {
+		t.Fatal("a reveal in flight kept the cap it started with")
 	}
 }

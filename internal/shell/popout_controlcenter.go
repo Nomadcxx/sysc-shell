@@ -1,13 +1,16 @@
 package shell
 
 import (
+	"io"
 	"strings"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 const panelControlCenterAction = "panel:control-center"
+const caffeineMenuAction = "cc:caffeine-preset"
 
 const (
 	controlCentrePageKey     = "control-centre-page"
@@ -23,6 +26,59 @@ const (
 	ccHeaderSize = 40
 )
 
+type caffeinePreset struct {
+	value    string
+	label    string
+	labelKey string
+	duration time.Duration
+	active   bool
+}
+
+var caffeinePresets = [...]caffeinePreset{
+	{value: "off", label: "Off", labelKey: "cc.caffeine.off"},
+	{value: "15m", label: "15m", duration: 15 * time.Minute, active: true},
+	{value: "30m", label: "30m", duration: 30 * time.Minute, active: true},
+	{value: "1h", label: "1h", duration: time.Hour, active: true},
+	{value: "2h", label: "2h", duration: 2 * time.Hour, active: true},
+	{value: "4h", label: "4h", duration: 4 * time.Hour, active: true},
+	{value: "8h", label: "8h", duration: 8 * time.Hour, active: true},
+	{value: "indefinite", label: "Indefinite", labelKey: "cc.caffeine.indefinite", active: true},
+}
+
+func caffeinePresetOptions(tr translateFunc) (options, values []string) {
+	options = make([]string, len(caffeinePresets))
+	values = make([]string, len(caffeinePresets))
+	for i, preset := range caffeinePresets {
+		options[i] = preset.label
+		if preset.labelKey != "" {
+			options[i] = cardT(tr, preset.labelKey, preset.label)
+		}
+		values[i] = preset.value
+	}
+	return options, values
+}
+
+func caffeinePresetFor(value string) (caffeinePreset, bool) {
+	for _, preset := range caffeinePresets {
+		if preset.value == value {
+			return preset, true
+		}
+	}
+	return caffeinePreset{}, false
+}
+
+func caffeineRemainingMinutes(deadline, now time.Time) int {
+	remaining := deadline.Sub(now)
+	if deadline.IsZero() || remaining <= 0 {
+		return 0
+	}
+	minutes := int(remaining / time.Minute)
+	if remaining%time.Minute != 0 {
+		minutes++
+	}
+	return minutes
+}
+
 type ccSection struct {
 	ID, Label, Icon string
 	Enabled         bool
@@ -32,6 +88,7 @@ var ccSections = []ccSection{
 	{ID: "home", Label: "Home", Icon: "home", Enabled: true},
 	{ID: "media", Label: "Media", Icon: "music_note", Enabled: true},
 	{ID: "audio", Label: "Audio", Icon: "volume_up", Enabled: true},
+	{ID: "privacy", Label: "Privacy", Icon: "security", Enabled: true},
 	{ID: "monitor", Label: "Monitor", Icon: "desktop_windows", Enabled: true},
 	{ID: "power", Label: "Power", Icon: "power_settings_new", Enabled: true},
 	{ID: "network", Label: "Network", Icon: "wifi", Enabled: true},
@@ -162,13 +219,12 @@ func ccBodyWidth(h *PanelHost) int {
 }
 
 func ccRail(h *PanelHost) *ui.Node {
-	// Eleven 40px destinations and three group spacers have to fit the 532px
-	// the panel leaves inside its padding. The buttons sit on the tight rung so
-	// the MarginM spacers still read as the group breaks.
-	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: theme.MarginXS}
+	// Twelve 40px destinations, three group breaks and 2px row gaps fit the
+	// panel's padded height while preserving the existing target size.
+	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: theme.MarginXXS}
 	for _, section := range ccSections {
 		if section.ID == "media" || section.ID == "network" || section.ID == "weather" {
-			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: theme.MarginM})
+			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: theme.MarginXS})
 		}
 		name := cardT(h.tr, "cc.tab."+section.ID, section.Label)
 		action := "section:" + section.ID
@@ -219,6 +275,8 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 	switch h.section {
 	case "audio":
 		return ccAudio(r, h)
+	case "privacy":
+		return ccPrivacy(r, h)
 	case "media":
 		return mediaBody(r, h)
 	case "monitor":
@@ -280,13 +338,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	case "cc:caffeine":
 		r.setCaffeine(h, !r.inhibitWanted)
 		r.rebuildPanel(h)
-		if settings := r.panelHosts[PanelSettings]; settings != nil && settings.section == "Screensaver" {
-			r.rebuildPanel(settings)
-			output, id := settings.output, panelSurfaceID(settings.id)
-			// Handlers hold Registry.mu and the invalidation send can block.
-			r.publishSurfaceAsync(output, id)
-		}
 		return true
+	case caffeineMenuAction:
+		return false
 	case "cc:nightlight":
 		if r.nightLight == nil || !r.nightLight.State().Supported {
 			return false
@@ -377,70 +431,144 @@ func (r *Registry) switchPanelLocked(h *PanelHost, target PanelID) *PanelHost {
 	return r.panelHosts[target]
 }
 
-// setCaffeine changes the one process-wide idle inhibit. Caller holds r.mu;
-// the process is started and stopped through scheduleControl off the owner.
+// setCaffeine changes the process-backed idle inhibit. Caller holds r.mu.
 func (r *Registry) setCaffeine(h *PanelHost, on bool) {
+	value := "off"
 	if on {
-		if r.inhibitWanted {
-			return
-		}
-		r.inhibitWanted = true
-		r.pushIdleInputsLocked()
-		if r.inhibit != nil || r.inhibitStarting {
-			return
-		}
-		r.inhibitStarting = true
-		start := r.startInhibit
-		r.scheduleControl(h, func() error {
-			hold, err := start()
-			r.mu.Lock()
-			r.inhibitStarting = false
-			if err != nil {
-				r.inhibitWanted = false
-				r.pushIdleInputsLocked()
-				r.mu.Unlock()
-				r.refreshScreensaverSettingsPanel()
-				return err
-			}
-			stopped := false
-			select {
-			case <-r.closed:
-				stopped = true
-			default:
-			}
-			keep := r.inhibitWanted && !stopped
-			if keep {
-				r.inhibit = hold
-			}
-			r.mu.Unlock()
-			r.refreshScreensaverSettingsPanel()
-			if !keep {
-				return hold.Close()
-			}
-			return nil
-		})
+		value = "indefinite"
+	}
+	r.setCaffeinePreset(h, value)
+}
+
+// setCaffeinePreset applies one of the fixed menu values. Caller holds r.mu.
+func (r *Registry) setCaffeinePreset(h *PanelHost, value string) {
+	preset, ok := caffeinePresetFor(value)
+	if !ok {
 		return
 	}
-
-	r.inhibitWanted = false
+	r.clearCaffeineLocked()
+	r.inhibitWanted = preset.active
+	r.inhibitDuration = preset.duration
+	if preset.duration > 0 && preset.active {
+		// Round strips time.Now's monotonic reading, so suspend time remains in
+		// this deadline. The timer uses the resulting wall-time duration.
+		deadline := time.Now().Round(0).Add(preset.duration)
+		r.inhibitUntil = deadline
+		r.inhibitTimer = time.AfterFunc(time.Until(deadline), func() {
+			r.caffeineTimerExpired(deadline)
+		})
+	}
 	r.pushIdleInputsLocked()
-	if r.inhibit == nil {
+	if output, ok := r.rebuildScreensaverSettingsPanelLocked(); ok {
+		r.publishSurfaceAsync(output, panelSurfaceID(PanelSettings))
+	}
+
+	if !preset.active {
+		if r.inhibit == nil {
+			return
+		}
+		hold := r.inhibit
+		r.inhibit = nil
+		r.shutdown.inhibit.store(nil)
+		r.scheduleControl(h, hold.Close)
 		return
+	}
+	if r.inhibit != nil || r.inhibitStarting {
+		return
+	}
+	r.inhibitStarting = true
+	start := r.startInhibit
+	r.scheduleControl(h, func() error {
+		hold, err := start()
+		r.mu.Lock()
+		r.inhibitStarting = false
+		if err != nil {
+			r.clearCaffeineLocked()
+			r.pushIdleInputsLocked()
+			r.mu.Unlock()
+			r.refreshScreensaverSettingsPanel()
+			return err
+		}
+		stopped := false
+		select {
+		case <-r.closed:
+			stopped = true
+		default:
+		}
+		keep := r.inhibitWanted && !stopped
+		if keep {
+			r.inhibit = hold
+			r.shutdown.inhibit.store(hold)
+		}
+		r.mu.Unlock()
+		r.refreshScreensaverSettingsPanel()
+		if !keep {
+			return hold.Close()
+		}
+		return nil
+	})
+}
+
+// clearCaffeineLocked clears this shell's request. External inhibitors remain
+// intact and continue to reach IdleService through pushIdleInputsLocked.
+func (r *Registry) clearCaffeineLocked() {
+	if r.inhibitTimer != nil {
+		r.inhibitTimer.Stop()
+		r.inhibitTimer = nil
+	}
+	r.inhibitWanted = false
+	r.inhibitDuration = 0
+	r.inhibitUntil = time.Time{}
+}
+
+func (r *Registry) expireCaffeineLocked(now time.Time) (io.Closer, bool) {
+	if !r.inhibitWanted || r.inhibitUntil.IsZero() || now.Before(r.inhibitUntil) {
+		return nil, false
 	}
 	hold := r.inhibit
 	r.inhibit = nil
-	r.scheduleControl(h, hold.Close)
+	r.shutdown.inhibit.store(nil)
+	r.clearCaffeineLocked()
+	r.pushIdleInputsLocked()
+	return hold, true
+}
+
+func (r *Registry) caffeineTimerExpired(deadline time.Time) {
+	r.mu.Lock()
+	if !r.inhibitWanted || !r.inhibitUntil.Equal(deadline) {
+		r.mu.Unlock()
+		return
+	}
+	now := time.Now().Round(0)
+	if now.Before(deadline) {
+		// A backward wall-clock adjustment can wake the monotonic timer before
+		// the deadline. Re-arm against the remaining wall-clock duration.
+		r.inhibitTimer = time.AfterFunc(deadline.Sub(now), func() {
+			r.caffeineTimerExpired(deadline)
+		})
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Unlock()
+	r.UpdateClock(now)
 }
 
 func (r *Registry) refreshScreensaverSettingsPanel() {
 	r.mu.Lock()
+	output, ok := r.rebuildScreensaverSettingsPanelLocked()
+	r.mu.Unlock()
+	if ok {
+		r.publishSurface(output, panelSurfaceID(PanelSettings))
+	}
+}
+
+// rebuildScreensaverSettingsPanelLocked returns the visible Screensaver
+// Settings surface after rebuilding it. Caller holds r.mu.
+func (r *Registry) rebuildScreensaverSettingsPanelLocked() (uint32, bool) {
 	h := r.panelHosts[PanelSettings]
 	if h == nil || h.section != "Screensaver" {
-		r.mu.Unlock()
-		return
+		return 0, false
 	}
-	output := h.output
 	r.rebuildPanel(h)
-	r.mu.Unlock()
-	r.publishSurface(output, panelSurfaceID(h.id))
+	return h.output, true
 }

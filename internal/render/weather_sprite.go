@@ -177,7 +177,7 @@ func blitWeatherSprite(c *Canvas, box ui.Rect, mask *image.Alpha, s *weatherSpri
 	for sy := sy0; sy < sy1; sy++ {
 		py := oy + sy
 		maskRow := (py - box.Y) * mask.Stride
-		row := py * c.Stride
+		row := c.row(py)
 		for sx := sx0; sx < sx1; sx++ {
 			i := (sy*s.w + sx) * 4
 			if s.pix[i+3] == 0 {
@@ -195,7 +195,8 @@ func blitWeatherSprite(c *Canvas, box ui.Rect, mask *image.Alpha, s *weatherSpri
 			if src[3] == 0 {
 				continue
 			}
-			blendPixel(c.Pix[row+px*4:row+px*4+4], src, uint32(src[3]))
+			at := (px - c.Ox) * 4
+			blendPixel(row[at:at+4], src, uint32(src[3]))
 		}
 	}
 }

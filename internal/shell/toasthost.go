@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"slices"
 	"sort"
@@ -37,6 +38,11 @@ type toastHost struct {
 	queued   map[string][]uint32
 	hovered  map[string]map[uint32]bool
 	expanded map[uint32]bool
+	// noReplay holds active IDs that arrived while DND or the notification
+	// centre suppressed their toast. Existing cards can return when suppression
+	// ends; these records remain in the centre without becoming new toasts.
+	noReplay          map[uint32]struct{}
+	fullscreenFocused bool
 
 	// geometry is the size each output's surface was configured at. Until a
 	// configure arrives an output has none, and the design default stands in.
@@ -68,7 +74,6 @@ type toastHost struct {
 
 	anim      *animator
 	shown     map[string]map[uint32]ui.Rect
-	from      map[string]map[uint32]ui.Rect
 	stopSlide chan struct{}
 	sliding   bool
 
@@ -126,8 +131,8 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 		queued:          map[string][]uint32{},
 		hovered:         map[string]map[uint32]bool{},
 		expanded:        map[uint32]bool{},
+		noReplay:        map[uint32]struct{}{},
 		shown:           map[string]map[uint32]ui.Rect{},
-		from:            map[string]map[uint32]ui.Rect{},
 		geometry:        map[string]toastGeometry{},
 		scale120:        map[string]int{},
 		measured:        map[string]bool{},
@@ -156,9 +161,56 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	return h
 }
 
+func (h *toastHost) suppressArrival(n protocol.Notification) {
+	for _, interval := range h.r.notify.suppressionIntervals(time.Now()) {
+		if notificationArrivedDuringSuppression(n, interval) {
+			h.markNoReplay(n.ID)
+			return
+		}
+	}
+}
+
+// Snapshot records are a baseline, so use their service timestamp to identify
+// notifications created during an active suppression interval. Older active
+// records remain eligible to return when DND or the centre closes.
+func (h *toastHost) suppressSnapshotArrivals(active []protocol.Notification) {
+	s := h.r.notify
+	intervals := s.takeSuppressionIntervals(h.r.clockNow())
+	for _, n := range active {
+		for _, interval := range intervals {
+			if notificationArrivedDuringSuppression(n, interval) {
+				h.markNoReplay(n.ID)
+				break
+			}
+		}
+	}
+}
+
+func notificationArrivedDuringSuppression(n protocol.Notification, interval notifySuppressionInterval) bool {
+	if interval.dnd && n.Urgency == protocol.UrgencyCritical {
+		return false
+	}
+	return !n.Timestamp.Before(interval.start) && (interval.end.IsZero() || n.Timestamp.Before(interval.end))
+}
+
+func (h *toastHost) markNoReplay(id uint32) {
+	if h.noReplay == nil {
+		h.noReplay = make(map[uint32]struct{})
+	}
+	h.noReplay[id] = struct{}{}
+}
+
 // restyleLocked rebinds the cached layout style to the published palette and
 // relayouts every output. Called with Registry.mu held, from the retheme pass.
-func (h *toastHost) restyleLocked() { h.recompute() }
+func (h *toastHost) restyleLocked() {
+	if h.anim != nil {
+		// The animator's table follows the published theme, so a speed or
+		// reduced-motion change reaches open toasts instead of waiting for the
+		// next surface.
+		h.anim.Configure(h.r.panelTheme().Motion, h.r.cfg.Accessibility.ReducedMotion)
+	}
+	h.recompute()
+}
 
 func (h *toastHost) harness() *hostHarness { return h.harnessRef }
 
@@ -173,6 +225,11 @@ func toastSlideKey(connector string, id uint32) string {
 // surface that no longer exists. The next syncOutputs opens a fresh one
 // (GitHub #21).
 func (h *toastHost) drop(connector string) {
+	if h.anim != nil {
+		for id := range h.shown[connector] {
+			h.anim.Forget(toastSlideKey(connector, id))
+		}
+	}
 	delete(h.outputs, connector)
 	delete(h.visible, connector)
 	delete(h.queued, connector)
@@ -308,10 +365,11 @@ func (h *toastHost) configureLocked(connector string, width, height, scale120 in
 			for id, rect := range h.shown[connector] {
 				rect.X += delta
 				h.shown[connector][id] = rect
-			}
-			for id, rect := range h.from[connector] {
-				rect.X += delta
-				h.from[connector][id] = rect
+				// A card still in flight moves with the surface: its drawn
+				// offset and its destination both shift by the same delta.
+				if h.anim != nil {
+					h.anim.shiftStackRectX(toastSlideKey(connector, id), float64(delta))
+				}
 			}
 			if h.pressing && h.pressConnector == connector {
 				h.press.rect.X += delta
@@ -774,7 +832,21 @@ func (h *toastHost) reply(id uint32, text string) {
 	h.r.sendNotify(protocol.Command{Kind: protocol.CommandReply, ID: id, Text: text})
 }
 func (h *toastHost) hover(uint32, bool) {}
-func (h *toastHost) openLink(string)    {}
+func (h *toastHost) openLink(href string) {
+	opener := openNotificationURL.Get()
+	if opener == nil || h.r == nil {
+		return
+	}
+	go func() {
+		// Wait for the pointer handler's Registry.mu critical section to end
+		// before starting the desktop opener.
+		h.r.mu.Lock()
+		h.r.mu.Unlock()
+		if err := opener(href); err != nil {
+			log.Printf("shell: notification link opener: %v", err)
+		}
+	}()
+}
 
 // updateHover recomputes the hovered set for one output and reports whether
 // it changed. Only a change is worth a frame.
@@ -864,20 +936,7 @@ func (h *toastHost) rebuildWithLayouts(connector string, ids []uint32, layouts m
 		moved = h.noteTargets(connector, ids[:min(len(ids), len(rects))], rects)
 	}
 	if moved && !h.sliding && h.anim != nil && !h.anim.reduced && !h.anim.Settled() {
-		h.sliding = true
-		h.stopSlide = make(chan struct{})
-		stop := h.stopSlide
-		frameCap := h.anim.frameCap()
-		go animateSurface(stop, func() bool {
-			h.r.mu.Lock()
-			defer h.r.mu.Unlock()
-			settled := h.anim == nil || h.anim.Settled()
-			if settled {
-				h.sliding = false
-				h.stopSlide = nil
-			}
-			return settled
-		}, h.publishSlideFrame, func() time.Duration { return frameCap })
+		h.startSlideLocked()
 	}
 	cards := make([]toastCard, 0, len(ids))
 	for i, id := range ids {
@@ -903,6 +962,35 @@ func (h *toastHost) rebuildWithLayouts(connector string, ids []uint32, layouts m
 // publishSlideFrame repaints every toast surface and moves its input region
 // onto the rectangles drawn this frame. The slide continues after recompute,
 // and the compositor delivers clicks to the region it was last given.
+// startSlideLocked runs the one frame loop that carries cards to their new
+// places and returns a channel closed when the loop stops. Caller holds
+// Registry.mu.
+func (h *toastHost) startSlideLocked() <-chan struct{} {
+	h.sliding = true
+	h.stopSlide = make(chan struct{})
+	stop := h.stopSlide
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		animateSurface(stop, func() bool {
+			h.r.mu.Lock()
+			defer h.r.mu.Unlock()
+			settled := h.anim == nil || h.anim.Settled()
+			if settled {
+				h.sliding = false
+				h.stopSlide = nil
+			}
+			return settled
+		}, h.publishSlideFrame, func() time.Duration {
+			// Asked per tick, so a restyle's cap reaches a slide in flight.
+			h.r.mu.Lock()
+			defer h.r.mu.Unlock()
+			return h.anim.frameCap()
+		})
+	}()
+	return done
+}
+
 func (h *toastHost) publishSlideFrame() {
 	if h == nil || h.r == nil {
 		return
@@ -935,33 +1023,43 @@ func (h *toastHost) publishSlideFrame() {
 	}
 }
 
-// displayRect is where one output draws a card this frame: on its way from
-// its old slot to the new one, or in its slot once settled.
+// displayRect is where one output draws a card this frame: its stored geometry
+// channels while the stack settles, or the slot itself once they retire. Paint,
+// hit testing and the input region all read this one rectangle, so a click
+// always lands on the pixels the user can see. Caller holds r.mu.
 func (h *toastHost) displayRect(connector string, id uint32, target ui.Rect) ui.Rect {
-	from, ok := h.from[connector][id]
-	if !ok || h.anim == nil || h.anim.reduced {
+	if h.anim == nil || h.anim.reduced {
 		return target
 	}
-	p := h.anim.Value(toastSlideKey(connector, id), animVisible)
-	if p >= 1 {
-		delete(h.from[connector], id)
+	node := toastSlideKey(connector, id)
+	if !h.anim.has(node, animStackX) {
 		return target
 	}
-	return ui.LerpRect(from, target, p)
+	rect := ui.Rect{
+		X: int(math.Round(h.anim.Value(node, animStackX))),
+		Y: int(math.Round(h.anim.Value(node, animStackY))),
+		W: int(math.Round(h.anim.Value(node, animStackW))),
+		H: int(math.Round(h.anim.Value(node, animStackH))),
+	}
+	// A spring may dip a pixel below a component's endpoints; a card is never
+	// narrower than nothing. X and Y may stay negative: the surface clips them.
+	if rect.W < 0 {
+		rect.W = 0
+	}
+	if rect.H < 0 {
+		rect.H = 0
+	}
+	return rect
 }
 
-// noteTargets tracks the visible cards' target rectangles per output. Moved
-// cards restart from where they are drawn so a second change never jumps.
+// noteTargets tracks the visible cards' target rectangles per output. A moved
+// card retargets its stored geometry, so a second change never jumps and the
+// spring keeps whatever speed the card already had. Caller holds r.mu.
 func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect) (moved bool) {
 	shown := h.shown[connector]
 	if shown == nil {
 		shown = make(map[uint32]ui.Rect, len(ids))
 		h.shown[connector] = shown
-	}
-	from := h.from[connector]
-	if from == nil {
-		from = make(map[uint32]ui.Rect)
-		h.from[connector] = from
 	}
 	seen := make(map[uint32]bool, len(ids))
 	for i, id := range ids {
@@ -973,12 +1071,7 @@ func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect)
 		if ok && old != rects[i] {
 			moved = true
 			if h.anim != nil && !h.anim.reduced {
-				from[id] = h.displayRect(connector, id, old)
-				key := toastSlideKey(connector, id)
-				h.anim.Reset(key, animVisible)
-				h.anim.Target(key, animVisible, 1)
-			} else {
-				delete(from, id)
+				h.anim.TargetStackRect(toastSlideKey(connector, id), old, rects[i])
 			}
 		}
 		shown[id] = rects[i]
@@ -986,7 +1079,6 @@ func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect)
 	for id := range shown {
 		if !seen[id] {
 			delete(shown, id)
-			delete(from, id)
 			if h.anim != nil {
 				h.anim.Forget(toastSlideKey(connector, id))
 			}
@@ -1049,18 +1141,32 @@ func (h *toastHost) wrapBody(s string) []string {
 
 // recompute relayouts every open output from the current projection and
 // publishes each surface's input region. It is safe to call on any record,
-// geometry, or output change.
+// fullscreen, geometry, or output change. Production callers hold Registry.mu.
 func (h *toastHost) recompute() {
+	fullscreen := h.focusedWindowFillsOutput()
+	h.fullscreenFocused = fullscreen
 	s := h.r.notify
 	s.mu.Lock()
-	suppressed := s.dndActiveLocked(h.r.clockNow()) || s.centerOpen
+	dnd := s.dndActiveLocked(h.r.clockNow())
+	centerOpen := s.centerOpen
+	connected := s.generation != 0
 	records := make([]uint32, 0, len(s.active))
 	active := make(map[uint32]struct{}, len(s.active))
-	for id := range s.active {
-		records = append(records, id)
+	for id, n := range s.active {
 		active[id] = struct{}{}
+		_, noReplay := h.noReplay[id]
+		if !noReplay && !notificationSuppressed(dnd, centerOpen, fullscreen, n.Urgency) {
+			records = append(records, id)
+		}
 	}
 	s.mu.Unlock()
+	if connected {
+		for id := range h.noReplay {
+			if _, ok := active[id]; !ok {
+				delete(h.noReplay, id)
+			}
+		}
+	}
 	for id := range h.expanded {
 		if _, ok := active[id]; !ok {
 			delete(h.expanded, id)
@@ -1123,7 +1229,7 @@ func (h *toastHost) recompute() {
 		layouts := make(map[uint32]toastCardLayout, len(records))
 		heights := make([]int, 0, len(records))
 		ids := make([]uint32, 0, len(records))
-		if !suppressed && known {
+		if known {
 			layouts = h.cardLayouts(records, measure)
 			for _, id := range records {
 				heights = append(heights, layouts[id].height)
@@ -1160,6 +1266,30 @@ func (h *toastHost) recompute() {
 		h.r.publishSurface(global, toastSurfaceID(connector))
 	}
 	h.publishPresentation()
+}
+
+func (h *toastHost) focusedWindowFillsOutput() bool {
+	snapshot := h.r.niriSnapshot
+	if snapshot.FocusedOutput == "" {
+		return false
+	}
+	geometry, known := h.geometryFor(snapshot.FocusedOutput)
+	if !known || geometry.OutputW <= 0 || geometry.OutputH <= 0 {
+		return false
+	}
+	// Niri 26.04 exposes no fullscreen bit. ponytail: use a focused tile that
+	// matches the output within one logical pixel; replace this inference if
+	// Niri adds an explicit field. A non-fullscreen tile filling the output is
+	// a false positive; a fullscreen tile differing by more than one pixel is
+	// a false negative.
+	for _, window := range snapshot.Windows {
+		if window.Focused && window.HasLayout &&
+			math.Abs(window.TileW-float64(geometry.OutputW)) <= 1 &&
+			math.Abs(window.TileH-float64(geometry.OutputH)) <= 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // inputRegion is clipped to the accepted surface's coordinates. A pending
@@ -1350,7 +1480,7 @@ func (h *toastHost) cardRects(connector string, ids []uint32) []ui.Rect {
 // viewFor reports one record's placement for the aggregate presentation
 // state. The registry's precedence collapses it.
 func (h *toastHost) viewFor(id uint32) presentationView {
-	v := presentationView{}
+	v := presentationView{fullscreen: h.fullscreenFocused}
 	for connector := range h.outputs {
 		for _, vid := range h.visible[connector] {
 			if vid == id {

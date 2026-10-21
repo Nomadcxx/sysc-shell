@@ -35,6 +35,12 @@ type Client struct {
 	state           State
 	updates         chan State
 	changed         chan struct{}
+	// dial and wait are this client's seams. They belong to the client, not to
+	// the package: a shared seam would let a client that is still running
+	// record another client's waits, and swapping it while that client runs
+	// is a data race.
+	dial func() (busConn, error)
+	wait func(time.Duration) <-chan time.Time
 }
 
 // busConn is the small slice of the session bus the watcher needs. Keeping it
@@ -78,9 +84,10 @@ func (b *liveBus) RequestLock(ctx context.Context, owner string) (string, error)
 	return data, err
 }
 
-// dialFn opens one session-bus connection with both signal matches installed.
-// Tests replace it to count dials without a bus.
-var dialFn = func() (busConn, error) {
+// dialSessionBus opens one session-bus connection with both signal matches
+// installed. A client swaps it through its dial seam to count dials without a
+// bus.
+func dialSessionBus() (busConn, error) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return nil, err
@@ -97,13 +104,21 @@ var dialFn = func() (busConn, error) {
 	return &liveBus{conn: conn, signals: signals}, nil
 }
 
-// waitFn paces reconnect attempts after a dial failure. Tests replace it.
-var waitFn = time.After
+// waitAfter paces reconnect attempts after a dial failure. A client swaps it
+// through its wait seam.
+func waitAfter(d time.Duration) <-chan time.Time { return time.After(d) }
 
 const reconnectBackoffCap = 30 * time.Second
 
 func New(session, socket string) *Client {
-	return &Client{session: session, socket: socket, state: State{Snapshot: Snapshot{Phase: "unavailable"}}, updates: make(chan State, 1), changed: make(chan struct{})}
+	return newClient(session, socket, dialSessionBus, waitAfter)
+}
+
+// newClient builds a client with explicit dial and wait seams. Production
+// always goes through New; the seams let a test drive the reconnect loop
+// without a bus and without sharing state with another client.
+func newClient(session, socket string, dial func() (busConn, error), wait func(time.Duration) <-chan time.Time) *Client {
+	return &Client{session: session, socket: socket, dial: dial, wait: wait, state: State{Snapshot: Snapshot{Phase: "unavailable"}}, updates: make(chan State, 1), changed: make(chan struct{})}
 }
 func (c *Client) State() State          { c.mu.Lock(); defer c.mu.Unlock(); return c.state }
 func (c *Client) Updates() <-chan State { return c.updates }
@@ -253,7 +268,7 @@ func decode(data string) (Snapshot, error) {
 // the life of the client. Reconnect happens only when the bus itself closes,
 // paced by exponential backoff; an unowned bus name costs nothing but a wait.
 func (c *Client) Start(ctx context.Context) {
-	bus, err := dialFn()
+	bus, err := c.dial()
 	if err != nil {
 		c.disconnect()
 	} else {
@@ -274,9 +289,9 @@ func (c *Client) run(ctx context.Context, bus busConn) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-waitFn(delay):
+			case <-c.wait(delay):
 			}
-			next, err := dialFn()
+			next, err := c.dial()
 			if err != nil {
 				c.disconnect()
 				delay *= 2

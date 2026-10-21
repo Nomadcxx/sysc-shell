@@ -543,7 +543,10 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 		r.setState(StateDegraded, "exceeded its update budget")
 		return
 	}
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
+	// The exit watcher closes the standard output to unblock a read that a
+	// descendant's copy of the pipe would hold forever. That is end of
+	// session, not a protocol fault, and the restart budget must apply.
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, os.ErrClosed) {
 		r.setState(StateFailed, fmt.Sprintf("plugin protocol error: %v", readErr))
 		return
 	}

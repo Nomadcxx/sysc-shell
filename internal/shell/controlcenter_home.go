@@ -76,7 +76,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		ccHomeIdentity(r, h, identity, half),
 		ccHomeMediaCard(r, h, media, body-half-ccHomeGap),
 	}}
-	toggles := ccHomeToggles(r, body, caffeine, wallsStatus, tr)
+	toggles := ccHomeToggles(r, h, body, caffeine, wallsStatus, tr)
 	split := &ui.Node{Kind: ui.KindRow, Height: ccHomeSplitH, Gap: ccHomeGap, Children: []*ui.Node{
 		{Kind: ui.KindColumn, Width: ccHomeLeftW, Height: ccHomeSplitH, Gap: ccHomeGap, Children: []*ui.Node{
 			ccHomeWeather(m, now, reading, tr),
@@ -165,7 +165,7 @@ func ccHomeMediaCard(r *Registry, h *PanelHost, media services.MediaState, width
 	return card
 }
 
-func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string, tr translateFunc) *ui.Node {
+func ccHomeToggles(r *Registry, h *PanelHost, body int, caffeine bool, wallsStatus string, tr translateFunc) *ui.Node {
 	supported := false
 	nightState := services.NightLightState{}
 	if r != nil && r.nightLight != nil {
@@ -177,18 +177,7 @@ func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string, tr 
 		count++
 	}
 	w := (body - (count-1)*ccHomeGap) / count
-	caffeineButton := ccHomePill(w, "coffee", cardT(tr, "cc.caffeine", "Caffeine"), "cc:caffeine", caffeine)
-	var holding []string
-	if r != nil {
-		for _, inh := range r.externalInhibitors {
-			if name := ccText(inh.App); name != ccDash {
-				holding = append(holding, name)
-			}
-		}
-	}
-	if len(holding) > 0 {
-		caffeineButton.Tooltip = "Idle held: " + strings.Join(holding, ", ")
-	}
+	caffeineButton := caffeinePresetControl(r, h, w, tr)
 	screensaver := ccHomePill(w, "schedule", "Screensaver", "settings-section:Screensaver", false)
 	screensaver.Tooltip = "Screensaver: " + ccText(wallsStatus)
 	if caffeine && r != nil && r.wallsSnapshot.Running() {
@@ -206,6 +195,67 @@ func ccHomeToggles(r *Registry, body int, caffeine bool, wallsStatus string, tr 
 		children = append(children, night)
 	}
 	return &ui.Node{Kind: ui.KindRow, Height: ccHomeToggleH, Gap: ccHomeGap, Children: children}
+}
+
+func caffeinePresetControl(r *Registry, h *PanelHost, width int, tr translateFunc) *ui.Node {
+	options, values := caffeinePresetOptions(tr)
+	active, duration := false, time.Duration(0)
+	if r != nil {
+		active, duration = r.inhibitWanted, r.inhibitDuration
+	}
+	index := 0
+	for i, value := range values {
+		preset, ok := caffeinePresetFor(value)
+		if ok && preset.active == active && preset.duration == duration {
+			index = i
+			break
+		}
+	}
+	var m *Menu
+	if h != nil {
+		if h.menus == nil {
+			h.menus = map[string]*Menu{}
+		}
+		m = h.menus[caffeineMenuAction]
+	}
+	if m == nil || !m.Opened() {
+		m = newMenu(options, values, index, false)
+		if h != nil {
+			h.menus[caffeineMenuAction] = m
+		}
+	} else {
+		m.reseed(options, values, index)
+	}
+	n := m.Node()
+	n.Action = caffeineMenuAction
+	n.Name = cardT(tr, "cc.caffeine", "Caffeine")
+	status := options[index]
+	if active && !r.inhibitUntil.IsZero() {
+		now := r.now
+		if now.IsZero() {
+			now = time.Now()
+		}
+		status = fmt.Sprintf("%dm", caffeineRemainingMinutes(r.inhibitUntil, now))
+	}
+	n.Text = n.Name + " " + status
+	n.Width, n.Height, n.Shape = width, ccHomeToggleH, ui.ShapeStadium
+	if active {
+		n.State |= ui.StateSelected
+		n.Fill = ui.FillAccent
+	}
+	n.Padding = theme.MarginS
+	var holding []string
+	if r != nil {
+		for _, inh := range r.externalInhibitors {
+			if name := ccText(inh.App); name != ccDash {
+				holding = append(holding, name)
+			}
+		}
+	}
+	if len(holding) > 0 {
+		n.Tooltip = "Idle held: " + strings.Join(holding, ", ")
+	}
+	return n
 }
 
 func ccHomePill(width int, icon, label, action string, selected bool) *ui.Node {

@@ -42,11 +42,42 @@ func (c Color) premultiply() [4]byte {
 
 // Canvas is a little-endian premultiplied ARGB8888 buffer, held in memory as
 // B, G, R, A bytes. Its coordinates are buffer pixels.
+//
+// A canvas may cover only part of the surface it paints, which is what a
+// group-opacity node needs: the offscreen it composites through is sized to the
+// node's own clipped box rather than to the whole surface. Ox and Oy place that
+// box on the surface, so every painter keeps working in absolute surface
+// coordinates and only the byte offset into Pix is relative.
 type Canvas struct {
 	Pix           []byte
 	Width, Height int
 	Stride        int
-	restrict      ui.Rect
+	// Ox, Oy are the surface coordinates of Pix's first pixel.
+	Ox, Oy   int
+	restrict ui.Rect
+}
+
+// extent is the rectangle the buffer covers in surface coordinates.
+func (c *Canvas) extent() ui.Rect {
+	return ui.Rect{X: c.Ox, Y: c.Oy, W: c.Width, H: c.Height}
+}
+
+// contains reports whether a surface pixel lies inside the buffer.
+func (c *Canvas) contains(x, y int) bool {
+	return x >= c.Ox && x < c.Ox+c.Width && y >= c.Oy && y < c.Oy+c.Height
+}
+
+// at is the byte offset of surface pixel (x, y). The caller has checked that
+// the pixel is inside the buffer; at does not.
+func (c *Canvas) at(x, y int) int {
+	return (y-c.Oy)*c.Stride + (x-c.Ox)*4
+}
+
+// row is the buffer from the first pixel of surface row y to the end. The
+// caller has checked that y is inside the buffer; the returned slice is indexed
+// by x-Ox.
+func (c *Canvas) row(y int) []byte {
+	return c.Pix[(y-c.Oy)*c.Stride:]
 }
 
 // ApplySurfaceTransform applies the final opacity and X/Y translation to an
@@ -136,7 +167,9 @@ func NewCanvas(pix []byte, width, height, stride int) (*Canvas, error) {
 	return &Canvas{Pix: pix, Width: width, Height: height, Stride: stride}, nil
 }
 
-// clip intersects a rectangle with the canvas bounds.
+// clip intersects a rectangle with the canvas bounds. The result is in surface
+// coordinates, so callers keep painting in absolute space whichever part of the
+// surface this buffer covers.
 func (c *Canvas) clip(r ui.Rect) (x0, y0, x1, y1 int) {
 	if c.restrict.W > 0 && c.restrict.H > 0 {
 		x0n := max(r.X, c.restrict.X)
@@ -145,8 +178,8 @@ func (c *Canvas) clip(r ui.Rect) (x0, y0, x1, y1 int) {
 		y1n := min(r.Y+r.H, c.restrict.Y+c.restrict.H)
 		r = ui.Rect{X: x0n, Y: y0n, W: max(x1n-x0n, 0), H: max(y1n-y0n, 0)}
 	}
-	x0, y0 = max(r.X, 0), max(r.Y, 0)
-	x1, y1 = min(r.X+r.W, c.Width), min(r.Y+r.H, c.Height)
+	x0, y0 = max(r.X, c.Ox), max(r.Y, c.Oy)
+	x1, y1 = min(r.X+r.W, c.Ox+c.Width), min(r.Y+r.H, c.Oy+c.Height)
 	return x0, y0, x1, y1
 }
 
@@ -158,9 +191,9 @@ func fillRect(c *Canvas, r ui.Rect, col Color) {
 	x0, y0, x1, y1 := c.clip(r)
 	src := col.premultiply()
 	for y := y0; y < y1; y++ {
-		row := c.Pix[y*c.Stride:]
+		row := c.row(y)[(x0-c.Ox)*4:]
 		for x := x0; x < x1; x++ {
-			blendPixel(row[x*4:x*4+4], src, uint32(col.A))
+			blendPixel(row[(x-x0)*4:(x-x0)*4+4], src, uint32(col.A))
 		}
 	}
 }
@@ -182,6 +215,35 @@ func fillRoundedRect(c *Canvas, r ui.Rect, radius int, col Color) {
 	}
 }
 
+// blendRing blends a ring mask over a clipped rounded rectangle's own box,
+// visiting only the bands a ring can reach.
+//
+// A ring of width width and corner radius radius is empty everywhere except its
+// top and bottom rows, and, between them, its left and right columns, so the
+// rectangle's interior never has to be scanned. Before this, every pixel of the
+// box was loaded, tested and skipped: the panel root rim strokes the whole
+// surface, so each panel frame paid about 20 percent of its time on coverage
+// that is zero (GH #373). The four regions are disjoint, so no pixel blends
+// twice.
+func blendRing(c *Canvas, r ui.Rect, radius, width int, col Color) {
+	if r.W <= 0 || r.H <= 0 || width <= 0 || col.A == 0 {
+		return
+	}
+	mask := RingMask(radius, r.W, r.H, width)
+	top, side := strokeBands(radius, r.W, r.H, width)
+	if 2*top >= r.H || 2*side >= r.W {
+		// The bands would meet in the middle: a thin or short rectangle has no
+		// empty interior to skip.
+		blendMask(c, mask, r.X, r.Y, col)
+		return
+	}
+	midH := r.H - 2*top
+	blendMaskBand(c, mask, ui.Rect{W: r.W, H: top}, r.X, r.Y, col)
+	blendMaskBand(c, mask, ui.Rect{Y: r.H - top, W: r.W, H: top}, r.X, r.Y, col)
+	blendMaskBand(c, mask, ui.Rect{Y: top, W: side, H: midH}, r.X, r.Y, col)
+	blendMaskBand(c, mask, ui.Rect{X: r.W - side, Y: top, W: side, H: midH}, r.X, r.Y, col)
+}
+
 // strokeRoundedRect outlines one clipped rounded rectangle inward from its
 // bounds, so the stroke never grows the node's box. It draws the cached ring
 // mask, which carries the same antialiased coverage the rounded fill uses.
@@ -191,10 +253,13 @@ func fillRoundedRect(c *Canvas, r ui.Rect, radius int, col Color) {
 // corner reads as a staircase, and the eye sees a broken line rather than a
 // thin one.
 func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
-	if r.W <= 0 || r.H <= 0 || width <= 0 || col.A == 0 {
-		return
-	}
-	blendMask(c, RingMask(radius, r.W, r.H, width), r.X, r.Y, col)
+	blendRing(c, r, radius, width, col)
+}
+
+// col is the buffer from surface pixel (x, Oy) to the end. The caller has
+// checked that x is inside the buffer; the returned slice is indexed by y-Oy.
+func (c *Canvas) col(x int) []byte {
+	return c.Pix[(x-c.Ox)*4:]
 }
 
 // clearOutsideRoundedRect restores transparency after children paint. Child
@@ -204,16 +269,16 @@ func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
 // body are emptied.
 func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, jointL, jointR int, attachEdge string) {
 	radius = min(radius, min(r.W, r.H)/2)
-	clipX0, clipY0, clipX1, clipY1 := c.clip(ui.Rect{W: c.Width, H: c.Height})
+	clipX0, clipY0, clipX1, clipY1 := c.clip(c.extent())
 	if clipX0 >= clipX1 || clipY0 >= clipY1 {
 		return
 	}
 	if attachEdge == "left" || attachEdge == "right" {
 		for x := clipX0; x < clipX1; x++ {
-			col := c.Pix[x*4:]
+			col := c.col(x)
 			if x < r.X || x >= r.X+r.W || r.W <= 0 || r.H <= 0 {
 				for y := clipY0; y < clipY1; y++ {
-					clear(col[y*c.Stride : y*c.Stride+4])
+					clear(col[(y-c.Oy)*c.Stride : (y-c.Oy)*c.Stride+4])
 				}
 				continue
 			}
@@ -235,19 +300,20 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, j
 				}
 			}
 			extTop, extBottom := ui.FilletExtent(near, jointL), ui.FilletExtent(near, jointR)
-			y0 := max(0, r.Y+insetTop-extTop)
-			y1 := min(c.Height, r.Y+r.H-insetBottom+extBottom)
+			y0 := max(c.Oy, r.Y+insetTop-extTop)
+			y1 := min(c.Oy+c.Height, r.Y+r.H-insetBottom+extBottom)
 			for y := clipY0; y < min(y0, clipY1); y++ {
-				clear(col[y*c.Stride : y*c.Stride+4])
+				clear(col[(y-c.Oy)*c.Stride : (y-c.Oy)*c.Stride+4])
 			}
 			for y := max(y1, clipY0); y < clipY1; y++ {
-				clear(col[y*c.Stride : y*c.Stride+4])
+				clear(col[(y-c.Oy)*c.Stride : (y-c.Oy)*c.Stride+4])
 			}
 		}
 		return
 	}
 	for y := clipY0; y < clipY1; y++ {
-		row := c.Pix[y*c.Stride+clipX0*4 : y*c.Stride+clipX1*4]
+		rowStart := (y-c.Oy)*c.Stride + (clipX0-c.Ox)*4
+		row := c.Pix[rowStart : rowStart+(clipX1-clipX0)*4]
 		if y < r.Y || y >= r.Y+r.H || r.W <= 0 || r.H <= 0 {
 			clear(row)
 			continue
@@ -275,7 +341,7 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, j
 				insetR = inset
 			}
 		}
-		x0 := max(clipX0, min(c.Width, r.X+insetL-extL))
+		x0 := max(clipX0, min(c.Ox+c.Width, r.X+insetL-extL))
 		x1 := max(x0, min(clipX1, r.X+r.W-insetR+extR))
 		clear(row[:(x0-clipX0)*4])
 		clear(row[(x1-clipX0)*4:])
@@ -297,7 +363,7 @@ func fillAttachFillets(c *Canvas, r ui.Rect, left, right int, attachEdge string,
 			}
 			for out := 0; out < left; out++ {
 				y := r.Y - 1 - out
-				if x >= 0 && x < c.Width && y >= 0 && y < c.Height {
+				if c.contains(x, y) {
 					coverage := ui.FilletCoverage(out, depth, left)
 					if coverage > 0 {
 						blendCoverage(c, x, y, col, float64(coverage)/255)
@@ -312,7 +378,7 @@ func fillAttachFillets(c *Canvas, r ui.Rect, left, right int, attachEdge string,
 			}
 			for out := 0; out < right; out++ {
 				y := r.Y + r.H + out
-				if x >= 0 && x < c.Width && y >= 0 && y < c.Height {
+				if c.contains(x, y) {
 					coverage := ui.FilletCoverage(out, depth, right)
 					if coverage > 0 {
 						blendCoverage(c, x, y, col, float64(coverage)/255)
@@ -331,7 +397,7 @@ func fillAttachFillets(c *Canvas, r ui.Rect, left, right int, attachEdge string,
 			if attachEdge == "bottom" {
 				row = r.Y + r.H - 1 - y
 			}
-			if row < 0 || row >= c.Height {
+			if row < c.Oy || row >= c.Oy+c.Height {
 				continue
 			}
 			for x := 0; x < fillet; x++ {
@@ -339,7 +405,7 @@ func fillAttachFillets(c *Canvas, r ui.Rect, left, right int, attachEdge string,
 				if coverage == 0 {
 					continue
 				}
-				if p := px(x); p >= 0 && p < c.Width {
+				if p := px(x); p >= c.Ox && p < c.Ox+c.Width {
 					blendCoverage(c, p, row, col, float64(coverage)/255)
 				}
 			}
@@ -363,7 +429,7 @@ func fillEdgeFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, left, 
 			if attachEdge == "right" {
 				x = r.X - 1 - out
 			}
-			if x < 0 || x >= c.Width {
+			if x < c.Ox || x >= c.Ox+c.Width {
 				continue
 			}
 			for along := 0; along < fillet && along < r.H; along++ {
@@ -374,13 +440,13 @@ func fillEdgeFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, left, 
 				alpha := float64(coverage) / 255
 				if left {
 					y := r.Y + along
-					if y >= 0 && y < c.Height {
+					if c.contains(x, y) {
 						blendCoverage(c, x, y, col, alpha)
 					}
 				}
 				if right {
 					y := r.Y + r.H - 1 - along
-					if y >= 0 && y < c.Height {
+					if c.contains(x, y) {
 						blendCoverage(c, x, y, col, alpha)
 					}
 				}
@@ -396,7 +462,7 @@ func fillEdgeFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, left, 
 		if attachEdge == "bottom" {
 			row = r.Y - 1 - y
 		}
-		if row < 0 || row >= c.Height {
+		if row < c.Oy || row >= c.Oy+c.Height {
 			continue
 		}
 		for x := 0; x < fillet && x < r.W; x++ {
@@ -405,10 +471,10 @@ func fillEdgeFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, left, 
 				continue
 			}
 			alpha := float64(coverage) / 255
-			if px := r.X + x; left && px >= 0 && px < c.Width {
+			if px := r.X + x; left && c.contains(px, row) {
 				blendCoverage(c, px, row, col, alpha)
 			}
-			if px := r.X + r.W - 1 - x; right && px >= 0 && px < c.Width {
+			if px := r.X + r.W - 1 - x; right && c.contains(px, row) {
 				blendCoverage(c, px, row, col, alpha)
 			}
 		}
@@ -440,25 +506,75 @@ func (c *Canvas) BlendText(m Mask, x, y int, col Color) {
 	blendMask(c, m.Alpha, x, y, col)
 }
 
+// strokeBands returns the row and column counts a ring's coverage can reach.
+// A ring of width w and corner radius r is empty everywhere except its top and
+// bottom rows, and, between those, its left and right columns, so the banded
+// blend in blendRing can skip the rectangle's interior entirely.
+//
+// The pad is one row and one column beyond max(radius, width): the antialiased
+// arc edge reaches half a pixel past the geometric silhouette, and the outermost
+// row that carries coverage sits on the far side of it. Taking only
+// max(radius, width) misses coverage on small rings. An exhaustive sweep over
+// every radius and width of every box up to 48x48 (960,400 shapes) found no
+// coverage outside these bands, and TestStrokeBandsCoverTheRing pins the
+// shipped geometries.
+func strokeBands(radius, w, h, width int) (top, side int) {
+	radius = max(min(radius, min(w, h)/2), 0)
+	width = max(min(width, min(w, h)/2), 0)
+	return max(radius, width) + 1, width + 1
+}
+
+// blendMaskBand blends only sub of a coverage mask placed at x, y, where sub is
+// in the mask's own coordinates. StrokeRounded uses it to visit a ring's bands
+// instead of its whole rectangle: for a 2 px rim that is under two percent of
+// the pixels blendMask would scan.
+func blendMaskBand(c *Canvas, mask *image.Alpha, sub ui.Rect, x, y int, col Color) {
+	if col.A == 0 || mask == nil || sub.W <= 0 || sub.H <= 0 {
+		return
+	}
+	b := mask.Bounds()
+	sub.X, sub.Y = max(sub.X, 0), max(sub.Y, 0)
+	right := min(sub.X+sub.W, max(b.Dx(), 0))
+	bottom := min(sub.Y+sub.H, max(b.Dy(), 0))
+	sub.W, sub.H = right-sub.X, bottom-sub.Y
+	if sub.W <= 0 || sub.H <= 0 {
+		return
+	}
+	blendMaskAt(c, mask, x, y, sub, col)
+}
+
+// blendMask is blendMaskBand over a mask's whole bounds.
 func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 	if col.A == 0 || mask == nil {
 		return
 	}
 	b := mask.Bounds()
-	x0, y0, x1, y1 := c.clip(ui.Rect{X: x, Y: y, W: b.Dx(), H: b.Dy()})
+	blendMaskAt(c, mask, x, y, ui.Rect{W: b.Dx(), H: b.Dy()}, col)
+}
+
+// blendMaskAt blends col through mask at x, y, visiting only sub, a region in
+// the mask's own coordinates. The mask carries its coverage in Pix from its
+// origin, so coverage for canvas pixel px is indexed by px-x however the
+// visited region is offset: the origin stays the reference for both the
+// coverage lookup and the clip.
+func blendMaskAt(c *Canvas, mask *image.Alpha, x, y int, sub ui.Rect, col Color) {
+	x0, y0, x1, y1 := c.clip(ui.Rect{X: x + sub.X, Y: y + sub.Y, W: sub.W, H: sub.H})
+	if x0 >= x1 || y0 >= y1 {
+		return
+	}
 	src := col.premultiply()
 	// Full coverage needs no mask multiplication. An opaque source or a
 	// clear destination also needs no over blend (including the bar ground).
 	opaque := col.A == 255
 	for py := y0; py < y1; py++ {
-		row := c.Pix[py*c.Stride:]
+		row := c.row(py)
 		cov := coverageRow(mask, py, y)
 		for px := x0; px < x1; px++ {
 			coverage := uint32(cov[px-x])
 			if coverage == 0 {
 				continue
 			}
-			dst := row[px*4 : px*4+4 : px*4+4]
+			dst := row[(px-c.Ox)*4 : (px-c.Ox)*4+4 : (px-c.Ox)*4+4]
 			if coverage == 255 {
 				if opaque || dst[0]|dst[1]|dst[2]|dst[3] == 0 {
 					dst[0], dst[1], dst[2], dst[3] = src[0], src[1], src[2], src[3]
@@ -487,7 +603,7 @@ func (c *Canvas) FillRounded(r ui.Rect, radius int, col Color) {
 // band, which is what a hairline border needs: a one-pixel stroke quantised to
 // whole pixels reads as a staircase rather than a line.
 func (c *Canvas) StrokeRounded(r ui.Rect, radius, width int, col Color) {
-	blendMask(c, RingMask(radius, r.W, r.H, width), r.X, r.Y, col)
+	blendRing(c, r, radius, width, col)
 }
 
 // DrawShadow composites a cached shadow around a panel rectangle.

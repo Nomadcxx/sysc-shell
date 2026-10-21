@@ -9,6 +9,20 @@
 // does guarantee is that a misbehaving plugin cannot make the shell
 // unresponsive, unbounded, or wrong: every input is bounded before it is
 // parsed and validated before it reaches presentation.
+//
+// # Process lifetime
+//
+// A plugin runs in its own process group, not the shell's. An orderly exit is
+// the plugin's responsibility: it answers host.shutdown and stops the children
+// it owns, and the host leaves any process that outlives it alone, so a plugin
+// may hand an editor or a browser to the session on purpose.
+//
+// A forced stop — the grace after host.shutdown expiring, a rejected
+// handshake, or the host context being cancelled — signals that whole group,
+// because the host cannot tell a plugin's own helpers from something the user
+// should keep. A process meant to outlive a plugin therefore has to leave the
+// group: start it through the open-url host call, which goes through the
+// session's own launcher, or with setsid if it is the plugin's own binary.
 package plugin
 
 import (
@@ -89,7 +103,7 @@ const (
 )
 
 // The narrowed classes say whether a plugin may read or change something, the
-// decision a user is actually making. They arrived in protocol minor 17; the
+// decision a user is actually making. They arrived in protocol minor 19; the
 // broad names above keep working and grant exactly the union of their parts.
 const (
 	CapStateRead         Capability = "state-read"
@@ -99,7 +113,7 @@ const (
 	CapScreenshotCapture Capability = "screenshot-capture"
 	CapScreenshotRead    Capability = "screenshot-read"
 	// CapOutputsRead gates output.context, which no class gated before
-	// minor 17. A manifest declaring an older minor keeps it ungated.
+	// minor 19. A manifest declaring an older minor keeps it ungated.
 	CapOutputsRead Capability = "outputs-read"
 	// CapFilesBrowser is files scoped to the host-owned browser root, today
 	// the only root, so it grants what files grants. The scope exists so a
@@ -109,7 +123,7 @@ const (
 
 // NarrowCapabilityMinor is the protocol minor that introduced the narrowed
 // classes and scoped names.
-const NarrowCapabilityMinor = 17
+const NarrowCapabilityMinor = 19
 
 var narrowCapabilities = map[Capability]bool{
 	CapStateRead: true, CapStateWrite: true, CapWallpaperRead: true, CapWallpaperWrite: true,
@@ -256,7 +270,7 @@ const (
 var socketEndpoints = []string{SocketSessionBus, SocketSystemBus, SocketCompositor, SocketWayland}
 
 // FilesystemMinor is the protocol minor that introduced the declaration.
-const FilesystemMinor = 18
+const FilesystemMinor = 20
 
 // maxFilesystemPaths bounds a declaration so a consent can be read whole.
 const maxFilesystemPaths = 32
@@ -318,6 +332,11 @@ type Setting struct {
 	Max         *float64
 	Options     []SettingOption
 	VisibleWhen *VisibleWhen
+	// Secret marks a string setting as a credential. The shell draws it
+	// masked, so the value never appears on screen, in a screenshot or in a
+	// screen share. A plugin that names a credential anything else declares
+	// it, instead of relying on how the key is spelled.
+	Secret bool
 }
 
 // Grants reports whether the manifest requested a capability.
@@ -439,6 +458,7 @@ type wireSetting struct {
 	Max         *float64         `json:"max,omitempty"`
 	Options     []wireOption     `json:"options,omitempty"`
 	VisibleWhen *wireVisibleWhen `json:"visible_when,omitempty"`
+	Secret      bool             `json:"secret,omitempty"`
 }
 
 type wireOption struct {
@@ -915,6 +935,13 @@ func setting(e wireSetting, path string) (Setting, error) {
 	}
 
 	s := Setting{Key: e.Key, Type: t, Label: e.Label, Description: e.Description, Min: e.Min, Max: e.Max}
+
+	if e.Secret {
+		if t != SettingString {
+			return Setting{}, fmt.Errorf("%s: only a string setting can be secret", path)
+		}
+		s.Secret = true
+	}
 
 	if !t.numeric() && (e.Min != nil || e.Max != nil) {
 		return Setting{}, fmt.Errorf("%s: a %s setting has no numeric bounds", path, t)

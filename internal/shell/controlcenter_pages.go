@@ -388,6 +388,43 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
 }
 
+func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
+	state := privacyState{}
+	if r != nil {
+		state = r.privacy
+	}
+	rows := []*ui.Node{
+		monitorCardTitle("Capture activity", 0),
+		privacyStatusSection("Microphone", state.microphone, privacySignalDetail(state, privacyMicrophone)),
+		privacyStatusSection("Camera", state.camera, privacySignalDetail(state, privacyCamera)),
+		privacyStatusSection("Screen sharing", state.screenShare, privacySignalDetail(state, privacyScreenShare)),
+	}
+	card := monitorCard(h.metrics(), rows)
+	card.Height = ccPageH
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
+}
+
+func privacyStatusSection(label string, activity privacyActivity, detail string) *ui.Node {
+	children := []*ui.Node{privacyStatusRow(label, activity)}
+	if activity == privacyActive && detail != "" {
+		children = append(children, &ui.Node{
+			Kind: ui.KindText, Text: detail, Name: label + " details", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: children}
+}
+
+func privacyStatusRow(label string, activity privacyActivity) *ui.Node {
+	status := &ui.Node{Kind: ui.KindText, Text: privacyStatus(activity), Name: privacyStatus(activity)}
+	if activity == privacyUnknown {
+		status.Tone = ui.ToneError
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: label, Name: label},
+		status,
+	}}
+}
+
 func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
 	tr := ccT(h, r)

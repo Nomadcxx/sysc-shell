@@ -78,6 +78,47 @@ func TestConvertExposesSelectedSegmentToTheNativeControl(t *testing.T) {
 	}
 }
 
+func TestConvertMapsSliderValueRangeAndAccessibleAction(t *testing.T) {
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{
+		Kind: v1.KindSlider, ID: "fan-level", Name: "Fan level", Role: "slider",
+		Min: 0, Max: 7, Step: 1, Value: 3,
+		Events: []v1.EventKind{v1.EventChange},
+	}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slider := got.Children[0]
+	if slider.Kind != ui.KindSlider || slider.Value != 3 || slider.Min != 0 || slider.Max != 7 || slider.Step != 1 {
+		t.Fatalf("converted slider = %+v", slider)
+	}
+	if slider.Action != "fan-level" || slider.Name != "Fan level" || slider.Role != "slider" || !slider.Focusable {
+		t.Fatalf("slider interaction = %+v", slider)
+	}
+}
+
+func TestConvertKeepsABarLogoImageInsideItsButton(t *testing.T) {
+	root := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{
+		Kind: v1.KindButton, ID: "open", Name: "Open ThinkPad panel", Role: "button",
+		Events: []v1.EventKind{v1.EventActivate, v1.EventPointer},
+		Children: []*v1.Node{{
+			Kind: v1.KindImage, Path: "/plugins/thinkpad.png", ImageW: 72, ImageH: 26,
+		}},
+	}}}
+	got, err := Convert(root, v1.ViewBar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	button := got.Children[0]
+	if button.Kind != ui.KindButton || button.Action != "open" || len(button.Children) != 1 {
+		t.Fatalf("bar logo button = %+v", button)
+	}
+	image := button.Children[0]
+	if image.Kind != ui.KindImage || image.ImagePath != "/plugins/thinkpad.png" || image.ImageW != 72 || image.ImageH != 26 {
+		t.Fatalf("bar logo image = %+v", image)
+	}
+}
+
 func TestConvertScheduleGridCopiesAndPositionsEvents(t *testing.T) {
 	zone, err := time.LoadLocation("Australia/Melbourne")
 	if err != nil {
@@ -295,6 +336,7 @@ func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 		{Kind: v1.KindText, Text: "ok"},
 		{Kind: v1.KindText, Text: "broken", Tone: v1.ToneError},
 		{Kind: v1.KindText, Text: "caption", Tone: v1.ToneSubtle},
+		{Kind: v1.KindText, Text: "pairing", Tone: v1.ToneWarning},
 	}}
 	got, err := Convert(root, v1.ViewPanel)
 	if err != nil {
@@ -308,6 +350,9 @@ func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 	}
 	if got.Children[2].Tone != ui.ToneSubtle {
 		t.Errorf("subtle tone = %v", got.Children[2].Tone)
+	}
+	if got.Children[3].Tone != ui.ToneActivity {
+		t.Errorf("warning tone = %v, want activity tone %v", got.Children[3].Tone, ui.ToneActivity)
 	}
 }
 

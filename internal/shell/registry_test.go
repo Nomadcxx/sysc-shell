@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,7 +109,7 @@ func TestThemePreviewHideRepaintsBeforeUnlock(t *testing.T) {
 }
 
 // newHosts is the common setup: one registry with hosts at the given globals.
-func newHosts(t *testing.T, reg *Registry, hosts map[uint32]string) {
+func newHosts(t testing.TB, reg *Registry, hosts map[uint32]string) {
 	t.Helper()
 	for global, connector := range hosts {
 		if _, err := reg.NewHost(global, connector); err != nil {
@@ -130,6 +131,7 @@ func TestAttachedPanelKeepsItsOwnAlphaOnceItHasABackdrop(t *testing.T) {
 	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
 
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.tokens = theme.Fallback
 	bar, leases, _, err := reg.buildBar(cfg, "DP-2", reg.tokens)
@@ -956,6 +958,9 @@ func TestReducedMotionSnapsToTheNewPalette(t *testing.T) {
 	defer reg.mu.Unlock()
 
 	want := lightTheme()
+	// A resolved theme carries the reduced flag (theme.go resolves it from the
+	// accessibility config); the helper theme needs it explicitly.
+	want.Motion.Reduced = true
 	h.retheme(want)
 	// A palette change is colour, not motion: there is nothing for reduced
 	// motion to want held.
@@ -1125,5 +1130,134 @@ func TestInitialBarViewHasClockBeforeFirstTick(t *testing.T) {
 	r.mu.Unlock()
 	if now.Before(before) || now.After(time.Now()) {
 		t.Fatalf("initial clock snapshot = %v, want the current time", now)
+	}
+}
+
+// A cap change reaches the animator each surface already has, without
+// replacing it or moving a value in flight. The clock is frozen, so any change
+// in the sampled value would be the retheme restarting the animation.
+func TestFrameCapRethemeUpdatesExistingAnimators(t *testing.T) {
+	t.Parallel()
+	frozen := time.Unix(500, 0)
+	clock := func() time.Time { return frozen }
+	const want = time.Second / 60
+	check := func(t *testing.T, before, after *animator, key string, value float64) {
+		t.Helper()
+		if after != before {
+			t.Fatal("cap change replaced animator")
+		}
+		if after.frameCap() != want {
+			t.Fatalf("cap = %v, did not reach live animator", after.frameCap())
+		}
+		if got := after.Value(key, animVisible); got != value {
+			t.Fatalf("value moved from %v to %v at a frozen clock", value, got)
+		}
+	}
+	prime := func(a *animator, key string) float64 {
+		a.now = clock
+		a.Target(key, animVisible, 0)
+		a.Target(key, animVisible, 1)
+		return a.Value(key, animVisible)
+	}
+
+	t.Run("bar", func(t *testing.T) {
+		b := newTestBar(t)
+		b.mu.Lock()
+		before := b.anim
+		value := prime(before, "probe")
+		next := b.theme
+		b.mu.Unlock()
+		next.Motion.Durations.FrameCap = want
+		b.retheme(next)
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		check(t, before, b.anim, "probe", value)
+	})
+	t.Run("panel", func(t *testing.T) {
+		reg, h := rethemeHost(t, false)
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		before := h.anim
+		value := prime(before, "probe")
+		next := h.theme
+		next.Motion.Durations.FrameCap = want
+		h.retheme(next)
+		check(t, before, h.anim, "probe", value)
+	})
+	t.Run("toast", func(t *testing.T) {
+		reg := newPanelRegistry(t)
+		h := newToastHost(reg, nil)
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		reg.toasts = h
+		before := h.anim
+		value := prime(before, "probe")
+		reg.cfg.Theme.FrameCap = theme.Repaint60
+		h.restyleLocked()
+		check(t, before, h.anim, "probe", value)
+	})
+	t.Run("osd", func(t *testing.T) {
+		reg := newPanelRegistry(t)
+		reg.setTestBar(1, &Bar{conn: "eDP-1"})
+		m := reg.OSD()
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		m.hideFor = time.Hour
+		_, _, _ = m.prepareShow(OSDView{Kind: osdAudio, Level: 20})
+		before := m.anim
+		value := prime(before, "probe")
+		next := m.theme
+		next.Motion.Durations.FrameCap = want
+		_ = m.retheme(next)
+		check(t, before, m.anim, "probe", value)
+	})
+}
+
+// An accepted reload carrying a new cap keeps the open panel and its animator
+// and moves the cap onto it.
+func TestReloadKeepsOpenPanelsAndAppliesFrameCap(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	host, anim := reg.panelHosts[PanelSession], reg.panelHosts[PanelSession].anim
+	reg.mu.Unlock()
+	candidate := config.Default()
+	candidate.Accessibility.ReducedMotion = true
+	candidate.Theme.FrameCap = theme.Repaint60
+	prepared, err := reg.PrepareConfig(candidate, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSession]
+	if h != host || h.anim != anim {
+		t.Fatal("reload replaced the open panel or its animator")
+	}
+	if got := h.anim.frameCap(); got != time.Second/60 {
+		t.Fatalf("panel cap after reload = %v, want 1/60 s", got)
+	}
+}
+
+// The cap paces only animation-driven publishes. A clock revision with no
+// animator running still reports its bar for repaint at once.
+func TestFrameCapDoesNotSuppressClockInvalidation(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cfg := reg.cfg
+	cfg.Theme.FrameCap = theme.Repaint60
+	withTestBar(t, reg, 7, cfg)
+	reg.mu.Lock()
+	reg.cfg.Theme.FrameCap = theme.Repaint60
+	reg.mu.Unlock()
+	_ = reg.UpdateClock(time.Date(2026, time.October, 15, 9, 7, 0, 0, time.Local))
+	changed := reg.UpdateClock(time.Date(2026, time.October, 15, 9, 8, 0, 0, time.Local))
+	if !slices.Contains(changed, uint32(7)) {
+		t.Fatalf("clock revision under a 60 fps cap changed %v, want bar 7", changed)
 	}
 }

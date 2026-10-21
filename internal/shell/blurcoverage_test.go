@@ -18,8 +18,8 @@ import (
 // if the enum grows past the end this walk knows about.
 func TestEveryPanelRequestsABackdrop(t *testing.T) {
 	t.Parallel()
-	if got := PanelID(PanelOnboarding + 1).String(); got != "unknown" {
-		t.Fatalf("the panel enum grew past PanelOnboarding (%q); widen this walk", got)
+	if got := PanelID(PanelKeyboardLayout + 1).String(); got != "unknown" {
+		t.Fatalf("the panel enum grew past PanelKeyboardLayout (%q); widen this walk", got)
 	}
 
 	onCfg := config.Default()
@@ -33,7 +33,7 @@ func TestEveryPanelRequestsABackdrop(t *testing.T) {
 	off := NewRegistry(offCfg)
 	t.Cleanup(off.Close)
 
-	for id := PanelClock; id <= PanelOnboarding; id++ {
+	for id := PanelClock; id <= PanelKeyboardLayout; id++ {
 		h := &PanelHost{id: id, place: Placement{
 			Output: ui.Rect{W: 1920, H: 1080},
 			Panel:  ui.Rect{W: 400, H: 300},

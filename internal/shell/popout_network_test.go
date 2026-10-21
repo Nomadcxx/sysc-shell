@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -13,12 +14,19 @@ import (
 )
 
 type shellNetworkBackend struct {
-	mu     sync.Mutex
-	state  services.NetworkState
-	aps    []services.AccessPoint
-	wake   chan<- struct{}
-	scan   func() error
-	closed int
+	mu             sync.Mutex
+	state          services.NetworkState
+	aps            []services.AccessPoint
+	wake           chan<- struct{}
+	scan           func() error
+	manualRequests []services.ManualNetworkRequest
+	manualDone     chan struct{}
+	manualErr      error
+	vpnProfiles    []services.VPNProfile
+	vpnDone        chan struct{}
+	vpnCalls       []string
+	vpnControlErr  error
+	closed         int
 }
 
 func (b *shellNetworkBackend) State() (services.NetworkState, error) {
@@ -44,7 +52,42 @@ func (b *shellNetworkBackend) Scan() error {
 }
 func (b *shellNetworkBackend) SetWirelessEnabled(bool) error       { return nil }
 func (b *shellNetworkBackend) Activate(services.AccessPoint) error { return nil }
-func (b *shellNetworkBackend) Forget(string) error                 { return nil }
+func (b *shellNetworkBackend) ConnectManual(req services.ManualNetworkRequest) error {
+	b.mu.Lock()
+	b.manualRequests = append(b.manualRequests, req)
+	done, err := b.manualDone, b.manualErr
+	b.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+	return err
+}
+func (b *shellNetworkBackend) VPNProfiles() ([]services.VPNProfile, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.vpnProfiles), nil
+}
+func (b *shellNetworkBackend) ConnectVPN(uuid string) error {
+	b.mu.Lock()
+	b.vpnCalls = append(b.vpnCalls, "connect:"+uuid)
+	done, err := b.vpnDone, b.vpnControlErr
+	b.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+	return err
+}
+func (b *shellNetworkBackend) DisconnectVPN(uuid string) error {
+	b.mu.Lock()
+	b.vpnCalls = append(b.vpnCalls, "disconnect:"+uuid)
+	done, err := b.vpnDone, b.vpnControlErr
+	b.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+	return err
+}
+func (b *shellNetworkBackend) Forget(string) error { return nil }
 func (b *shellNetworkBackend) Close() error {
 	b.mu.Lock()
 	b.closed++
@@ -60,22 +103,37 @@ func (b *shellNetworkBackend) Watch(wake chan<- struct{}, _ <-chan struct{}) err
 
 // Panel configure, render and handle all run with Registry.mu held. A write
 // that took a bus round trip on that path would stall every bar on the
-// machine, so every network write goes through scheduleControl, which runs it
-// on its own goroutine before re-taking the lock to publish.
-func TestNetworkWriteNeverRunsUnderRegistryLock(t *testing.T) {
+// machine, so every network write goes through scheduleControl and runs after
+// the handler releases the lock.
+func TestNetworkWriteRunsAfterRegistryUnlock(t *testing.T) {
 	r := &Registry{}
 	h := &PanelHost{id: PanelNetwork, networkTab: "wifi"}
-	done := make(chan struct{})
+	unlocked := make(chan bool, 1)
 
 	r.mu.Lock() // held exactly as the panel paths hold it
-	r.scheduleControl(h, func() error { close(done); return nil })
+	r.scheduleControl(h, func() error {
+		ok := r.mu.TryLock()
+		if ok {
+			r.mu.Unlock()
+		}
+		unlocked <- ok
+		return nil
+	})
 	select {
-	case <-done:
-	case <-time.After(time.Second):
+	case ok := <-unlocked:
 		r.mu.Unlock()
-		t.Fatal("the control never ran while the lock was held; it is not off-owner")
+		t.Fatalf("network write ran before the handler released Registry.mu (lock available: %v)", ok)
+	case <-time.After(10 * time.Millisecond):
 	}
 	r.mu.Unlock()
+	select {
+	case ok := <-unlocked:
+		if !ok {
+			t.Fatal("network write ran while Registry.mu was held")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the network write did not run after the handler released Registry.mu")
+	}
 }
 
 // A bare PanelHost carries the zero Metrics, so a tree test must build against
@@ -107,6 +165,21 @@ func findRowIfPresent(n *ui.Node, ssid string) *ui.Node {
 	}
 	for _, c := range n.Children {
 		if got := findRowIfPresent(c, ssid); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func findActionNode(n *ui.Node, action string) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Action == action {
+		return n
+	}
+	for _, child := range n.Children {
+		if got := findActionNode(child, action); got != nil {
 			return got
 		}
 	}
@@ -254,20 +327,23 @@ func TestHeaderOmitsTheRadioToggleOnEthernet(t *testing.T) {
 	}
 }
 
-func TestNetworkTabsAreTwoSegmentsWithWifiSelected(t *testing.T) {
+func TestNetworkTabsHaveWifiEthernetAndVPNWithWifiSelected(t *testing.T) {
 	tabs := networkTabs(&PanelHost{networkTab: "wifi"}, standardMetrics())
 	seg := firstOfKind(tabs, ui.KindSegmented)
 	if seg == nil {
 		t.Fatal("no segmented control in the tabs row")
 	}
-	if len(seg.Children) != 2 {
-		t.Fatalf("segments = %d, want 2", len(seg.Children))
+	if len(seg.Children) != 3 {
+		t.Fatalf("segments = %d, want 3", len(seg.Children))
 	}
 	if seg.Children[0].State&ui.StateSelected == 0 {
 		t.Error("Wi-Fi must be the selected segment by default")
 	}
 	if seg.Children[1].State&ui.StateSelected != 0 {
 		t.Error("Ethernet must not be selected while the tab is wifi")
+	}
+	if seg.Children[2].State&ui.StateSelected != 0 {
+		t.Error("VPN must not be selected while the tab is wifi")
 	}
 }
 
@@ -380,6 +456,127 @@ func TestWifiListPreservesServiceOrder(t *testing.T) {
 	}
 }
 
+func TestNetworkManualEntryWorksWithoutScannedAccessPoints(t *testing.T) {
+	r := newPanelRegistry(t)
+	backend := &shellNetworkBackend{manualDone: make(chan struct{}), manualErr: errors.New("activation refused")}
+	r.setNetwork(services.NewNetwork(backend))
+	h := &PanelHost{id: PanelNetwork, output: 7, place: Placement{Panel: panelTargetSize(PanelNetwork)}, theme: DefaultTheme(), stopAnim: make(chan struct{})}
+	r.mu.Lock()
+	r.panelHosts[PanelNetwork] = h
+	tree := networkWifiTree(nil, services.NetworkState{WirelessEnabled: true, Tier: services.TierNM}, h, h.metrics())
+	if findActionNode(tree, "network-manual-open") == nil {
+		r.mu.Unlock()
+		t.Fatal("manual entry is missing when there are no scanned access points")
+	}
+	if !h.applyNetworkControl(r, &ui.Node{Action: "network-manual-open"}) {
+		r.mu.Unlock()
+		t.Fatal("manual entry action was not handled")
+	}
+	if !h.manualEntry || h.manualSSID == nil {
+		r.mu.Unlock()
+		t.Fatal("manual entry form did not open")
+	}
+	if focused := h.focused(); focused == nil || focused.Name != "Network name (SSID)" {
+		r.mu.Unlock()
+		t.Fatal("manual entry did not focus the SSID field")
+	}
+	form := networkManualCard(h)
+	if findActionNode(form, "network-manual-ssid") == nil ||
+		findActionNode(form, "network-manual-security:open") == nil ||
+		findActionNode(form, "network-manual-security:personal") == nil {
+		r.mu.Unlock()
+		t.Fatal("manual entry form is missing SSID or security controls")
+	}
+	if !h.applyNetworkControl(r, &ui.Node{Action: "network-manual-security:personal"}) || h.manualSecurity != services.ManualSecurityWPAPersonal {
+		r.mu.Unlock()
+		t.Fatal("WPA-Personal security choice was not applied")
+	}
+	h.manualSSID.Text = "Not scanned"
+	if !h.applyNetworkControl(r, &ui.Node{Action: "network-manual-submit"}) {
+		r.mu.Unlock()
+		t.Fatal("manual submit action was not handled")
+	}
+	if h.manualEntry || h.manualSSID.Text != "Not scanned" {
+		r.mu.Unlock()
+		t.Fatal("manual SSID was not retained for a possible retry")
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-backend.manualDone:
+	case <-time.After(time.Second):
+		t.Fatal("manual request never reached the backend")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		got := h.errLabel
+		r.mu.Unlock()
+		if got == "activation refused" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.mu.Lock()
+	got := h.errLabel
+	r.mu.Unlock()
+	if got != "activation refused" {
+		t.Fatalf("backend result = %q, want actionable error", got)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if len(backend.manualRequests) != 1 || backend.manualRequests[0] != (services.ManualNetworkRequest{
+		SSID: "Not scanned", Security: services.ManualSecurityWPAPersonal,
+	}) {
+		t.Fatalf("manual requests = %+v", backend.manualRequests)
+	}
+}
+
+func TestNetworkPasswordSubmitRejectsInvalidPassphrase(t *testing.T) {
+	h := &PanelHost{id: PanelNetwork, pendingSSID: "Hidden", password: ui.NewField("short")}
+	r := &Registry{network: services.NewNetwork(&shellNetworkBackend{})}
+	if !h.applyNetworkControl(r, &ui.Node{Action: "network-password-submit"}) {
+		t.Fatal("password submit action was not handled")
+	}
+	if h.password.Text != "short" || h.pendingSSID != "Hidden" {
+		t.Fatal("invalid passphrase should remain editable in the active prompt")
+	}
+	if h.errLabel == "" {
+		t.Fatal("invalid passphrase did not show a validation message")
+	}
+	h.password.Text = "hunter22"
+	if !h.applyNetworkControl(r, &ui.Node{Action: "network-password-submit"}) {
+		t.Fatal("corrected password submit action was not handled")
+	}
+	if h.errLabel != "" {
+		t.Fatalf("corrected passphrase retained old error label %q", h.errLabel)
+	}
+}
+
+func TestNetworkManualSSIDFieldUsesRetainedEditor(t *testing.T) {
+	h := &PanelHost{id: PanelNetwork, manualEntry: true, manualSSID: ui.NewField("")}
+	h.root = networkManualCard(h)
+	h.focus = ui.Focusables(h.root)
+	h.roving.Count = len(h.focus)
+	h.focusByName("Network name (SSID)")
+	if !h.editField(&Registry{}, func(f *ui.Field) { f.Insert("Hidden") }) {
+		t.Fatal("manual SSID field did not accept input")
+	}
+	if h.manualSSID.Text != "Hidden" {
+		t.Fatalf("SSID field = %q, want Hidden", h.manualSSID.Text)
+	}
+}
+
+func TestNetworkManualCancelClearsSSID(t *testing.T) {
+	h := &PanelHost{id: PanelNetwork, manualEntry: true, manualSSID: ui.NewField("Not saved")}
+	if !h.applyNetworkControl(&Registry{}, &ui.Node{Action: "network-manual-cancel"}) {
+		t.Fatal("manual cancel action was not handled")
+	}
+	if h.manualEntry || h.manualSSID.Text != "" {
+		t.Fatalf("cancel retained manual input: open=%v ssid=%q", h.manualEntry, h.manualSSID.Text)
+	}
+}
+
 // Radio off is not an empty list: the list would say "no networks here", which
 // is a different and wrong claim.
 func TestRadioOffShowsAnOffStateNotAnEmptyList(t *testing.T) {
@@ -438,8 +635,8 @@ func TestPasswordFieldEditsTheCredentialHolder(t *testing.T) {
 func TestPasswordActionsClearTheCredential(t *testing.T) {
 	for _, action := range []string{"network-password-submit", "network-password-cancel"} {
 		t.Run(action, func(t *testing.T) {
-			h := &PanelHost{id: PanelNetwork, pendingSSID: "Orac 15A", password: ui.NewField("hunter2")}
-			r := &Registry{}
+			h := &PanelHost{id: PanelNetwork, pendingSSID: "Orac 15A", password: ui.NewField("hunter22")}
+			r := &Registry{network: services.NewNetwork(&shellNetworkBackend{})}
 			if !h.applyNetworkControl(r, &ui.Node{Action: action}) {
 				t.Fatalf("%s was not handled", action)
 			}
@@ -469,14 +666,14 @@ func TestNetworkPanelTeardownClearsCredential(t *testing.T) {
 	r := newPanelRegistry(t)
 	h := &PanelHost{
 		id: PanelNetwork, stopAnim: make(chan struct{}), pendingSSID: "Orac 15A",
-		password: ui.NewField("hunter2"),
+		password: ui.NewField("hunter22"), manualEntry: true, manualSSID: ui.NewField("Hidden"),
 	}
 	r.mu.Lock()
 	r.panelHosts[PanelNetwork] = h
 	r.teardownPanelLocked(PanelNetwork)
 	r.mu.Unlock()
-	if h.password.Text != "" || h.pendingSSID != "" {
-		t.Fatalf("teardown retained credential state: password=%q ssid=%q", h.password.Text, h.pendingSSID)
+	if h.password.Text != "" || h.pendingSSID != "" || h.manualEntry || h.manualSSID.Text != "" {
+		t.Fatalf("teardown retained network input: password=%q pending ssid=%q manual=%v/%q", h.password.Text, h.pendingSSID, h.manualEntry, h.manualSSID.Text)
 	}
 }
 
@@ -692,5 +889,92 @@ func TestANoticeHintWrapsInsideThePanel(t *testing.T) {
 	// A title line and a hint that wraps onto at least two more.
 	if lines := (h - 2*m.CardPadding) / 20; lines < 3 {
 		t.Errorf("the notice is %d high, %d lines; its hint did not wrap", h, lines)
+	}
+}
+
+func TestNetworkVPNRowsUseUUIDActionsAndShowState(t *testing.T) {
+	profiles := []services.VPNProfile{
+		{UUID: "11111111-1111-4111-8111-111111111111", Name: "Office", Status: services.VPNConnected},
+		{UUID: "22222222-2222-4222-8222-222222222222", Name: "Office", Status: services.VPNDisconnected},
+	}
+	tree := networkVPNTree(profiles, "", services.NetworkState{Tier: services.TierNM}, &PanelHost{}, standardMetrics())
+	for _, action := range []string{
+		"network-vpn-disconnect:" + profiles[0].UUID,
+		"network-vpn-connect:" + profiles[1].UUID,
+	} {
+		if findActionNode(tree, action) == nil {
+			t.Fatalf("VPN row is missing UUID action %q", action)
+		}
+	}
+	if !slices.Contains(collectText(tree), "Office") {
+		t.Fatal("VPN profile names are missing from the panel")
+	}
+}
+
+func TestNetworkVPNConnectingRowOffersEnabledCancel(t *testing.T) {
+	profile := services.VPNProfile{UUID: "11111111-1111-4111-8111-111111111111", Name: "Office", Status: services.VPNConnecting}
+	tree := networkVPNTree([]services.VPNProfile{profile}, "", services.NetworkState{Tier: services.TierNM}, &PanelHost{}, standardMetrics())
+	control := findActionNode(tree, "network-vpn-disconnect:"+profile.UUID)
+	if control == nil {
+		t.Fatal("connecting VPN row must offer cancellation through disconnect")
+	}
+	if control.State&ui.StateDisabled != 0 || control.AriaDisabled {
+		t.Fatal("connecting VPN cancel control must remain enabled")
+	}
+	if !slices.Contains(collectText(control), "Cancel") {
+		t.Fatalf("connecting VPN action = %v, want Cancel", collectText(control))
+	}
+}
+
+func TestNetworkVPNControlDisplaysBackendError(t *testing.T) {
+	profile := services.VPNProfile{UUID: "11111111-1111-4111-8111-111111111111", Name: "Office"}
+	backend := &shellNetworkBackend{
+		vpnProfiles: []services.VPNProfile{profile}, vpnDone: make(chan struct{}), vpnControlErr: errors.New("connection failed"),
+	}
+	r := newPanelRegistry(t)
+	r.setNetwork(services.NewNetwork(backend))
+	if err := r.network.RefreshVPNProfiles(); err != nil {
+		t.Fatal(err)
+	}
+	h := &PanelHost{id: PanelNetwork, output: 7, place: Placement{Panel: panelTargetSize(PanelNetwork)}, theme: DefaultTheme(), stopAnim: make(chan struct{})}
+	r.mu.Lock()
+	r.panelHosts[PanelNetwork] = h
+	if !h.applyNetworkControl(r, &ui.Node{Action: "network-vpn-connect:" + profile.UUID}) {
+		r.mu.Unlock()
+		t.Fatal("VPN connect action was not handled")
+	}
+	r.mu.Unlock()
+	select {
+	case <-backend.vpnDone:
+	case <-time.After(time.Second):
+		t.Fatal("VPN control never reached the backend")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		got := h.errLabel
+		r.mu.Unlock()
+		if got == "connection failed" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.mu.Lock()
+	got := h.errLabel
+	r.mu.Unlock()
+	if got != "connection failed" {
+		t.Fatalf("VPN result = %q, want actionable error", got)
+	}
+}
+
+func TestNetworkVPNTabExplainsUnsupportedBackend(t *testing.T) {
+	for _, tier := range []services.Tier{services.TierIWD, services.TierKernel, services.TierNone} {
+		tree := networkVPNTree(nil, "", services.NetworkState{Tier: tier, ReadOnly: tier == services.TierKernel}, &PanelHost{}, standardMetrics())
+		if findActionNode(tree, "network-vpn-connect:") != nil || findActionNode(tree, "network-vpn-disconnect:") != nil {
+			t.Fatalf("tier %v exposed VPN controls", tier)
+		}
+		if len(collectText(tree)) == 0 {
+			t.Fatalf("tier %v did not explain why VPN is unavailable", tier)
+		}
 	}
 }

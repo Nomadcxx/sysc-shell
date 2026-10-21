@@ -1,17 +1,19 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark.png">
-    <img src="assets/wordmark-light.png" alt="sysc-shell" height="64">
-  </picture>
+  <img src="assets/header.webp" height="64" alt="sysc-shell">
 </p>
 
 
 A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate daemons for
 notifications, clipboard history and the system tray.
 
+<details>
+<summary>Video tour</summary>
+
 https://github.com/user-attachments/assets/7cadf7b9-6fe5-4d53-b7d6-757e4082b68a
 
 <p align="center"><sub>Settings, Bar settings and the system monitor opening over a static wallpaper, bar included. <a href="assets/tour.mp4">Download the 1080p file</a> (19 s).</sub></p>
+
+</details>
 
 ## Quick Links
 
@@ -25,27 +27,27 @@ Captured from fixture data with invented names, so nothing here is a real accoun
 
 <table>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396"><br><sub>Control centre: Home</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-media.png" alt="Control centre: Media" width="396"><br><sub>Control centre: Media</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-control-centre.png" alt="Control centre: Home" width="396" loading="lazy"><br><sub>Control centre: Home</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-media.png" alt="Control centre: Media" width="396" loading="lazy"><br><sub>Control centre: Media</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-settings.png" alt="Settings: Appearance" width="396"><br><sub>Settings: Appearance</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-monitor.png" alt="System monitor" width="396"><br><sub>System monitor</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-settings.png" alt="Settings: Appearance" width="396" loading="lazy"><br><sub>Settings: Appearance</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-monitor.png" alt="System monitor" width="396" loading="lazy"><br><sub>System monitor</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396"><br><sub>Launcher</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396"><br><sub>Weather</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-launcher.png" alt="Launcher" width="396" loading="lazy"><br><sub>Launcher</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-weather.png" alt="Weather" width="396" loading="lazy"><br><sub>Weather</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-wifi.png" alt="Wi-Fi" width="396"><br><sub>Wi-Fi</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-bluetooth.png" alt="Bluetooth" width="396"><br><sub>Bluetooth</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-wifi.png" alt="Wi-Fi" width="396" loading="lazy"><br><sub>Wi-Fi</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bluetooth.png" alt="Bluetooth" width="396" loading="lazy"><br><sub>Bluetooth</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396"><br><sub>Clipboard history</sub></td>
-    <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396"><br><sub>Settings: Bar</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-clipboard.png" alt="Clipboard history" width="396" loading="lazy"><br><sub>Clipboard history</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/shell-bar-settings.png" alt="Settings: Bar" width="396" loading="lazy"><br><sub>Settings: Bar</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396"><br><sub>Wallpaper picker</sub></td>
+    <td align="center" valign="top" colspan="2"><img src="assets/screens/shell-wallpaper.png" alt="Wallpaper picker" width="396" loading="lazy"><br><sub>Wallpaper picker</sub></td>
   </tr>
 </table>
 
@@ -83,6 +85,51 @@ official plugin bundle.
 
 [Documentation](https://nomadcxx.github.io/sysc/docs/).
 
+### Nix
+
+For Nix, the flake is the installation route: nothing here is packaged as an AUR package and the
+guided installer does not touch a Nix store. home-manager users import the module and enable it:
+
+```nix
+{
+  inputs.sysc-shell.url = "github:Nomadcxx/sysc-shell";
+
+  # In a home-manager flake configuration:
+  #   modules = [ inputs.sysc-shell.homeModules.default ];
+  #   programs.sysc-shell.enable = true;
+  #
+  #   # Optional: the weather plugin, linked into the user plugin root
+  #   # under its manifest id.
+  #   programs.sysc-shell.plugins = [
+  #     inputs.sysc-shell.packages.${pkgs.system}.sysc-shell-plugin-weather
+  #   ];
+  #
+  # Without home-manager, on NixOS, where the package goes into
+  # environment.systemPackages and the unit into /etc/systemd/user:
+  #   imports = [ inputs.sysc-shell.nixosModules.default ];
+  #   programs.sysc-shell.enable = true;
+  #
+  # Without the module, use the overlay and set the package yourself:
+  #   nixpkgs.overlays = [ inputs.sysc-shell.overlays.default ];
+  #   programs.sysc-shell.package = pkgs.sysc-shell;
+}
+```
+
+The two modules reuse the repository's own `packaging/systemd/sysc-shell.service` with `ExecStart`
+pointed at the store, so there is one unit and one install story. The home-manager module puts the
+shell binary in your profile, which is what makes the `sysc-shell ipc` commands below work;
+`nixosModules.default` is the machine-wide counterpart for a system without home-manager: the
+package in `environment.systemPackages` and the same unit under `/etc/systemd/user`, which every
+user's service manager reads. Plugin directories and shell settings are per user, so those stay
+with the home-manager module. No release is tagged yet, so `sysc-shell --version` reports
+`development (<source revision>)`. Nothing seeds or rewrites `config.json`, and `scripts/deploy`
+does not apply: a Nix install starts a store path, not the binary under `~/.local/bin`. Enabling
+refuses to activate while `~/.local/bin/sysc-shell` exists, because two shells would fight over
+the bar.
+
+Not covered, on purpose: no CI workflow builds the flake, no companion daemon is packaged, and
+the deploy-guard drop-in is not installed.
+
 ### Build from source
 
 ```bash
@@ -111,9 +158,10 @@ sysc-shell ipc status
 ```
 
 Release binaries are stamped with their version and commit; the same two values appear as `version` in
-`ipc status`. Builds from source, from your AUR helper, and from Nix are not stamped and report
+`ipc status`. Builds from source and from your AUR helper are not stamped and report
 `sysc-shell development (unknown)`. That is the honest answer, not a lookup failure: an unstamped
-build has no version to report until the release workflow stamps it. Use `sysc --version` from the
+build has no version to report until the release workflow stamps it. A Nix build stamps the revision
+it was cut from instead, `sysc-shell development (<source revision>)`. Use `sysc --version` from the
 installer to see which suite an install actually recorded.
 
 ### Companion daemons
@@ -208,6 +256,34 @@ or ends.
 Settings are in the settings panel and saved to `$XDG_CONFIG_HOME/sysc-shell/config.json`
 (default: `~/.config/sysc-shell/config.json`). Logs go to
 `journalctl --user -u sysc-shell`.
+
+Add launcher commands under `launcher` in `config.json`:
+
+```json
+{
+  "launcher": {
+    "providers": [{
+      "name": "Files",
+      "prefix": "/files",
+      "glyph": "glyph:description",
+      "description": "Search files",
+      "command": ["file-list", "--query={query}"],
+      "on_select": ["file-open", "{selection}"]
+    }],
+    "actions": [{
+      "id": "open-docs",
+      "label": "Open documentation",
+      "argv": ["browser", "https://example.test/docs"]
+    }]
+  }
+}
+```
+
+The provider command prints one result per line as `label` or `label<TAB>comment`. Type `/files query`
+to search it. `on_select` receives the full output line as `{selection}` and the search text as
+`{query}`. The shell replaces templates inside argv elements and runs both commands without shell
+evaluation. Fixed actions appear in launcher search; actions marked `"dangerous": true` stay hidden
+until you also set `"allow_dangerous": true`.
 
 ## Panels and integrations
 

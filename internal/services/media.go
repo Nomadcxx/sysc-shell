@@ -331,6 +331,12 @@ func (m *Media) run(stop, done chan struct{}, reenumerate bool) {
 	}
 	changes := m.b.NameChanges()
 	for {
+		// A drop leaves the player set a guess, so reconcile from the bus
+		// before trusting the stream again. Overflowed swaps the flag off,
+		// so one drop cannot ask for more than one enumeration.
+		if m.b.Overflowed() {
+			m.enumerate()
+		}
 		select {
 		case <-stop:
 			return

@@ -33,16 +33,16 @@ func TestFilesystemDeclarationIsValidatedAndVersioned(t *testing.T) {
 		decl  any
 		err   string
 	}{
-		{"absent stays unconfined", 17, nil, ""},
-		{"declared at 18", 18, fs([]string{"~/.local/share/opencode/auth.json"}, []string{"~/.cache/Proton"}), ""},
-		{"an empty declaration asks for nothing", 18, map[string]any{}, ""},
-		{"absolute paths", 18, fs([]string{"/srv/media"}, nil), ""},
-		{"needs minor 18", 17, fs([]string{"~/.cache"}, nil), "requires protocol minor 18"},
-		{"relative path", 18, fs([]string{".cache"}, nil), `filesystem.read[0]`},
-		{"parent escape", 18, fs(nil, []string{"~/../etc"}), `filesystem.read_write[0]`},
-		{"unclean path", 18, fs([]string{"~/.cache//x/"}, nil), `filesystem.read[0]`},
-		{"the root", 18, fs([]string{"/"}, nil), `filesystem.read[0]`},
-		{"unknown field", 18, map[string]any{"execute": []string{"~/bin"}}, "execute"},
+		{"absent stays unconfined", 19, nil, ""},
+		{"declared at 20", 20, fs([]string{"~/.local/share/opencode/auth.json"}, []string{"~/.cache/Proton"}), ""},
+		{"an empty declaration asks for nothing", 20, map[string]any{}, ""},
+		{"absolute paths", 20, fs([]string{"/srv/media"}, nil), ""},
+		{"needs minor 20", 19, fs([]string{"~/.cache"}, nil), "requires protocol minor 20"},
+		{"relative path", 20, fs([]string{".cache"}, nil), `filesystem.read[0]`},
+		{"parent escape", 20, fs(nil, []string{"~/../etc"}), `filesystem.read_write[0]`},
+		{"unclean path", 20, fs([]string{"~/.cache//x/"}, nil), `filesystem.read[0]`},
+		{"the root", 20, fs([]string{"/"}, nil), `filesystem.read[0]`},
+		{"unknown field", 20, map[string]any{"execute": []string{"~/bin"}}, "execute"},
 	} {
 		_, err := ParseManifest(manifestWith(t, tc.minor, tc.decl))
 		switch {
@@ -52,14 +52,14 @@ func TestFilesystemDeclarationIsValidatedAndVersioned(t *testing.T) {
 			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.err)
 		}
 	}
-	m, err := ParseManifest(manifestWith(t, 18, fs([]string{"~/a"}, []string{"~/b"})))
+	m, err := ParseManifest(manifestWith(t, 20, fs([]string{"~/a"}, []string{"~/b"})))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.Filesystem == nil || !slices.Equal(m.Filesystem.Read, []string{"~/a"}) || !slices.Equal(m.Filesystem.ReadWrite, []string{"~/b"}) {
 		t.Fatalf("declaration = %+v", m.Filesystem)
 	}
-	if m, _ := ParseManifest(manifestWith(t, 17, nil)); m.Filesystem != nil {
+	if m, _ := ParseManifest(manifestWith(t, 19, nil)); m.Filesystem != nil {
 		t.Fatal("an absent declaration decoded as one that asks for nothing")
 	}
 }
@@ -132,7 +132,7 @@ func TestSocketsAndSignalsAreDeclaredWithTheFilesystem(t *testing.T) {
 		{"signals other", map[string]any{"signals": "all"}, `filesystem.signals`},
 		{"sockets count toward the bound", map[string]any{"read": slices.Repeat([]string{"~/a"}, 30), "sockets": []string{"session-bus", "system-bus", "compositor"}}, "more than the 32 allowed"},
 	} {
-		_, err := ParseManifest(manifestWith(t, 18, tc.decl))
+		_, err := ParseManifest(manifestWith(t, 20, tc.decl))
 		switch {
 		case tc.err == "" && err != nil:
 			t.Errorf("%s: %v", tc.name, err)
@@ -140,14 +140,14 @@ func TestSocketsAndSignalsAreDeclaredWithTheFilesystem(t *testing.T) {
 			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.err)
 		}
 	}
-	m, err := ParseManifest(manifestWith(t, 18, map[string]any{"sockets": []string{"session-bus", "/run/docker.sock"}, "signals": "any"}))
+	m, err := ParseManifest(manifestWith(t, 20, map[string]any{"sockets": []string{"session-bus", "/run/docker.sock"}, "signals": "any"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(m.Filesystem.Sockets, []string{"session-bus", "/run/docker.sock"}) || !m.Filesystem.SignalAny {
 		t.Fatalf("declaration = %+v", m.Filesystem)
 	}
-	if m, _ := ParseManifest(manifestWith(t, 18, map[string]any{})); m.Filesystem.SignalAny {
+	if m, _ := ParseManifest(manifestWith(t, 20, map[string]any{})); m.Filesystem.SignalAny {
 		t.Fatal("a declaration that names no signals may signal anything")
 	}
 }

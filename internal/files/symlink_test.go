@@ -203,9 +203,7 @@ func TestContainEntryRejectsParentOutsideJail(t *testing.T) {
 // forceRename swaps the rename seam for the duration of the test.
 func forceRename(t *testing.T, fn func(old, new string) error) {
 	t.Helper()
-	orig := renameFn
-	renameFn = fn
-	t.Cleanup(func() { renameFn = orig })
+	t.Cleanup(renameFn.Swap(fn))
 }
 
 func exdev(_ string, _ string) error {

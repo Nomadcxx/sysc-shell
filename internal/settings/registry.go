@@ -270,6 +270,15 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				func(c *config.Config, n int) { c.Theme.MotionSpeed = n }),
 		},
 		{
+			Path: "appearance.frame-cap", Label: "Maximum repaint rate", Section: "Appearance", Group: "Animation",
+			Describe: "Display keeps normal compositor pacing. Other values cap animation repaints in frames per second; effects may update more slowly.",
+			Kind:     KindEnum,
+			Options:  repaintCapNames, OptionLabels: []string{"Display", "60 fps", "90 fps", "120 fps"},
+			Get: func(c config.Config) string { return string(c.Theme.FrameCap) },
+			Set: setEnum("appearance.frame-cap", repaintCapNames,
+				func(c *config.Config, v string) { c.Theme.FrameCap = theme.RepaintCap(v) }),
+		},
+		{
 			Path: "appearance.bar-opacity", Present: PresentSlider, Unit: "%", Label: "Solid bar opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque the bar is when Style is Solid.",
 			Kind:     KindInt,
@@ -624,9 +633,8 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Path: "weather.unit", Label: "Unit", Section: "Weather", Group: "Forecast", Kind: KindEnum,
 			Describe: "Temperature scale.",
 			Options:  weatherUnits,
-			// Weather is written only once a place is set, so an unconfigured
-			// block reports the value the loader would supply rather than the
-			// empty zero value, which no option matches.
+			// A zero-value weather config reports the loader's default rather
+			// than the empty value, which no option matches.
 			Get: func(c config.Config) string {
 				if c.Weather.Unit == "" {
 					return defaultWeatherUnit
@@ -705,6 +713,46 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Options:  wallpaperHidden,
 			Get:      func(c config.Config) string { return c.Wallpaper.Hidden },
 			Set:      setEnum("wallpaper.hidden", wallpaperHidden, func(c *config.Config, v string) { c.Wallpaper.Hidden = v }),
+		},
+		{
+			Path: "wallpaper.cycle-enabled", Label: "Automatic cycling", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindBool,
+			Describe: "Advance assigned wallpapers on a global schedule.",
+			Get:      getBool(func(c config.Config) bool { return c.Wallpaper.CycleEnabled }),
+			Set:      setBool("wallpaper.cycle-enabled", func(c *config.Config, b bool) { c.Wallpaper.CycleEnabled = b }),
+		},
+		{
+			Path: "wallpaper.cycle-mode", Label: "Schedule", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindEnum,
+			Describe: "Change wallpapers after a fixed interval or once at a local time each day.",
+			Options:  wallpaperCycleModes, OptionLabels: []string{"Interval", "Daily time"},
+			Get: func(c config.Config) string { return c.Wallpaper.CycleMode },
+			Set: setEnum("wallpaper.cycle-mode", wallpaperCycleModes, func(c *config.Config, v string) { c.Wallpaper.CycleMode = v }),
+		},
+		{
+			Path: "wallpaper.cycle-interval", Label: "Interval", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindString,
+			Describe: "How often assigned wallpapers change, as a duration such as 30m (minimum 1m).",
+			Get:      func(c config.Config) string { return c.Wallpaper.CycleInterval.String() },
+			Set: write(func(c *config.Config, v string) error {
+				d, err := time.ParseDuration(strings.TrimSpace(v))
+				if err != nil || d < time.Minute {
+					return fmt.Errorf("settings: wallpaper.cycle-interval: %q is not a duration of at least 1m", v)
+				}
+				c.Wallpaper.CycleInterval = d
+				return nil
+			}),
+		},
+		{
+			Path: "wallpaper.cycle-time", Label: "Daily time", Section: "Wallpaper", Group: "Automatic cycling", Kind: KindString,
+			Describe: "Local time to change wallpapers each day, in HH:MM form.",
+			Get:      func(c config.Config) string { return c.Wallpaper.CycleTime },
+			Set: write(func(c *config.Config, v string) error {
+				value := strings.TrimSpace(v)
+				parsed, err := time.Parse("15:04", value)
+				if err != nil || parsed.Format("15:04") != value {
+					return fmt.Errorf("settings: wallpaper.cycle-time: %q is not a local time in HH:MM form", v)
+				}
+				c.Wallpaper.CycleTime = value
+				return nil
+			}),
 		},
 		{
 			Path: "wallpaper.pause-covered", Label: "When covered", Section: "Wallpaper", Group: "When covered or idle", Kind: KindBool,
@@ -815,7 +863,7 @@ func presetAxisPaths() []string {
 		"appearance.motion", "appearance.motion-speed", "appearance.bar-opacity",
 		"appearance.panel-opacity", "appearance.overlay-opacity", "appearance.blur-behind",
 		"appearance.blur-radius", "appearance.glass", "appearance.glass-intensity",
-		"appearance.elevation",
+		"appearance.elevation", "appearance.frame-cap",
 	}
 }
 
@@ -870,7 +918,7 @@ func SectionClusters() []Cluster {
 		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
 		// duplicates, and Plugins is not a panel.
 		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver", "Night Light"}},
-		{"Shell", []string{"Bar", "Widgets", "Tray"}},
+		{"Shell", []string{"Bar", "Widgets", "Tray", "Applications"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
 		{"System", []string{"Session", "Lock Screen", "Accessibility", "Sounds"}},
@@ -914,8 +962,11 @@ var (
 		string(theme.DensityMini), string(theme.DensityCompact), string(theme.DensityDefault),
 		string(theme.DensityComfortable), string(theme.DensitySpacious),
 	}
-	motionNames    = []string{string(theme.MotionStandard), string(theme.MotionExpressive)}
-	glassNames     = theme.GlassMaterialNames()
+	motionNames     = []string{string(theme.MotionStandard), string(theme.MotionExpressive)}
+	glassNames      = theme.GlassMaterialNames()
+	repaintCapNames = []string{
+		string(theme.RepaintDisplay), string(theme.Repaint60), string(theme.Repaint90), string(theme.Repaint120),
+	}
 	elevationNames = []string{
 		string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
 	}
@@ -923,6 +974,7 @@ var (
 	wallpaperScales     = []string{"fill", "stretch", "original", "panscan"}
 	wallpaperFPS        = []string{"30", "60", "100"}
 	wallpaperHidden     = []string{"none", "auto-pause", "auto-stop"}
+	wallpaperCycleModes = []string{"interval", "time"}
 	wallpaperOnBattery  = []string{"keep", "pause", "limit-10"}
 	wallpaperLowBattery = []string{"off", "10", "15", "20", "25", "30"}
 	osdPositions        = []string{
@@ -1061,7 +1113,7 @@ func seedEntry(cfg config.Config, custom, names []string) Entry {
 func (r *Registry) addTemplateEntries() {
 	for _, name := range []string{
 		"alacritty", "foot", "ghostty", "kitty", "wezterm", "niri",
-		"qt", "kcolorscheme", "helix",
+		"gtk3", "gtk4", "qt", "kcolorscheme", "helix",
 		"btop", "cava", "starship",
 	} {
 		// GH #7: only complete templates get a toggle; a stub would brick the
@@ -1069,8 +1121,15 @@ func (r *Registry) addTemplateEntries() {
 		if !theming.Complete(name) {
 			continue
 		}
+		label := name
+		switch name {
+		case "gtk3":
+			label = "GTK 3"
+		case "gtk4":
+			label = "GTK 4"
+		}
 		r.entries = append(r.entries, Entry{
-			Path: "theme.templates." + name, Label: name, Section: "Templates", Group: "Applications", Kind: KindBool,
+			Path: "theme.templates." + name, Label: label, Section: "Templates", Group: "Applications", Kind: KindBool,
 			Describe: "Write this application's colours when the theme changes.",
 			Get:      getBool(func(c config.Config) bool { return c.TemplateEnabled(name) }),
 			Set: setBool("theme.templates."+name, func(c *config.Config, b bool) {
@@ -1187,9 +1246,13 @@ func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entr
 			return ""
 		}
 	}
+	entries := make([]Entry, 0, 2)
+	if it.ID != "workspace" && it.ID != "group" && it.ID != "plugin" {
+		entries = append(entries, widgetScrollEntry(ref, it, group, read))
+	}
 	switch it.ID {
 	case "clock":
-		return []Entry{{
+		return append(entries, Entry{
 			Path: widgetEntryPath(ref, "format"), Label: "Format",
 			Section: "Widgets", Group: group,
 			Describe: "Go layout string, such as 15:04 for a 24-hour clock.",
@@ -1201,9 +1264,9 @@ func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entr
 					return nil
 				})(c, v)
 			},
-		}}
+		})
 	case "window-title":
-		return []Entry{{
+		return append(entries, Entry{
 			Path: widgetEntryPath(ref, "max-width"), Label: "Maximum width",
 			Section: "Widgets", Group: group,
 			Describe: "Longest title in logical pixels before it is shortened.",
@@ -1223,9 +1286,37 @@ func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entr
 					return nil
 				})(c, v)
 			},
-		}}
+		})
 	}
-	return nil
+	return entries
+}
+
+func widgetScrollEntry(ref config.ItemRef, it config.Item, group string, read func(func(config.Item) string) Getter) Entry {
+	path := widgetEntryPath(ref, "scroll")
+	options := []string{
+		string(config.ScrollActionNone),
+		string(config.ScrollActionVolume),
+		string(config.ScrollActionBrightness),
+	}
+	defaultValue := string((config.Item{ID: it.ID}).EffectiveScrollAction())
+	return Entry{
+		Path: path, Label: "Scroll action", Section: "Widgets", Group: group,
+		Describe: "Action to perform when the wheel is over this widget.",
+		Kind:     KindEnum, Options: options, OptionLabels: []string{"Disabled", "Volume", "Brightness"},
+		Get:     read(func(i config.Item) string { return string(i.EffectiveScrollAction()) }),
+		Default: func(config.Config) string { return defaultValue },
+		Set: func(c *config.Config, value string) error {
+			for _, option := range options {
+				if value == option {
+					return writeItem(ref, func(i *config.Item) error {
+						i.Scroll = config.BarScrollAction(value)
+						return nil
+					})(c, value)
+				}
+			}
+			return fmt.Errorf("settings: %s: %q is not a valid option", path, value)
+		},
+	}
 }
 
 // write adapts a field assignment into a Setter. Every setter carries the same

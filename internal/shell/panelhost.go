@@ -65,12 +65,18 @@ const (
 
 // Trigger is the placement hint for opening a panel on one output.
 type Trigger struct {
-	BarEdge    string
-	BarZone    int
-	Align      string
-	OutW, OutH int
-	AnchorX    int
-	AnchorY    int
+	BarEdge      string
+	BarZone      int
+	Align        string
+	OutW, OutH   int
+	AnchorX      int
+	AnchorY      int
+	AnchorAction string
+}
+
+type settingsWriteChange struct {
+	path  string
+	value string
 }
 
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
@@ -79,8 +85,15 @@ type PanelHost struct {
 	// writeTimer is the pending settings write, if a field or slider has been
 	// moved and has not settled yet.
 	writeTimer *time.Timer
-	id         PanelID
-	output     uint32
+	// writeTimerGeneration invalidates callbacks from replaced or flushed timers.
+	// Registry.mu guards it along with writeTimer.
+	writeTimerGeneration uint64
+	// settingsWriteRevision and settingsWriteChanges are guarded by
+	// Registry.settingsWriteMu.
+	settingsWriteRevision uint64
+	settingsWriteChanges  []settingsWriteChange
+	id                    PanelID
+	output                uint32
 	// filesOwner is the files session whose tree this host currently renders
 	// (PanelFiles only, set at spawn and on rebuild). Teardown cancels a
 	// pending pick only while the host belongs to the current session, so
@@ -192,6 +205,14 @@ type PanelHost struct {
 	// tree starts at the top, so without this a drag or a remove threw the
 	// user back to the first row and lost their place.
 	settingsScroll int
+	// settingsRailScroll retains the section list's offset across a rebuild.
+	settingsRailScroll int
+	// settingsRailRevealPending is a section that must be brought into view on
+	// the next layout, including when an IPC open arrives before configure.
+	settingsRailRevealPending string
+	// Search results have their own body and keep a separate scroll offset, so
+	// returning to the page restores the position the user left there.
+	settingsSearchScroll int
 	// settingsPage is the open section's page (settings redesign D1). Empty
 	// means the section's first.
 	settingsPage string
@@ -205,6 +226,9 @@ type PanelHost struct {
 	// settingsScrollTop makes the next rebuild open the body at the top: a
 	// page or section switch. rebuildPanel otherwise carries the old offset.
 	settingsScrollTop bool
+	// settingsSearchScrollTop resets results when the query changes without
+	// moving the retained page offset.
+	settingsSearchScrollTop bool
 	// settingsTreeScale is the scale the settings tree was built at, so a
 	// configure at another scale rebuilds it (its measured widths and the bar
 	// pictures depend on it).
@@ -256,7 +280,13 @@ type PanelHost struct {
 	mediaLease         *services.Lease
 	mediaSeekPending   *int64
 	mediaSeekTrack     string
+	layoutRequested    int
+	layoutRequestSeq   uint64
+	layoutUnavailable  bool
 	networkTab         string
+	manualEntry        bool
+	manualSSID         *ui.Field
+	manualSecurity     services.ManualSecurity
 	weatherView        string
 	pendingSSID        string
 	password           *ui.Field
@@ -277,8 +307,8 @@ type PanelHost struct {
 	launcherActions []launcher.Action
 	// launcherAttempt stamps the user's current launcher interaction; an
 	// activation completion applies only while its stamp is still current.
-	// launcherPendingAttempt is the stamp an in-flight activation captured,
-	// so a Notes capture superseded before its provider ran is dropped.
+	// launcherPendingAttempt is handed to the serialized service activation,
+	// so a provider can drop a request superseded before its callback runs.
 	launcherAttempt        uint64
 	launcherPendingAttempt uint64
 	// launcherAwaiting is set when a query is sent and cleared only by a
@@ -352,11 +382,12 @@ type PanelHost struct {
 	profilesOK     bool
 	profilePending bool
 
-	audioTab    string
-	mixerLease  *services.MixerLease
-	pendingVol  map[int]int
-	pendingMute map[int]bool
-	pendingAt   time.Time
+	audioTab        string
+	mixerLease      *services.MixerLease
+	pendingVol      map[int]int
+	pendingMute     map[int]bool
+	pendingAt       time.Time
+	audioRouteSinks []services.AudioNode
 
 	monitorPage      string
 	processFilter    string
@@ -379,14 +410,15 @@ type PanelHost struct {
 	clipboardThumbnails       map[string]*ui.Image
 	clipboardThumbnailRequest map[string]struct{}
 	// onbPage and onbScroll are the wizard's step and retained body scroll.
-	onbPage       onboardingPage
-	onbScroll     int
-	onbFontLocale string
-	onbFontState  onboardingFontState
-	onbMoving     bool
-	onbMoveMode   bool
-	onbGrabX      int
-	onbGrabY      int
+	onbPage             onboardingPage
+	onbScroll           int
+	onbPluginSelections map[string]bool
+	onbFontLocale       string
+	onbFontState        onboardingFontState
+	onbMoving           bool
+	onbMoveMode         bool
+	onbGrabX            int
+	onbGrabY            int
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -427,6 +459,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelFiles, nil
 	case "onboarding":
 		return PanelOnboarding, nil
+	case "keyboard-layout":
+		return PanelKeyboardLayout, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -569,6 +603,13 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 			return fmt.Errorf("unknown section %q", requested)
 		}
 		if h.section == section && settingsCurrentPage(h, section) == page {
+			h.settingsRailRevealPending = section
+			if h.logicalW > 0 && h.logicalH > 0 {
+				if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
+					return err
+				}
+			}
+			r.publishSurface(h.output, panelSurfaceID(id))
 			return nil
 		}
 		h.settingsScrollTop = true
@@ -1076,6 +1117,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelFiles, true
 	case "onboarding":
 		return PanelOnboarding, true
+	case "keyboard-layout":
+		return PanelKeyboardLayout, true
 	default:
 		return 0, false
 	}
@@ -1100,11 +1143,12 @@ func (r *Registry) openPanelHostsLocked(output uint32, except *PanelID) []*Panel
 	return hosts
 }
 
-func (r *Registry) restorePanelPositionsLocked(output uint32) {
+func (r *Registry) restorePanelPositionsLocked(output uint32) map[*PanelHost]bool {
 	hosts := r.openPanelHostsLocked(output, nil)
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].openOrder < hosts[j].openOrder })
 	placedHosts := make([]*PanelHost, 0, len(hosts))
 	placedRects := make([]ui.Rect, 0, len(hosts))
+	updated := make(map[*PanelHost]bool, len(hosts))
 	for _, h := range hosts {
 		anchor := h.rect
 		if h.place.sideAxis() {
@@ -1116,12 +1160,13 @@ func (r *Registry) restorePanelPositionsLocked(output uint32) {
 		rect, nextRects := panelArrangement(anchor, work, placedRects,
 			ui.Size{W: h.rect.W, H: h.rect.H}, h.place.sideAxis())
 		for i, placed := range placedHosts {
-			r.updatePanelPlacementLocked(placed, nextRects[i])
+			updated[placed] = r.updatePanelPlacementLocked(placed, nextRects[i]) || updated[placed]
 		}
-		r.updatePanelPlacementLocked(h, rect)
+		updated[h] = r.updatePanelPlacementLocked(h, rect) || updated[h]
 		placedHosts = append(placedHosts, h)
 		placedRects = append(nextRects, rect)
 	}
+	return updated
 }
 
 func panelWorkArea(base ui.Rect, place Placement, open []*PanelHost) ui.Rect {
@@ -1152,43 +1197,83 @@ func barGeometryChanged(a, b config.Bar) bool {
 	return (!a.Attached() || !b.Attached()) && a.Gap != b.Gap
 }
 
-func (r *Registry) repositionSettingsLocked(h *PanelHost) {
-	if h == nil {
+// repositionPanelsLocked adopts the current bar geometry while retaining each
+// open panel host. Caller holds Registry.mu.
+func (r *Registry) repositionPanelsLocked(output uint32) {
+	hosts := r.openPanelHostsLocked(output, nil)
+	sort.Slice(hosts, func(i, j int) bool { return hosts[i].openOrder < hosts[j].openOrder })
+	if len(hosts) == 0 {
 		return
 	}
+	bar := r.bars[output]
 	connector := ""
-	if bar := r.bars[h.output]; bar != nil {
+	if bar != nil {
 		connector = bar.connector()
 	}
-	trigger := r.triggerLocked(h.output, connector)
-	if trigger.OutW <= 0 {
-		trigger.OutW = h.place.Output.W
+	oldPlaces := make(map[*PanelHost]Placement, len(hosts))
+	oldRects := make(map[*PanelHost]ui.Rect, len(hosts))
+	for _, h := range hosts {
+		oldPlaces[h], oldRects[h] = h.place, h.rect
+		trigger := r.triggerLocked(output, connector)
+		if trigger.OutW <= 0 {
+			trigger.OutW = h.place.Output.W
+		}
+		if trigger.OutH <= 0 {
+			trigger.OutH = h.place.Output.H
+		}
+		trigger.Align = h.place.Align
+		trigger.AnchorAction = h.place.AnchorAction
+		if h.id == PanelSettings {
+			trigger.Align = "center"
+			trigger.AnchorX, trigger.AnchorY = 0, 0
+		} else if h.place.AnchorAction != "" {
+			bounds := ui.Rect{}
+			if bar != nil {
+				bounds = bar.actionBounds(h.place.AnchorAction)
+			}
+			if bounds.W > 0 && bounds.H > 0 {
+				trigger = triggerAtAction(bar, trigger, h.place.AnchorAction)
+			} else {
+				trigger.Align = "center"
+				trigger.AnchorX, trigger.AnchorY = 0, 0
+			}
+		} else if h.place.CenterY {
+			trigger.AnchorX, trigger.AnchorY = 0, 0
+		} else if h.place.sideAxis() {
+			trigger.AnchorY = h.preferredMain
+		} else {
+			trigger.AnchorX = h.preferredMain
+		}
+		size := h.place.Panel
+		switch h.id {
+		case PanelSettings:
+			size = settingsPanelSize(trigger.OutW, trigger.OutH)
+		case PanelAudio:
+			size = audioPanelSize(trigger.OutW, trigger.OutH)
+		case PanelOnboarding:
+			size = onboardingPanelSize(trigger.OutW, trigger.OutH)
+		}
+		place := r.panelPlacementLocked(h.id, output, trigger, size)
+		r.panelOverlapLocked(output, &place)
+		place.Panel.W, place.Panel.H = place.FittedSize()
+		h.place, h.rect = place, place.Rect()
+		h.preferredMain = place.mainStart(h.rect)
 	}
-	if trigger.OutH <= 0 {
-		trigger.OutH = h.place.Output.H
+	updated := r.restorePanelPositionsLocked(output)
+	for _, h := range hosts {
+		if (oldPlaces[h] != h.place || oldRects[h] != h.rect) && !updated[h] {
+			r.sendPanelPlacementLocked(h)
+		}
 	}
-	trigger.Align = "center"
-	place := r.panelPlacementLocked(PanelSettings, h.output, trigger,
-		settingsPanelSize(trigger.OutW, trigger.OutH))
-	place.Panel.W, place.Panel.H = place.FittedSize()
-	rect := place.Rect()
-	if place == h.place && rect == h.rect {
-		return
-	}
-	h.place, h.rect = place, rect
-	h.preferredMain = place.mainStart(rect)
-	r.sendPanelPlacementLocked(h)
 }
 
-func (r *Registry) refreshSettingsPlacement(global uint32, bar *Bar) {
+func (r *Registry) refreshPanelPlacements(global uint32, bar *Bar) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.bars[global] != bar {
 		return
 	}
-	if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
-		r.repositionSettingsLocked(h)
-	}
+	r.repositionPanelsLocked(global)
 }
 
 func panelWorkAreaRects(base ui.Rect, place Placement, openRects []ui.Rect, safeEdge int) ui.Rect {
@@ -1217,9 +1302,9 @@ func panelWorkAreaRects(base ui.Rect, place Placement, openRects []ui.Rect, safe
 
 // updatePanelPlacementLocked moves an existing panel without replacing its
 // Wayland surface, which keeps its focus and event callbacks attached.
-func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
+func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) bool {
 	if h == nil || h.rect == rect {
-		return
+		return false
 	}
 	h.rect = rect
 	center := rect.X + rect.W/2
@@ -1228,6 +1313,7 @@ func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
 	}
 	h.place.setMainAnchor(center)
 	r.sendPanelPlacementLocked(h)
+	return true
 }
 
 func (r *Registry) sendPanelPlacementLocked(h *PanelHost) {
@@ -1323,6 +1409,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		fontFamily:      r.panelFontFamily(output),
 		fontCatalog:     &r.fontCatalog,
 		wallpaperCharge: -1,
+		layoutRequested: -1,
 	}
 	if id == PanelFiles {
 		h.filesOwner = r.files
@@ -1353,6 +1440,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		if r.onboardingResume {
 			h.onbPage = r.onboardingPage
 			h.draft = r.onboardingDraft.Clone()
+			h.onbPluginSelections = cloneOnboardingPluginSelections(r.onboardingPluginSelections)
 			h.set = r.settingsForLocked(h.draft)
 			h.errLabel = r.onboardingError
 		}
@@ -1407,9 +1495,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.clipboardThumbnails = make(map[string]*ui.Image)
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
-	if id == PanelOnboarding {
-		// Its copy is wrapped while the tree is built, so load the real shaper
-		// first; Configure runs only after this initial tree has been created.
+	if id == PanelOnboarding || id == PanelLauncher {
+		// These trees derive geometry from text before Configure runs: onboarding
+		// wraps its copy, and the launcher sizes its result viewport. Use real
+		// metrics before either initial tree is built.
 		if err := h.ensureText(); err != nil {
 			return err
 		}
@@ -1463,6 +1552,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		// that happens to be first in the tree.
 		h.focusByName(onbMainLabelFor(h, h.onbPage))
 	}
+	if id == PanelKeyboardLayout {
+		h.focusKeyboardLayout(r.niriSnapshot.Layouts)
+	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
 	baseRect := h.place.panelRect()
@@ -1510,7 +1602,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	if id == PanelNetwork && r.network != nil && r.network.Available() && !r.network.CachedState().ReadOnly {
 		network := r.network
-		r.scheduleControl(h, network.Scan)
+		r.scheduleControl(h, func() error {
+			_ = network.RefreshVPNProfiles()
+			return network.Scan()
+		})
 	}
 	if id == PanelBluetooth {
 		r.startBluetoothDiscoveryLocked(h)
@@ -1539,6 +1634,7 @@ func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger,
 		BarEdge: trig.BarEdge, Output: ui.Rect{W: outW, H: outH}, BarZone: trig.BarZone,
 		Gap: gap, Padding: r.cfg.Panels.Padding, Panel: size,
 		Align: trig.Align, AnchorX: trig.AnchorX, AnchorY: trig.AnchorY,
+		AnchorAction: trig.AnchorAction,
 	}
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
@@ -2466,8 +2562,39 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	} else {
 		err = ui.LayoutColumn(h.root, box, h.measureText())
 	}
-	if err != nil || h.id != PanelPluginStore {
+	if err != nil {
 		return err
+	}
+	if h.id == PanelSettings {
+		if h.settingsRailRevealPending != "" {
+			rail := keyedScroll(h.root, settingsRailKey)
+			var section *ui.Node
+			for _, candidate := range ui.Focusables(rail) {
+				if candidate.Action == "section:"+h.settingsRailRevealPending {
+					section = candidate
+					break
+				}
+			}
+			if rail != nil && section != nil {
+				if scrollNodeIntoView(rail, section) {
+					if h.root != nil && h.root.Kind == ui.KindRow {
+						err = ui.Layout(h.root, box, h.measureText())
+					} else {
+						err = ui.LayoutColumn(h.root, box, h.measureText())
+					}
+					if err != nil {
+						return err
+					}
+				}
+				h.settingsRailScroll = rail.ScrollOffset
+				h.settingsRailRevealPending = ""
+			}
+		} else if offset, ok := settingsScrollOffsetFor(h.root, settingsRailKey); ok {
+			h.settingsRailScroll = offset
+		}
+	}
+	if h.id != PanelPluginStore {
+		return nil
 	}
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
@@ -2793,17 +2920,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				ui.SliderAt(n, h.hoverX)
 				h.sliderDrag = nil
 				h.pressed = ""
-				if strings.HasPrefix(n.Action, "plugin-set:") {
-					return r.handlePluginManager(h, n)
-				}
-				if strings.HasPrefix(n.Action, "audio-") {
-					return h.applyAudioControl(r, n)
-				}
-				if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
-					return true
-				}
-				h.applySetting(r, n)
-				return true
+				return h.commitSlider(r, n)
 			}
 			if h.scrollDrag != nil {
 				h.scrollDrag = nil
@@ -3450,6 +3567,10 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 		r.rebuildPanel(h)
 		return true
 	}
+	if n.Action == "network-manual-ssid" {
+		r.rebuildPanel(h)
+		return true
+	}
 	if h.id == PanelFiles && n.Action == files.ActionRename {
 		if r.files != nil {
 			r.files.renameDraft = f.Text
@@ -3459,6 +3580,7 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 	if n.Name == "Search" {
 		if h.id == PanelSettings {
 			h.invalidateSettingsBrowse()
+			h.settingsSearchScrollTop = strings.TrimSpace(f.Text) != ""
 		}
 		h.query = f.Text
 		if h.id == PanelPluginStore {
@@ -3515,6 +3637,12 @@ func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
 		}
 		h.password.SyncFrom(n)
 		f = h.password
+	} else if h.id == PanelNetwork && n.Action == "network-manual-ssid" {
+		if h.manualSSID == nil {
+			h.manualSSID = ui.NewField("")
+		}
+		h.manualSSID.SyncFrom(n)
+		f = h.manualSSID
 	} else if n.Name == "Search" {
 		if h.search == nil {
 			h.search = ui.NewField("")
@@ -3665,11 +3793,18 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	if !ui.ControlKey(n, key) {
 		return false
 	}
+	return h.commitSlider(r, n)
+}
+
+func (h *PanelHost) commitSlider(r *Registry, n *ui.Node) bool {
 	if strings.HasPrefix(n.Action, "plugin-set:") {
 		return r.handlePluginManager(h, n)
 	}
 	if strings.HasPrefix(n.Action, "audio-") {
 		return h.applyAudioControl(r, n)
+	}
+	if _, ok := parsePluginAction(n.Action); ok {
+		return r.deliverPluginSlider(n.Action, n.Value)
 	}
 	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
 		return true
@@ -3682,6 +3817,12 @@ func (h *PanelHost) activate(r *Registry) bool {
 	n := h.focused()
 	if n == nil || n.State.Has(ui.StateDisabled) {
 		return false
+	}
+	if h.id == PanelAudio && strings.HasPrefix(n.Action, "audio-route:") {
+		return h.activateAudioRoute(r, n)
+	}
+	if h.id == PanelKeyboardLayout {
+		return h.activateKeyboardLayout(r, n)
 	}
 	if h.id == PanelClipboard {
 		return h.activateClipboard(r, n)
@@ -3750,6 +3891,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if r.handlePalettes(h, n) {
 		return true
+	}
+	if h.id == PanelSettings && strings.HasPrefix(n.Action, "applications:") {
+		return h.applicationSettingsAction(r, n)
 	}
 	if strings.HasPrefix(n.Action, "bluetooth-") && bluetoothBodyVisible(h) {
 		return h.activateBluetooth(r, n)
@@ -3930,8 +4074,8 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 		case rest == "close":
 			r.closePanelLocked(h.id)
 		case rest == "dnd":
-			_, on := r.notify.dndState(r.clockNow())
-			r.notify.setDND(!on)
+			_, on := r.notify.dndState(time.Now())
+			r.setDND(!on)
 			if r.toasts != nil {
 				r.toasts.recompute()
 			}
@@ -3957,12 +4101,12 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 			}
 		case strings.HasPrefix(rest, "preset:"):
 			id := strings.TrimPrefix(rest, "preset:")
-			now := r.clockNow()
+			now := time.Now()
 			if d, untilOff, ok := dndPresetDuration(id, now); ok {
 				if untilOff {
-					r.notify.setDND(true)
+					r.setDND(true)
 				} else {
-					r.notify.setDNDPreset(now, d)
+					r.setDNDPresetAt(now, d)
 				}
 				if r.toasts != nil {
 					r.toasts.recompute()
@@ -4032,6 +4176,9 @@ func (r *Registry) clearVisible(h *PanelHost) {
 }
 
 func (h *PanelHost) afterFocusChange(r *Registry) {
+	if h.id == PanelSettings {
+		h.revealFocusedSettingsSection()
+	}
 	if h.id == PanelMonitor {
 		r.rebuildPanel(h)
 		if revealFocusedProcess(h) && h.logicalW > 0 {
@@ -4045,6 +4192,42 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 	if h.id == PanelFiles {
 		h.revealFocusedRow()
 	}
+}
+
+func (h *PanelHost) revealFocusedSettingsSection() {
+	n := h.focused()
+	if n == nil || !strings.HasPrefix(n.Action, "section:") {
+		return
+	}
+	rail := keyedScroll(h.root, settingsRailKey)
+	if !scrollNodeIntoView(rail, n) {
+		return
+	}
+	h.settingsRailScroll = rail.ScrollOffset
+	if h.logicalW > 0 && h.logicalH > 0 {
+		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+	}
+}
+
+func scrollNodeIntoView(view, node *ui.Node) bool {
+	if view == nil || node == nil || view.Bounds.H <= 0 || node.Bounds.H <= 0 {
+		return false
+	}
+	previous, offset := view.ScrollOffset, view.ScrollOffset
+	switch {
+	case node.Bounds.Y < view.Bounds.Y:
+		offset -= view.Bounds.Y - node.Bounds.Y
+	case node.Bounds.Y+node.Bounds.H > view.Bounds.Y+view.Bounds.H:
+		offset += node.Bounds.Y + node.Bounds.H - view.Bounds.Y - view.Bounds.H
+	default:
+		return false
+	}
+	if offset == view.ScrollOffset {
+		return false
+	}
+	view.ScrollOffset = offset
+	ui.ScrollBy(view, 0)
+	return view.ScrollOffset != previous
 }
 
 // focusFilesEntry moves roving focus onto a files list row and scrolls it into
@@ -4067,25 +4250,13 @@ func (h *PanelHost) revealFocusedRow() {
 		return
 	}
 	n := h.focused()
-	if n == nil || n.Bounds.H <= 0 {
+	if n == nil {
 		return
 	}
 	s := scrollBody(h.root)
-	if s == nil || s.Bounds.H <= 0 {
-		return
+	if scrollNodeIntoView(s, n) {
+		h.scrollTo(s.ScrollOffset)
 	}
-	top, bottom := n.Bounds.Y, n.Bounds.Y+n.Bounds.H
-	viewTop, viewBottom := s.Bounds.Y, s.Bounds.Y+s.Bounds.H
-	off := s.ScrollOffset
-	switch {
-	case top < viewTop:
-		off -= viewTop - top
-	case bottom > viewBottom:
-		off += bottom - viewBottom
-	default:
-		return
-	}
-	h.scrollTo(off)
 }
 
 // queueFilesPanelImages fills the files panel's image nodes from the plugin
@@ -4100,9 +4271,20 @@ func (r *Registry) queueFilesPanelImages(h *PanelHost) {
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
 	if h.id == PanelSettings {
-		h.settingsScroll = settingsScrollOffset(h.root)
+		if offset, ok := settingsScrollOffsetFor(h.root, settingsRailKey); ok {
+			h.settingsRailScroll = offset
+		}
+		if offset, ok := settingsScrollOffsetFor(h.root, settingsBodyKey); ok {
+			h.settingsScroll = offset
+		}
+		if offset, ok := settingsScrollOffsetFor(h.root, settingsSearchBodyKey); ok {
+			h.settingsSearchScroll = offset
+		}
 		if h.settingsScrollTop {
 			h.settingsScroll, h.settingsScrollTop = 0, false
+		}
+		if h.settingsSearchScrollTop {
+			h.settingsSearchScroll, h.settingsSearchScrollTop = 0, false
 		}
 	}
 	if h.id == PanelOnboarding {
@@ -4111,11 +4293,10 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	focusedKey := ""
 	focusedName := ""
 	focusedKind := ui.Kind(0)
-	// Plugin panels rebuild on every view the plugin pushes. A restored
-	// roving index would then land on whatever node moved into the old
-	// position — focus must follow the node's identity, or keystrokes the
-	// user aims at a settings field get eaten as panel shortcuts.
-	if h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
+	// Settings rebuilds after config adoption, and plugin panels rebuild on
+	// pushed views. Restoring only the roving index can move focus to another
+	// control when the tree changes, so carry the focused node's identity.
+	if h.id == PanelSettings || h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
 		if focused := h.focused(); focused != nil {
 			focusedKey = focused.StableKey()
 			focusedName = focused.Name
@@ -4162,11 +4343,26 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 			}
 		}
 	}
+	if h.id == PanelSettings && !restoredFocus && focusedKey == "" && focusedName != "" {
+		for i, n := range h.focus {
+			if n != nil && n.Kind == focusedKind && n.Name == focusedName {
+				h.roving.Set(i)
+				restoredFocus = true
+				break
+			}
+		}
+	}
+	if h.id == PanelSettings && !restoredFocus {
+		h.roving.Set(0)
+	}
 	if h.id == PanelPluginStore && !restoredFocus {
 		h.focusPluginStoreSelection()
 	}
 	if h.id == PanelNotifications {
 		r.syncNotificationsSize(h)
+	}
+	if h.id == PanelKeyboardLayout {
+		h.focusKeyboardLayout(r.niriSnapshot.Layouts)
 	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
@@ -4270,6 +4466,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return r.filesTree(h)
 	case PanelOnboarding:
 		return onboardingTree(r, h)
+	case PanelKeyboardLayout:
+		return keyboardLayoutTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -4327,6 +4525,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 800, H: 650}
 	case PanelOnboarding:
 		return onboardingPanelSize(1920, 1080)
+	case PanelKeyboardLayout:
+		return ui.Rect{W: 360, H: 320}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -4497,7 +4697,7 @@ func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 	// writing per keystroke rewrote the whole document each time.
 	switch e.Kind {
 	case settings.KindInt, settings.KindString:
-		h.deferDraft(r)
+		h.deferDraft(r, e.Path, v)
 	default:
 		h.persistDraft(r)
 	}
@@ -4510,34 +4710,67 @@ const settingsWriteDelay = 400 * time.Millisecond
 
 // deferDraft arms the write, replacing any write already armed, so a run of
 // edits collapses into the one that follows the last of them.
-func (h *PanelHost) deferDraft(r *Registry) {
+func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 	if h.writeTimer != nil {
 		h.writeTimer.Stop()
+	}
+	h.writeTimerGeneration++
+	generation := h.writeTimerGeneration
+	var revision uint64
+	if h.id == PanelSettings {
+		r.settingsWriteMu.Lock()
+		h.settingsWriteRevision++
+		revision = h.settingsWriteRevision
+		h.settingsWriteChanges = appendSettingsWriteChange(h.settingsWriteChanges, path, value)
+		r.settingsWriteMu.Unlock()
 	}
 	delay := settingsWriteDelay
 	if r != nil && r.writeDelay > 0 {
 		delay = r.writeDelay
 	}
 	h.writeTimer = time.AfterFunc(delay, func() {
-		r.mu.Lock()
-		if r.panelHosts[h.id] != h {
-			// The host was replaced while the edit was settling; its draft is
-			// no longer the one on screen.
-			r.mu.Unlock()
-			return
-		}
-		h.writeTimer = nil
-		if h.id == PanelTerminalArt {
-			h.persistDraft(r)
-			r.mu.Unlock()
-			return
-		}
-		cfg := h.draft
-		r.mu.Unlock()
-		// scheduleControl runs the write off the Wayland owner, re-takes the
-		// lock, discards the result if the host has gone, and rebuilds.
-		r.scheduleControl(h, func() error { return r.writeConfig(cfg) })
+		h.writeTimerExpired(r, generation, revision)
 	})
+}
+
+func (h *PanelHost) writeTimerExpired(r *Registry, generation, revision uint64) {
+	r.mu.Lock()
+	if r.panelHosts[h.id] != h || h.writeTimer == nil || h.writeTimerGeneration != generation {
+		// The host was replaced while the edit was settling; its draft is
+		// no longer the one on screen, or a newer timer replaced this one.
+		r.mu.Unlock()
+		return
+	}
+	h.writeTimer = nil
+	if h.id == PanelTerminalArt {
+		h.persistDraft(r)
+		r.mu.Unlock()
+		return
+	}
+	r.settingsWriteMu.Lock()
+	if h.settingsWriteRevision != revision {
+		r.settingsWriteMu.Unlock()
+		r.mu.Unlock()
+		return
+	}
+	changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
+	r.settingsWriteMu.Unlock()
+	r.mu.Unlock()
+	// scheduleControlResult runs the write off the Wayland owner, re-takes the
+	// lock, discards the result if the host has gone, and rebuilds.
+	r.scheduleControlResult(h, func() (bool, error) {
+		return r.writeDebouncedSettingsChanges(h, changes, revision)
+	})
+}
+
+func appendSettingsWriteChange(changes []settingsWriteChange, path, value string) []settingsWriteChange {
+	for i, change := range changes {
+		if change.path == path {
+			changes = append(changes[:i], changes[i+1:]...)
+			break
+		}
+	}
+	return append(changes, settingsWriteChange{path: path, value: value})
 }
 
 // flushDraft writes an edit that has not settled yet. Closing the panel is
@@ -4546,13 +4779,41 @@ func (h *PanelHost) flushDraft(r *Registry) {
 	if h.writeTimer == nil {
 		return
 	}
+	h.writeTimerGeneration++
 	h.writeTimer.Stop()
 	h.writeTimer = nil
+	if h.id == PanelSettings {
+		r.settingsWriteMu.Lock()
+		revision := h.settingsWriteRevision
+		changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
+		r.settingsWriteMu.Unlock()
+		if len(changes) == 0 {
+			return
+		}
+		apply, err := r.writeSettingsChanges(h, changes, revision, r.configPath, r.cfg.Clone(),
+			append([]theme.PaletteInfo(nil), r.palettes...))
+		if apply && err != nil {
+			h.errLabel = err.Error()
+		} else if apply {
+			h.errLabel = ""
+		}
+		return
+	}
 	h.persistDraft(r)
 }
 
 func (h *PanelHost) applyMenu(r *Registry, path string) {
 	if path == "" {
+		return
+	}
+	if strings.HasPrefix(path, "audio-route:") {
+		h.applyAudioRouteMenu(r, path)
+		return
+	}
+	if h.id == PanelControlCenter && path == caffeineMenuAction {
+		if m := h.menus[path]; m != nil {
+			r.setCaffeinePreset(h, m.Value())
+		}
 		return
 	}
 	if path == artPaletteMenu && h.id == PanelTerminalArt {
@@ -4679,6 +4940,8 @@ func (h *PanelHost) retheme(next Theme) {
 	if h.anim == nil {
 		return
 	}
+	// A speed or reduced-motion change reaches a running surface animation.
+	h.anim.Configure(next.Motion, next.Motion.Reduced)
 	key := panelSurfaceID(h.id)
 	// Restart from zero so the blend runs the whole way from what is rendering.
 	h.anim.Reset(key, animTheme)
@@ -4752,13 +5015,7 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		defer r.mu.Unlock()
 		return h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)
 	}, func() {
-		r.mu.Lock()
-		if r.panelHosts[h.id] == h && mediaBodyVisible(h) {
-			r.rebuildPanel(h)
-		}
-		out := h.output
-		r.mu.Unlock()
-		r.publishSurface(out, panelSurfaceID(h.id))
+		r.publishPanelFrame(h)
 	}, frameCap, func() (time.Duration, bool) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -4767,6 +5024,28 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		}
 		return h.anim.SpriteRest()
 	})
+}
+
+// publishPanelFrame publishes a frame for the panel host and rebuilds it when
+// its media body changed.
+//
+// A tick that was already in flight when the panel closed runs this after the
+// close removed the host, and the surface it would paint is then gone:
+// publishing for it asks the compositor to redraw a surface that no longer
+// exists. It also made the ticker look like it was still running after the
+// close, because the frame arrived after the test had drained.
+func (r *Registry) publishPanelFrame(h *PanelHost) {
+	r.mu.Lock()
+	if r.panelHosts[h.id] != h {
+		r.mu.Unlock()
+		return
+	}
+	if mediaBodyVisible(h) {
+		r.rebuildPanel(h)
+	}
+	out := h.output
+	r.mu.Unlock()
+	r.publishSurface(out, panelSurfaceID(h.id))
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {
@@ -4802,6 +5081,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	h.drag.Cancel()
 	if id == PanelNetwork {
 		h.clearNetworkSecret()
+		h.clearManualEntry()
 	}
 	if id == PanelMonitor {
 		// Owners are resolved for the panel's lifetime (D10).
@@ -4879,11 +5159,13 @@ func (r *Registry) sendAuxWait(ctx context.Context, req wayland.AuxRequest) erro
 	case <-r.closed:
 		return errors.New("shell is closing")
 	case <-ctx.Done():
-		// Preserve request order: if open was already dequeued, this close
-		// retires it after the owner finishes handling the open.
-		select {
-		case r.aux <- wayland.AuxRequest{Output: req.Output, ID: req.ID}:
-		case <-r.closed:
+		if req.Open != nil {
+			// Preserve request order: if open was already dequeued, this close
+			// retires it after the owner finishes handling the open.
+			select {
+			case r.aux <- wayland.AuxRequest{Output: req.Output, ID: req.ID}:
+			case <-r.closed:
+			}
 		}
 		return ctx.Err()
 	}
@@ -4900,6 +5182,10 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 }
 
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
+	r.runSessionActionAtAttempt(h, action, h.launcherAttempt)
+}
+
+func (r *Registry) runSessionActionAtAttempt(h *PanelHost, action string, launcherAttempt uint64) {
 	argv := sessionArgv(action, r.cfg.Session.Locker)
 	run := r.runArgv
 	if action == "session-lock" {
@@ -4918,6 +5204,9 @@ func (r *Registry) runSessionAction(h *PanelHost, action string) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if r.panelHosts[h.id] != h {
+			return
+		}
+		if h.id == PanelLauncher && h.launcherAttempt != launcherAttempt {
 			return
 		}
 		if err != nil {

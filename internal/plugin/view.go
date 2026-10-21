@@ -311,6 +311,8 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Tone = ui.ToneSubtle
 	case v1.ToneAccent:
 		out.Tone = ui.ToneAccent
+	case v1.ToneWarning:
+		out.Tone = ui.ToneActivity
 	}
 
 	if n.Fill != "" {
@@ -393,6 +395,16 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Kind = ui.KindMeter
 		out.Value = n.Value
 		out.Key, out.Animate = n.Key, n.Animate
+	case v1.KindSlider:
+		out.Kind = ui.KindSlider
+		out.Value, out.Min, out.Max, out.Step = n.Value, n.Min, n.Max, n.Step
+		out.Action = n.ID
+		out.Focusable = true
+		if n.Disabled {
+			out.State |= ui.StateDisabled
+			out.AriaDisabled = true
+			out.Action = ""
+		}
 	case v1.KindSpinner:
 		out.Kind = ui.KindSpinner
 		out.Key = n.Key

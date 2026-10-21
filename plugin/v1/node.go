@@ -127,9 +127,7 @@ const (
 	// affordance: a bar strip has no room for punctuation.
 	KindSeparator NodeKind = "separator"
 	// KindImage displays a host-decoded raster from an absolute filesystem
-	// path. It is a panel affordance: bar slots are fixed-width and rebuilt
-	// per frame, so a decode job per bar revision is waste no consumer
-	// needs. The host owns the decode; the plugin names a path and gains
+	// path. The host owns the decode; the plugin names a path and gains
 	// display, not read, power.
 	KindImage NodeKind = "image"
 	// KindSpinner is an indeterminate activity indicator, for work whose
@@ -141,6 +139,8 @@ const (
 	KindSpinner NodeKind = "spinner"
 	// KindSegmented exposes the shell's exclusive segmented control to plugins.
 	KindSegmented NodeKind = "segmented"
+	// KindSlider exposes the shell's accessible stepped slider to plugins.
+	KindSlider NodeKind = "slider"
 	// KindScheduleGrid arranges bounded event occurrences in local-time columns.
 	KindScheduleGrid NodeKind = "schedule_grid"
 )
@@ -177,6 +177,9 @@ const (
 	// ToneAccent paints emphasized text -- a running countdown, the active
 	// player's name -- in the theme accent at full contrast.
 	ToneAccent Tone = "accent"
+	// ToneWarning marks a pending or cautionary state without reporting a
+	// failure. The host maps it to its noncritical activity role.
+	ToneWarning Tone = "warning"
 )
 
 // ViewKind names where a tree is going to be shown. The same vocabulary is not
@@ -202,7 +205,8 @@ const (
 // arrived in minor four. Path, the image box fields, Background, Stroke, and
 // StrokeFill, and the image kind arrived in minor five. Animate arrived in
 // minor six. Minor seven widened Absent to meters. IconSize, Frames, and
-// CycleMS arrived in minor eight. A minor-one host ignores the new fields,
+// CycleMS arrived in minor eight. Sliders and compact bar images arrived in
+// minor seventeen. A minor-one host ignores the new fields,
 // so a plugin that sets them still speaks to an older shell,
 // just without the presentation.
 type Node struct {
@@ -236,8 +240,12 @@ type Node struct {
 	// arrived with protocol minor eight.
 	Frames  []string `json:"frames,omitempty"`
 	CycleMS int      `json:"cycle_ms,omitempty"`
-	// Value is a progress fraction from zero through one.
+	// Value is a progress fraction, gauge reading, or slider position.
 	Value float64 `json:"value,omitempty"`
+	// Min, Max, and Step bound a slider's value and pointer or keyboard motion.
+	Min  float64 `json:"min,omitempty"`
+	Max  float64 `json:"max,omitempty"`
+	Step float64 `json:"step,omitempty"`
 	// Animate asks the host to glide this node's Value to each new revision's
 	// target instead of jumping. Progress and gauge only, and it requires a
 	// Key so the host can keep one transition attached to one element across
@@ -364,18 +372,19 @@ func (k NodeKind) container() bool {
 // interactive reports whether a kind produces input and therefore needs an
 // address and an accessible identity.
 func (k NodeKind) interactive() bool {
-	return k == KindButton || k == KindTextInput || k == KindDragSource
+	return k == KindButton || k == KindTextInput || k == KindDragSource || k == KindSlider
 }
 
 // keyboard reports whether a kind needs keyboard focus to be usable. Bar views
 // have no keyboard focus, so placing one there would render a control the user
 // could never reach.
-func (k NodeKind) keyboard() bool { return k == KindTextInput }
+func (k NodeKind) keyboard() bool { return k == KindTextInput || k == KindSlider }
 
 // allowedEvents is the exact event set each kind may declare.
 var allowedEvents = map[NodeKind]map[EventKind]bool{
 	KindButton:     {EventActivate: true, EventPointer: true},
 	KindTextInput:  {EventChange: true, EventSubmit: true},
+	KindSlider:     {EventChange: true},
 	KindDragSource: {EventPointer: true, EventDrop: true},
 	KindDropZone:   {EventDrop: true},
 	KindList:       {EventScroll: true},
@@ -386,12 +395,14 @@ var knownKinds = map[NodeKind]bool{
 	KindProgress: true, KindButton: true, KindTextInput: true,
 	KindList: true, KindDragSource: true, KindDropZone: true,
 	KindGauge: true, KindGraph: true, KindSeparator: true, KindImage: true,
-	KindSegmented: true, KindScheduleGrid: true, KindSpinner: true,
+	KindSegmented: true, KindSlider: true, KindScheduleGrid: true, KindSpinner: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true, ViewFloating: true}
 
-var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true, ToneSubtle: true, ToneAccent: true}
+var knownTones = map[Tone]bool{
+	ToneNormal: true, ToneError: true, ToneSubtle: true, ToneAccent: true, ToneWarning: true,
+}
 
 var knownFills = map[string]bool{
 	"surface": true, "accent": true, "container": true, "error": true,
@@ -497,6 +508,9 @@ func (v *validator) nodeIn(n *Node, path string, depth int, segmentChild bool) e
 		return err
 	}
 	if err := v.minorNine(n, path); err != nil {
+		return err
+	}
+	if err := v.minorSeventeen(n, path); err != nil {
 		return err
 	}
 	if n.Selected && (!segmentChild || n.Kind != KindButton) {
@@ -636,12 +650,45 @@ func (v *validator) vocabulary(n *Node, path string) error {
 		if len(n.ValueText) > MaxTextBytes {
 			return fmt.Errorf("%s: value text is %d bytes, more than the %d allowed", path, len(n.ValueText), MaxTextBytes)
 		}
+	case KindSlider:
+		for name, value := range map[string]float64{"min": n.Min, "max": n.Max, "step": n.Step, "value": n.Value} {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("%s: slider %s is not finite", path, name)
+			}
+		}
+		if n.Min >= n.Max {
+			return fmt.Errorf("%s: slider max must be greater than min", path)
+		}
+		if n.Step <= 0 {
+			return fmt.Errorf("%s: slider step must be positive", path)
+		}
+		rangeSize := n.Max - n.Min
+		if math.IsInf(rangeSize, 0) {
+			return fmt.Errorf("%s: slider range overflows", path)
+		}
+		steps := rangeSize / n.Step
+		// Node values are float64; beyond 2^53, adjacent integer step indexes
+		// are not all representable.
+		if math.IsInf(steps, 0) || steps > 1<<53 {
+			return fmt.Errorf("%s: slider has too many steps for float64 precision", path)
+		}
+		minResolution := math.Nextafter(n.Min, math.Inf(1)) - n.Min
+		maxResolution := n.Max - math.Nextafter(n.Max, math.Inf(-1))
+		if n.Step < minResolution || n.Step < maxResolution {
+			return fmt.Errorf("%s: slider step is below float64 resolution in its range", path)
+		}
+		if n.Value < n.Min || n.Value > n.Max {
+			return fmt.Errorf("%s: slider value %v is outside [%v,%v]", path, n.Value, n.Min, n.Max)
+		}
 	}
 	if v.view == ViewTooltip && n.Kind.interactive() {
 		return fmt.Errorf("%s: a tooltip is read-only and cannot hold a %s", path, n.Kind)
 	}
 	if n.Kind == KindSegmented && v.view != ViewPanel {
 		return fmt.Errorf("%s: a segmented control is only valid in a panel", path)
+	}
+	if n.Kind == KindSlider && v.view != ViewPanel && v.view != ViewFloating {
+		return fmt.Errorf("%s: a slider is only valid in a panel or floating view", path)
 	}
 	if v.view == ViewBar && n.Kind.keyboard() {
 		return fmt.Errorf("%s: a bar view has no keyboard focus and cannot hold a %s", path, n.Kind)
@@ -761,7 +808,7 @@ func (v *validator) minorFour(n *Node, path string) error {
 // the host already ships, so the checks stay vocabulary-level.
 func (v *validator) minorFive(n *Node, path string) error {
 	if n.Kind == KindImage {
-		if v.view != ViewPanel && v.view != ViewFloating {
+		if v.view != ViewPanel && v.view != ViewFloating && v.view != ViewBar {
 			return fmt.Errorf("%s: a %s view cannot hold an image", path, v.view)
 		}
 		if n.Path == "" {
@@ -946,6 +993,30 @@ func (v *validator) minorNine(n *Node, path string) error {
 		}
 		if err := icon(name); err != nil {
 			return fmt.Errorf("%s: frame %d: %w", path, i, err)
+		}
+	}
+	return nil
+}
+
+// minorSeventeen validates stepped sliders and the compact images added for
+// plugin bar buttons.
+func (v *validator) minorSeventeen(n *Node, path string) error {
+	if n.Kind == KindSlider {
+		if n.Role != "slider" {
+			return fmt.Errorf("%s: a slider needs role \"slider\"", path)
+		}
+		return nil
+	}
+	if n.Min != 0 || n.Max != 0 || n.Step != 0 {
+		return fmt.Errorf("%s: %s cannot carry slider bounds", path, n.Kind)
+	}
+	if n.Kind == KindImage && v.view == ViewBar {
+		width, height := n.ImageW, n.ImageH
+		if n.ImageSize > 0 {
+			width, height = n.ImageSize, n.ImageSize
+		}
+		if width > 128 || height > 32 {
+			return fmt.Errorf("%s: a bar image is larger than 128 by 32", path)
 		}
 	}
 	return nil

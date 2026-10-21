@@ -2,8 +2,11 @@ package shell
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
@@ -112,9 +115,42 @@ func TestPluginStoreRemoveNeedsInlineConfirmation(t *testing.T) {
 }
 
 func TestOpenURLRejectsHTTP(t *testing.T) {
-	if err := openURL("http://example.com"); err == nil {
+	if err := openURL.Get()("http://example.com"); err == nil {
 		t.Fatalf("openURL(http) error = %v, want insecure URL error", err)
 	}
+}
+
+func TestNotificationURLOpenerPassesOneURLArgument(t *testing.T) {
+	bin := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "arguments")
+	xdgOpen := filepath.Join(bin, "xdg-open")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n' \"$#\" \"$1\" > \"$SYSC_NOTIFICATION_URL_CAPTURE\"\n"
+	if err := os.WriteFile(xdgOpen, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SYSC_NOTIFICATION_URL_CAPTURE", capture)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	raw := "https://example.test/?q=$HOME;echo%20literal"
+	want, ok := notificationURL(raw)
+	if !ok {
+		t.Fatal("test URL was rejected")
+	}
+	if err := openNotificationURLDefault(raw); err != nil {
+		t.Fatalf("openNotificationURLDefault: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		arguments, err := os.ReadFile(capture)
+		if err == nil {
+			if got := string(arguments); got != "1\n"+want+"\n" {
+				t.Fatalf("xdg-open arguments = %q, want one URL argument %q", got, want)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("xdg-open did not receive the notification URL")
 }
 
 func renderPluginStorePanel(t *testing.T, panel *wayland.AuxSpec) {

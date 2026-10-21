@@ -1,7 +1,10 @@
 package wallpaper
 
 import (
+	"context"
 	"errors"
+	"image/color"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,6 +33,7 @@ type fakeEngine struct {
 	restoreGate  map[string]chan struct{}
 	preview      map[string]string
 	fail         map[string]error
+	restoreErr   error
 	caps         Capabilities
 	refreshCaps  *Capabilities
 	refreshCalls int
@@ -91,8 +95,14 @@ func (f *fakeEngine) Restore(connector, still string) error {
 	defer f.mu.Unlock()
 	f.restored = append(f.restored, connector)
 	f.stills = append(f.stills, still)
-	return nil
+	return f.restoreErr
 }
+
+type testRestoreStoppedError struct{ cause error }
+
+func (e testRestoreStoppedError) Error() string { return e.cause.Error() }
+func (e testRestoreStoppedError) Unwrap() error { return e.cause }
+func (testRestoreStoppedError) restoreStopped() {}
 
 func (f *fakeEngine) SetPaused(connector string, paused bool) error {
 	f.mu.Lock()
@@ -176,6 +186,208 @@ func awaitSnapshot(t *testing.T, svc *Service, want func(Snapshot) bool) Snapsho
 	}
 }
 
+func newCycleServiceForTest(t *testing.T, roots, connectors []string, assignments map[string]Assignment, policy CyclePolicy) (*Service, *fakeEngine) {
+	t.Helper()
+	engine := newFakeEngine()
+	svc := &Service{
+		engine:         engine,
+		set:            Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+		cyclePolicy:    policy,
+		cycleStart:     time.Now().Add(-time.Hour),
+		cycleDate:      dailyCycleBaseline(time.Now(), policy.Time),
+		roots:          slices.Clone(roots),
+		restarted:      make(map[string]bool),
+		cmds:           make(chan Command, 32),
+		cycleUpdates:   make(chan CyclePolicy, 1),
+		results:        make(chan engineResult, 32),
+		updates:        make(chan Snapshot, 1),
+		quit:           make(chan struct{}),
+		auto:           make(map[string]Reasons),
+		paused:         make(map[string]bool),
+		fps:            make(map[string]int),
+		fpsUnsupported: make(map[string]bool),
+	}
+	svc.store.SetConnectors(connectors)
+	svc.store.Adopt(assignments)
+	svc.lib = Scan(roots)
+	svc.caps = engine.Capabilities()
+	return svc, engine
+}
+
+func writeCycleLibrary(t *testing.T, names ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func finishCycleJobs(t *testing.T, svc *Service, count int) {
+	t.Helper()
+	for range count {
+		select {
+		case result := <-svc.results:
+			svc.finish(result)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for wallpaper cycle apply")
+		}
+	}
+	svc.work.Wait()
+}
+
+func TestServiceCycleAdvancesEachAssignedOutputIndependently(t *testing.T) {
+	root := writeCycleLibrary(t, "a.png", "b.png", "c.png")
+	policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+	svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1", "DP-3"}, map[string]Assignment{
+		"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+		"DP-3": {Kind: KindVideo, Path: filepath.Join(root, "b.png"), DesiredPlayback: StatePlaying},
+	}, policy)
+	now := time.Now()
+	svc.cycleStart = now.Add(-policy.Interval)
+	svc.restarted["DP-1"] = true
+
+	svc.runCycle(now)
+	finishCycleJobs(t, svc, 2)
+	if svc.restarted["DP-1"] {
+		t.Fatal("new cycle selection retained the previous restart guard")
+	}
+
+	got := engine.appliedPaths()
+	slices.Sort(got)
+	want := []string{filepath.Join(root, "b.png"), filepath.Join(root, "c.png")}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("cycled paths = %v, want %v", got, want)
+	}
+	if got, _ := svc.store.Assignment("DP-1"); got.Path != filepath.Join(root, "b.png") {
+		t.Errorf("DP-1 assignment = %+v, want b.png", got)
+	}
+	if got, _ := svc.store.Assignment("DP-3"); got.Path != filepath.Join(root, "c.png") {
+		t.Errorf("DP-3 assignment = %+v, want c.png", got)
+	}
+}
+
+func TestServiceCycleSkipsUnassignedAndApplyingOutputs(t *testing.T) {
+	t.Run("unassigned output", func(t *testing.T) {
+		root := writeCycleLibrary(t, "a.png", "b.png")
+		policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+		svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1", "DP-2"}, map[string]Assignment{
+			"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+		}, policy)
+		now := time.Now()
+		svc.cycleStart = now.Add(-policy.Interval)
+		svc.runCycle(now)
+		finishCycleJobs(t, svc, 1)
+		if got := engine.appliedPaths(); !slices.Equal(got, []string{filepath.Join(root, "b.png")}) {
+			t.Fatalf("applied paths = %v, want only DP-1's next entry", got)
+		}
+		if _, ok := svc.store.Assignment("DP-2"); ok {
+			t.Fatal("cycling assigned an output that had no prior assignment")
+		}
+	})
+
+	t.Run("apply in flight", func(t *testing.T) {
+		root := writeCycleLibrary(t, "a.png", "b.png")
+		policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+		svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1"}, map[string]Assignment{
+			"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+		}, policy)
+		svc.store.Apply("DP-1", filepath.Join(root, "a.png"), KindImage)
+		now := time.Now()
+		svc.cycleStart = now.Add(-policy.Interval)
+		svc.runCycle(now)
+		if got := engine.appliedPaths(); len(got) != 0 {
+			t.Fatalf("cycle applied during another apply: %v", got)
+		}
+		if got := svc.store.Runtime("DP-1").State; got != StateStarting {
+			t.Fatalf("in-flight runtime state = %v, want to remain starting", got)
+		}
+	})
+}
+
+func TestServiceCycleNoopsWhenDisabledOrWithoutMultipleEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		names   []string
+		enabled bool
+	}{
+		{name: "disabled", names: []string{"a.png", "b.png"}},
+		{name: "empty library", enabled: true},
+		{name: "single entry", names: []string{"a.png"}, enabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeCycleLibrary(t, tc.names...)
+			policy := CyclePolicy{Enabled: tc.enabled, Mode: CycleModeInterval, Interval: time.Minute}
+			svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1"}, map[string]Assignment{
+				"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+			}, policy)
+			now := time.Now()
+			svc.cycleStart = now.Add(-time.Hour)
+			svc.runCycle(now)
+			if got := engine.appliedPaths(); len(got) != 0 {
+				t.Fatalf("cycle applied paths %v, want none", got)
+			}
+			if got, _ := svc.store.Assignment("DP-1"); got.Path != filepath.Join(root, "a.png") {
+				t.Fatalf("assignment = %+v, want original assignment", got)
+			}
+		})
+	}
+}
+
+func TestServiceCycleFailurePreservesPreviousAssignment(t *testing.T) {
+	root := writeCycleLibrary(t, "a.png", "b.png")
+	policy := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+	svc, engine := newCycleServiceForTest(t, []string{root}, []string{"DP-1"}, map[string]Assignment{
+		"DP-1": {Kind: KindImage, Path: filepath.Join(root, "a.png"), DesiredPlayback: StateStatic},
+	}, policy)
+	engine.fail[filepath.Join(root, "b.png")] = errors.New("candidate failed")
+	now := time.Now()
+	svc.cycleStart = now.Add(-policy.Interval)
+
+	svc.runCycle(now)
+	finishCycleJobs(t, svc, 1)
+
+	if got, _ := svc.store.Assignment("DP-1"); got.Path != filepath.Join(root, "a.png") {
+		t.Fatalf("failed cycle assignment = %+v, want prior a.png", got)
+	}
+	if got := svc.store.Runtime("DP-1"); got.State != StateError || got.Err != "candidate failed" {
+		t.Fatalf("failed cycle runtime = %+v, want visible candidate error", got)
+	}
+}
+
+func TestServiceCyclePolicyUpdatesCoalesceAndManualApplyResetsInterval(t *testing.T) {
+	old := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: time.Minute}
+	svc, _ := newCycleServiceForTest(t, nil, nil, nil, old)
+	first := CyclePolicy{Enabled: true, Mode: CycleModeInterval, Interval: 2 * time.Minute}
+	latest := CyclePolicy{Enabled: true, Mode: CycleModeTime, Time: "08:30"}
+	svc.SetCyclePolicy(first)
+	svc.SetCyclePolicy(latest)
+	if got := <-svc.cycleUpdates; got != latest {
+		t.Fatalf("coalesced policy = %+v, want latest %+v", got, latest)
+	}
+
+	now := time.Now()
+	svc.updateCyclePolicy(latest, now)
+	if svc.cyclePolicy != latest || !svc.cycleStart.Equal(now) {
+		t.Fatalf("updated policy/start = %+v/%v", svc.cyclePolicy, svc.cycleStart)
+	}
+	wantDate := dailyCycleBaseline(now, latest.Time)
+	if svc.cycleDate != wantDate {
+		t.Fatalf("daily baseline = %q, want %q", svc.cycleDate, wantDate)
+	}
+
+	svc.cyclePolicy = old
+	svc.cycleStart = now.Add(-time.Hour)
+	svc.handle(Command{Op: OpApply, Token: "missing", Kind: KindImage, Path: "/wallpaper/manual.png"})
+	if svc.cycleStart.Before(now) {
+		t.Fatalf("manual apply did not reset interval baseline: %v before %v", svc.cycleStart, now)
+	}
+	finishCycleJobs(t, svc, 0)
+}
+
 func TestServiceRefreshesTerminalCatalog(t *testing.T) {
 	engine := newFakeEngine()
 	engine.caps = Capabilities{
@@ -220,6 +432,66 @@ func TestServiceApplyPublishes(t *testing.T) {
 	}
 	if snap.Caps.GSlapper != true {
 		t.Error("the snapshot must carry the engine capabilities for the banner")
+	}
+}
+
+func TestServicePublishesImageLuminancePerOutput(t *testing.T) {
+	dir := t.TempDir()
+	whitePath := filepath.Join(dir, "white.png")
+	blackPath := filepath.Join(dir, "black.png")
+	writeLuminancePNG(t, whitePath, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff})
+	writeLuminancePNG(t, blackPath, color.NRGBA{A: 0xff})
+	engine := newFakeEngine()
+	engine.preview["/w/clip.mp4"] = whitePath
+
+	svc := NewService(ServiceConfig{
+		Engine:      engine,
+		Connectors:  []string{"DP-1", "DP-3", "DP-5"},
+		CacheDir:    filepath.Join(dir, "cache"),
+		PersistPath: filepath.Join(dir, "assignments.json"),
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: whitePath, Kind: KindImage})
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-3", Path: blackPath, Kind: KindImage})
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-5", Path: "/w/clip.mp4", Kind: KindVideo})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		_, white := s.ImageLuminance["DP-1"]
+		_, black := s.ImageLuminance["DP-3"]
+		_, video := s.ImageLuminance["DP-5"]
+		return white && black && video
+	})
+	if got := snap.ImageLuminance["DP-1"]; math.Abs(got-1) > 1e-6 {
+		t.Errorf("DP-1 luminance = %v, want 1", got)
+	}
+	if got := snap.ImageLuminance["DP-3"]; got != 0 {
+		t.Errorf("DP-3 luminance = %v, want 0", got)
+	}
+	if got := snap.ImageLuminance["DP-5"]; math.Abs(got-1) > 1e-6 {
+		t.Errorf("DP-5 video preview luminance = %v, want 1", got)
+	}
+	snap.ImageLuminance["DP-1"] = 0
+	if got := svc.Snapshot().ImageLuminance["DP-1"]; got != 1 {
+		t.Errorf("mutating a published snapshot changed service state: DP-1 luminance = %v", got)
+	}
+}
+
+func TestServiceOmitsLuminanceForAChangedStillPath(t *testing.T) {
+	svc := &Service{
+		imageLuminance: map[string]assignedImageLuminance{
+			"DP-1": {path: "/w/old.png", value: 0.8},
+		},
+	}
+	svc.store.SetConnectors([]string{"DP-1"})
+	job := svc.store.Apply("DP-1", "/w/new.png", KindImage)[0]
+	if !svc.store.Commit(job, "", EngineGSlapper) {
+		t.Fatal("new image assignment did not commit")
+	}
+	svc.recordImageLuminance(imageLuminanceResult{connector: "DP-1", path: "/w/old.png", value: 0.8})
+
+	svc.publish()
+	if got := svc.Snapshot().ImageLuminance; len(got) != 0 {
+		t.Fatalf("luminance for a previous still was published: %v", got)
 	}
 }
 
@@ -772,6 +1044,105 @@ func TestRestoreEffectReturnsToPriorStill(t *testing.T) {
 	}
 }
 
+func TestServiceRestoreEffectPersistsStillAndDoesNotReplayEffect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	newService := func(engine *fakeEngine) *Service {
+		return NewService(ServiceConfig{
+			Engine:      engine,
+			Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+			Connectors:  []string{"DP-1"},
+			PersistPath: path,
+		})
+	}
+
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newService(engine)
+	t.Cleanup(svc.Close)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/still.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/still.png" })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStatic })
+
+	want := Assignment{Kind: KindImage, Path: "/w/still.png", DesiredPlayback: StateStatic}
+	if got := snap.Assignments["DP-1"]; got != want {
+		t.Fatalf("restored assignment = %+v, want static still %+v", got, want)
+	}
+	saved, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatalf("load restored assignments: %v", err)
+	}
+	if got := saved["DP-1"]; got != want {
+		t.Fatalf("persisted assignment = %+v, want static still %+v", got, want)
+	}
+
+	svc.Close()
+	restartEngine := newFakeEngine()
+	restarted := newService(restartEngine)
+	t.Cleanup(restarted.Close)
+	awaitSnapshot(t, restarted, func(s Snapshot) bool {
+		return s.Assignments["DP-1"] == want &&
+			s.Runtime["DP-1"].State == StateStatic &&
+			slices.Equal(restartEngine.appliedPaths(), []string{"/w/still.png"})
+	})
+}
+
+func TestServiceRestoreFailureAfterStopPersistsStillAndDoesNotReplayEffect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	newService := func(engine *fakeEngine) *Service {
+		return NewService(ServiceConfig{
+			Engine:      engine,
+			Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+			Connectors:  []string{"DP-1"},
+			PersistPath: path,
+		})
+	}
+
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	engine.caps.Statics = nil
+	engine.restoreErr = testRestoreStoppedError{cause: ErrNoStaticEngine}
+	svc := newService(engine)
+	t.Cleanup(svc.Close)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/still.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/still.png" })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+
+	want := Assignment{Kind: KindImage, Path: "/w/still.png", DesiredPlayback: StateStatic}
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.Runtime["DP-1"].State == StateError && s.Assignments["DP-1"] == want
+	})
+	if snap.Runtime["DP-1"].Err == "" {
+		t.Fatal("fallback failure must remain visible after persisting the stopped assignment")
+	}
+	saved, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatalf("load stopped assignment: %v", err)
+	}
+	if got := saved["DP-1"]; got != want {
+		t.Fatalf("persisted assignment = %+v, want static still %+v", got, want)
+	}
+
+	svc.Close()
+	restartEngine := newFakeEngine()
+	restartEngine.caps.Terminal = true
+	restartEngine.caps.Statics = nil
+	restarted := newService(restartEngine)
+	t.Cleanup(restarted.Close)
+	awaitSnapshot(t, restarted, func(s Snapshot) bool { return s.Assignments["DP-1"] == want })
+	restartEngine.mu.Lock()
+	defer restartEngine.mu.Unlock()
+	for _, job := range restartEngine.applied {
+		if job.Kind == KindEffect {
+			t.Fatalf("restart replayed stopped effect: %+v", job)
+		}
+	}
+}
+
 func TestServicePauseAllReachesEachPlayer(t *testing.T) {
 	engine := newFakeEngine()
 	svc := newTestService(t, engine)
@@ -857,6 +1228,73 @@ func TestServiceReportsTheOpenFolderProgress(t *testing.T) {
 	})
 	if snap.ThumbsTotal != 3 {
 		t.Fatalf("library total %d, want 3 files", snap.ThumbsTotal)
+	}
+}
+
+func TestServiceCloseWaitsForThumbnailWorker(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "clip.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(ServiceConfig{CacheDir: t.TempDir()})
+	t.Cleanup(svc.Close)
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+	exited := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWorker := func() { releaseOnce.Do(func() { close(release) }) }
+	svc.thumbs.extract = func(ctx context.Context, _, _ string) error {
+		defer close(exited)
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		<-release
+		return ctx.Err()
+	}
+	svc.thumbs.Enqueue([]Entry{{Name: filepath.Base(source), Path: source, Kind: KindVideo}}, "")
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("thumbnail worker did not start")
+	}
+	t.Cleanup(func() {
+		releaseWorker()
+		select {
+		case <-exited:
+		case <-time.After(2 * time.Second):
+			t.Error("thumbnail worker did not exit")
+		}
+	})
+
+	closed := make(chan struct{})
+	go func() {
+		svc.Close()
+		close(closed)
+	}()
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service close did not cancel thumbnail work")
+	}
+	select {
+	case <-svc.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service loop did not stop")
+	}
+	select {
+	case <-closed:
+		t.Fatal("service close returned while a thumbnail worker was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseWorker()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service close did not return after thumbnail work stopped")
 	}
 }
 

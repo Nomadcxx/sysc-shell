@@ -82,9 +82,10 @@ func audioSegment(h *PanelHost, action, label string, selected bool) *ui.Node {
 
 func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 	snap, stale, unavailable := audioMixerState(r)
+	discardStaleAudioRouteMenu(h, snap)
 	rows := []*ui.Node{
-		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sinks, "Output")), "Output", nil, h),
-		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sources, "Input")), "Input", nil, h),
+		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sinks, "Output")), "Output", nil, h, nil),
+		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sources, "Input")), "Input", nil, h, nil),
 		{Kind: ui.KindText, Text: fmt.Sprintf("Applications %d", len(snap.Streams)), TextRole: theme.RoleLabel, Height: 28}, // token-exempt: the applications label band, a measured text row with no counterpart in the density row
 	}
 	if unavailable {
@@ -104,7 +105,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 		for _, stream := range snap.Streams {
 			n := audioApplyPending(h, stream)
 			img := audioStreamImage(r, n)
-			row := audioVolumeCard(n, "Application", img, h)
+			row := audioVolumeCard(n, "Application", img, h, snap.Sinks)
 			if unavailable {
 				audioDisable(row)
 			}
@@ -115,6 +116,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
+	clearAudioRouteMenu(h)
 	m := h.metrics()
 	snap, _, unavailable := audioMixerState(r)
 	out := []*ui.Node{
@@ -239,7 +241,7 @@ func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image, m theme.M
 	}}
 }
 
-func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *PanelHost) *ui.Node {
+func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *PanelHost, outputs []services.AudioNode) *ui.Node {
 	m := h.metrics()
 	row := audioVolumeRow(n, role, icon, m)
 	panelW := h.place.Panel.W
@@ -252,10 +254,18 @@ func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *Panel
 	valueW := audioValueColumn(h)
 	row.Children[1].Width = max(innerW-m.CompactControl-valueW-m.CompactControl-3*row.Gap, 0)
 	row.Children[2].Width = valueW
+	children := []*ui.Node{row}
+	cardH := row.Height + 2*m.CardPadding
+	if role == "Application" {
+		route := audioRouteControl(h, n, outputs)
+		route.Height = m.StandardControl
+		children = append(children, route)
+		cardH += theme.MarginS + route.Height
+	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Height: row.Height + 2*m.CardPadding,
+		Kind: ui.KindCapsule, Height: cardH,
 		Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{row},
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: children}},
 	}
 }
 
@@ -451,6 +461,192 @@ func (h *PanelHost) applyAudioControl(r *Registry, n *ui.Node) bool {
 	return false
 }
 
+func audioRoutableSinks(sinks []services.AudioNode) []services.AudioNode {
+	var out []services.AudioNode
+	for _, sink := range sinks {
+		if sink.Routeable {
+			out = append(out, sink)
+		}
+	}
+	return out
+}
+
+func audioRouteControl(h *PanelHost, stream services.AudioNode, sinks []services.AudioNode) *ui.Node {
+	action := fmt.Sprintf("audio-route:%d", stream.ID)
+	choices := audioRoutableSinks(sinks)
+	if !stream.Routeable || len(choices) == 0 {
+		if h != nil && h.menuPath == action && h.menu != nil && h.menu.Opened() {
+			clearAudioRouteMenu(h)
+		}
+		label := "Output routing unavailable"
+		if stream.Routeable {
+			label = "No available outputs"
+		}
+		return &ui.Node{Kind: ui.KindText, Text: label, Name: label, Role: "status", State: ui.StateDisabled}
+	}
+	if h != nil && h.menuPath == action && h.menu != nil && h.menu.Opened() {
+		if !sameAudioRouteSinks(h.audioRouteSinks, choices) {
+			clearAudioRouteMenu(h)
+		} else {
+			n := h.menu.Node()
+			n.Text = audioRouteLabel(stream, sinks)
+			n.Action = action
+			n.Name = audioRouteName(stream)
+			n.Role = "combobox"
+			n.Height = h.metrics().StandardControl
+			return n
+		}
+	}
+	options := make([]string, len(choices))
+	index := 0
+	for i, sink := range choices {
+		options[i] = audioSinkLabel(sink)
+		if sink.ID == stream.OutputID {
+			index = i
+		}
+	}
+	n := NewMenu(options, index).Node()
+	n.Text = audioRouteLabel(stream, sinks)
+	n.Action = action
+	n.Name = audioRouteName(stream)
+	n.Role = "combobox"
+	n.Height = h.metrics().StandardControl
+	return n
+}
+
+func audioRouteLabel(stream services.AudioNode, sinks []services.AudioNode) string {
+	for _, sink := range sinks {
+		if sink.ID == stream.OutputID {
+			return "Output: " + audioSinkLabel(sink)
+		}
+	}
+	return "Output: Unknown"
+}
+
+func audioRouteName(stream services.AudioNode) string {
+	name := stream.Description
+	if name == "" {
+		name = stream.Name
+	}
+	if name == "" {
+		name = "application"
+	}
+	return "Output for " + name
+}
+
+func audioSinkLabel(sink services.AudioNode) string {
+	if sink.Description != "" {
+		return sink.Description
+	}
+	if sink.Name != "" {
+		return sink.Name
+	}
+	return fmt.Sprintf("Output %d", sink.ID)
+}
+
+func sameAudioRouteSinks(a, b []services.AudioNode) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || audioSinkLabel(a[i]) != audioSinkLabel(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func discardStaleAudioRouteMenu(h *PanelHost, snap services.AudioSnapshot) {
+	if h == nil || h.menu == nil || !h.menu.Opened() || !strings.HasPrefix(h.menuPath, "audio-route:") {
+		return
+	}
+	id, ok := audioActionID(h.menuPath, "audio-route:")
+	if ok {
+		for _, stream := range snap.Streams {
+			if stream.ID == id && stream.Routeable && sameAudioRouteSinks(h.audioRouteSinks, audioRoutableSinks(snap.Sinks)) {
+				return
+			}
+		}
+	}
+	clearAudioRouteMenu(h)
+}
+
+func clearAudioRouteMenu(h *PanelHost) {
+	if h.menu != nil && strings.HasPrefix(h.menuPath, "audio-route:") {
+		h.menu.Cancel()
+		h.menu = nil
+		h.menuPath = ""
+		h.audioRouteSinks = nil
+	}
+}
+
+func (h *PanelHost) activateAudioRoute(r *Registry, n *ui.Node) bool {
+	streamID, ok := audioActionID(n.Action, "audio-route:")
+	if !ok {
+		return false
+	}
+	if h.menu != nil && h.menuPath == n.Action && h.menu.Opened() {
+		if !h.menu.PickAt(n, h.hoverX, h.hoverY) {
+			return true
+		}
+		h.menu.Select()
+		h.applyAudioRouteMenu(r, n.Action)
+		r.rebuildPanel(h)
+		return true
+	}
+	snap := audioMixerSnapshot(r)
+	var stream services.AudioNode
+	for _, candidate := range snap.Streams {
+		if candidate.ID == streamID {
+			stream = candidate
+			break
+		}
+	}
+	choices := audioRoutableSinks(snap.Sinks)
+	if !stream.Routeable || len(choices) == 0 {
+		return true
+	}
+	options := make([]string, len(choices))
+	index := 0
+	for i, sink := range choices {
+		options[i] = audioSinkLabel(sink)
+		if sink.ID == stream.OutputID {
+			index = i
+		}
+	}
+	if h.menu != nil {
+		h.menu.Cancel()
+	}
+	h.audioRouteSinks = choices
+	h.menu = NewMenu(options, index)
+	h.menu.Open()
+	h.menuPath = n.Action
+	r.rebuildPanel(h)
+	return true
+}
+
+func (h *PanelHost) applyAudioRouteMenu(r *Registry, path string) {
+	streamID, ok := audioActionID(path, "audio-route:")
+	if !ok || h.menu == nil || h.menu.Opened() {
+		return
+	}
+	index := h.menu.Index()
+	if index < 0 || index >= len(h.audioRouteSinks) {
+		clearAudioRouteMenu(h)
+		return
+	}
+	sinkID := h.audioRouteSinks[index].ID
+	h.menu = nil
+	h.menuPath = ""
+	h.audioRouteSinks = nil
+	r.scheduleControl(h, func() error {
+		if r.audio == nil {
+			return fmt.Errorf("audio unavailable")
+		}
+		return r.audio.MoveStream(streamID, sinkID)
+	})
+}
+
 func audioActionID(action, prefix string) (int, bool) {
 	rest, ok := strings.CutPrefix(action, prefix)
 	if !ok {
@@ -461,19 +657,33 @@ func audioActionID(action, prefix string) (int, bool) {
 }
 
 func (r *Registry) scheduleControl(h *PanelHost, run func() error) {
+	r.scheduleControlResult(h, func() (bool, error) { return true, run() })
+}
+
+// scheduleControlResult applies the error and rebuilds the host only when the
+// result still applies. A skipped stale operation leaves existing feedback in
+// place but still invalidates the surface after its worker finishes.
+func (r *Registry) scheduleControlResult(h *PanelHost, run func() (bool, error)) {
 	go func() {
-		err := run()
+		// The action handler may have scheduled this work while holding r.mu.
+		// Wait for that handler to finish before running an external command.
+		r.mu.Lock()
+		r.mu.Unlock()
+
+		apply, err := run()
 		r.mu.Lock()
 		if r.panelHosts[h.id] != h {
 			r.mu.Unlock()
 			return
 		}
-		if err != nil {
-			h.errLabel = err.Error()
-		} else {
-			h.errLabel = ""
+		if apply {
+			if err != nil {
+				h.errLabel = err.Error()
+			} else {
+				h.errLabel = ""
+			}
+			r.rebuildPanel(h)
 		}
-		r.rebuildPanel(h)
 		output, id := h.output, panelSurfaceID(h.id)
 		// The invalidation send can block, so it runs with Registry.mu free.
 		r.mu.Unlock()

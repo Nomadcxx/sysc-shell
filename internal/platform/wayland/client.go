@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -118,8 +119,9 @@ type Callbacks struct {
 	// NewHost supplies the per-bar hooks when a bar is created for a connector.
 	NewHost func(global uint32, connector string) (HostCallbacks, error)
 	// PrepareConfig builds replacement bars for every enabled connector without
-	// changing live shell state.
-	PrepareConfig func(config.Config, []HostIdentity) (PreparedConfig, error)
+	// changing live shell state. configGeneration identifies Settings writes
+	// completed before the owner read the candidate.
+	PrepareConfig func(config.Config, []HostIdentity, uint64) (PreparedConfig, error)
 	// DropHost releases per-bar resources after a bar is destroyed.
 	DropHost func(global uint32)
 	// Invalidations is owned by the caller. Run only receives from it and
@@ -159,6 +161,12 @@ type Callbacks struct {
 	Capabilities func(Capabilities)
 	// ConfigPath is the file a reload re-reads. Empty disables reloading.
 	ConfigPath string
+	// ConfigGeneration samples the Settings-write generation before the owner
+	// reads a reload candidate. Nil treats every candidate as generation zero.
+	ConfigGeneration func() uint64
+	// ReloadResult reports a safe precommit refusal, or nil after an accepted
+	// reload. It runs on the Wayland owner goroutine and must not block.
+	ReloadResult func(error)
 }
 
 func (c Callbacks) validate() error {
@@ -1126,26 +1134,45 @@ func (o *owner) invalidate(inv Invalidation) {
 	}
 }
 
-// reloadConfig re-reads and applies the configuration file. A failure at any
-// stage leaves the previous configuration live and applies nothing.
+// reloadConfig re-reads and applies the configuration file. Precommit
+// refusals leave the current configuration live; transport failures during
+// application propagate to Run and stop the owner.
 func (o *owner) reloadConfig() error {
 	if o.cb.ConfigPath == "" {
 		return nil
 	}
-	cfg, err := config.Load(o.cb.ConfigPath)
+	var configGeneration uint64
+	if o.cb.ConfigGeneration != nil {
+		configGeneration = o.cb.ConfigGeneration()
+	}
+	cfg, err := config.LoadRequired(o.cb.ConfigPath)
 	if err != nil {
+		o.reportReloadResult(err)
 		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
 		return nil
 	}
-	prepared, err := o.prepareConfig(cfg)
+	if o.cfg != nil && reflect.DeepEqual(*o.cfg, cfg) {
+		o.reportReloadResult(nil)
+		return nil
+	}
+	prepared, err := o.prepareConfig(cfg, configGeneration)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
+		safeErr := errors.New("configuration could not be prepared")
+		o.reportReloadResult(safeErr)
+		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", safeErr)
 		return nil
 	}
 	if err := o.applyPreparedConfig(prepared); err != nil {
 		return fmt.Errorf("wayland: apply reloaded config: %w", err)
 	}
+	o.reportReloadResult(nil)
 	return nil
+}
+
+func (o *owner) reportReloadResult(err error) {
+	if o.cb.ReloadResult != nil {
+		o.cb.ReloadResult(err)
+	}
 }
 
 type preparedHostConfig struct {
@@ -1194,7 +1221,7 @@ func abandon(prepared PreparedConfig, err error) (preparedOwnerConfig, error) {
 
 // prepareConfig resolves and builds every ready host before changing live
 // owner or shell state.
-func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
+func (o *owner) prepareConfig(cfg config.Config, configGeneration uint64) (preparedOwnerConfig, error) {
 	live := o.hosts.each()
 	ready := make([]*OutputHost, 0, len(live))
 	connectors := make([]string, 0, len(live))
@@ -1216,7 +1243,7 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 			enabled = append(enabled, HostIdentity{Global: h.global, Connector: h.connector})
 		}
 	}
-	prepared, err := o.cb.PrepareConfig(cfg, enabled)
+	prepared, err := o.cb.PrepareConfig(cfg, enabled, configGeneration)
 	if err != nil {
 		return preparedOwnerConfig{}, err
 	}
@@ -1276,7 +1303,7 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 // document but unresolvable for one connected output is rejected whole, so the
 // shell can never end up with half its bars on new policy and half on old.
 func (o *owner) applyConfig(cfg config.Config) error {
-	prepared, err := o.prepareConfig(cfg)
+	prepared, err := o.prepareConfig(cfg, 0)
 	if err != nil {
 		return err
 	}

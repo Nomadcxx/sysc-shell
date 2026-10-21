@@ -54,7 +54,7 @@ func paintImageMasked(c *Canvas, box ui.Rect, img *ui.Image, mask *image.Alpha) 
 			if alpha == 0 {
 				continue
 			}
-			dst := y*c.Stride + x*4
+			dst := c.at(x, y)
 			if dst+4 > len(c.Pix) {
 				continue
 			}
@@ -115,7 +115,7 @@ func blendMaskImageMode(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image, c
 	}
 	x0, y0, x1, y1 := c.clip(box)
 	for py := y0; py < y1; py++ {
-		row := c.Pix[py*c.Stride:]
+		row := c.row(py)
 		var sy0, sy1, wy int
 		if crop {
 			sy0, sy1, wy = cropSample(float64(py-box.Y), float64(box.H), cropY, cropH, img.Height)
@@ -148,7 +148,8 @@ func blendMaskImageMode(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image, c
 			if alpha == 0 {
 				continue
 			}
-			blendPixel(row[px*4:px*4+4], s, alpha)
+			at := (px - c.Ox) * 4
+			blendPixel(row[at:at+4], s, alpha)
 		}
 	}
 }

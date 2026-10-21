@@ -24,6 +24,7 @@ const (
 	PanelFiles
 	PanelTerminalArt
 	PanelOnboarding
+	PanelKeyboardLayout
 )
 
 func (p PanelID) String() string {
@@ -64,6 +65,8 @@ func (p PanelID) String() string {
 		return "terminal-art"
 	case PanelOnboarding:
 		return "onboarding"
+	case PanelKeyboardLayout:
+		return "keyboard-layout"
 	default:
 		return "unknown"
 	}
@@ -80,6 +83,9 @@ type Placement struct {
 	// AnchorX and AnchorY are the logical centre of the triggering widget.
 	// Zero means unset; Align then centres along the bar's main axis.
 	AnchorX, AnchorY int
+	// AnchorAction lets config reloads resolve a widget anchor against the
+	// replacement bar, or centre the retained panel if that widget disappeared.
+	AnchorAction string
 	// CenterY centres the panel on the cross axis inside the remaining work
 	// area: Settings, the launcher and the clipboard float.
 	CenterY bool

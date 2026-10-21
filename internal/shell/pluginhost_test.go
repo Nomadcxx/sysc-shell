@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/walls"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -250,15 +252,16 @@ func bindTestPluginMotion(t *testing.T, mode string, reduced bool) *Registry {
 	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	if err := reg.BindPlugins(PluginHostOptions{
-		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
-		StateDir: t.TempDir(),
+		Roots:        []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir:     t.TempDir(),
+		recordInputs: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return reg
 }
 
-func waitPluginText(t *testing.T, bar *Bar, want string) {
+func waitPluginText(t testing.TB, bar *Bar, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -351,6 +354,460 @@ func TestPluginHostOpensOneBarViewPerOutput(t *testing.T) {
 	pid := reg.plugins.pid("org.sysc.timer")
 	if pid == 0 {
 		t.Fatal("shared runtime has no pid")
+	}
+}
+
+func TestConfigReloadStartsNewlyEnabledPlugin(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, "org.sysc.timer"), self, "ok", testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = nil
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	if pid := reg.plugins.pid("org.sysc.timer"); pid != 0 {
+		t.Fatalf("disabled plugin started before config selection, pid = %d", pid)
+	}
+
+	candidate := cfg.Clone()
+	candidate.Plugins.Enabled = []string{"org.sysc.timer"}
+	candidate.Bar.Right = []config.Item{{
+		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "org.sysc.timer-1",
+	}}
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 1, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for reg.plugins.pid("org.sysc.timer") == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pid := reg.plugins.pid("org.sysc.timer"); pid == 0 {
+		t.Fatal("config reload did not start newly enabled plugin")
+	}
+	waitPluginText(t, reg.bars[1], "hello")
+}
+
+func TestConfigReloadDoesNotWaitForPluginStart(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "org.sysc.timer")
+	if _, err := plugin.WriteHelperPlugin(dir, self, "ok", testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+	started := filepath.Join(root, "plugin-started")
+	stopped := filepath.Join(root, "plugin-stopped")
+	mode := "shutdown-marker:" + stopped
+	script := fmt.Sprintf("#!/bin/sh\n: > %q\nsleep 1\nexec %q %s %q\n", started, self, plugin.HelperFlag, mode)
+	if err := os.WriteFile(filepath.Join(dir, "bin", "sysc-plugin-timer"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = nil
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+
+	candidate := cfg.Clone()
+	candidate.Plugins.Enabled = []string{"org.sysc.timer"}
+	candidate.Bar.Right = []config.Item{{
+		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "org.sysc.timer-1",
+	}}
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 1, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := make(chan struct{})
+	go func() {
+		prepared.Commit()
+		close(committed)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("config reload never started the plugin")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-committed:
+	default:
+		<-committed
+		t.Fatal("config commit waited for the plugin process to start")
+	}
+
+	reg.mu.Lock()
+	err = reg.plugins.enableLocked("org.sysc.timer", false)
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatalf("disable while plugin was starting: %v", err)
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(stopped); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("plugin disabled during startup was not stopped before becoming active")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if pid := reg.plugins.pid("org.sysc.timer"); pid != 0 {
+		t.Fatalf("plugin remained running after being disabled during startup, pid = %d", pid)
+	}
+}
+
+func TestPluginHostCloseWaitsForStartingPluginToStop(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "org.sysc.timer")
+	if _, err := plugin.WriteHelperPlugin(dir, self, "ok", testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+	started := filepath.Join(root, "plugin-started")
+	stopped := filepath.Join(root, "plugin-stopped")
+	mode := "shutdown-marker:" + stopped
+	script := fmt.Sprintf("#!/bin/sh\n: > %q\nsleep 0.5\nexec %q %s %q\n", started, self, plugin.HelperFlag, mode)
+	if err := os.WriteFile(filepath.Join(dir, "bin", "sysc-plugin-timer"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = nil
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	var closeOnce sync.Once
+	closeRegistry := func() { closeOnce.Do(reg.Close) }
+	t.Cleanup(closeRegistry)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+
+	candidate := cfg.Clone()
+	candidate.Plugins.Enabled = []string{"org.sysc.timer"}
+	candidate.Bar.Right = []config.Item{{
+		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "org.sysc.timer-1",
+	}}
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 1, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("config reload never started the plugin")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		closeRegistry()
+		close(closed)
+	}()
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(stopped); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shutdown canceled the host before the in-flight plugin could stop")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("registry close did not finish after the plugin stopped")
+	}
+}
+
+func TestPluginHostCloseBoundsSyncWaitingForRegistryLock(t *testing.T) {
+	root := t.TempDir()
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = nil
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	var host *pluginHost
+	var registryLocked bool
+	t.Cleanup(func() {
+		if registryLocked {
+			reg.mu.Unlock()
+		}
+		reg.mu.Lock()
+		if reg.plugins == host {
+			reg.plugins = nil
+		}
+		reg.mu.Unlock()
+		reg.Close()
+	})
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	host = reg.plugins
+
+	reg.mu.Lock()
+	registryLocked = true
+	host.syncEnabledAsync()
+	host.syncQueueMu.Lock()
+	running := host.syncQueueRunning
+	host.syncQueueMu.Unlock()
+	if !running {
+		t.Fatal("plugin sync was not queued")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		host.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(closeLockGrace + time.Second):
+		reg.mu.Unlock()
+		registryLocked = false
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("plugin host close remained stuck after Registry.mu was released")
+		}
+		t.Fatal("plugin host close waited for a sync blocked on Registry.mu")
+	}
+
+	reg.plugins = nil
+	reg.mu.Unlock()
+	registryLocked = false
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		host.syncQueueMu.Lock()
+		running = host.syncQueueRunning
+		host.syncQueueMu.Unlock()
+		if !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("blocked sync did not exit after Registry.mu was released")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPluginSyncKeepsPluginEnabledDuringConcurrentStart(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, "org.sysc.timer"), self, "ok", testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+	secondManifest := strings.Replace(testTimerManifest, "org.sysc.timer", "org.sysc.second", 1)
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, "org.sysc.second"), self, "ok", secondManifest); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = nil
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	starting := make(chan struct{})
+	continueStart := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-continueStart:
+		default:
+			close(continueStart)
+		}
+	})
+	reg.plugins.ensureRaceHook = func(id string, _ *plugin.Runtime) {
+		if id == "org.sysc.timer" {
+			close(starting)
+			<-continueStart
+		}
+	}
+	reg.mu.Lock()
+	cfg = reg.cfg.Clone()
+	cfg.Plugins.Enabled = []string{"org.sysc.timer"}
+	reg.cfg = cfg
+	reg.mu.Unlock()
+	reg.plugins.syncEnabledAsync()
+	select {
+	case <-starting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first sync never reached the delayed plugin start")
+	}
+
+	reg.mu.Lock()
+	cfg = reg.cfg.Clone()
+	cfg.Plugins.Enabled = []string{"org.sysc.second"}
+	reg.cfg = cfg
+	err = reg.plugins.syncEnabledLocked()
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatalf("enable second plugin during first start: %v", err)
+	}
+	if pid := reg.plugins.pid("org.sysc.second"); pid == 0 {
+		t.Fatal("second plugin was not running before the first start resumed")
+	}
+
+	close(continueStart)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		reg.plugins.syncQueueMu.Lock()
+		running := reg.plugins.syncQueueRunning
+		reg.plugins.syncQueueMu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first sync did not finish after the delayed start resumed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pid := reg.plugins.pid("org.sysc.second"); pid == 0 {
+		t.Fatal("first sync stopped the plugin enabled by a concurrent sync")
+	}
+	if pid := reg.plugins.pid("org.sysc.timer"); pid != 0 {
+		t.Fatalf("plugin disabled during startup remained active, pid = %d", pid)
+	}
+}
+
+func TestPluginSyncDoesNotStopPluginReenabledAfterRemovalSelection(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	secondID := "org.sysc.second"
+	secondManifest := strings.Replace(testTimerManifest, "org.sysc.timer", secondID, 1)
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, secondID), self, "ok", secondManifest); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = []string{secondID}
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldPID := reg.plugins.pid(secondID)
+	if oldPID == 0 {
+		t.Fatal("initial plugin did not start")
+	}
+
+	selected := make(chan struct{})
+	continueRemoval := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRemoval := func() { releaseOnce.Do(func() { close(continueRemoval) }) }
+	t.Cleanup(releaseRemoval)
+	reg.plugins.syncDropHook = func(id string) {
+		if id == secondID {
+			close(selected)
+			<-continueRemoval
+		}
+	}
+	reg.mu.Lock()
+	disabled := reg.cfg.Clone()
+	disabled.Plugins.Enabled = nil
+	reg.cfg = disabled
+	reg.mu.Unlock()
+	reg.plugins.syncEnabledAsync()
+	select {
+	case <-selected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync never selected the disabled plugin for removal")
+	}
+
+	reg.mu.Lock()
+	reenabled := reg.cfg.Clone()
+	reenabled.Plugins.Enabled = []string{secondID}
+	reg.cfg = reenabled
+	err = reg.plugins.syncEnabledLocked()
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatalf("re-enable plugin while removal was pending: %v", err)
+	}
+	replacementPID := reg.plugins.pid(secondID)
+	if replacementPID == 0 || replacementPID == oldPID {
+		t.Fatalf("re-enable did not start a replacement runtime: old pid = %d, current pid = %d", oldPID, replacementPID)
+	}
+
+	releaseRemoval()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		reg.plugins.syncQueueMu.Lock()
+		running := reg.plugins.syncQueueRunning
+		reg.plugins.syncQueueMu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("old sync did not finish after removal resumed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pid := reg.plugins.pid(secondID); pid != replacementPID {
+		t.Fatalf("old sync stopped or replaced the newer runtime: want pid %d, got %d", replacementPID, pid)
 	}
 }
 
@@ -724,21 +1181,36 @@ func TestPluginPanelTextChangeSubmitAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	var action string
-	reg.mu.Lock()
-	host.roving.Count = len(ui.Focusables(host.root))
-	// Focus the text field if present and submit.
-	for i, n := range ui.Focusables(host.root) {
-		if n.Kind == ui.KindTextField {
-			host.roving.Set(i)
-			n.Text = "tea"
-			action = n.Action
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		host = reg.panelHosts[PanelPlugin]
+		if host != nil && host.root != nil {
+			focus := ui.Focusables(host.root)
+			for i, n := range focus {
+				if n.Kind == ui.KindTextField {
+					host.roving.Count = len(focus)
+					host.roving.Set(i)
+					n.Text = "tea"
+					action = n.Action
+					break
+				}
+			}
+		}
+		reg.mu.Unlock()
+		if action != "" {
 			break
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	reg.mu.Unlock()
-	if action != "" {
-		reg.deliverPluginText(action, "tea", v1.EventChange)
-		reg.deliverPluginText(action, "tea", v1.EventSubmit)
+	if action == "" {
+		t.Fatal("plugin panel text input never appeared")
+	}
+	if !reg.deliverPluginText(action, "tea", v1.EventChange) {
+		t.Fatal("plugin text change was not accepted")
+	}
+	if !reg.deliverPluginText(action, "tea", v1.EventSubmit) {
+		t.Fatal("plugin text submit was not accepted")
 	}
 	reg.ClosePanel(PanelPlugin)
 	deadline = time.Now().Add(2 * time.Second)
@@ -759,6 +1231,99 @@ func TestPluginPanelTextChangeSubmitAndClose(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("inputs=%+v closed=%v", reg.plugins.lastInputs(), reg.plugins.closedViews())
+}
+
+func TestPluginInputsAreNotRetainedInProduction(t *testing.T) {
+	const pluginID = "org.sysc.shortcuts"
+	reg := bindManifestPluginWithInputRecording(t, "ok", pluginID, testPanelShortcutManifest, []string{pluginID}, false)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	opened, err := reg.plugins.openPanel(pluginID, v1.PanelParams{Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-input-retention"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+	action := pluginActionPrefix + opened.ViewID + ":note"
+	for i := 0; i < 10_000; i++ {
+		if !reg.deliverPluginText(action, "sample", v1.EventSubmit) {
+			t.Fatalf("submit %d was not accepted", i)
+		}
+	}
+	reg.plugins.mu.Lock()
+	retained, capacity := len(reg.plugins.inputs), cap(reg.plugins.inputs)
+	reg.plugins.mu.Unlock()
+	if retained != 0 || capacity != 0 {
+		t.Fatalf("production retained %d plugin input events (capacity %d), want no history", retained, capacity)
+	}
+}
+
+func BenchmarkPluginDeliverSubmit(b *testing.B) {
+	const pluginID = "org.sysc.shortcuts"
+	reg := bindManifestPluginWithInputRecording(b, "ok", pluginID, testPanelShortcutManifest, []string{pluginID}, false)
+	newHosts(b, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(b, reg.bars[7], "hello")
+	opened, err := reg.plugins.openPanel(pluginID, v1.PanelParams{Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-submit-benchmark"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	_ = drainAux(b, reg, 2)
+	waitPluginPanelRoot(b, reg)
+	action := pluginActionPrefix + opened.ViewID + ":note"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !reg.deliverPluginText(action, "sample", v1.EventSubmit) {
+			b.Fatalf("submit %d was not accepted", i)
+		}
+	}
+}
+
+func TestPluginSliderCommitSendsAnExplicitNumericValue(t *testing.T) {
+	host := &pluginHost{
+		recordInputs: true,
+		views: map[string]*hostedView{"panel": {
+			ID: "panel", Plugin: "org.sysc.test", Kind: v1.ViewPanel, Revision: 4,
+			Events: map[string][]v1.EventKind{"level": {v1.EventChange}},
+		}},
+		slots: map[string]*pluginSlot{},
+	}
+	reg := &Registry{plugins: host}
+	host.r = reg
+	panel := &PanelHost{}
+	slider := &ui.Node{Kind: ui.KindSlider, Action: "plugin:panel:level", Value: 2}
+	panel.commitSlider(reg, slider)
+	host.settleTextFlush()
+
+	host.mu.Lock()
+	inputs := append([]v1.InputEvent(nil), host.inputs...)
+	inputs = append(inputs, host.textOut.Flush()...)
+	host.mu.Unlock()
+	if len(inputs) != 1 {
+		t.Fatalf("slider inputs = %+v, want one event", inputs)
+	}
+	got := inputs[0]
+	if got.Event != v1.EventChange || got.Node != "level" || got.Revision != 4 || got.Value == nil || *got.Value != 2 {
+		t.Fatalf("slider input = %+v, want numeric value 2", got)
+	}
+}
+
+func TestPluginBarSecondaryClickEmitsPointerEvent(t *testing.T) {
+	host := &pluginHost{
+		recordInputs: true,
+		views: map[string]*hostedView{"bar": {
+			ID: "bar", Plugin: "org.sysc.test", Kind: v1.ViewBar,
+			Events: map[string][]v1.EventKind{"open": {v1.EventActivate, v1.EventPointer}},
+		}},
+		slots: map[string]*pluginSlot{},
+	}
+	reg := &Registry{plugins: host}
+	reg.handlePluginBar("plugin:bar:open", wayland.Event{Kind: wayland.EventPointerRelease, Button: 273}, ui.Rect{})
+
+	if got := host.inputs; len(got) != 1 || got[0].Event != v1.EventPointer || got[0].Button != v1.ButtonSecondary {
+		t.Fatalf("bar right-click input = %+v, want a secondary pointer event", got)
+	}
 }
 
 func TestOutputContextBarEventIncludesOutput(t *testing.T) {
@@ -868,6 +1433,10 @@ const testRecorderPanelManifest = `{
 }`
 
 func bindManifestPlugin(t *testing.T, mode, id, manifest string, enabled []string) *Registry {
+	return bindManifestPluginWithInputRecording(t, mode, id, manifest, enabled, true)
+}
+
+func bindManifestPluginWithInputRecording(t testing.TB, mode, id, manifest string, enabled []string, recordInputs bool) *Registry {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -886,15 +1455,16 @@ func bindManifestPlugin(t *testing.T, mode, id, manifest string, enabled []strin
 	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	if err := reg.BindPlugins(PluginHostOptions{
-		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
-		StateDir: t.TempDir(),
+		Roots:        []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir:     t.TempDir(),
+		recordInputs: recordInputs,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return reg
 }
 
-func waitPluginPanelRoot(t *testing.T, reg *Registry) *ui.Node {
+func waitPluginPanelRoot(t testing.TB, reg *Registry) *ui.Node {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -2183,9 +2753,10 @@ func TestRetryLockedSendsPendingTextBeforeStop(t *testing.T) {
 // drops changes for a view that has gone. The close sends it instead.
 func TestClosingAViewSendsItsPendingTextFirst(t *testing.T) {
 	h := &pluginHost{
-		views:    map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
-		slots:    map[string]*pluginSlot{},
-		surfaces: map[string]*pluginSurfaceHost{},
+		recordInputs: true,
+		views:        map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
+		slots:        map[string]*pluginSlot{},
+		surfaces:     map[string]*pluginSurfaceHost{},
 	}
 	h.textOut.Push(v1.InputEvent{ViewID: "v1", Node: "body", Event: v1.EventChange, Text: "last words"})
 	h.closeView("v1")
@@ -2235,6 +2806,37 @@ func TestRegistryCloseLetsPluginsFinish(t *testing.T) {
 	reg.Close()
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("plugin never ran its shutdown: %v", err)
+	}
+}
+
+type closeCallbackWallsService struct {
+	*fakeWallsService
+	closeFunc func() error
+}
+
+func (s closeCallbackWallsService) Close() error { return s.closeFunc() }
+
+func TestRegistryCloseStopsPluginsBeforeWallsService(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "flushed")
+	reg := bindTestPlugin(t, "shutdown-marker:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	pluginsStopped := false
+	reg.mu.Lock()
+	reg.wallsService = closeCallbackWallsService{
+		fakeWallsService: newFakeWallsService(walls.Snapshot{}),
+		closeFunc: func() error {
+			_, err := os.Stat(marker)
+			pluginsStopped = err == nil
+			return nil
+		},
+	}
+	reg.mu.Unlock()
+
+	reg.Close()
+	if !pluginsStopped {
+		t.Fatal("walls cleanup started before plugins received HostShutdown")
 	}
 }
 

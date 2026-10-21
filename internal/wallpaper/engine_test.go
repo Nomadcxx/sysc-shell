@@ -9,8 +9,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 type fakeProcess struct {
@@ -19,6 +22,28 @@ type fakeProcess struct {
 	exit    chan struct{}
 	err     error
 }
+
+type failedStopProcess struct {
+	exit chan struct{}
+	err  error
+}
+
+func (p *failedStopProcess) Wait() error {
+	<-p.exit
+	return nil
+}
+
+func (p *failedStopProcess) Stop() error { return p.err }
+
+type stubbornProcess struct{ exit chan struct{} }
+
+func (p *stubbornProcess) Wait() error {
+	<-p.exit
+	return nil
+}
+
+func (*stubbornProcess) Stop() error      { return nil }
+func (*stubbornProcess) ForceStop() error { return nil }
 
 func newFakeProcess() *fakeProcess { return &fakeProcess{exit: make(chan struct{})} }
 
@@ -33,7 +58,7 @@ func TestEngineRefreshTerminalCatalogReadsCurrentList(t *testing.T) {
 	dir := t.TempDir()
 	catalogPath := filepath.Join(dir, "catalog")
 	binaryPath := filepath.Join(dir, "sysc-terminal")
-	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\nif [ \"$1\" != \"--list\" ]; then exit 2; fi\nexec /bin/cat \"$SYSC_TERMINAL_TEST_CATALOG\"\n"), 0o755); err != nil {
+	if err := fakebin.Write(binaryPath, "#!/bin/sh\nif [ \"$1\" != \"--list\" ]; then exit 2; fi\nexec /bin/cat \"$SYSC_TERMINAL_TEST_CATALOG\"\n", 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -266,7 +291,7 @@ func (h *engineHarness) socket(connector string) string {
 }
 
 func (h *engineHarness) ownSocket(connector string) {
-	h.eng.owned[connector] = newFakeProcess()
+	h.eng.owned[connector] = watchProcess(newFakeProcess())
 }
 
 func (h *engineHarness) argvs() [][]string {
@@ -800,18 +825,91 @@ func TestEngineRestoreClearsStaleSocket(t *testing.T) {
 	}
 }
 
-func TestEngineStopOwnedRefusesForeignLiveSocket(t *testing.T) {
+func TestEngineRestoreRefusesForeignLiveSocketWithoutStoppedMarker(t *testing.T) {
 	h := newEngineHarness(t)
 	l, err := net.Listen("unix", h.socket("DP-1"))
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	defer l.Close()
-	if err := h.eng.stopOwned("DP-1", h.socket("DP-1")); err == nil || !strings.Contains(err.Error(), "not ours to stop") {
-		t.Fatalf("stopOwned over a live foreign socket: got %v, want a refusal", err)
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "not ours to stop") {
+		t.Fatalf("restore over a live foreign socket: got %v, want a refusal", err)
+	}
+	var stopped stoppedRestoreFailure
+	if errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, must not mark an unowned live socket stopped", err)
 	}
 	if _, err := os.Lstat(h.socket("DP-1")); err != nil {
 		t.Fatalf("live foreign socket was removed: %v", err)
+	}
+}
+
+func TestEngineRestoreDoesNotMarkProcessStopFailure(t *testing.T) {
+	h := newEngineHarness(t)
+	socket := h.socket("DP-1")
+	deadSocketFileFor(t, socket)
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatalf("stat owned socket: %v", err)
+	}
+	proc := &failedStopProcess{exit: make(chan struct{}), err: errors.New("stop refused")}
+	owned := watchProcess(proc)
+	h.eng.owned["DP-1"] = owned
+	h.eng.socketFiles = map[string]os.FileInfo{"DP-1": info}
+	h.eng.request = func(string, string, time.Duration) (string, error) {
+		return "", errors.New("IPC stop failed")
+	}
+	defer close(proc.exit)
+
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "stop process on DP-1: stop refused") {
+		t.Fatalf("restore error = %v, want process stop failure", err)
+	}
+	var stopped stoppedRestoreFailure
+	if errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, must not mark a process that did not stop", err)
+	}
+	if _, err := os.Lstat(socket); err != nil {
+		t.Fatalf("socket was removed after failed process stop: %v", err)
+	}
+}
+
+func TestEngineRestoreDoesNotAssumeMissingSocketMeansProcessStopped(t *testing.T) {
+	h := newEngineHarness(t)
+	socket := h.socket("DP-1")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatalf("stat owned socket: %v", err)
+	}
+	proc := &stubbornProcess{exit: make(chan struct{})}
+	owned := watchProcess(proc)
+	h.eng.owned["DP-1"] = owned
+	h.eng.socketFiles = map[string]os.FileInfo{"DP-1": info}
+	h.eng.request = func(path, command string, _ time.Duration) (string, error) {
+		if command == "stop" {
+			return "OK", os.Remove(path)
+		}
+		return "OK", nil
+	}
+	defer close(proc.exit)
+
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "process on DP-1 did not exit") {
+		t.Fatalf("restore error = %v, want an unconfirmed process-stop error", err)
+	}
+	var stopped stoppedRestoreFailure
+	if errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, must not mark an unconfirmed stop", err)
+	}
+	if h.eng.ownedProcess("DP-1") != owned {
+		t.Fatal("unconfirmed process was removed from engine ownership")
+	}
+	if _, err := os.Lstat(socket); !os.IsNotExist(err) {
+		t.Fatalf("stop fixture socket = %v, want absent", err)
 	}
 }
 
@@ -840,6 +938,60 @@ func TestRemoveSocketIfSameRefusesReplacedSocket(t *testing.T) {
 	}
 	if _, err := os.Lstat(path); err != nil {
 		t.Fatalf("live replacement socket was removed: %v", err)
+	}
+}
+
+func TestRemoveSocketIfSameRefusesReplacementAfterProbe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gslapper-DP-1.sock")
+	deadSocketFileFor(t, path)
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat dead socket: %v", err)
+	}
+
+	replacement := filepath.Join(dir, "replacement.sock")
+	listener, err := net.Listen("unix", replacement)
+	if err != nil {
+		t.Fatalf("listen replacement: %v", err)
+	}
+	defer listener.Close()
+
+	err = removeSocketIfSameWithPeerProbe(path, info, func(path string) (int, error) {
+		if err := os.Remove(path); err != nil {
+			return 0, err
+		}
+		if err := os.Rename(replacement, path); err != nil {
+			return 0, err
+		}
+		return 0, syscall.ECONNREFUSED
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed while it was stopped") {
+		t.Fatalf("removeSocketIfSame after replacement during probe: got %v, want a refusal", err)
+	}
+	if _, err := socketPeerPID(path); err != nil {
+		t.Fatalf("live replacement socket was removed: %v", err)
+	}
+}
+
+func TestRemoveSocketIfSameRefusesLiveSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gslapper-DP-1.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+
+	err = removeSocketIfSame(path, info)
+	if err == nil || !strings.Contains(err.Error(), "still live") {
+		t.Fatalf("removeSocketIfSame on a live socket: got %v, want a refusal", err)
+	}
+	if _, err := socketPeerPID(path); err != nil {
+		t.Fatalf("live socket stopped answering after cleanup refusal: %v", err)
 	}
 }
 
@@ -1344,6 +1496,119 @@ func TestEngineRestoreStopsThenFallsBack(t *testing.T) {
 	// The daemon has to be up before the client can hand anything over (D16).
 	if !slices.ContainsFunc(h.argvs(), func(a []string) bool { return a[0] == engineAwwwDaemon }) {
 		t.Fatal("awww-daemon was never started")
+	}
+}
+
+func TestEngineRestoreMarksFallbackFailureAfterStopping(t *testing.T) {
+	h := newEngineHarness(t)
+	h.eng.caps = Capabilities{GSlapper: true}
+	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	h.ownSocket("DP-1")
+	h.replies["stop"] = "OK"
+	h.eng.setActive("DP-1", Assignment{Kind: KindEffect, Effect: "fire", Theme: "nord"}, StatePlaying, EngineTerminal)
+
+	err := h.eng.Restore("DP-1", "/c/still.jpg")
+	if !errors.Is(err, ErrNoStaticEngine) {
+		t.Fatalf("restore error = %v, want missing static engine", err)
+	}
+	var stopped stoppedRestoreFailure
+	if !errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, want marker that the animated engine stopped", err)
+	}
+	if _, err := os.Stat(h.socket("DP-1")); !os.IsNotExist(err) {
+		t.Fatalf("owned engine socket still exists after restore failure: %v", err)
+	}
+	if _, ok := h.eng.active["DP-1"]; ok {
+		t.Fatal("restore failure retained the stopped effect as active")
+	}
+}
+
+func TestEngineRestoreClearsActiveWhenStoppingFallbackFails(t *testing.T) {
+	h := newEngineHarness(t)
+	socket := h.socket("DP-1")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatalf("stat owned socket: %v", err)
+	}
+	h.eng.owned["DP-1"] = watchProcess(exitedProcess(nil))
+	h.eng.socketFiles = map[string]os.FileInfo{"DP-1": info}
+	fallback := &failedStopProcess{exit: make(chan struct{}), err: errors.New("fallback stop refused")}
+	h.eng.fallbacks["DP-1"] = watchProcess(fallback)
+	h.eng.setActive("DP-1", Assignment{Kind: KindEffect, Effect: "fire", Theme: "nord"}, StatePlaying, EngineTerminal)
+	defer close(fallback.exit)
+
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "fallback stop refused") {
+		t.Fatalf("restore error = %v, want fallback stop failure", err)
+	}
+	var stopped stoppedRestoreFailure
+	if !errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, want marker that the animated engine stopped", err)
+	}
+	if _, ok := h.eng.active["DP-1"]; ok {
+		t.Fatal("fallback stop failure retained the stopped effect as active")
+	}
+}
+
+func TestEngineRestoreMarksSocketCleanupFailureAfterStopping(t *testing.T) {
+	h := newEngineHarness(t)
+	socket := h.socket("DP-1")
+	deadSocketFileFor(t, socket)
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatalf("stat owned socket: %v", err)
+	}
+	proc := watchProcess(newFakeProcess())
+	h.eng.owned["DP-1"] = proc
+	h.eng.socketFiles = map[string]os.FileInfo{"DP-1": info}
+	h.eng.setActive("DP-1", Assignment{Kind: KindEffect, Effect: "fire", Theme: "nord"}, StatePlaying, EngineTerminal)
+
+	var replacement net.Listener
+	h.eng.request = func(path, command string, _ time.Duration) (string, error) {
+		if command != "stop" {
+			return "OK", nil
+		}
+		if err := os.Remove(path); err != nil {
+			return "", err
+		}
+		replacement, err = net.Listen("unix", path)
+		if err != nil {
+			return "", err
+		}
+		return "OK", proc.Stop()
+	}
+	defer func() {
+		if replacement != nil {
+			_ = replacement.Close()
+		}
+	}()
+
+	err = h.eng.Restore("DP-1", "/c/still.jpg")
+	if err == nil || !strings.Contains(err.Error(), "changed while it was stopped") {
+		t.Fatalf("restore error = %v, want socket cleanup failure", err)
+	}
+	var stopped stoppedRestoreFailure
+	if !errors.As(err, &stopped) {
+		t.Fatalf("restore error = %T, want marker that the owned engine stopped", err)
+	}
+	if _, ok := h.eng.active["DP-1"]; ok {
+		t.Fatal("socket cleanup failure retained the stopped effect as active")
+	}
+	failedApply := errors.New("next apply failed")
+	job := h.eng.actualPrevious(Job{Connector: "DP-1", Gen: 2, Path: h.media("next.mp4"), Kind: KindVideo})
+	if job.HasPrevious {
+		t.Fatalf("next apply inherited stale active assignment: %+v", job.Previous)
+	}
+	if got := h.eng.restorePreviousAfterApplyFailure(job, defaultSettings(), failedApply); !errors.Is(got, failedApply) {
+		t.Fatalf("failed apply rollback error = %v, want original error", got)
+	}
+	if _, err := os.Lstat(socket); err != nil {
+		t.Fatalf("replacement socket was removed: %v", err)
 	}
 }
 

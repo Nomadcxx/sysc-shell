@@ -46,8 +46,16 @@ type runningAppMenuHost struct {
 	forceQuitState      runningAppForceQuitState
 	forceQuitMessage    string
 	forceQuitGeneration uint64
+	floatPending        map[uint64]runningAppFloatingRequest
+	floatUnavailable    map[uint64]bool
+	floatGeneration     uint64
 	text                *render.TextRenderer
 	style               render.Style
+}
+
+type runningAppFloatingRequest struct {
+	target     bool
+	generation uint64
 }
 
 func newRunningAppMenuHost(r *Registry) *runningAppMenuHost {
@@ -89,7 +97,7 @@ func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anch
 	h.forceQuitGeneration++
 	h.forceQuitState = runningAppForceQuitIdle
 	h.forceQuitMessage = ""
-	h.rows = runningAppMenu(slot, h.r.niriSnapshot.Workspaces)
+	h.rows = h.menuRowsLocked(slot, h.r.niriSnapshot)
 	h.buildMenu(0)
 	w, height, err := h.remeasureLocked()
 	if err != nil {
@@ -311,11 +319,12 @@ func (h *runningAppMenuHost) refreshLocked(slot runningAppSlot, snapshot niri.Sn
 		return false
 	}
 	var selectedWindow uint64
-	if row, ok := h.optionRow(h.menu.cursor); ok && h.rows[row].Kind == runningAppMenuWindow {
+	if row, ok := h.optionRow(h.menu.cursor); ok &&
+		(h.rows[row].Kind == runningAppMenuWindow || h.rows[row].Kind == runningAppMenuFloating) {
 		selectedWindow = h.rows[row].WindowID
 	}
 	h.slot = slot
-	h.rows = runningAppForceQuitMenuRows(slot, h.forceQuitState, h.forceQuitMessage, snapshot.Workspaces)
+	h.rows = h.menuRowsLocked(slot, snapshot)
 	h.buildMenu(selectedWindow)
 	h.pressed = ""
 	h.pointer = ""
@@ -616,6 +625,8 @@ func (h *runningAppMenuHost) actionForRow(row runningAppMenuRow) string {
 	switch row.Kind {
 	case runningAppMenuWindow:
 		return "running-app-window:" + strconv.FormatUint(row.WindowID, 10)
+	case runningAppMenuFloating:
+		return "running-app-floating:" + strconv.FormatUint(row.WindowID, 10)
 	case runningAppMenuAction:
 		return "running-app-action:" + row.ActionID
 	case runningAppMenuWorkspace:
@@ -763,6 +774,9 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 	}
 	row := h.rows[i]
 	switch row.Kind {
+	case runningAppMenuFloating:
+		h.toggleFloatingLocked(row.WindowID)
+		return
 	case runningAppMenuForceQuit:
 		h.showForceQuitStateLocked(runningAppForceQuitConfirming, "")
 		return
@@ -802,7 +816,7 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 func (h *runningAppMenuHost) showForceQuitStateLocked(state runningAppForceQuitState, message string) {
 	h.forceQuitState = state
 	h.forceQuitMessage = message
-	h.rows = runningAppForceQuitMenuRows(h.slot, state, message, h.r.niriSnapshot.Workspaces)
+	h.rows = h.menuRowsLocked(h.slot, h.r.niriSnapshot)
 	h.buildMenu(0)
 	h.pressed = ""
 	h.pointer = ""
@@ -811,6 +825,158 @@ func (h *runningAppMenuHost) showForceQuitStateLocked(state runningAppForceQuitS
 		return
 	}
 	h.r.publishSurface(h.output, runningAppMenuSurfaceID)
+}
+
+func (h *runningAppMenuHost) menuRowsLocked(slot runningAppSlot, snapshot niri.Snapshot) []runningAppMenuRow {
+	rows := runningAppForceQuitMenuRows(slot, h.forceQuitState, h.forceQuitMessage, snapshot.Workspaces)
+	if h.forceQuitState != runningAppForceQuitIdle {
+		return rows
+	}
+	filtered := rows[:0]
+	for _, row := range rows {
+		if row.Kind == runningAppMenuFloating {
+			if _, pending := h.floatPending[row.WindowID]; pending {
+				continue
+			}
+			if _, unavailable := h.floatUnavailable[row.WindowID]; unavailable {
+				continue
+			}
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
+func (h *runningAppMenuHost) confirmFloatingTogglesLocked(snapshot niri.Snapshot) {
+	if len(h.floatPending) == 0 && len(h.floatUnavailable) == 0 {
+		return
+	}
+	windows := make(map[uint64]niri.Window, len(snapshot.Windows))
+	for _, window := range snapshot.Windows {
+		windows[window.ID] = window
+	}
+	for id, request := range h.floatPending {
+		window, exists := windows[id]
+		if !exists || window.Floating == request.target {
+			delete(h.floatPending, id)
+		}
+	}
+	for id, wasFloating := range h.floatUnavailable {
+		window, exists := windows[id]
+		if !exists || window.Floating != wasFloating {
+			delete(h.floatUnavailable, id)
+		}
+	}
+}
+
+func (h *runningAppMenuHost) toggleFloatingLocked(windowID uint64) {
+	if _, pending := h.floatPending[windowID]; pending {
+		return
+	}
+	if _, unavailable := h.floatUnavailable[windowID]; unavailable {
+		return
+	}
+	window, exists := currentRunningWindowValue(h.r.running, h.slot.Key, windowID)
+	if !exists {
+		return
+	}
+	h.floatGeneration++
+	request := runningAppFloatingRequest{target: !window.Floating, generation: h.floatGeneration}
+	if h.floatPending == nil {
+		h.floatPending = make(map[uint64]runningAppFloatingRequest)
+	}
+	h.floatPending[windowID] = request
+	if slot, ok := runningSlotByKey(h.r.running, h.slot.Key); ok {
+		if h.refreshLocked(slot, h.r.niriSnapshot) {
+			h.r.publishSurface(h.output, runningAppMenuSurfaceID)
+		}
+	}
+	h.r.sendNiriResultLocked(niri.ToggleWindowFloating{ID: windowID}, func(err error) {
+		h.finishFloatingToggle(windowID, request.generation, err)
+	})
+}
+
+func (h *runningAppMenuHost) finishFloatingToggle(windowID, generation uint64, err error) {
+	if err != nil {
+		log.Printf("running-app floating toggle %d: %v", windowID, err)
+	}
+	if err == nil {
+		return
+	}
+	h.r.mu.Lock()
+	request, pending := h.floatPending[windowID]
+	if !pending || request.generation != generation {
+		h.r.mu.Unlock()
+		return
+	}
+	recoverAmbiguous := false
+	var refusal *niri.ActionRefusalError
+	if errors.As(err, &refusal) {
+		delete(h.floatPending, windowID)
+		if h.floatUnavailable == nil {
+			h.floatUnavailable = make(map[uint64]bool)
+		}
+		h.floatUnavailable[windowID] = !request.target
+		h.confirmFloatingTogglesLocked(h.r.niriSnapshot)
+	} else {
+		var notSent *niri.ActionNotSentError
+		if errors.As(err, &notSent) {
+			delete(h.floatPending, windowID)
+		} else {
+			recoverAmbiguous = true
+		}
+	}
+	updated := false
+	output := h.output
+	if h.open_ {
+		if slot, ok := runningSlotByKey(h.r.running, h.slot.Key); ok {
+			updated = h.refreshLocked(slot, h.r.niriSnapshot)
+		}
+	}
+	h.r.mu.Unlock()
+	if updated {
+		h.r.publishSurface(output, runningAppMenuSurfaceID)
+	}
+	if !recoverAmbiguous {
+		return
+	}
+	windows, queryErr := h.r.queryNiriWindows()
+	if queryErr != nil {
+		log.Printf("running-app floating toggle %d: refresh window state: %v", windowID, queryErr)
+		return
+	}
+	for _, window := range windows {
+		if window.ID == windowID {
+			h.reconcileAmbiguousFloatingToggle(windowID, generation, window)
+			return
+		}
+	}
+}
+
+func (h *runningAppMenuHost) reconcileAmbiguousFloatingToggle(windowID, generation uint64, window niri.Window) {
+	r := h.r
+	r.mu.Lock()
+	request, pending := h.floatPending[windowID]
+	if !pending || request.generation != generation {
+		r.mu.Unlock()
+		return
+	}
+	if window.Floating == request.target {
+		r.mu.Unlock()
+		return
+	}
+	delete(h.floatPending, windowID)
+	updated := false
+	output := h.output
+	if h.open_ {
+		if slot, ok := runningSlotByKey(r.running, h.slot.Key); ok {
+			updated = h.refreshLocked(slot, r.niriSnapshot)
+		}
+	}
+	r.mu.Unlock()
+	if updated {
+		r.publishSurface(output, runningAppMenuSurfaceID)
+	}
 }
 
 func (h *runningAppMenuHost) startForceQuitLocked() {

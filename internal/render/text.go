@@ -100,6 +100,21 @@ type TextRenderer struct {
 	// Changing fields must not retain an unbounded history of long prefixes.
 	shaped     map[rasterKey][]shapedFaceRun
 	shapedCost int
+	// scratch holds offscreen canvases for group opacity, largest first. A
+	// panel repaints many frames of the same subtree, so a buffer a previous
+	// frame grew is exactly the size the next one wants; without it every
+	// frame would allocate the node's box afresh.
+	//
+	// It holds canvases rather than byte slices so a steady-state frame
+	// allocates nothing at all: the canvas header is as much of a per-frame
+	// cost as the pixels are, and one group repainted every frame would
+	// otherwise heap-allocate a header every time.
+	//
+	// It lives here for the same reason the raster cache does: a renderer
+	// already belongs to one surface and one goroutine, and it outlives the
+	// frames. Buffers nest, because a group-opacity node may contain another,
+	// so this is a free list rather than a single buffer.
+	scratch []*Canvas
 }
 
 // rasterKey identifies one rasterised run. Every field changes the pixels:
@@ -144,6 +159,46 @@ func (r *TextRenderer) storeRaster(key rasterKey, m Mask) {
 	}
 	r.raster[key] = m
 	r.rasterOrder = append(r.rasterOrder, key)
+}
+
+// scratchMax bounds one renderer's free offscreen canvases.
+const scratchMax = 8
+
+// takeScratch returns a zeroed canvas of exactly w by h pixels. The caller owns
+// it until putScratch returns it.
+//
+// The pixels are cleared here rather than by the caller because the offscreen
+// must start transparent: it holds a group of nodes whose combined alpha is the
+// group's, not a stack of earlier frames. Clearing is proportional to the box,
+// which is the least work the composite can do.
+func (r *TextRenderer) takeScratch(w, h int) (*Canvas, error) {
+	need := w * h * 4
+	if r == nil {
+		return NewCanvas(make([]byte, need), w, h, w*4)
+	}
+	for i, c := range r.scratch {
+		// Eligibility is the allocation, not the header: the header carries
+		// whichever box was drawn last, while Pix keeps the full capacity the
+		// canvas grew to. Slicing Pix down would throw that capacity away and
+		// the next larger frame would have to grow it again.
+		if len(c.Pix) < need {
+			continue
+		}
+		r.scratch = append(r.scratch[:i], r.scratch[i+1:]...)
+		c.Width, c.Height, c.Stride = w, h, w*4
+		clear(c.Pix[:need])
+		return c, nil
+	}
+	return NewCanvas(make([]byte, need), w, h, w*4)
+}
+
+// putScratch returns a canvas taken by takeScratch. Canvases beyond scratchMax
+// are dropped so a tree that nests deeply once cannot pin the memory.
+func (r *TextRenderer) putScratch(c *Canvas) {
+	if r == nil || c == nil || len(r.scratch) >= scratchMax {
+		return
+	}
+	r.scratch = append(r.scratch, c)
 }
 
 func NewTextRenderer(face *font.Face) *TextRenderer {

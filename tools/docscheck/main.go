@@ -8,8 +8,8 @@
 //
 //	docscheck [-v] [path...]
 //
-// With no path it reads README.md and docs/*.md. Exit codes: 0 clean, 1 a
-// finding, 2 a path that is not a readable regular file.
+// With no path it reads README.md, AGENTS.md and docs/*.md. Exit codes: 0
+// clean, 1 a finding, 2 a path that is not a readable regular file.
 package main
 
 import (
@@ -47,8 +47,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	code := 0
 	blocks := 0
+	pins, err := goModPins()
+	if err != nil {
+		fmt.Fprintf(stderr, "docs/examples: cannot read go.mod: %v\n", err)
+		return 2
+	}
 	for _, path := range paths {
 		for _, line := range checkFile(path) {
+			fmt.Fprintln(stderr, "docs/examples: "+line)
+			code = 1
+		}
+		for _, line := range checkPins(path, pins) {
 			fmt.Fprintln(stderr, "docs/examples: "+line)
 			code = 1
 		}
@@ -62,9 +71,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // defaultPaths is the document set this gate covers. It is deliberately not the
 // whole repository: docs/plans holds design history, and internal/skill/content
-// is checked by the skill's own package tests.
+// is checked by the skill's own package tests. The contributor guide is in the
+// set because it states rules the code has to keep, and a rule that names a
+// version the repository has moved past is a rule the code no longer follows.
 func defaultPaths() []string {
-	paths := []string{"README.md"}
+	paths := []string{"README.md", "AGENTS.md"}
 	matches, err := filepath.Glob(filepath.Join("docs", "*.md"))
 	if err != nil {
 		return paths

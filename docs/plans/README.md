@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-10-06.
+Last updated: 2026-10-20.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -616,6 +616,49 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-14-running-apps-menu-safety-design.md](2026-10-14-running-apps-menu-safety-design.md) | design | Complete Niri app menu: exact per-window actions, explicit force quit through validated systemd app scopes, and a measured six-row popup. |
 | [2026-10-14-running-apps-menu-safety.md](2026-10-14-running-apps-menu-safety.md) | plan | Test-first implementation and gate for the #235 window menu and systemd-scoped app force quit. |
+
+## Privacy indicators (`sysc-1307`, `sysc-781`)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-18-privacy-indicators-design.md](2026-10-18-privacy-indicators-design.md) | design | Reliable PipeWire capture links, Niri cast events, visible unknown state, grouped bar symbols, Control Centre details, and transition OSDs. |
+| [2026-10-18-privacy-indicators.md](2026-10-18-privacy-indicators.md) | plan | Test-first implementation covering Niri casts, bounded PipeWire snapshots, registry lifecycle, bar and OSD behavior, and the laptop live gate. |
+
+## Bluetooth peripheral battery (2026-10-20)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-20-sysc-1408-bluetooth-widget-battery.md](2026-10-20-sysc-1408-bluetooth-widget-battery.md) | plan | `sysc-1408`: lowest connected BlueZ Battery1 percentage beside the Bluetooth bar glyph, with reducer validation and focused widget/service checks. |
+
+## Weather settings persistence (2026-10-20)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-20-sysc-331-weather-settings-persistence.md](2026-10-20-sysc-331-weather-settings-persistence.md) | plan | Preserve non-default weather unit and refresh interval without configuring a location or inventing coordinates. |
+
+## Notification lead-image precedence (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1490-notification-image-precedence.md](2026-10-21-sysc-1490-notification-image-precedence.md) | plan | `sysc-1490`: keep a decoded `image-data` as the card lead in toasts, the centre and history, with the desktop-entry `Icon=` restored to the fallback role FDO gives it. |
+
+## Banded stroke blend (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1480-stroke-banded-blend.md](2026-10-21-sysc-1480-stroke-banded-blend.md) | plan | `sysc-1480`: `StrokeRounded` blends only the band a ring can cover, byte-identically, for about 21% off the Settings and control-centre frames at 2x. |
+
+## IPC listener race (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1496-ipc-listener-race.md](2026-10-21-sysc-1496-ipc-listener-race.md) | plan | `sysc-1496`: route every read and write of the server's listener field through the existing mutex, so `Listen` and `Close` no longer race when the shell shuts down while serving. |
+
+## Plugin shutdown I/O bound (2026-10-21)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-21-sysc-1532-shutdown-waitdelay-race.md](2026-10-21-sysc-1532-shutdown-waitdelay-race.md) | plan | `sysc-1532`: fix the command's I/O bound once before `Start` instead of assigning `Cmd.WaitDelay` at close time, which raced `os/exec`'s context watcher and let a dead plugin's descendant hold the close for a whole grace period. |
 
 ## Sibling repositories
 

@@ -24,6 +24,7 @@ func TestEveryPanelLaysOutAtItsNarrowestWidth(t *testing.T) {
 			cfg.Session.Locker = "swaylock"
 			cfg.Accessibility.ReducedMotion = true
 			reg := NewRegistry(cfg)
+			keepInvalidationsDrained(t, reg)
 			reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 			t.Cleanup(reg.Close)
 

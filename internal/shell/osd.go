@@ -54,6 +54,10 @@ func (m *OSDManager) Show(v OSDView) {
 		return
 	}
 	m.r.mu.Lock()
+	if v.Kind == osdDND {
+		// A relay can wait here behind another DND change; sample after the lock so an older event cannot overwrite it.
+		_, v.On = m.r.dndStateAt(m.r.clockNow())
+	}
 	aux, pubs, startReveal := m.prepareShow(v)
 	m.r.mu.Unlock()
 	for _, req := range aux {
@@ -114,6 +118,13 @@ func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []wa
 		m.stopAnim = make(chan struct{})
 		m.stopOnce = sync.Once{}
 		startReveal = !m.anim.Settled()
+		if startReveal {
+			// The reveal loop marks the animator as running before it
+			// starts, so a reader never sees an idle animator while the
+			// reveal is still in flight. The panel path keeps the same flag
+			// for the same reason.
+			m.anim.running.Store(true)
+		}
 	}
 	return aux, pubs, startReveal
 }
@@ -149,6 +160,11 @@ func (m *OSDManager) prepareHide() []wayland.AuxRequest {
 // retheme updates a visible OSD and reports the surfaces that need repainting.
 // Registry.mu is held by the caller.
 func (m *OSDManager) retheme(t Theme) []wayland.Invalidation {
+	if m.anim != nil {
+		// The animator's table follows the published theme even while the OSD
+		// is hidden, so the next reveal uses the current motion.
+		m.anim.Configure(t.Motion, t.Motion.Reduced)
+	}
 	if !m.Visible() {
 		return nil
 	}
@@ -264,12 +280,16 @@ func (m *OSDManager) slidePx() int {
 const osdAnimKey = "osd"
 
 func (m *OSDManager) revealLoop() {
-	// Resolve the cap once, under the lock. m.anim may be nil here, which
-	// frameCap answers with zero: no pacing, one publish per tick.
 	m.r.mu.Lock()
-	frameCap := m.anim.frameCap()
 	stop := m.stopAnim
+	anim := m.anim
 	m.r.mu.Unlock()
+	if anim != nil {
+		// The reveal ends when this loop retires, so the flag clears only
+		// after the settling frame has been published. A reader that waits
+		// for the flag to fall therefore waits for the last frame too.
+		defer anim.running.Store(false)
+	}
 	animateSurface(stop, func() bool {
 		m.r.mu.Lock()
 		defer m.r.mu.Unlock()
@@ -284,7 +304,13 @@ func (m *OSDManager) revealLoop() {
 		for _, p := range pubs {
 			m.r.publishSurface(p.Global, p.SurfaceID)
 		}
-	}, func() time.Duration { return frameCap })
+	}, func() time.Duration {
+		// Asked per tick, so a reload's cap reaches a reveal in flight. A nil
+		// animator answers zero: no pacing, one publish per tick.
+		m.r.mu.Lock()
+		defer m.r.mu.Unlock()
+		return m.anim.frameCap()
+	})
 }
 
 func osdSurfaceID(global uint32) string { return fmt.Sprintf("osd:%d", global) }

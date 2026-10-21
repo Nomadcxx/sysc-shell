@@ -96,8 +96,19 @@ func (s *notifyState) unread() int {
 // DND. A preset stores one end time and clears when it passes; permanent DND
 // has no end. One timer clears whichever end is set.
 func (s *notifyState) setDND(on bool) {
+	s.setDNDAt(on, time.Now())
+}
+
+func (s *notifyState) setDNDAt(on bool, now time.Time) {
 	s.mu.Lock()
-	changed := s.dnd != on
+	wasActive := s.dndActiveLocked(now)
+	changed := wasActive != on
+	if on && !wasActive {
+		s.finishDNDSuppressionLocked(now)
+		s.dndSince = now
+	} else if !on {
+		s.finishDNDSuppressionLocked(now)
+	}
 	s.dnd = on
 	s.dndUntil = time.Time{}
 	hook := s.onDND
@@ -109,7 +120,12 @@ func (s *notifyState) setDND(on bool) {
 
 func (s *notifyState) setDNDPreset(now time.Time, d time.Duration) {
 	s.mu.Lock()
-	changed := !s.dnd
+	wasActive := s.dndActiveLocked(now)
+	if !wasActive {
+		s.finishDNDSuppressionLocked(now)
+		s.dndSince = now
+	}
+	changed := !wasActive
 	s.dnd = true
 	s.dndUntil = now.Add(d)
 	hook := s.onDND
@@ -117,6 +133,20 @@ func (s *notifyState) setDNDPreset(now time.Time, d time.Duration) {
 	if changed && hook != nil {
 		hook(true)
 	}
+}
+
+func (s *notifyState) finishDNDSuppressionLocked(end time.Time) {
+	if s.dndSince.IsZero() {
+		return
+	}
+	if !s.dndUntil.IsZero() && s.dndUntil.Before(end) {
+		end = s.dndUntil
+	}
+	if end.Before(s.dndSince) {
+		end = s.dndSince
+	}
+	s.rememberSuppressionLocked(s.dndSince, end, true)
+	s.dndSince = time.Time{}
 }
 
 func (s *notifyState) dndState(now time.Time) (time.Time, bool) {
@@ -137,6 +167,7 @@ func (s *notifyState) expireDND(now time.Time) bool {
 		s.mu.Unlock()
 		return false
 	}
+	s.finishDNDSuppressionLocked(s.dndUntil)
 	s.dnd = false
 	s.dndUntil = time.Time{}
 	hook := s.onDND
@@ -304,9 +335,9 @@ func centreSectionLabel(text string) *ui.Node {
 		TextRole: theme.RoleCaption, Tone: ui.ToneAccent}
 }
 
-// linksAllowed reports the qualified opener capability. Task 10 wires the
-// real capability; the center builds with links off until then.
-func (r *Registry) linksAllowed() bool { return false }
+// linksAllowed reports whether notification bodies can launch a bounded web
+// URL through the desktop handler.
+func (r *Registry) linksAllowed() bool { return openNotificationURL.Get() != nil }
 
 func (r *Registry) clockNow() time.Time {
 	if r != nil && !r.now.IsZero() {

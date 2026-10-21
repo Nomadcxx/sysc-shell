@@ -151,8 +151,8 @@ func workspacePillsMatch(row *ui.Node, pills []workspacePill, m theme.Metrics, s
 // the release. Niri rejects an id that has since gone, which is the only
 // check this needs.
 //
-// Only the primary button switches. Scroll cycling is a follow-up, and the
-// other buttons carry no workspace gesture yet.
+// Only the primary button switches; the other buttons carry no workspace
+// gesture.
 func (r *Registry) handleWorkspacePillClick(id uint64, button uint32) bool {
 	if button != 0 && button != buttonLeft {
 		return false
@@ -160,5 +160,46 @@ func (r *Registry) handleWorkspacePillClick(id uint64, button uint32) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sendNiriLocked(niri.FocusWorkspace{ID: id})
+	return true
+}
+
+// adjacentWorkspaceID follows the visible pill order. The pointer action must
+// still belong to this output, while the active pill is the starting point.
+func adjacentWorkspaceID(pills []workspacePill, pointedID uint64, delta int) (uint64, bool) {
+	if delta == 0 {
+		return 0, false
+	}
+	pointed, active := false, -1
+	for i, pill := range pills {
+		if pill.ID == pointedID {
+			pointed = true
+		}
+		if pill.Focused {
+			active = i
+		}
+	}
+	if !pointed || active < 0 {
+		return 0, false
+	}
+	target := active + delta
+	if target < 0 || target >= len(pills) {
+		return 0, false
+	}
+	return pills[target].ID, true
+}
+
+// handleWorkspacePillAxis consumes workspace-axis events even at an edge so
+// they cannot fall through to another bar action.
+func (r *Registry) handleWorkspacePillAxis(global uint32, pointedID uint64, delta int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	bar := r.bars[global]
+	if bar == nil {
+		return true
+	}
+	state := r.outputs[bar.connector()]
+	if id, ok := adjacentWorkspaceID(state.Pills, pointedID, delta); ok {
+		r.sendNiriLocked(niri.FocusWorkspace{ID: id})
+	}
 	return true
 }

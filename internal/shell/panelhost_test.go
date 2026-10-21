@@ -13,7 +13,9 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -368,8 +370,9 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	}
 	// Advance the clock past the transition. The loop publishes its settling
 	// frame on the next tick and retires; drain the backlog until the surface
-	// goes quiet with no loop left standing.
-	clock.add(enter)
+	// goes quiet with no loop left standing. A spring reaches its endpoint
+	// after the token it is derived from, so the bound is twice the reveal.
+	clock.add(2 * enter)
 	settled := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !settled {
@@ -395,7 +398,47 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	if err := quiet.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countSurfaceInvalidations(quiet, reducedPanelCap+50*time.Millisecond); got == 0 {
+	quiet.mu.Lock()
+	quietHost := quiet.panelHosts[PanelSession]
+	quiet.mu.Unlock()
+	if quietHost == nil {
+		t.Fatal("the panel host is not registered")
+	}
+	// The fade ends when the frame loop retires, not at a fixed elapsed time.
+	// The loop publishes its settling frame on the tick that first sees the
+	// animation settled, and that tick lands after the fade's nominal length
+	// plus the tick grid plus whatever delay the scheduler adds. A loaded
+	// runner can miss a tick by more than the margin a fixed window leaves,
+	// and the settling frame then arrives inside the quiet window and reads
+	// as a leak.
+	//
+	// The channel is drained while waiting, because a full buffer blocks the
+	// publish and would hold the loop open past the fade.
+	seen := 0
+	drain := func() {
+		for {
+			select {
+			case inv := <-quiet.Invalidations():
+				if inv.SurfaceID != "" {
+					seen++
+				}
+			default:
+				return
+			}
+		}
+	}
+	fadeDeadline := time.Now().Add(5 * time.Second)
+	for quietHost.anim.running.Load() {
+		drain()
+		if time.Now().After(fadeDeadline) {
+			t.Fatal("the frame loop outlived its fade")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// The loop publishes its settling frame before it retires, so what arrived
+	// with it is already in the channel once the running flag is down.
+	drain()
+	if seen == 0 {
 		t.Fatal("reduced motion produced no invalidations; the panel never appeared")
 	}
 	if got := countSurfaceInvalidations(quiet, 100*time.Millisecond); got != 0 {
@@ -904,6 +947,7 @@ func TestReloadKeepsOpenPanels(t *testing.T) {
 func TestClosingDuringRevealStopsTicker(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
@@ -917,7 +961,67 @@ func TestClosingDuringRevealStopsTicker(t *testing.T) {
 	}
 }
 
+// A tick that was already in flight when the panel closed must not publish a
+// frame for a surface that is gone. The frame loop checks the stop channel
+// before it publishes, but a tick that passed that check waits for the
+// registry lock, which the close holds. It used to publish after the close
+// had already removed the panel, so the count depended on where the tick
+// landed: on a loaded machine the frame arrived inside the counting window
+// and the ticker looked like it was still running.
+func TestCloseDropsTheFrameInFlight(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSession]
+
+	reg.ClosePanel(PanelSession)
+	waitSurfaceFramesStopped(t, h)
+	drainInvalidations(reg)
+
+	// The tick that was in flight when the panel closed runs its publish
+	// after the close removed the host.
+	reg.publishPanelFrame(h)
+	if got := countSurfaceInvalidations(reg, 50*time.Millisecond); got != 0 {
+		t.Fatalf("a tick in flight published %d frames after the close", got)
+	}
+}
+
+// waitSurfaceFramesStopped waits for the panel's frame loop to leave, so a
+// test can drive the publish of a tick that was in flight without the loop
+// publishing beside it.
+func waitSurfaceFramesStopped(t *testing.T, h *PanelHost) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for h.anim.running.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("the frame loop did not stop")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// newPanelRegistry builds a Registry with a stand-in for the owner's bridge:
+// its invalidations channel is kept drained, so a test that publishes more than
+// the cap-8 buffer holds cannot stall the suite. A test that must read those
+// invalidations builds its registry with newPanelRegistryWithoutBridge instead.
 func newPanelRegistry(t *testing.T) *Registry {
+	t.Helper()
+	reg := newPanelRegistryWithoutBridge(t)
+	keepInvalidationsDrained(t, reg)
+	return reg
+}
+
+// newPanelRegistryWithoutBridge is newPanelRegistry without the stand-in
+// bridge. Its invalidations channel is left undrained so the test can read it,
+// and such a test must consume the channel itself: publish blocks on a full
+// buffer rather than dropping (GH #4).
+func newPanelRegistryWithoutBridge(t *testing.T) *Registry {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
@@ -925,6 +1029,26 @@ func newPanelRegistry(t *testing.T) *Registry {
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	return reg
+}
+
+// A fixture built by newPanelRegistry cannot stall the suite. publishSurface
+// blocks on the cap-8 channel and only a consumer releases it, which is how CI
+// hung in TestEdgeReloadRetainsOpenPanels: that fixture published seven and had
+// one slot of headroom (sysc-1494).
+func TestPanelRegistryFixtureDrainsInvalidations(t *testing.T) {
+	reg := newPanelRegistry(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i <= cap(reg.invalidations); i++ {
+			reg.publishSurface(7, "probe")
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(asyncTestWait):
+		t.Fatal("publishSurface blocked: nothing drains the fixture's invalidations")
+	}
 }
 
 // newBatteryPanelRegistry is newPanelRegistry on a bar that carries a battery
@@ -938,6 +1062,7 @@ func newBatteryPanelRegistry(t *testing.T) *Registry {
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	keepInvalidationsDrained(t, reg)
 	return reg
 }
 
@@ -952,6 +1077,18 @@ func withTestBar(t *testing.T, reg *Registry, global uint32, cfg config.Config) 
 	t.Cleanup(func() { releaseAll(leases) })
 	reg.setTestBar(global, bar)
 	return bar
+}
+
+func configureCandidateBar(t *testing.T, callbacks wayland.HostCallbacks, policy config.Bar, outW, outH, scale120 int) {
+	t.Helper()
+	callbacks.OutputSize(outW, outH)
+	width, height := outW, policy.SurfaceExtent()
+	if policy.Edge == "left" || policy.Edge == "right" {
+		width, height = policy.SurfaceExtent(), outH
+	}
+	if err := callbacks.Configure(width, height, scale120); err != nil {
+		t.Fatalf("candidate Configure: %v", err)
+	}
 }
 
 func settleHostAnimation(reg *Registry, h *PanelHost) {
@@ -972,7 +1109,7 @@ func settleHostAnimation(reg *Registry, h *PanelHost) {
 // run on a loaded machine.
 const asyncTestWait = 10 * time.Second
 
-func drainAux(t *testing.T, reg *Registry, n int) []wayland.AuxRequest {
+func drainAux(t testing.TB, reg *Registry, n int) []wayland.AuxRequest {
 	t.Helper()
 	out := make([]wayland.AuxRequest, 0, n)
 	deadline := time.After(asyncTestWait)
@@ -1572,7 +1709,7 @@ func TestReloadReseedsAnOpenSettingsDraft(t *testing.T) {
 	}
 }
 
-func TestEdgeReloadPreservesSettingsAndClosesOldGeometryPanels(t *testing.T) {
+func TestEdgeReloadRetainsOpenPanels(t *testing.T) {
 	reg := newPanelRegistry(t)
 	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
 	trigger := Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}
@@ -1584,6 +1721,27 @@ func TestEdgeReloadPreservesSettingsAndClosesOldGeometryPanels(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = drainAux(t, reg, 1)
+	reg.mu.Lock()
+	settingsBefore := reg.panelHosts[PanelSettings]
+	clockBefore := reg.panelHosts[PanelClock]
+	settingsField := ui.NewField("retained draft")
+	settingsBefore.fields["reload-state"] = settingsField
+	settingsBefore.settingsScroll = 73
+	if len(settingsBefore.focus) > 0 {
+		settingsBefore.roving.Set(len(settingsBefore.focus) - 1)
+	}
+	settingsFocus := settingsBefore.focused()
+	settingsFocusName := ""
+	if settingsFocus != nil {
+		settingsFocusName = settingsFocus.Name
+	}
+	settingsScroll := scrollBody(settingsBefore.root)
+	settingsScrollOffset := -1
+	if settingsScroll != nil {
+		settingsScroll.ScrollOffset = 73
+		settingsScrollOffset = settingsScroll.ScrollOffset
+	}
+	reg.mu.Unlock()
 	reg.dwell.enter(7, ui.Rect{X: 3, Y: 4, W: 10, H: 10}, "pending hint")
 
 	candidate := config.Default()
@@ -1595,66 +1753,86 @@ func TestEdgeReloadPreservesSettingsAndClosesOldGeometryPanels(t *testing.T) {
 		t.Fatalf("PrepareConfig: %v", err)
 	}
 	callbacks := prepared.Hosts[7]
-	callbacks.OutputSize(1536, 864)
-	if err := callbacks.Configure(override.SurfaceExtent(), 864, 120); err != nil {
-		t.Fatalf("candidate Configure: %v", err)
-	}
+	configureCandidateBar(t, callbacks, override, 1536, 864, 120)
 	prepared.Commit()
 
 	reg.mu.Lock()
 	settingsHost := reg.panelHosts[PanelSettings]
 	clockHost := reg.panelHosts[PanelClock]
-	if settingsHost == nil {
+	if settingsHost != settingsBefore {
 		reg.mu.Unlock()
-		t.Fatal("edge reload closed Settings")
+		t.Fatal("edge reload replaced or closed Settings")
 	}
-	if clockHost != nil {
+	if clockHost != clockBefore {
 		reg.mu.Unlock()
-		t.Fatal("edge reload kept a panel attached to the old bar geometry")
+		t.Fatal("edge reload replaced or closed Clock")
 	}
 	if settingsHost.place.BarEdge != "right" || settingsHost.place.Output != (ui.Rect{W: 1536, H: 864}) {
 		got := settingsHost.place
 		reg.mu.Unlock()
 		t.Fatalf("Settings placement = edge %q output %+v, want right on 1536x864", got.BarEdge, got.Output)
 	}
+	if clockHost.place.BarEdge != "right" || clockHost.place.Output != (ui.Rect{W: 1536, H: 864}) {
+		got := clockHost.place
+		reg.mu.Unlock()
+		t.Fatalf("Clock placement = edge %q output %+v, want right on 1536x864", got.BarEdge, got.Output)
+	}
 	if got := settingsHost.place.Rect(); got != settingsHost.rect {
 		reg.mu.Unlock()
 		t.Fatalf("Settings host rect %+v disagrees with its updated placement %+v", settingsHost.rect, got)
+	}
+	if settingsHost.fields["reload-state"] != settingsField || settingsHost.settingsScroll != 73 {
+		reg.mu.Unlock()
+		t.Fatal("edge reload lost a retained settings field or its scroll offset")
+	}
+	if settingsFocusName != "" && settingsHost.focused() == nil ||
+		settingsFocusName != "" && settingsHost.focused().Name != settingsFocusName {
+		reg.mu.Unlock()
+		t.Fatalf("edge reload changed Settings focus from %q", settingsFocusName)
+	}
+	if settingsScroll != nil {
+		currentScroll := scrollBody(settingsHost.root)
+		if currentScroll == nil || currentScroll.ScrollOffset != settingsScrollOffset {
+			reg.mu.Unlock()
+			t.Fatal("edge reload lost the Settings body scroll position")
+		}
 	}
 	if settingsHost.rect.X == 0 || settingsHost.rect.Y == 0 {
 		reg.mu.Unlock()
 		t.Fatalf("Settings was not refitted and repositioned: %+v", settingsHost.rect)
 	}
 	reg.mu.Unlock()
+	updatedClock, updatedSettings := false, false
+	for pending := true; pending; {
+		select {
+		case req := <-reg.AuxRequests():
+			if req.ID == panelSurfaceID(PanelClock) {
+				if req.Open != nil || req.Update == nil {
+					t.Fatalf("retained Clock surface received a remap/close request: %+v", req)
+				}
+				updatedClock = true
+			}
+			if req.ID == panelSurfaceID(PanelSettings) && req.Update != nil && req.Update.Width != nil && req.Update.Height != nil {
+				updatedSettings = true
+			}
+		default:
+			if !updatedClock || !updatedSettings {
+				t.Fatalf("edge reload placement updates: Clock=%v Settings=%v", updatedClock, updatedSettings)
+			}
+			pending = false
+		}
+	}
+	for _, rect := range []ui.Rect{settingsBefore.rect, clockBefore.rect} {
+		if rect.X < 0 || rect.Y < 0 || rect.X+rect.W > 1536 || rect.Y+rect.H > 864 {
+			t.Fatalf("retained panel is outside output bounds: %+v", rect)
+		}
+	}
 	reg.dwell.mu.Lock()
 	dwellArmed := reg.dwell.armedValid
 	reg.dwell.mu.Unlock()
 	if dwellArmed {
 		t.Fatal("edge reload left an old-geometry tooltip dwell armed")
 	}
-
-	updatedSettings := false
-	for pending := true; pending; {
-		select {
-		case req := <-reg.AuxRequests():
-			if req.ID == panelSurfaceID(PanelSettings) && req.Update != nil && req.Update.Width != nil && req.Update.Height != nil {
-				updatedSettings = true
-			}
-		default:
-			if !updatedSettings {
-				t.Fatal("edge reload did not update the Settings surface placement")
-			}
-			pending = false
-		}
-	}
-
-	reg.mu.Lock()
-	trigger = reg.triggerLocked(7, "DP-1")
-	reg.mu.Unlock()
-	if err := reg.OpenPanel(PanelClock, 7, trigger); err != nil {
-		t.Fatalf("open panel after edge reload: %v", err)
-	}
-	_ = drainAux(t, reg, 1)
 
 	thicker := override
 	thicker.Height += 8
@@ -1665,10 +1843,7 @@ func TestEdgeReloadPreservesSettingsAndClosesOldGeometryPanels(t *testing.T) {
 		t.Fatalf("PrepareConfig thickness: %v", err)
 	}
 	callbacks = prepared.Hosts[7]
-	callbacks.OutputSize(1536, 864)
-	if err := callbacks.Configure(thicker.SurfaceExtent(), 864, 120); err != nil {
-		t.Fatalf("thickness Configure: %v", err)
-	}
+	configureCandidateBar(t, callbacks, thicker, 1536, 864, 120)
 	prepared.Commit()
 
 	reg.mu.Lock()
@@ -1678,11 +1853,11 @@ func TestEdgeReloadPreservesSettingsAndClosesOldGeometryPanels(t *testing.T) {
 		reg.mu.Unlock()
 		t.Fatal("thickness reload closed Settings")
 	}
-	if clockHost != nil || settingsHost.place.BarZone != thicker.Extent() {
+	if clockHost != clockBefore || settingsHost.place.BarZone != thicker.Extent() || clockHost.place.BarZone != thicker.Extent() {
 		got := settingsHost.place.BarZone
 		reg.mu.Unlock()
-		t.Fatalf("thickness reload kept Clock=%v or left Settings zone %d, want closed and %d",
-			clockHost != nil, got, thicker.Extent())
+		t.Fatalf("thickness reload replaced/closed Clock=%v or left zones Settings=%d Clock=%d, want %d",
+			clockHost != clockBefore, got, clockHost.place.BarZone, thicker.Extent())
 	}
 	reg.mu.Unlock()
 }
@@ -1706,16 +1881,61 @@ func TestEdgeReloadClosesAffectedTrayDrawer(t *testing.T) {
 		t.Fatalf("PrepareConfig: %v", err)
 	}
 	callbacks := prepared.Hosts[7]
-	callbacks.OutputSize(1536, 864)
-	if err := callbacks.Configure(candidate.Bar.SurfaceExtent(), 864, 120); err != nil {
-		t.Fatalf("candidate Configure: %v", err)
-	}
+	configureCandidateBar(t, callbacks, candidate.Bar, 1536, 864, 120)
 	prepared.Commit()
 	reg.mu.Lock()
 	drawerOpen := reg.trayDrawer.open_
 	reg.mu.Unlock()
 	if drawerOpen || len(harness.closes) != 1 {
 		t.Fatalf("edge reload left drawer open=%v with %d close requests", drawerOpen, len(harness.closes))
+	}
+}
+
+func TestDisablingBarClosesItsPanels(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{BarEdge: "top", OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 1)
+
+	candidate := config.Default()
+	candidate.Bar.Enabled = false
+	prepared, err := reg.PrepareConfig(candidate, nil)
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if len(reg.panelHosts) != 0 {
+		t.Fatalf("disabling the bar retained panels: %v", reg.panelHosts)
+	}
+}
+
+func TestRemovingOutputClosesItsPanelGroup(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 1)
+
+	// The owner calls DropAux for the shield's OnDrop when it tears down an
+	// output's auxiliary surfaces.
+	reg.DropAux(7, panelShieldSurfaceID(7))
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if len(reg.panelHosts) != 0 {
+		t.Fatalf("output removal retained panels: %v", reg.panelHosts)
 	}
 }
 
@@ -1751,11 +1971,300 @@ func TestUnrelatedReloadKeepsOpenPanelLifetime(t *testing.T) {
 	}
 }
 
+func TestReloadCentersRetainedPanelWhenTriggerActionDisappears(t *testing.T) {
+	reg := newPanelRegistry(t)
+	bar := withTestBar(t, reg, 7, reg.cfg)
+	bar.setOutputSize(1536, 864)
+	if err := bar.Configure(1536, reg.cfg.Bar.SurfaceExtent(), 120); err != nil {
+		t.Fatal(err)
+	}
+	trigger := Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}
+	if bounds := bar.actionBounds(panelControlCenterAction); bounds.W <= 0 {
+		t.Fatal("default bar has no Control Centre trigger for the fixture")
+	}
+	trigger = triggerAtAction(bar, trigger, panelControlCenterAction)
+	if err := reg.OpenPanel(PanelControlCenter, 7, trigger); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	before := reg.panelHosts[PanelControlCenter]
+	reg.mu.Unlock()
+
+	candidate := config.Default()
+	candidate.Bar.Center = []config.Item{{ID: "media"}}
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[7]
+	configureCandidateBar(t, callbacks, candidate.Bar, 1536, 864, 120)
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelControlCenter]
+	if h != before {
+		t.Fatal("the disappearing trigger action closed or replaced its panel")
+	}
+	if h.place.AnchorAction != panelControlCenterAction {
+		t.Fatalf("placement forgot its trigger action %q", h.place.AnchorAction)
+	}
+	if h.place.Align != "center" {
+		t.Fatalf("missing trigger did not fall back to centering: align=%q anchor=(%d,%d)", h.place.Align, h.place.AnchorX, h.place.AnchorY)
+	}
+	if got := h.rect.X + h.rect.W/2; got != 768 {
+		t.Fatalf("panel center x = %d, want 768 (%+v)", got, h.rect)
+	}
+}
+
+func TestGeometryReloadRetainsPendingFilesPick(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	pick := make(chan error, 1)
+	root := t.TempDir()
+	session := &filesSession{root: root, cwd: root, title: "Pick", mode: "pick-file", pick: pick}
+	session.cwd = session.root
+	reg.mu.Lock()
+	reg.files = session
+	reg.mu.Unlock()
+	if err := reg.OpenPanel(PanelFiles, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	before := reg.panelHosts[PanelFiles]
+	reg.mu.Unlock()
+
+	candidate := config.Default()
+	candidate.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[7]
+	configureCandidateBar(t, callbacks, candidate.Bar, 1536, 864, 120)
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.panelHosts[PanelFiles] != before || reg.files != session || reg.files.pick != pick {
+		t.Fatal("geometry reload replaced the files panel or canceled its pending pick")
+	}
+	select {
+	case err := <-pick:
+		t.Fatalf("pending pick was canceled by geometry reload: %v", err)
+	default:
+	}
+}
+
+func TestGeometryReloadReflowsTwoRetainedPanelsOnSideBar(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	trigger := Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}
+	if err := reg.OpenPanel(PanelClock, 7, trigger); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if err := reg.OpenPanel(PanelSession, 7, trigger); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 1)
+	reg.mu.Lock()
+	clockBefore := reg.panelHosts[PanelClock]
+	sessionBefore := reg.panelHosts[PanelSession]
+	reg.mu.Unlock()
+
+	candidate := config.Default()
+	candidate.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[7]
+	configureCandidateBar(t, callbacks, candidate.Bar, 1536, 864, 120)
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	clock, session := reg.panelHosts[PanelClock], reg.panelHosts[PanelSession]
+	if clock != clockBefore || session != sessionBefore {
+		t.Fatal("side-bar reload replaced or closed a retained panel")
+	}
+	if clock.place.BarEdge != "right" || session.place.BarEdge != "right" {
+		t.Fatalf("retained edges = %q/%q, want right/right", clock.place.BarEdge, session.place.BarEdge)
+	}
+	if overlaps(clock.rect, session.rect) {
+		t.Fatalf("side-bar reload left retained panels overlapping: Clock=%+v Session=%+v", clock.rect, session.rect)
+	}
+	for _, rect := range []ui.Rect{clock.rect, session.rect} {
+		if rect.X < 0 || rect.Y < 0 || rect.X+rect.W > 1536 || rect.Y+rect.H > 864 {
+			t.Fatalf("retained side panel is outside output bounds: %+v", rect)
+		}
+	}
+}
+
+func TestGeometryReloadRetainsPanelsAcrossBarGeometryCases(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{BarEdge: "top", OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	before := reg.panelHosts[PanelClock]
+	reg.mu.Unlock()
+
+	right := config.Default().Bar
+	right.Edge = "right"
+	bottom := right
+	bottom.Edge = "bottom"
+	islands := bottom
+	islands.Style = "islands"
+	reserve := 96
+	reserved := islands
+	reserved.Reserve = &reserve
+	thicker := reserved
+	thicker.Height += 8
+	for _, tc := range []struct {
+		name string
+		bar  config.Bar
+	}{
+		{"top to right", right},
+		{"right to bottom", bottom},
+		{"attached to islands", islands},
+		{"reserve", reserved},
+		{"thickness", thicker},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := config.Default()
+			candidate.Bar = tc.bar
+			prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+			if err != nil {
+				t.Fatalf("PrepareConfig: %v", err)
+			}
+			callbacks := prepared.Hosts[7]
+			configureCandidateBar(t, callbacks, tc.bar, 1536, 864, 120)
+			prepared.Commit()
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			h := reg.panelHosts[PanelClock]
+			if h != before {
+				t.Fatal("geometry reload replaced or closed Clock")
+			}
+			if h.place.BarEdge != tc.bar.Edge || h.place.BarZone != tc.bar.Extent() {
+				t.Fatalf("placement edge/zone = %q/%d, want %q/%d", h.place.BarEdge, h.place.BarZone, tc.bar.Edge, tc.bar.Extent())
+			}
+			if h.place.Detached == tc.bar.Attached() {
+				t.Fatalf("placement detached=%v disagrees with bar attached=%v", h.place.Detached, tc.bar.Attached())
+			}
+		})
+	}
+}
+
+func TestLaterBarConfigureRefreshesRetainedPanelPlacement(t *testing.T) {
+	reg := newPanelRegistry(t)
+	bar := withTestBar(t, reg, 7, reg.cfg)
+	bar.setOutputSize(1536, 864)
+	if err := bar.Configure(reg.cfg.Bar.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{BarEdge: "top", OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	before := reg.panelHosts[PanelClock]
+	reg.mu.Unlock()
+
+	callbacks := reg.bindHost(7, bar, wayland.HostCallbacks{Configure: bar.Configure, OutputSize: bar.setOutputSize})
+	callbacks.OutputSize(1600, 900)
+	if err := callbacks.Configure(1600, reg.cfg.Bar.SurfaceExtent(), 150); err != nil {
+		t.Fatalf("scaled Configure: %v", err)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.panelHosts[PanelClock] != before || before.place.Output != (ui.Rect{W: 1600, H: 900}) {
+		t.Fatalf("later configure lost retained placement: host=%p want=%p output=%+v", reg.panelHosts[PanelClock], before, before.place.Output)
+	}
+}
+
+func TestGeometryReloadLeavesUnrelatedOutputAndMonitorLeasesAlone(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	bar, leases, _, err := reg.buildBar(reg.cfg, "DP-2", reg.tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseAll(leases); bar.stopAnimation() })
+	bar.setOutputSize(1536, 864)
+	reg.setTestBar(8, bar)
+	for _, b := range []*Bar{reg.bars[7], bar} {
+		if err := b.Configure(reg.cfg.Bar.SurfaceExtent(), 864, 120); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{BarEdge: "top", OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if err := reg.OpenPanel(PanelMonitor, 8, Trigger{BarEdge: "top", OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	clockBefore := reg.panelHosts[PanelClock]
+	monitorBefore := reg.panelHosts[PanelMonitor]
+	monitorLeases := append([]*services.Lease(nil), monitorBefore.leases...)
+	reg.mu.Unlock()
+	if !reg.Metrics().SourceLeased(services.SourceProcess) {
+		t.Fatal("Monitor fixture did not lease process metrics")
+	}
+
+	candidate := config.Default()
+	override := candidate.Bar
+	override.Edge = "right"
+	candidate.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: override}}
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{
+		{Global: 7, Connector: "DP-1"}, {Global: 8, Connector: "DP-2"},
+	})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	for _, global := range []uint32{7, 8} {
+		callbacks := prepared.Hosts[global]
+		policy := candidate.ForConnector(map[uint32]string{7: "DP-1", 8: "DP-2"}[global])
+		configureCandidateBar(t, callbacks, policy, 1536, 864, 120)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.panelHosts[PanelClock] != clockBefore || reg.panelHosts[PanelMonitor] != monitorBefore {
+		t.Fatal("geometry reload changed a panel host on either output")
+	}
+	if reg.panelHosts[PanelClock].place.BarEdge != "right" || reg.panelHosts[PanelMonitor].place.BarEdge != "top" {
+		t.Fatalf("output edges = %q/%q, want right/top", reg.panelHosts[PanelClock].place.BarEdge, reg.panelHosts[PanelMonitor].place.BarEdge)
+	}
+	if len(monitorBefore.leases) != len(monitorLeases) {
+		t.Fatalf("Monitor lease count = %d, want %d", len(monitorBefore.leases), len(monitorLeases))
+	}
+	for i, lease := range monitorLeases {
+		if monitorBefore.leases[i] != lease {
+			t.Fatalf("Monitor lease %d was replaced", i)
+		}
+	}
+	if !reg.Metrics().SourceLeased(services.SourceProcess) {
+		t.Fatal("geometry reload released the final Monitor process lease")
+	}
+}
+
 func TestOutputScaleConfigureRefitsOpenSettings(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Bar.Edge = "right"
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	bar := withTestBar(t, reg, 7, cfg)
@@ -1878,6 +2387,7 @@ func TestFloatingSettingsUsesStableOutputAnchor(t *testing.T) {
 			cfg := config.Default()
 			cfg.Bar.Edge = edge
 			reg := NewRegistry(cfg)
+			keepInvalidationsDrained(t, reg)
 			t.Cleanup(reg.Close)
 			withTestBar(t, reg, 7, cfg).setOutputSize(1536, 864)
 			reg.mu.Lock()
@@ -1935,5 +2445,36 @@ func TestSettingsDraftEditsStayOffTheLiveConfig(t *testing.T) {
 	}
 	if liveHeight != 36 {
 		t.Fatalf("live height = %d, want 36: the draft edit reached the live config", liveHeight)
+	}
+}
+
+// A palette reload carries the resolved motion settings onto a running panel
+// animation: the animator is kept, reduced motion settles what was in flight,
+// and the crossfade still restarts from what is rendering.
+func TestPanelRethemeAppliesMotion(t *testing.T) {
+	t.Parallel()
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	h.anim = newAnimator(nil, false, h.theme.Motion)
+	anim := h.anim
+	h.anim.Target(panelSurfaceID(h.id), animVisible, 1)
+
+	next := DefaultTheme()
+	next.Motion = render.MotionSet{
+		Durations: theme.BaseMotion.AtSpeed(400),
+		Reduced:   true,
+	}
+	h.retheme(next)
+
+	if h.anim != anim {
+		t.Fatal("retheme replaced the panel animator")
+	}
+	if !h.anim.reduced {
+		t.Fatal("reduced motion did not reach the panel animator")
+	}
+	if h.themeFrom == (Theme{}) {
+		t.Fatal("retheme lost the crossfade origin")
+	}
+	if !h.anim.has(panelSurfaceID(h.id), animTheme) {
+		t.Fatal("retheme did not restart the palette blend")
 	}
 }

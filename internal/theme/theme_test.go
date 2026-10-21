@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 // stubColors is real matugen output for one seed, complete in both modes. The
@@ -344,7 +346,7 @@ func writeMatugenStub(t *testing.T, dir string, recordArgs bool) {
 	}
 	script += "cat > colors.json <<'EOF'\n" + stubColors + "\nEOF\n"
 	path := filepath.Join(dir, "matugen")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := fakebin.Write(path, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -335,6 +335,50 @@ func TestBluetoothReducerDoesNotDuplicateConnectedUnpairedDevices(t *testing.T) 
 	}
 }
 
+func TestBluetoothReducerKeepsOnlyValidBatteryPercentages(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  uint8
+		valid bool
+	}{
+		{name: "zero", value: uint8(0), want: 0, valid: true},
+		{name: "hundred", value: uint8(100), want: 100, valid: true},
+		{name: "over percentage range", value: uint8(101)},
+		{name: "wide over percentage range", value: uint16(101)},
+		{name: "wide overflow", value: uint16(256)},
+		{name: "negative", value: int(-1)},
+		{name: "negative overflow", value: int(-256)},
+		{name: "wrong type", value: "50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := reduceManagedObjects(map[dbus.ObjectPath]map[string]map[string]dbus.Variant{
+				dbus.ObjectPath("/org/bluez/hci0"): {
+					adapterInterface: {"Powered": dbus.MakeVariant(true)},
+				},
+				dbus.ObjectPath("/org/bluez/hci0/dev_1"): {
+					deviceInterface: {
+						"Adapter":   dbus.MakeVariant(dbus.ObjectPath("/org/bluez/hci0")),
+						"Address":   dbus.MakeVariant("AA:01"),
+						"Connected": dbus.MakeVariant(true),
+					},
+					batteryInterface: {"Percentage": dbus.MakeVariant(tc.value)},
+				},
+			})
+			got := state.Devices[0].Battery
+			if !tc.valid {
+				if got != nil {
+					t.Fatalf("Battery = %d, want absent", *got)
+				}
+				return
+			}
+			if got == nil || *got != tc.want {
+				t.Fatalf("Battery = %v, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBluetoothReducerInvalidationAndRemovalClearOptionalValues(t *testing.T) {
 	r := newBluetoothReducer()
 	path := dbus.ObjectPath("/org/bluez/hci0/dev_1")

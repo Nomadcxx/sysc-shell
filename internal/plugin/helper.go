@@ -62,12 +62,36 @@ func HelperServe(args []string) int {
 		shutdownMarker = p
 		mode = "ok"
 	}
+	if mode == "hold-stderr" {
+		time.Sleep(time.Minute)
+		return 0
+	}
 	// record-input:<path> appends each input event. A host that drops the
 	// last buffered change never produces a line for it.
 	recordInput := ""
 	if p, ok := strings.CutPrefix(mode, "record-input:"); ok {
 		recordInput = p
 		mode = "ok"
+	}
+	// The spawn-child fixtures leave a descendant behind so a test can check
+	// what a forced stop does to it. The pid lands in the named file; the mode
+	// the plugin serves afterwards is the part before the colon.
+	spawnChild := ""
+	if p, ok := strings.CutPrefix(mode, "spawn-child:"); ok {
+		spawnChild, mode = p, "ok"
+	}
+	if p, ok := strings.CutPrefix(mode, "spawn-child-slow-shutdown:"); ok {
+		spawnChild, mode = p, "slow-shutdown"
+	}
+	if p, ok := strings.CutPrefix(mode, "spawn-child-silent:"); ok {
+		spawnChild, mode = p, "silent"
+	}
+	// crash-with-child:<path> writes the pid of the descendant it leaves
+	// behind, so the test that started this can clean up after itself.
+	crashWithChild := ""
+	if p, ok := strings.CutPrefix(mode, "crash-with-child:"); ok {
+		crashWithChild = p
+		mode = "crash-with-child"
 	}
 	// probe reports the boundary the process started inside, on stderr, then
 	// serves normally: its resource ceilings, and the outcome of each
@@ -106,6 +130,21 @@ func HelperServe(args []string) int {
 		Plugin:       hello.Plugin,
 		Capabilities: hello.Capabilities,
 	}
+	if spawnChild != "" {
+		// A descendant in the plugin's own group, the shape of a plugin that
+		// shells out to a recorder, a poll loop or a CLI. It writes nothing
+		// and reads nothing, so it stays alive until something kills it.
+		child := exec.Command(os.Args[0], HelperFlag, "hold-stderr")
+		child.Stdin, child.Stdout, child.Stderr = nil, nil, nil
+		if err := child.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "helper: start descendant: %v\n", err)
+			return 1
+		}
+		if err := os.WriteFile(spawnChild, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "helper: record descendant: %v\n", err)
+			return 1
+		}
+	}
 	switch mode {
 	case "silent":
 		time.Sleep(time.Minute)
@@ -140,7 +179,73 @@ func HelperServe(args []string) int {
 		b := make([]byte, 9<<30)
 		b[0] = 1
 		fmt.Fprintf(os.Stderr, "helper: allocated %d bytes\n", len(b))
+	case "crash-with-child":
+		// A descendant that inherits both pipes: the shape of a script entry
+		// point that runs `helper &` and then execs the real binary. The
+		// plugin itself is gone the moment this returns, but the pipes stay
+		// open in the child.
+		child := exec.Command(os.Args[0], HelperFlag, "hold-stderr")
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			return 1
+		}
+		if crashWithChild != "" {
+			// Append: a runtime that restarts leaves one descendant per
+			// attempt, and a test wants to end all of them.
+			f, err := os.OpenFile(crashWithChild, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err == nil {
+				_, _ = fmt.Fprintf(f, "%d\n", child.Process.Pid)
+				_ = f.Close()
+			}
+		}
+		return 4
 	case "ignore-shutdown":
+		time.Sleep(time.Minute)
+		return 0
+	case "slow-shutdown":
+		msg, err := in.Decode()
+		if err != nil {
+			return 1
+		}
+		if _, ok := msg.(*v1.HostShutdown); !ok {
+			return 1
+		}
+		time.Sleep(2 * time.Second)
+		return 0
+	case "stderr-tail-on-shutdown":
+		msg, err := in.Decode()
+		if err != nil {
+			return 1
+		}
+		if _, ok := msg.(*v1.HostShutdown); !ok {
+			return 1
+		}
+		fmt.Fprintln(os.Stderr, "stderr prefix")
+		_ = out.Encode(&v1.ViewSnapshot{ViewID: "stderr-ready", Revision: 1,
+			Root: &v1.Node{Kind: v1.KindText, Text: "stderr ready"}})
+		time.Sleep(200 * time.Millisecond)
+		fmt.Fprintln(os.Stderr, "stderr final marker")
+		return 0
+	case "stderr-inherited-child":
+		msg, err := in.Decode()
+		if err != nil {
+			return 1
+		}
+		if _, ok := msg.(*v1.HostShutdown); !ok {
+			return 1
+		}
+		child := exec.Command(os.Args[0], HelperFlag, "hold-stderr")
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			return 1
+		}
+		_ = out.Encode(&v1.ViewSnapshot{ViewID: "stderr-child", Revision: 1,
+			Root: &v1.Node{Kind: v1.KindText, Text: strconv.Itoa(child.Process.Pid)}})
+		// Stay alive holding the pipe. A plugin that exits here would leave
+		// the test racing the grace against the pipe copy; going deaf on
+		// purpose guarantees the host has to bound the wait and stop the
+		// group itself.
 		time.Sleep(time.Minute)
 		return 0
 	case "flood":

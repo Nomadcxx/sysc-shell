@@ -105,7 +105,7 @@ type Release struct {
 	Assets       map[string]Asset `json:"assets"`
 	ReleaseNotes string           `json:"release_notes,omitempty"`
 	// Filesystem repeats the manifest's filesystem declaration (protocol
-	// minor 18) so the consent shows what a confined plugin may reach
+	// minor 20) so the consent shows what a confined plugin may reach
 	// before it is downloaded. Nil means the release declares none.
 	Filesystem *Filesystem `json:"filesystem,omitempty"`
 }

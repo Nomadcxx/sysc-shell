@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
@@ -18,6 +19,7 @@ func TestAcceptSettingsPanelOpens(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	reg := shell.NewRegistry(cfg)
 	t.Cleanup(reg.Close)
+	keepInvalidationsDrained(t, reg)
 	if err := reg.OpenPanel(shell.PanelSettings, 7, shell.Trigger{Align: "center"}); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +36,7 @@ func TestAcceptStockThemesGenerate(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncat > colors.json <<'EOF'\n" + stubColors + "\nEOF\n"
 	path := filepath.Join(dir, "matugen")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := fakebin.Write(path, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	g := theme.Generator{CacheDir: dir, Matugen: path}

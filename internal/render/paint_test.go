@@ -682,6 +682,26 @@ func TestPaintButtonTogglesColor(t *testing.T) {
 	}
 }
 
+func TestPaintToggleKnobUsesAccentForeground(t *testing.T) {
+	t.Parallel()
+
+	style := testStyle
+	style.Accent = Color{R: 0xf0, G: 0x60, B: 0x9f, A: 0xff}
+	style.AccentOn = style.Accent // The palette's error and primary colors can match.
+	style.OnAccent = Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	n := &ui.Node{Kind: ui.KindToggle, Value: 1, Bounds: ui.Rect{X: 20, Y: 8, W: 48, H: 24}}
+	c := newTestCanvas(t, 88, 48)
+	paintToggle(c, n, style)
+
+	knob := ui.ToggleKnob
+	pad := (n.Bounds.H - knob) / 2
+	x := n.Bounds.X + n.Bounds.W - pad - knob/2
+	y := n.Bounds.Y + n.Bounds.H/2
+	if got := pixelAt(t, c, x, y); got != style.OnAccent {
+		t.Fatalf("on-toggle knob = %+v, want accent foreground %+v", got, style.OnAccent)
+	}
+}
+
 // A button paints its label in OnPrimary: the fill is the Primary token, so
 // the text token paired with it is the only legible choice (launcher D11).
 func TestPaintButtonTextUsesOnPrimary(t *testing.T) {
@@ -2463,6 +2483,21 @@ func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
 	}
 	if !found {
 		t.Error("the filter well drew no outline, so it was painted as text rather than as a field")
+	}
+}
+
+func TestPaintMenuUsesStadiumShapeAndSelectedFill(t *testing.T) {
+	n := &ui.Node{
+		Kind: ui.KindMenu, Text: "Caffeine 15m", Width: 160, Height: 44,
+		Shape: ui.ShapeStadium, State: ui.StateSelected, Fill: ui.FillAccent,
+	}
+	c := paintChromeNode(t, n, testStyle)
+	x, y := fillPointOf(n)
+	if got := pixelAt(t, c, x, y); got != testStyle.accent() {
+		t.Fatalf("selected menu fill = %+v, want accent %+v", got, testStyle.accent())
+	}
+	if got := pixelAt(t, c, n.Bounds.X, n.Bounds.Y); got != testStyle.Background {
+		t.Fatalf("stadium menu corner = %+v, want untouched background %+v", got, testStyle.Background)
 	}
 }
 

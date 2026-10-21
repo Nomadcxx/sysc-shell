@@ -143,7 +143,6 @@ func TestRunningAppsIconArrivesAfterPaint(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	worker := icons.NewWorker(icons.NewResolver("hicolor", []string{root}), reg.applyTrayIcon)
-	go func() { _ = worker.Run(ctx) }()
 	reg.trayIcons = worker
 	reg.runningIndex = []runningAppEntry{{ID: "firefox", Icon: "firefox"}}
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
@@ -162,6 +161,7 @@ func TestRunningAppsIconArrivesAfterPaint(t *testing.T) {
 		t.Fatalf("before decode letter = %q, want F", letter)
 	}
 
+	go func() { _ = worker.Run(ctx) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		_, kind, image := tileContent()

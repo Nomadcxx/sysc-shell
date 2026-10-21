@@ -114,7 +114,8 @@ func TestDisabledControlsPaintFaded(t *testing.T) {
 		t.Fatal("a live control was faded")
 	}
 	for name, pair := range map[string][2]Color{
-		"accent": {style.Accent, dim.Accent}, "track": {style.Track, dim.Track}, "foreground": {style.Foreground, dim.Foreground},
+		"accent": {style.Accent, dim.Accent}, "track": {style.Track, dim.Track},
+		"foreground": {style.Foreground, dim.Foreground}, "accent foreground": {style.OnAccent, dim.OnAccent},
 	} {
 		if pair[1].A >= pair[0].A {
 			t.Errorf("disabled %s alpha %#x, live %#x", name, pair[1].A, pair[0].A)

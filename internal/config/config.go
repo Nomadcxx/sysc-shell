@@ -6,7 +6,6 @@
 package config
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 	"sort"
@@ -20,6 +19,9 @@ import (
 // filesystem widgets watching different mounts.
 type Item struct {
 	ID string
+	// Scroll is the bounded action performed when the wheel is over this item.
+	// Empty follows the item's default, which keeps volume widgets scrollable.
+	Scroll BarScrollAction
 	// Format is the Go layout string for a clock. Empty on other items.
 	Format string
 	// Boundary is how often this clock's text can change, derived from Format
@@ -58,6 +60,28 @@ type Item struct {
 	Plugin   string
 	Entry    string
 	Instance string
+}
+
+// BarScrollAction is the fixed set of actions a bar item may bind to its
+// wheel. An empty value means the item's default action.
+type BarScrollAction string
+
+const (
+	ScrollActionNone       BarScrollAction = "none"
+	ScrollActionVolume     BarScrollAction = "volume"
+	ScrollActionBrightness BarScrollAction = "brightness"
+)
+
+// EffectiveScrollAction resolves an omitted value without serializing an
+// option for every item in the built-in bar.
+func (i Item) EffectiveScrollAction() BarScrollAction {
+	if i.Scroll != "" {
+		return i.Scroll
+	}
+	if i.ID == "volume" {
+		return ScrollActionVolume
+	}
+	return ScrollActionNone
 }
 
 // Plugins is the shell's record of external plugins: which are turned on and
@@ -202,6 +226,17 @@ func (c Config) Clone() Config {
 	out.Tray.Pinned = slices.Clone(c.Tray.Pinned)
 	out.Tray.Order = slices.Clone(c.Tray.Order)
 	out.Media.Blacklist = slices.Clone(c.Media.Blacklist)
+	out.Launcher.Actions = slices.Clone(c.Launcher.Actions)
+	for i := range out.Launcher.Actions {
+		out.Launcher.Actions[i].Argv = slices.Clone(out.Launcher.Actions[i].Argv)
+	}
+	out.Launcher.Providers = slices.Clone(c.Launcher.Providers)
+	for i := range out.Launcher.Providers {
+		out.Launcher.Providers[i].Command = slices.Clone(out.Launcher.Providers[i].Command)
+		out.Launcher.Providers[i].OnSelect = slices.Clone(out.Launcher.Providers[i].OnSelect)
+	}
+	out.Applications.Favourites = slices.Clone(c.Applications.Favourites)
+	out.Applications.Hidden = slices.Clone(c.Applications.Hidden)
 	out.Templates = maps.Clone(c.Templates)
 	out.Plugins = c.Plugins.Clone()
 	return out
@@ -352,6 +387,42 @@ type Session struct {
 	Language    string // UI language code ("es", "ja"...); empty follows the session locale
 }
 
+const (
+	LauncherAppsPrefix    = "/apps"
+	LauncherCalcPrefix    = "/calc"
+	LauncherEmojiPrefix   = "/emo"
+	LauncherNotesPrefix   = "/nt"
+	LauncherSessionPrefix = "/session"
+	LauncherActionsPrefix = "/action"
+)
+
+// Launcher holds user-defined launcher providers and fixed actions.
+type Launcher struct {
+	Providers []LauncherCommandProvider
+	Actions   []LauncherAction
+}
+
+// LauncherCommandProvider runs an argv listing command and activates a row
+// through a second argv command. Templates are replaced within argv tokens.
+type LauncherCommandProvider struct {
+	Name        string
+	Prefix      string
+	Glyph       string
+	Description string
+	Command     []string
+	OnSelect    []string
+}
+
+// LauncherAction is an argv command and its display metadata.
+type LauncherAction struct {
+	ID             string
+	Label          string
+	Comment        string
+	Argv           []string
+	Dangerous      bool
+	AllowDangerous bool
+}
+
 // Idle are the display-power timeouts, resolved to durations. A zero timeout
 // disables that behavior on that power source; all-zero disables the idle
 // service entirely (opt-in, like Media).
@@ -391,11 +462,6 @@ type OutputOverride struct {
 	Bar       Bar
 }
 
-// Weather is the process-wide weather source. Coordinates live here rather
-// than on the item because one service serves every bar.
-//
-// Configured distinguishes a supplied block from the zero value, which is what
-// lets a weather widget with no block fail with a useful message.
 // Wallpaper is the picker's two library roots plus the gSlapper playback
 // settings. Assignments are not here: what is on which output is state, not
 // configuration, and lives under $XDG_STATE_HOME (D19).
@@ -416,6 +482,12 @@ type Wallpaper struct {
 	// wallpaper is occluded. It also decides whether a video-to-video apply can
 	// use IPC `change`, because gSlapper requires --auto-stop for that.
 	Hidden string
+	// CycleEnabled opts into the global wallpaper rotation policy. CycleMode is
+	// interval or time; CycleTime is a local HH:MM daily target.
+	CycleEnabled  bool
+	CycleMode     string
+	CycleInterval time.Duration
+	CycleTime     string
 	// PauseCovered pauses the wallpaper while a window covers the output, and
 	// PauseLocked while the session is locked.
 	PauseCovered bool
@@ -459,20 +531,25 @@ var (
 	wallpaperHidden     = map[string]bool{"none": true, "auto-pause": true, "auto-stop": true}
 	wallpaperOnBattery  = map[string]bool{"keep": true, "pause": true, "limit-10": true}
 	wallpaperLowBattery = map[int]bool{0: true, 10: true, 15: true, 20: true, 25: true, 30: true}
+	wallpaperCycleModes = map[string]bool{"interval": true, "time": true}
 )
 
+// Weather is the process-wide forecast source. Coordinates live here rather
+// than on the item because one service serves every bar.
 type Weather struct {
 	Latitude  float64
 	Longitude float64
 	Unit      string
 	Interval  time.Duration
 	// City is an optional place name the shell resolves to coordinates
-	// through the forecast provider's geocoding. Exactly one of city or
-	// latitude+longitude is accepted.
+	// through the forecast provider's geocoding. When configured, exactly one of
+	// city or latitude+longitude is accepted.
 	City string
-	// Location is an optional display label for the place the coordinates
-	// name. It never feeds the request; the coordinates do that alone.
-	Location   string
+	// Location is an optional display label for the place. It never feeds the
+	// request; the city or coordinates do that alone.
+	Location string
+	// Configured is true only when a city or complete coordinate pair exists;
+	// preference-only weather settings leave it false.
 	Configured bool
 }
 
@@ -504,6 +581,14 @@ func defaultNightLight() NightLight {
 type Media struct {
 	Preferred string
 	Blacklist []string
+}
+
+// ApplicationPreferences stores shell-owned choices by the stable desktop ID
+// from sysc-launch. It does not change desktop files or MIME associations.
+type ApplicationPreferences struct {
+	Favourites      []string
+	Hidden          []string
+	DefaultTerminal string
 }
 
 // Monitor is the system monitor panel. Colours are theme role names, not
@@ -549,12 +634,14 @@ type Config struct {
 	ThemeGen      ThemeConfig
 	Accessibility Accessibility
 	Session       Session
+	Launcher      Launcher
 	Idle          Idle
 	Panels        Panels
 	Tray          TrayPreferences
 	Weather       Weather
 	NightLight    NightLight
 	Media         Media
+	Applications  ApplicationPreferences
 	Monitor       Monitor
 	Sounds        Sounds
 	Wallpaper     Wallpaper
@@ -579,8 +666,9 @@ const (
 // a widget.
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
-	"cpu": {}, "memory": {}, "temperature": {}, "gpu": {}, "filesystem": {}, "block": {}, "network": {},
-	"weather": {}, "battery": {}, "notifications": {},
+	"keyboard-layout": {},
+	"cpu":             {}, "memory": {}, "temperature": {}, "gpu": {}, "filesystem": {}, "block": {}, "network": {},
+	"weather": {}, "battery": {}, "notifications": {}, "privacy": {},
 	"running-apps": {}, "wordmark": {},
 	"launcher": {},
 	// "wallpaper" opens the picker. It is deliberately not in Default(): a
@@ -704,6 +792,7 @@ func Default() Config {
 					{ID: "gpu", Display: "radial", Interval: defaultMetricInterval},
 				}},
 				{ID: "clipboard"},
+				{ID: "privacy"},
 				{ID: "notifications"},
 			},
 		},
@@ -730,6 +819,10 @@ func Default() Config {
 			FPS:             30,
 			FadeDuration:    0.5,
 			Hidden:          "none",
+			CycleEnabled:    false,
+			CycleMode:       "interval",
+			CycleInterval:   5 * time.Minute,
+			CycleTime:       "06:00",
 			PauseCovered:    true,
 			PauseLocked:     true,
 			OnBattery:       "limit-10",
@@ -818,7 +911,7 @@ func (c Config) TemplateEnabled(name string) bool {
 }
 
 func pathErr(path, format string, args ...any) error {
-	return fmt.Errorf("config: %s: %s", path, fmt.Sprintf(format, args...))
+	return newPathError(path, format, args...)
 }
 
 // KnownItemIDs lists the bar widget vocabulary in a stable order. The config

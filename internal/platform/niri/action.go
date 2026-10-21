@@ -37,6 +37,25 @@ type CloseWindow struct {
 	ID uint64 `json:"id"`
 }
 
+// SwitchLayout asks Niri to select one reported keyboard layout index.
+type SwitchLayout struct{ Index uint8 }
+
+// ToggleWindowFloating toggles one exact window ID between floating and tiling.
+type ToggleWindowFloating struct{ ID uint64 }
+
+// ActionRefusalError reports an explicit Err reply from Niri for an action.
+type ActionRefusalError struct{ Reason string }
+
+func (e *ActionRefusalError) Error() string { return fmt.Sprintf("niri: action: %s", e.Reason) }
+
+// ActionNotSentError reports a failure known to happen before Niri could
+// receive the action request.
+type ActionNotSentError struct{ Cause error }
+
+func (e *ActionNotSentError) Error() string { return fmt.Sprintf("niri: action not sent: %v", e.Cause) }
+
+func (e *ActionNotSentError) Unwrap() error { return e.Cause }
+
 // FocusWorkspace asks the compositor to focus one workspace by id. Niri's
 // reference is an id, an index or a name; the id is the only one that is
 // stable while workspaces are created and destroyed, so it is the only one
@@ -74,20 +93,29 @@ type PowerOnMonitors struct{}
 func Action(ctx context.Context, socketPath string, body any) error {
 	payload, err := marshalAction(body)
 	if err != nil {
-		return err
+		return &ActionNotSentError{Cause: err}
 	}
 
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("niri: connect to %s: %w", socketPath, err)
+		return &ActionNotSentError{Cause: fmt.Errorf("niri: connect to %s: %w", socketPath, err)}
 	}
 	defer conn.Close()
 	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopCancel()
 
-	if _, err := conn.Write(append(payload, '\n')); err != nil {
-		return fmt.Errorf("niri: send action: %w", err)
+	request := append(payload, '\n')
+	written, err := conn.Write(request)
+	if err != nil {
+		cause := fmt.Errorf("niri: send action: %w", err)
+		if written == 0 {
+			return &ActionNotSentError{Cause: cause}
+		}
+		return cause
+	}
+	if written != len(request) {
+		return fmt.Errorf("niri: short action write: %d of %d bytes", written, len(request))
 	}
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 4096), maxLine)
@@ -102,7 +130,7 @@ func Action(ctx context.Context, socketPath string, body any) error {
 		return fmt.Errorf("niri: decode action reply: %w", err)
 	}
 	if reply.Err != nil {
-		return fmt.Errorf("niri: action: %s", *reply.Err)
+		return &ActionRefusalError{Reason: *reply.Err}
 	}
 	if reply.Ok == nil {
 		return fmt.Errorf("niri: action reply carried no result")
@@ -117,6 +145,12 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"FocusWindow": v}
 	case CloseWindow:
 		inner = map[string]any{"CloseWindow": v}
+	case ToggleWindowFloating:
+		inner = map[string]any{"ToggleWindowFloating": map[string]any{"id": v.ID}}
+	case SwitchLayout:
+		inner = map[string]any{"SwitchLayout": map[string]any{
+			"layout": map[string]any{"Index": v.Index},
+		}}
 	case ScreenshotScreen:
 		inner = map[string]any{"ScreenshotScreen": v}
 	case ScreenshotWindow:

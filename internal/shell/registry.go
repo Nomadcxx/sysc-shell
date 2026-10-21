@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -60,20 +61,26 @@ type Registry struct {
 	// onboardingPending keeps the first-start offer until an interactive,
 	// focused output can host it. Output loss restores the offer and its small
 	// view state for the next usable output.
-	onboardingPending bool
-	onboardingResume  bool
-	onboardingPage    onboardingPage
-	onboardingDraft   config.Config
-	onboardingError   string
+	onboardingPending          bool
+	onboardingResume           bool
+	onboardingPage             onboardingPage
+	onboardingDraft            config.Config
+	onboardingPluginSelections map[string]bool
+	onboardingError            string
 	// effectOutputs names the connectors whose wallpaper is a playing or
 	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
-	effectOutputs map[string]bool
-	leases        map[uint32][]*services.Lease
-	niriSnapshot  niri.Snapshot
-	now           time.Time
-	focused       string
-	layouts       niri.KeyboardLayouts
-	layoutsSeen   bool
+	effectOutputs      map[string]bool
+	wallpaperLuminance map[string]float64
+	leases             map[uint32][]*services.Lease
+	niriSnapshot       niri.Snapshot
+	privacyPipe        services.PrivacySnapshot
+	privacy            privacyState
+	privacySvc         *services.Privacy
+	privacyOSD         chan []privacyChange
+	now                time.Time
+	focused            string
+	layouts            niri.KeyboardLayouts
+	layoutsSeen        bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -105,6 +112,10 @@ type Registry struct {
 	// themeErr is why the published palette is not the requested one, empty
 	// when it is. Surfaced by the picker; never fatal.
 	themeErr string
+	// configReloadError and its timestamp are the latest safe refused reload.
+	// Both are protected by Registry.mu and copied by Status.
+	configReloadError   string
+	configReloadErrorAt string
 	// previewing keeps the preview session open until hide so its committed
 	// generation reason can be restored. previewTheme is the separate in-memory
 	// presentation used by every surface; commits clear it without persisting it.
@@ -179,6 +190,11 @@ type Registry struct {
 	// transactions ordered. IPC setters read after taking it so concurrent
 	// edits preserve each other's config fields.
 	configWriteMu sync.Mutex
+	// settingsWriteMu guards pending Settings edits and snapshots written by the
+	// debounce worker until their matching config reloads are applied.
+	settingsWriteMu         sync.Mutex
+	settingsWriteGeneration uint64
+	settingsWriteReloads    []settingsWriteReload
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
 	writeDelay           time.Duration
@@ -244,6 +260,9 @@ type Registry struct {
 	inhibit         io.Closer
 	inhibitWanted   bool
 	inhibitStarting bool
+	inhibitDuration time.Duration
+	inhibitUntil    time.Time
+	inhibitTimer    *time.Timer
 	// idleSvc is the display-power policy. Nil means no idle service is
 	// wired, which is the test and disabled configuration.
 	idleSvc *services.IdleService
@@ -262,8 +281,8 @@ type Registry struct {
 	usernames      *usernameCache
 	runningMenu    *runningAppMenuHost
 	windowSwitcher *windowSwitcherHost
-	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
-	// sends niri.Action on $NIRI_SOCKET off this goroutine.
+	// niriSend is the Niri action seam. Tests replace it; nil sends niri.Action
+	// on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
 	// signalProcess validates PID identity and delivers TERM/KILL off Registry.mu.
 	signalProcess func(services.ProcessIdentity, syscall.Signal) error
@@ -277,8 +296,10 @@ type Registry struct {
 
 	// clipboard is the daemon-owned metadata projection. Payload bytes never
 	// enter Registry or a bar view.
-	clipboard       clipboardProjection
-	clipboardSender clipboardCommandSender
+	clipboard            clipboardProjection
+	clipboardSender      clipboardCommandSender
+	clipboardCommandMu   sync.Mutex
+	clipboardCompletions map[string]*clipboardCommandCompletion
 
 	// tray is the service-owned tray projection.
 	tray                 *trayState
@@ -291,6 +312,7 @@ type Registry struct {
 	trayReplies          *trayReplyTracker
 	trayCloses           *trayCloseTracker
 	trayIcons            *icons.Worker
+	shutdown             shutdownState
 	wallpaperSvc         *wallpaper.Service
 	wallsService         wallsController
 	wallsSnapshot        walls.Snapshot
@@ -354,16 +376,33 @@ type Registry struct {
 	depthClocks     *depthClockHost
 	depthClockLease *services.Lease
 	// launcherSvc is created on the first launcher open; nil until then.
-	launcherSvc *launcher.Service
+	launcherSvc              *launcher.Service
+	launcherServiceProviders []config.LauncherCommandProvider
+	launcherServiceActions   []config.LauncherAction
+	// launcherServiceCloseDone tracks retired services until their callbacks
+	// return. Registry.mu protects this map.
+	launcherServiceCloseDone map[*launcher.Service]chan struct{}
+	launcherRelayStarted     bool
+	// launcherActivationMu serializes Service.Activate calls so each provider
+	// callback sees its own launcherPendingAttempt.
+	launcherActivationMu sync.Mutex
+	// launcherApplications is an immutable copy for Settings. A refresh is
+	// requested under Registry.mu and fetched off the Wayland owner.
+	launcherApplications   atomic.Pointer[launcherApplicationSnapshot]
+	launcherAppsRefreshing bool
+	// launcherAppPrefs is an immutable ranking and terminal-choice snapshot.
+	// The service reads it without taking Registry.mu while Settings may hold it.
+	launcherAppPrefs atomic.Pointer[launcherAppPreferenceSnapshot]
 	// launcherMu guards the query generation, its current plan,
 	// and the batch of provider rows being assembled into one snapshot.
 	// Lock order is Registry.mu then launcherMu. The service goroutine takes
 	// launcherMu only; it never takes Registry.mu while ranking.
-	launcherMu    sync.Mutex
-	launcherGen   uint64
-	launcherPlan  launcherPlan
-	launcherBatch launcherBatch
-	launcherSnaps chan launcherSnap
+	launcherMu                 sync.Mutex
+	launcherGen                uint64
+	launcherProviderGeneration uint64
+	launcherPlan               launcherPlan
+	launcherBatch              launcherBatch
+	launcherSnaps              chan launcherSnap
 	// launcherRankWait, when set, runs on the service goroutine after a rank
 	// and before that rank is stamped. Tests hold a publish there.
 	launcherRankWait func(query string)
@@ -373,6 +412,11 @@ type Registry struct {
 	// afterLauncherSnap runs on the relay after a received snapshot has been
 	// accepted or ignored. Registry.mu.
 	afterLauncherSnap func()
+}
+
+type settingsWriteReload struct {
+	generation uint64
+	config     config.Config
 }
 
 func listPalettes(st *theme.Store) []theme.PaletteInfo {
@@ -461,6 +505,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:               make(map[PanelID]*PanelHost),
 		panelShields:             make(map[uint32]*PanelHost),
 		closed:                   make(chan struct{}),
+		privacyOSD:               make(chan []privacyChange, 8),
 		dwell:                    newDwell(defaultDwell),
 		runArgv:                  runArgvDefault,
 		lookPath:                 exec.LookPath,
@@ -489,6 +534,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		onboardingFontInstall:          runCJKFontInstall,
 		machineFacts:                   readMachineFacts(),
 	}
+	r.storeLauncherAppPreferences(cfg.Applications)
 	// Absent marker (missing file, malformed state, or a pre-onboarding
 	// config) means the wizard has not been seen. A malformed file is left
 	// untouched; the marker only moves when the user acts.
@@ -518,6 +564,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.publishCommittedThemeSelection(cfg, initialTokens)
 	}
 	r.osd = newOSDManager(r, 0)
+	go r.relayPrivacyOSD()
 	r.tooltips = newTooltipHost(r, nil)
 	go r.relayTooltips(r.dwell)
 	r.mediaIntent = newMediaStripIntent(nil)
@@ -536,6 +583,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.setBrightness(services.NewBrightnessDDC("", "", 0))
 	}
 	if !runningAsTest() {
+		r.setPrivacyService(services.NewPrivacy(0, ""))
 		r.lockKeys = services.NewLockKeys("", 0)
 		r.lockKeys.Start()
 		go r.relayLockKeysOSD(r.lockKeys)
@@ -579,6 +627,13 @@ func NewRegistry(cfg config.Config) *Registry {
 		r.launcherServiceLocked()
 		r.mu.Unlock()
 	}
+	// The mono role's verdict rests on a scan of the system fonts, and the
+	// first scan in a process costs real time. Every theme resolution runs
+	// under the registry lock, so a scan that happened there would stall
+	// every other registry user for the length of the scan: the panel frame
+	// loop, the bar, the tray. The scan happens here, while the registry is
+	// still private to this goroutine and no lock is held.
+	monospaceFamily.Get()(cfg.Theme.Composition.MonoFontFamily, theme.DefaultMonoFamily)
 	return r
 }
 
@@ -737,6 +792,7 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 func (r *Registry) mediaArtFor() *mediaArtWorker {
 	if r.mediaArt == nil {
 		r.mediaArt = newMediaArtWorker(r.applyMediaArt)
+		r.shutdown.mediaArt.store(r.mediaArt)
 	}
 	return r.mediaArt
 }
@@ -926,6 +982,7 @@ func (r *Registry) setBluetooth(bluetooth *services.Bluetooth) {
 		_ = r.bluetooth.Close()
 	}
 	r.bluetooth = bluetooth
+	r.shutdown.bluetooth.store(bluetooth)
 	if bluetooth == nil {
 		r.bluetoothState = services.BluetoothState{}
 		return
@@ -1005,6 +1062,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 	}
 	network.State()
 	network.AccessPoints()
+	_ = network.RefreshVPNProfiles()
 	r.publishNetworkSnapshot(network)
 
 	for {
@@ -1016,6 +1074,7 @@ func (r *Registry) relayNetwork(network *services.Network) {
 				return
 			}
 			network.AccessPoints()
+			_ = network.RefreshVPNProfiles()
 			r.publishNetworkSnapshot(network)
 		case req, ok := <-network.SecretRequests():
 			if !ok {
@@ -1139,6 +1198,8 @@ func (r *Registry) Status() map[string]any {
 	}
 	cfg := r.cfg
 	polkitStatus := r.polkitStatusLocked()
+	configError := r.configReloadError
+	configErrorAt := r.configReloadErrorAt
 	inhibitors := make([]string, 0, len(r.externalInhibitors))
 	for _, in := range r.externalInhibitors {
 		inhibitors = append(inhibitors, in.App)
@@ -1158,6 +1219,8 @@ func (r *Registry) Status() map[string]any {
 		"templates":       templates,
 		"idle_inhibitors": inhibitors,
 		"polkit":          polkitStatus,
+		"config_error":    configError,
+		"config_error_at": configErrorAt,
 	}
 }
 
@@ -1178,6 +1241,10 @@ func (r *Registry) OSDStep(kind, action string) error {
 // coalesce; add a serialized worker channel if ordering ever matters.
 func (r *Registry) stepAudioAsync(action string) {
 	go func() { _ = r.stepAudio(action) }()
+}
+
+func (r *Registry) stepBrightnessAsync(action string) {
+	go func() { _ = r.stepBrightness(action) }()
 }
 
 func (r *Registry) stepAudio(action string) error {
@@ -1240,6 +1307,14 @@ func (r *Registry) BindPersist(path string, reloads chan<- struct{}) {
 	r.configPath = path
 	r.reloads = reloads
 	r.mu.Unlock()
+}
+
+// SettingsWriteGeneration reports the latest successful debounced Settings
+// write. Wayland samples it before reading a reload candidate.
+func (r *Registry) SettingsWriteGeneration() uint64 {
+	r.settingsWriteMu.Lock()
+	defer r.settingsWriteMu.Unlock()
+	return r.settingsWriteGeneration
 }
 
 // Tokens is the palette the registry generated at construction or last reload.
@@ -1324,6 +1399,7 @@ func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens t
 	if err != nil {
 		return DefaultTheme()
 	}
+	t.WallpaperLuminance = r.wallpaperLuminance[connector]
 	return t
 }
 
@@ -1767,6 +1843,7 @@ func (r *Registry) tryOpenOnboardingLocked(first uint32) {
 // in-memory resume state. Reopening setup from Settings must not turn a
 // completed install back into a dismissed one.
 func (r *Registry) markOnboardingOutcomeLocked(outcome onboarding.Outcome) error {
+	r.onboardingPluginSelections = nil
 	path := onboarding.StatePath()
 	if outcome == onboarding.OutcomeDismissed {
 		state, err := onboarding.Load(path)
@@ -1792,6 +1869,7 @@ func (r *Registry) preserveOnboardingLocked(h *PanelHost) {
 	r.onboardingResume = true
 	r.onboardingPage = h.onbPage
 	r.onboardingDraft = h.draft
+	r.onboardingPluginSelections = cloneOnboardingPluginSelections(h.onbPluginSelections)
 	r.onboardingError = h.errLabel
 }
 
@@ -1816,6 +1894,7 @@ func (r *Registry) adoptBar(
 	// build cannot install a bar with stale colors.
 	cfg, tokens := r.effectiveThemeLocked()
 	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector]); err == nil {
+		next.WallpaperLuminance = r.wallpaperLuminance[connector]
 		bar.retheme(next)
 	}
 	r.attachRunningIconsAtLocked(bar.scale120())
@@ -1825,6 +1904,7 @@ func (r *Registry) adoptBar(
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
+	r.shutdown.bars.store(r.barListLocked())
 	// Route this bar's invalidations -- animation frames included -- to the
 	// owner through the registry. Without this the frame loop writes a
 	// private channel nothing reads and every settling frame is dropped.
@@ -1860,6 +1940,7 @@ func (r *Registry) bindBarPluginLocked(bar *Bar) {
 }
 
 func triggerAtAction(bar *Bar, trig Trigger, action string) Trigger {
+	trig.AnchorAction = action
 	w, h := bar.configuredSize()
 	anchor := barRectOnOutput(bar.actionBounds(action), trig.BarEdge, trig.OutW, trig.OutH, w, h)
 	if anchor.W <= 0 || anchor.H <= 0 {
@@ -1885,6 +1966,9 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		switch {
 		case action == panelLauncherAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelLauncher, out, trig) == nil
+		case action == panelKeyboardLayoutAction && (button == 0 || button == buttonLeft):
+			trig = triggerAtAction(bar, trig, panelKeyboardLayoutAction)
+			return r.TogglePanel(PanelKeyboardLayout, out, trig) == nil
 		case action == panelMonitorAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelMonitor, out, trig) == nil
 		case action == panelSessionAction && button == buttonRight:
@@ -1929,6 +2013,15 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelWeatherAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			trig = triggerAtAction(bar, trig, panelWeatherAction)
 			return r.TogglePanel(PanelWeather, out, trig) == nil
+		case action == panelPrivacyAction && (button == 0 || button == buttonLeft):
+			trig = triggerAtAction(bar, trig, panelPrivacyAction)
+			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
+				return false
+			}
+			r.mu.Lock()
+			err := r.selectPanelSectionLocked(PanelControlCenter, "privacy")
+			r.mu.Unlock()
+			return err == nil
 		case action == panelBluetoothAction && button == buttonRight:
 			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
@@ -1972,12 +2065,22 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		return false
 	})
 	bar.setAxisHandler(func(action string, delta int) bool {
+		if id, ok := workspaceID(action); ok {
+			return r.handleWorkspacePillAxis(global, id, delta)
+		}
 		switch action {
-		case panelAudioAction:
+		case barScrollActionPrefix + string(config.ScrollActionVolume):
 			if delta > 0 {
 				r.stepAudioAsync("up")
 			} else if delta < 0 {
 				r.stepAudioAsync("down")
+			}
+			return true
+		case barScrollActionPrefix + string(config.ScrollActionBrightness):
+			if delta > 0 {
+				r.stepBrightnessAsync("up")
+			} else if delta < 0 {
+				r.stepBrightnessAsync("down")
 			}
 			return true
 		}
@@ -1987,8 +2090,8 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 
 func (r *Registry) toggleNotifyDND() {
 	r.mu.Lock()
-	_, on := r.notify.dndState(r.now)
-	r.notify.setDND(!on)
+	_, on := r.notify.dndState(time.Now())
+	r.setDND(!on)
 	if r.toasts != nil {
 		r.toasts.recompute()
 	}
@@ -2030,14 +2133,21 @@ func (r *Registry) outputGlobalsLocked() map[string]uint32 {
 	return globals
 }
 
-// PrepareConfig builds every enabled host's replacement bar and acquires its
-// services before the caller changes live host policy.
+// PrepareConfig prepares a candidate using the latest known Settings-write
+// generation. Reload owners must use PrepareConfigWithGeneration with the
+// generation they sampled before reading the candidate.
+func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+	return r.PrepareConfigWithGeneration(cfg, identities, r.SettingsWriteGeneration())
+}
+
+// PrepareConfigWithGeneration builds every enabled host's replacement bar and
+// acquires its services before the caller changes live host policy.
 //
 // Acquiring here, and releasing the outgoing leases only in Commit, is what
 // keeps a service in continuous use from stopping: its consumer count never
 // reaches zero, so it is never restarted. A failure at any point releases
 // exactly what this call acquired.
-func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []wayland.HostIdentity, configGeneration uint64) (wayland.PreparedConfig, error) {
 	tok, genErr := r.generateTheme(cfg)
 	bars := make(map[uint32]*Bar, len(identities))
 	leases := make(map[uint32][]*services.Lease, len(identities))
@@ -2065,14 +2175,22 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		Commit: func() {
 			once.Do(func() {
 				r.mu.Lock()
+				pluginsEnabledChanged := !slices.Equal(r.cfg.Plugins.Enabled, cfg.Plugins.Enabled)
+				applicationPreferencesChanged := r.cfg.Applications.DefaultTerminal != cfg.Applications.DefaultTerminal ||
+					!slices.Equal(r.cfg.Applications.Favourites, cfg.Applications.Favourites) ||
+					!slices.Equal(r.cfg.Applications.Hidden, cfg.Applications.Hidden)
 				polkitPolicyChanged := r.cfg.Session.PolkitAgent != cfg.Session.PolkitAgent
 				polkitNeedsStart := len(bars) > 0 && r.polkitAgent == nil
 				outgoing := r.leases
 				outgoingBars := r.bars
 				geometryOutputs := make(map[uint32]bool)
+				disabledOutputs := make(map[uint32]bool)
 				for global, oldBar := range outgoingBars {
 					oldPolicy := r.cfg.ForConnector(oldBar.connector())
 					nextPolicy := cfg.ForConnector(oldBar.connector())
+					if !nextPolicy.Enabled {
+						disabledOutputs[global] = true
+					}
 					if barGeometryChanged(oldPolicy, nextPolicy) {
 						geometryOutputs[global] = true
 					}
@@ -2090,6 +2208,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.cfg.Bar.FontSize != cfg.Bar.FontSize
 				mediaConfigChanged := r.cfg.Media.Preferred != cfg.Media.Preferred ||
 					!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
+				launcherConfigChanged := !sameLauncherCommandProviders(r.cfg.Launcher.Providers, cfg.Launcher.Providers) ||
+					!sameLauncherActions(r.cfg.Launcher.Actions, cfg.Launcher.Actions)
 				var media *services.Media
 				var depthEffects depthClockEffects
 				// Coordinates, unit and city are the request, not a lease
@@ -2111,10 +2231,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 						if h := r.runningMenu; h != nil && h.open_ && h.output == global {
 							h.closeLocked()
 						}
-						for _, id := range r.panelIDsOnOutputLocked(global) {
-							if id != PanelSettings {
-								r.closePanelLocked(id)
-							}
+						if disabledOutputs[global] {
+							r.closePanelsOnOutputLocked(global)
 						}
 					}
 				}
@@ -2122,19 +2240,66 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				if applicationPreferencesChanged {
+					r.storeLauncherAppPreferences(cfg.Applications)
+				}
 				r.syncSoundLocked()
 				r.pushIdleInputsLocked()
-				// An open settings panel holds its own draft, and a change
-				// arriving from outside it would otherwise be reverted by the
-				// next control write, which puts that draft back whole. The
-				// registry is rebuilt with it because an entry's options can
-				// depend on another setting.
-				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
-					if h := r.panelHosts[id]; h != nil {
-						h.draft = cfg.Clone()
-						h.set = r.settingsForLocked(cfg)
+				// An open settings panel holds its own draft. A genuine reload
+				// replaces it; a reload from its own delayed write rebases any
+				// newer edits over the written config.
+				r.settingsWriteMu.Lock()
+				settingsWriteReloadAt := -1
+				for i, written := range r.settingsWriteReloads {
+					if reflect.DeepEqual(written.config, cfg) {
+						settingsWriteReloadAt = i
 					}
 				}
+				settingsWriteReload := settingsWriteReloadAt >= 0
+				if settingsWriteReload {
+					r.settingsWriteReloads = slices.Clone(r.settingsWriteReloads[settingsWriteReloadAt+1:])
+				} else {
+					retained := r.settingsWriteReloads[:0]
+					for _, written := range r.settingsWriteReloads {
+						if written.generation > configGeneration {
+							retained = append(retained, written)
+						}
+					}
+					clear(r.settingsWriteReloads[len(retained):])
+					r.settingsWriteReloads = retained
+				}
+				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
+					if h := r.panelHosts[id]; h != nil {
+						if id == PanelSettings {
+							h.invalidateSettingsBrowseIfChanged(cfg)
+							if settingsWriteReload {
+								draft := cfg.Clone()
+								if err := applySettingsWriteChanges(&draft, h.settingsWriteChanges, r.palettes); err == nil {
+									h.draft = draft
+								} else {
+									settingsWriteReload = false
+								}
+							}
+							if !settingsWriteReload {
+								h.settingsWriteRevision++
+								h.settingsWriteChanges = nil
+								if h.writeTimer != nil {
+									h.writeTimer.Stop()
+									h.writeTimer = nil
+								}
+								h.draft = cfg.Clone()
+							}
+						} else {
+							h.draft = cfg.Clone()
+						}
+						h.set = r.settingsForLocked(h.draft)
+						if id == PanelSettings {
+							h.reseedSettingsFields()
+							h.reseedSettingsMenus()
+						}
+					}
+				}
+				r.settingsWriteMu.Unlock()
 				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media
 				r.tokens = tok
@@ -2147,27 +2312,60 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.previewPrevErr = r.themeErr
 				}
 				surfacePubs := r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
+				if launcherConfigChanged {
+					if h := r.panelHosts[PanelLauncher]; h != nil {
+						h.launcherAttempt++
+						r.launcherSendQuery(h, h.query)
+						r.rebuildPanel(h)
+						surfacePubs = append(surfacePubs, wayland.Invalidation{
+							Global: h.output, SurfaceID: panelSurfaceID(PanelLauncher),
+						})
+					}
+				}
 				if depthClockVisualChanged && r.depthClocks != nil {
 					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
 				}
 				r.bars = bars
 				r.leases = leases
-				for global := range geometryOutputs {
-					if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
-						r.repositionSettingsLocked(h)
+				r.shutdown.bars.store(r.barListLocked())
+				panelOutputs := make(map[uint32]bool)
+				for _, h := range r.panelHosts {
+					if h != nil && !disabledOutputs[h.output] {
+						panelOutputs[h.output] = true
 					}
+				}
+				for global := range panelOutputs {
+					r.repositionPanelsLocked(global)
 				}
 				for global, bar := range r.bars {
 					r.bindBarTrayLocked(global, bar.connector(), bar)
 					r.bindBarPluginLocked(bar)
 					r.bindBarPanelActionsLocked(global, bar)
 				}
+				if h := r.panelHosts[PanelSettings]; h != nil {
+					r.rebuildPanel(h)
+					h.closeUnrenderedSettingsMenu()
+					surfacePubs = append(surfacePubs, wayland.Invalidation{
+						Global: h.output, SurfaceID: panelSurfaceID(PanelSettings),
+					})
+				}
+				if applicationPreferencesChanged {
+					if output, ok := r.refreshOpenLauncherLocked(); ok {
+						surfacePubs = append(surfacePubs, wayland.Invalidation{
+							Global: output, SurfaceID: panelSurfaceID(PanelLauncher),
+						})
+					}
+				}
 				// Seeded only: every replacement bar is reconfigured and
 				// repainted by the owner as part of adopting the candidate.
 				r.syncTrayLocked()
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
+				wallpaperSvc := r.wallpaperSvc
 				r.mu.Unlock()
+				if wallpaperSvc != nil {
+					wallpaperSvc.SetCyclePolicy(wallpaperCyclePolicy(cfg.Wallpaper))
+				}
 				// A settings edit can change the autopause policy; nothing
 				// else re-evaluates it on a static desktop.
 				r.syncAutoPause()
@@ -2190,7 +2388,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
-					plugins.syncBars()
+					if pluginsEnabledChanged {
+						plugins.syncEnabledAsync()
+					} else {
+						plugins.syncBars()
+					}
 				}
 				if polkitPolicyChanged || polkitNeedsStart {
 					go r.configurePolkit()
@@ -2229,6 +2431,7 @@ func (r *Registry) DropHost(global uint32) {
 	}
 	delete(r.bars, global)
 	delete(r.leases, global)
+	r.shutdown.bars.store(r.barListLocked())
 	r.trayOutputLostLocked(global)
 	r.mediaStrip.outputLostLocked(global)
 	r.tooltips.outputLost(global)
@@ -2284,7 +2487,18 @@ func (r *Registry) Close() {
 	// better than never reporting why we are shutting down at all.
 	locked := r.lockWithin(closeLockGrace)
 	if !locked {
-		log.Printf("shell: closing without r.mu; a handler panic left it held")
+		log.Printf("shell: closing without r.mu; could not acquire r.mu within shutdown grace")
+		// r.mu is stranded, so the locked cleanup below cannot run. Release
+		// what the shell owns anyway: the handles are recorded where each
+		// resource is created, so the shutdown path reaches them without the
+		// lock. The panel, tray and toast teardown stays behind the lock,
+		// because those hold registry state. The plugin host is closed
+		// through its slot as well, and r.plugins is left alone: a render
+		// may hold the lock while it reads that field, and rewriting it
+		// here is the data race the fallback must not have. A closed host
+		// renders the same as a nil one -- frames() is internally
+		// synchronized and Close has emptied its views.
+		r.shutdown.release()
 	}
 	var osdAux []wayland.AuxRequest
 	var leases []*services.Lease
@@ -2300,6 +2514,9 @@ func (r *Registry) Close() {
 	var mediaArt *mediaArtWorker
 	var soundPlayer cuePlayer
 	var depthEffects depthClockEffects
+	var privacySvc *services.Privacy
+	var plugins *pluginHost
+	var launcherSvc *launcher.Service
 	if locked {
 		if r.polkitHost != nil && r.polkitHost.open_ {
 			r.polkitHost.finishLocked(true)
@@ -2350,6 +2567,12 @@ func (r *Registry) Close() {
 		r.mediaArt = nil
 		soundPlayer = r.sound
 		r.sound = nil
+		privacySvc = r.privacySvc
+		r.privacySvc = nil
+		plugins = r.plugins
+		r.plugins = nil
+		launcherSvc = r.launcherSvc
+		r.launcherSvc = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -2358,9 +2581,12 @@ func (r *Registry) Close() {
 		}
 		inhibit = r.inhibit
 		r.inhibit = nil
-		r.inhibitWanted = false
+		r.clearCaffeineLocked()
 		r.pushIdleInputsLocked()
 		r.mu.Unlock()
+	}
+	if plugins != nil {
+		plugins.Close()
 	}
 	if polkitCancel != nil {
 		polkitCancel()
@@ -2391,20 +2617,17 @@ func (r *Registry) Close() {
 		_ = inhibit.Close()
 	}
 	releaseAll(leases)
-	var launcherSvc *launcher.Service
-	if r.lockWithin(closeLockGrace) {
-		launcherSvc = r.launcherSvc
-		r.launcherSvc = nil
-		r.mu.Unlock()
-	}
 	if launcherSvc != nil {
-		launcherSvc.Close()
+		r.shutdown.closeLauncher(launcherSvc)
 	}
 	if wallpaperThumbCancel != nil {
 		wallpaperThumbCancel()
 	}
 	if soundPlayer != nil {
 		_ = soundPlayer.Close()
+	}
+	if privacySvc != nil {
+		privacySvc.Close()
 	}
 	if mediaArt != nil {
 		mediaArt.Close()
@@ -2443,10 +2666,6 @@ func (r *Registry) Close() {
 	if bluetooth != nil {
 		_ = bluetooth.Close()
 	}
-	if r.plugins != nil {
-		r.plugins.Close()
-		r.plugins = nil
-	}
 }
 
 // UpdateClock applies a shared time snapshot to every bar and reports the
@@ -2457,6 +2676,7 @@ func (r *Registry) Close() {
 func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	r.mu.Lock()
 	r.now = now
+	caffeineHold, caffeineExpired := r.expireCaffeineLocked(now)
 	expired := r.notify.expireDND(now)
 	if expired && r.toasts != nil {
 		r.toasts.recompute()
@@ -2469,6 +2689,14 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 		if h := r.panelHosts[PanelNotifications]; h != nil {
 			r.rebuildPanel(h)
 			dndCentreOut, dndCentreOpen = h.output, true
+		}
+	}
+	var caffeineSettingsOut uint32
+	caffeineSettingsOpen := false
+	if caffeineExpired {
+		if h := r.panelHosts[PanelSettings]; h != nil && h.section == "Screensaver" {
+			r.rebuildPanel(h)
+			caffeineSettingsOut, caffeineSettingsOpen = h.output, true
 		}
 	}
 	var changed []uint32
@@ -2484,6 +2712,11 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
+	if caffeineHold != nil {
+		if err := caffeineHold.Close(); err != nil {
+			log.Printf("shell: release expired Caffeine inhibit: %v", err)
+		}
+	}
 	r.publish(changed)
 	if r.depthClocks != nil {
 		r.depthClocks.emit(depthEffects)
@@ -2493,6 +2726,9 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	}
 	if dndCentreOpen {
 		r.publishSurface(dndCentreOut, panelSurfaceID(PanelNotifications))
+	}
+	if caffeineSettingsOpen {
+		r.publishSurface(caffeineSettingsOut, panelSurfaceID(PanelSettings))
 	}
 	return changed
 }
@@ -2605,31 +2841,69 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	next := projectOutputs(s)
 
 	r.mu.Lock()
+	previousLayouts := r.layouts
+	previousLayoutsSeen := r.layoutsSeen
+	layoutNamesChanged := !slices.Equal(previousLayouts.Names, s.Layouts.Names)
+	layoutCurrentChanged := previousLayouts.Current != s.Layouts.Current
+	previousPrivacy := r.privacy
+	previousNiri := r.niriSnapshot
 	// Replaced wholesale, not merged: a connector absent from the projection
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
 	r.niriSnapshot = cloneNiriSnapshot(s)
+	r.privacy = privacyStateFrom(r.privacyPipe, r.niriSnapshot)
+	privacyChanges := privacyTransitions(previousPrivacy, r.privacy, previousNiri, r.niriSnapshot)
+	privacyPageOutput := uint32(0)
+	privacyPageOpen := false
+	if r.privacy != previousPrivacy {
+		if h := r.panelHosts[PanelControlCenter]; h != nil && h.section == "privacy" {
+			r.rebuildPanel(h)
+			privacyPageOutput, privacyPageOpen = h.output, true
+		}
+	}
 	r.focused = s.FocusedOutput
+	if r.toasts != nil && r.toasts.focusedWindowFillsOutput() != r.toasts.fullscreenFocused {
+		// Layout events can change the toast policy without changing bar text.
+		r.toasts.recompute()
+	}
 	r.tryOpenOnboardingLocked(0)
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
 	var runningMenuUpdated bool
 	var runningMenuOutput uint32
-	if h := r.runningMenu; h != nil && h.open_ {
-		// A scope can outlive its Niri window; keep pending or failure feedback until dismissed.
-		if slot, ok := runningSlotByKey(r.running, h.slot.Key); ok {
-			runningMenuUpdated = h.refreshLocked(slot, r.niriSnapshot)
-			runningMenuOutput = h.output
-		} else if h.forceQuitState != runningAppForceQuitPending && h.forceQuitState != runningAppForceQuitFailed {
-			h.closeLocked()
+	if h := r.runningMenu; h != nil {
+		h.confirmFloatingTogglesLocked(r.niriSnapshot)
+		if h.open_ {
+			// A scope can outlive its Niri window; keep pending or failure feedback until dismissed.
+			if slot, ok := runningSlotByKey(r.running, h.slot.Key); ok {
+				runningMenuUpdated = h.refreshLocked(slot, r.niriSnapshot)
+				runningMenuOutput = h.output
+			} else if h.forceQuitState != runningAppForceQuitPending && h.forceQuitState != runningAppForceQuitFailed {
+				h.closeLocked()
+			}
 		}
 	}
 	changed := r.applyRunningIconsLocked()
-	layoutView, showLayout := layoutOSD(r.layouts, s.Layouts, r.layoutsSeen)
+	layoutView, showLayout := layoutOSD(previousLayouts, s.Layouts, previousLayoutsSeen)
 	r.layouts = niri.KeyboardLayouts{Names: slices.Clone(s.Layouts.Names), Current: s.Layouts.Current}
 	if len(s.Layouts.Names) > 0 {
 		r.layoutsSeen = true
+	}
+	layoutPickerUpdated := false
+	layoutPickerOutput := uint32(0)
+	if h := r.panelHosts[PanelKeyboardLayout]; h != nil && (layoutNamesChanged || layoutCurrentChanged) {
+		if layoutNamesChanged && h.layoutRequested >= 0 {
+			h.layoutRequestSeq++
+			h.layoutRequested = -1
+		} else if layoutCurrentChanged && h.layoutRequested >= 0 && s.Layouts.Current == h.layoutRequested {
+			h.layoutRequestSeq++
+			h.layoutRequested = -1
+		}
+		h.layoutUnavailable = false
+		r.rebuildPanel(h)
+		layoutPickerUpdated = true
+		layoutPickerOutput = h.output
 	}
 	switcherUpdated := false
 	var switcherOutput uint32
@@ -2643,12 +2917,19 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	if runningMenuUpdated {
 		r.publishSurface(runningMenuOutput, runningAppMenuSurfaceID)
 	}
+	if layoutPickerUpdated {
+		r.publishSurface(layoutPickerOutput, panelSurfaceID(PanelKeyboardLayout))
+	}
 	if switcherUpdated {
 		r.publishSurface(switcherOutput, windowSwitcherSurfaceID)
+	}
+	if privacyPageOpen {
+		r.publishSurface(privacyPageOutput, panelSurfaceID(PanelControlCenter))
 	}
 	if showLayout {
 		r.OSD().Show(layoutView)
 	}
+	r.queuePrivacyOSD(privacyChanges)
 	r.syncAutoPause()
 	return changed
 }
@@ -2664,6 +2945,8 @@ func (r *Registry) viewLocked(connector string) barView {
 		Now:       r.now,
 		Workspace: state.Workspace,
 		Title:     state.Title,
+		Layouts:   niri.KeyboardLayouts{Names: slices.Clone(r.niriSnapshot.Layouts.Names), Current: r.niriSnapshot.Layouts.Current},
+		Locale:    i18n.Resolve(r.cfg.Session.Language),
 		Pills:     state.Pills,
 		Metrics:   r.sample,
 		History:   r.historyLocked(),
@@ -2693,6 +2976,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		}
 	}
 	view.Bluetooth = r.bluetoothState
+	view.Privacy = r.privacy
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}
@@ -2730,11 +3014,13 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 	policy := cfg.ForConnector(connector)
 	r.mu.Lock()
 	blur, effect := r.caps.Blur, r.effectOutputs[connector]
+	luminance := r.wallpaperLuminance[connector]
 	r.mu.Unlock()
 	th, err := resolveOutputTheme(cfg, connector, tok, blur, effect)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
+	th.WallpaperLuminance = luminance
 	text, err := r.textRenderer(policy.FontFamily)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
@@ -2874,7 +3160,7 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		if err := innerConfigure(width, height, scale120); err != nil {
 			return err
 		}
-		r.refreshSettingsPlacement(global, bar)
+		r.refreshPanelPlacements(global, bar)
 		if bar.scale120() != prev {
 			r.reprojectTray()
 			r.reprojectRunningApps()

@@ -10,7 +10,7 @@ import (
 func TestCatalogEmbedsAllTemplates(t *testing.T) {
 	t.Parallel()
 	c := Catalog()
-	if len(c.Names()) != 12 {
+	if len(c.Names()) != 14 {
 		t.Fatalf("got %d", len(c.Names()))
 	}
 	for _, n := range c.Names() {

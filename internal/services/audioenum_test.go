@@ -2,7 +2,11 @@ package services
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 func TestPwdumpIgnoresHeterogeneousUnrelatedMetadata(t *testing.T) {
@@ -82,6 +86,217 @@ func TestCubicVolumeMatchesWpctlDisplay(t *testing.T) {
 	if got := cubicPercent(1); got != 100 {
 		t.Errorf("cubicPercent(1) = %d, want 100", got)
 	}
+}
+
+func TestParsePulseRoutingMapsPipeWireObjectIDs(t *testing.T) {
+	inputs := []byte(`[
+		{"index":973016,"sink":58,"properties":{"object.id":"82"}}
+	]`)
+	sinks := []byte(`[
+		{"index":58,"name":"sink.headphones","properties":{"object.id":"46"}},
+		{"index":61,"name":"sink.unmapped","properties":{"object.id":"77"}}
+	]`)
+	routing, err := parsePulseRouting(inputs, sinks)
+	if err != nil {
+		t.Fatalf("parsePulseRouting: %v", err)
+	}
+	snap := mergePulseRouting(AudioSnapshot{
+		Sinks:   []AudioNode{{ID: 46}, {ID: 77}, {ID: 90}},
+		Streams: []AudioNode{{ID: 82}, {ID: 116}},
+	}, routing)
+	if !snap.Streams[0].Routeable || snap.Streams[0].OutputID != 46 {
+		t.Errorf("mapped stream = %+v, want routable on output 46", snap.Streams[0])
+	}
+	if snap.Streams[1].Routeable || snap.Streams[1].OutputID != 0 {
+		t.Errorf("unmapped stream = %+v, want routing disabled", snap.Streams[1])
+	}
+	if !snap.Sinks[0].Routeable || !snap.Sinks[1].Routeable || snap.Sinks[2].Routeable {
+		t.Errorf("sink routing = %+v, want only PulseAudio-backed sinks enabled", snap.Sinks)
+	}
+}
+
+func TestParsePulseRoutingRejectsAmbiguousObjectIDs(t *testing.T) {
+	inputs := []byte(`[
+		{"index":10,"sink":58,"properties":{"object.id":"82"}},
+		{"index":11,"sink":58,"properties":{"object.id":"82"}}
+	]`)
+	sinks := []byte(`[{"index":58,"name":"sink.main","properties":{"object.id":"46"}}]`)
+	if _, err := parsePulseRouting(inputs, sinks); err == nil {
+		t.Fatal("parsePulseRouting accepted two PulseAudio inputs for one PipeWire object ID")
+	}
+}
+
+func TestParsePulseRoutingRejectsDuplicateSinkInputIndexes(t *testing.T) {
+	inputs := []byte(`[
+		{"index":10,"sink":58,"properties":{"object.id":"82"}},
+		{"index":10,"sink":58,"properties":{"object.id":"83"}}
+	]`)
+	sinks := []byte(`[{"index":58,"name":"sink.main","properties":{"object.id":"46"}}]`)
+	if _, err := parsePulseRouting(inputs, sinks); err == nil {
+		t.Fatal("parsePulseRouting accepted two PipeWire streams for one PulseAudio sink-input index")
+	}
+}
+
+func TestPollMixerProjectsPulseRoutesAndKeepsVolumeWhenPactlFails(t *testing.T) {
+	dump := `[{"id":46,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.main","node.description":"Main output"},"params":{"Props":[{"channelVolumes":[0.125],"mute":false}]}}},{"id":34,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.other","node.description":"Other output"}}},{"id":82,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.player"}}},{"id":116,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.unmapped"}}}]`
+	commands := newFakeAudioRoutingCommands(t,
+		dump,
+		`[{"index":973016,"sink":58,"properties":{"object.id":"82"}}]`,
+		`[{"index":58,"name":"sink.main","properties":{"object.id":"46"}},{"index":86,"name":"sink.other","properties":{"object.id":"34"}}]`,
+	)
+	a := &Audio{dumpBin: commands.dumpBin, pactlBin: commands.pactlBin, mixerCh: make(chan AudioSnapshot, 1)}
+	a.pollMixer()
+	snap := a.Mixer()
+	if !a.MixerReady() || len(snap.Streams) != 2 || !snap.Streams[0].Routeable || snap.Streams[0].OutputID != 46 || snap.Streams[1].Routeable {
+		t.Fatalf("mixer routes = %+v, want stream 82 mapped to 46 and stream 116 disabled", snap.Streams)
+	}
+	var mainOutput AudioNode
+	for _, sink := range snap.Sinks {
+		if sink.ID == 46 {
+			mainOutput = sink
+		}
+		if !sink.Routeable {
+			t.Errorf("sink %d is not routeable", sink.ID)
+		}
+	}
+	if len(snap.Sinks) != 2 || mainOutput.ID == 0 || mainOutput.Level != 50 {
+		t.Fatalf("mixer sinks = %+v, want routable outputs and PipeWire volume retained", snap.Sinks)
+	}
+
+	a = &Audio{dumpBin: commands.dumpBin, pactlBin: "/bin/false", mixerCh: make(chan AudioSnapshot, 1)}
+	a.pollMixer()
+	snap = a.Mixer()
+	mainOutput = AudioNode{}
+	for _, sink := range snap.Sinks {
+		if sink.ID == 46 {
+			mainOutput = sink
+		}
+	}
+	if !a.MixerReady() || snap.Error != "" || len(snap.Sinks) != 2 || mainOutput.Level != 50 || snap.Streams[0].Routeable {
+		t.Fatalf("mixer after pactl failure = %+v, want volume state retained and routing disabled", snap)
+	}
+}
+
+func TestMoveStreamUsesFreshValidatedPulseIndices(t *testing.T) {
+	commands := newFakeAudioRoutingCommands(t,
+		`[{"id":46,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.main"}}},{"id":34,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.other"}}},{"id":82,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.player"}}}]`,
+		`[{"index":973016,"sink":58,"properties":{"object.id":"82"}}]`,
+		`[{"index":58,"name":"sink.main","properties":{"object.id":"46"}},{"index":86,"name":"sink.other","properties":{"object.id":"34"}}]`,
+	)
+	a := &Audio{dumpBin: commands.dumpBin, pactlBin: commands.pactlBin}
+	if err := a.MoveStream(82, 34); err != nil {
+		t.Fatalf("MoveStream: %v", err)
+	}
+	got := commands.log(t)
+	want := []string{
+		"-f json list sink-inputs",
+		"-f json list sinks",
+		"move-sink-input 973016 86",
+	}
+	if got != strings.Join(want, "\n")+"\n" {
+		t.Fatalf("pactl log = %q, want only the selected input moved to sink 86", got)
+	}
+}
+
+func TestMoveStreamRefusesStaleOrUnmappedObjects(t *testing.T) {
+	tests := []struct {
+		name    string
+		stream  int
+		sink    int
+		dump    string
+		inputs  string
+		sinks   string
+		wantErr string
+	}{
+		{
+			name: "stream no longer exists", stream: 116, sink: 34,
+			inputs:  `[{"index":973016,"sink":58,"properties":{"object.id":"82"}}]`,
+			sinks:   `[{"index":86,"name":"sink.other","properties":{"object.id":"34"}}]`,
+			wantErr: "stream 116 is unavailable",
+		},
+		{
+			name: "destination disappeared from PulseAudio", stream: 82, sink: 34,
+			inputs:  `[{"index":973016,"sink":58,"properties":{"object.id":"82"}}]`,
+			sinks:   `[{"index":58,"name":"sink.main","properties":{"object.id":"46"}}]`,
+			wantErr: "output 34 is unavailable",
+		},
+		{
+			name: "stream has no PulseAudio mapping", stream: 116, sink: 34,
+			dump:    `[{"id":46,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.main"}}},{"id":34,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.other"}}},{"id":116,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.other"}}}]`,
+			inputs:  `[{"index":973016,"sink":58,"properties":{"object.id":"82"}}]`,
+			sinks:   `[{"index":58,"name":"sink.main","properties":{"object.id":"46"}},{"index":86,"name":"sink.other","properties":{"object.id":"34"}}]`,
+			wantErr: "stream 116 has no PulseAudio route",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dump := tt.dump
+			if dump == "" {
+				dump = `[{"id":46,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.main"}}},{"id":34,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.other"}}},{"id":82,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.player"}}}]`
+			}
+			commands := newFakeAudioRoutingCommands(t,
+				dump,
+				tt.inputs, tt.sinks,
+			)
+			a := &Audio{dumpBin: commands.dumpBin, pactlBin: commands.pactlBin}
+			err := a.MoveStream(tt.stream, tt.sink)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("MoveStream error = %v, want it to contain %q", err, tt.wantErr)
+			}
+			if got := commands.log(t); strings.Contains(got, "move-sink-input") {
+				t.Fatalf("pactl log = %q, stale request was moved", got)
+			}
+		})
+	}
+}
+
+type fakeAudioRoutingCommands struct {
+	dumpBin  string
+	pactlBin string
+	logPath  string
+}
+
+func newFakeAudioRoutingCommands(t *testing.T, dump, inputs, sinks string) fakeAudioRoutingCommands {
+	t.Helper()
+	dir := t.TempDir()
+	for name, value := range map[string]string{
+		"dump.json": dump, "inputs.json": inputs, "sinks.json": sinks,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dumpBin := filepath.Join(dir, "pw-dump")
+	if err := fakebin.Write(dumpBin, "#!/bin/sh\ncat '"+filepath.Join(dir, "dump.json")+"'\n", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "pactl.log")
+	pactlBin := filepath.Join(dir, "pactl")
+	script := `#!/bin/sh
+echo "$*" >> '` + logPath + `'
+case "$*" in
+  '-f json list sink-inputs') cat '` + filepath.Join(dir, "inputs.json") + `' ;;
+  '-f json list sinks') cat '` + filepath.Join(dir, "sinks.json") + `' ;;
+  'move-sink-input '*) ;;
+  *) exit 2 ;;
+esac
+`
+	if err := fakebin.Write(pactlBin, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return fakeAudioRoutingCommands{dumpBin: dumpBin, pactlBin: pactlBin, logPath: logPath}
+}
+
+func (c fakeAudioRoutingCommands) log(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(c.logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestHotUnplugBetweenTwoDumps(t *testing.T) {

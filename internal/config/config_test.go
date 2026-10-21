@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,54 @@ func TestVolumeIsKnownButNotDefault(t *testing.T) {
 				t.Error("volume must not join the default bar: like wallpaper, it is opt-in")
 			}
 		}
+	}
+}
+
+func TestBarItemScrollActionsParseAndWrite(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"bar":{"items":{"left":[
+		{"id":"group","items":[{"id":"clock","scroll":"brightness"}]},
+		{"id":"volume","scroll":"none"},
+		{"id":"volume"}
+	]}}}`))
+	if err != nil {
+		t.Fatalf("Parse supported scroll actions: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	for _, want := range []string{`"scroll": "brightness"`, `"scroll": "none"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("written config is missing %s:\n%s", want, body)
+		}
+	}
+	if _, err := Parse(body); err != nil {
+		t.Fatalf("Parse written config: %v", err)
+	}
+}
+
+func TestBarItemScrollActionsRejectUnknownAndReservedBindings(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"unknown action", `{"bar":{"items":{"left":[{"id":"clock","scroll":"command"}]}}}`},
+		{"workspace override", `{"bar":{"items":{"left":[{"id":"workspace","scroll":"volume"}]}}}`},
+		{"group override", `{"bar":{"items":{"left":[{"id":"group","scroll":"brightness","items":["clock"]}]}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.body))
+			if err == nil || !strings.Contains(err.Error(), "scroll") {
+				t.Fatalf("Parse error = %v, want a scroll field error", err)
+			}
+		})
 	}
 }
 
@@ -42,6 +92,44 @@ func TestBluetoothIsKnownButNotDefault(t *testing.T) {
 	if len(parsed.Bar.Right) != 1 || parsed.Bar.Right[0].ID != "bluetooth" {
 		t.Fatalf("parsed Bluetooth item = %+v", parsed.Bar.Right)
 	}
+}
+
+func TestKeyboardLayoutIsAnOptInBarItem(t *testing.T) {
+	t.Parallel()
+	parsed, err := Parse([]byte(`{"bar":{"items":{"right":["keyboard-layout"]}}}`))
+	if err != nil {
+		t.Fatalf("keyboard-layout config: %v", err)
+	}
+	if len(parsed.Bar.Right) != 1 || parsed.Bar.Right[0].ID != "keyboard-layout" {
+		t.Fatalf("parsed keyboard-layout item = %+v", parsed.Bar.Right)
+	}
+	for _, lane := range [][]Item{Default().Bar.Left, Default().Bar.Center, Default().Bar.Right} {
+		for _, item := range lane {
+			if item.ID == "keyboard-layout" {
+				t.Fatal("keyboard-layout must remain opt-in")
+			}
+		}
+	}
+}
+
+func TestPrivacyIsKnownAndShipsOnTheDefaultBar(t *testing.T) {
+	t.Parallel()
+	if _, ok := knownItems["privacy"]; !ok {
+		t.Fatal("config must accept the privacy item")
+	}
+	parsed, err := Parse([]byte(`{"bar":{"items":{"right":["privacy"]}}}`))
+	if err != nil {
+		t.Fatalf("privacy config: %v", err)
+	}
+	if len(parsed.Bar.Right) != 1 || parsed.Bar.Right[0].ID != "privacy" {
+		t.Fatalf("parsed privacy item = %+v", parsed.Bar.Right)
+	}
+	for _, item := range Default().Bar.Right {
+		if item.ID == "privacy" {
+			return
+		}
+	}
+	t.Fatal("privacy is absent from the default right lane")
 }
 
 func TestDefaultBarMatchesLegacyContentBand(t *testing.T) {
@@ -253,8 +341,8 @@ func TestUnknownConfigurationFieldsAreRejected(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Parse(%s) accepted an unknown field", tc.doc)
 			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error %q does not name %q", err, tc.want)
+			if !strings.Contains(err.Error(), "unknown field") || strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q should safely report an unknown field without echoing %q", err, tc.want)
 			}
 		})
 	}
@@ -389,7 +477,7 @@ func TestDefaultVocabularyShipsCentrePillAndMedia(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
-			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" {
+			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" || m.ID == "privacy" {
 				continue
 			}
 			if m.Interval <= 0 {
@@ -754,16 +842,46 @@ func TestTheWeatherBlockDefaults(t *testing.T) {
 	}
 }
 
+func TestWeatherPreferencesLoadWithoutAPlace(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"weather":{"unit":"fahrenheit","interval":"30m"}}`))
+	if err != nil {
+		t.Fatalf("Parse preference-only block: %v", err)
+	}
+	if cfg.Weather.Configured || cfg.Weather.City != "" || cfg.Weather.Latitude != 0 || cfg.Weather.Longitude != 0 {
+		t.Fatalf("preference-only block configured a place: %+v", cfg.Weather)
+	}
+	if cfg.Weather.Unit != "fahrenheit" || cfg.Weather.Interval != 30*time.Minute {
+		t.Fatalf("weather preferences = %q/%v, want fahrenheit/30m", cfg.Weather.Unit, cfg.Weather.Interval)
+	}
+}
+
+func TestWeatherLocationLabelRequiresAPlace(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"weather":{"unit":"fahrenheit","location":"Living room"}}`))
+	if err == nil {
+		t.Fatal("a weather location label without a place was accepted")
+	}
+	if !strings.Contains(err.Error(), "weather.location") {
+		t.Fatalf("error %q does not name the location field", err)
+	}
+}
+
 // The configuration's first cross-section check. Without it the widget would
 // render an error forever because of a block the user was never told about.
 func TestAWeatherWidgetWithoutCoordinatesIsRejected(t *testing.T) {
 	t.Parallel()
-	_, err := Parse([]byte(`{"bar":{"items":{"right":[{"id":"weather"}]}}}`))
-	if err == nil {
-		t.Fatal("a weather widget with no weather block was accepted")
-	}
-	if !strings.Contains(err.Error(), "weather.latitude") {
-		t.Fatalf("error %q does not name the missing field", err)
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"weather"}]}}}`,
+		`{"weather":{"unit":"fahrenheit"},"bar":{"items":{"right":[{"id":"weather"}]}}}`,
+	} {
+		_, err := Parse([]byte(body))
+		if err == nil {
+			t.Fatalf("a weather widget without a place was accepted: %s", body)
+		}
+		if !strings.Contains(err.Error(), "weather.latitude") {
+			t.Fatalf("error %q does not name the missing field", err)
+		}
 	}
 }
 
@@ -794,17 +912,27 @@ func TestOutOfRangeCoordinatesAreRejected(t *testing.T) {
 
 func TestAnInvalidWeatherUnitIsRejected(t *testing.T) {
 	t.Parallel()
-	err := errFromParse(t, `{"weather":{"latitude":0,"longitude":0,"unit":"kelvin"}}`)
-	if !strings.Contains(err.Error(), "weather.unit") {
-		t.Fatalf("error %q does not name the unit field", err)
+	for _, body := range []string{
+		`{"weather":{"latitude":0,"longitude":0,"unit":"kelvin"}}`,
+		`{"weather":{"unit":"kelvin"}}`,
+	} {
+		err := errFromParse(t, body)
+		if !strings.Contains(err.Error(), "weather.unit") {
+			t.Fatalf("error %q does not name the unit field", err)
+		}
 	}
 }
 
 func TestANonPositiveWeatherIntervalIsRejected(t *testing.T) {
 	t.Parallel()
-	err := errFromParse(t, `{"weather":{"latitude":0,"longitude":0,"interval":"0s"}}`)
-	if !strings.Contains(err.Error(), "weather.interval") {
-		t.Fatalf("error %q does not name the interval field", err)
+	for _, body := range []string{
+		`{"weather":{"latitude":0,"longitude":0,"interval":"0s"}}`,
+		`{"weather":{"interval":"0s"}}`,
+	} {
+		err := errFromParse(t, body)
+		if !strings.Contains(err.Error(), "weather.interval") {
+			t.Fatalf("error %q does not name the interval field", err)
+		}
 	}
 }
 
@@ -1006,6 +1134,10 @@ func TestWallpaperDefaults(t *testing.T) {
 		Fade:            false,
 		FadeDuration:    0.5,
 		Hidden:          "none",
+		CycleEnabled:    false,
+		CycleMode:       "interval",
+		CycleInterval:   5 * time.Minute,
+		CycleTime:       "06:00",
 		PauseCovered:    true,
 		PauseLocked:     true,
 		OnBattery:       "limit-10",
@@ -1184,7 +1316,7 @@ func TestThemeRejectsEveryInvalidAxisWithItsPath(t *testing.T) {
 		{"overlay opacity", `{"theme":{"overlay-opacity":0}}`, "theme.overlay-opacity"},
 		{"empty family", `{"theme":{"font-family":""}}`, "theme.font-family"},
 		{"empty mono family", `{"theme":{"mono-font-family":""}}`, "theme.mono-font-family"},
-		{"unknown key", `{"theme":{"corner":4}}`, "corner"},
+		{"unknown key", `{"theme":{"corner":4}}`, "unknown field"},
 	} {
 		_, err := Parse([]byte(tc.doc))
 		if err == nil {
@@ -1255,6 +1387,60 @@ func TestWallpaperRoundTrip(t *testing.T) {
 	}
 	if back.Wallpaper != cfg.Wallpaper {
 		t.Fatalf("round trip = %+v, want %+v", back.Wallpaper, cfg.Wallpaper)
+	}
+}
+
+func TestWallpaperCyclePolicyDefaultsAndRoundTrips(t *testing.T) {
+	defaults, err := Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatalf("parse defaults: %v", err)
+	}
+	explicitDefaults, err := Parse([]byte(`{"wallpaper":{"cycle_enabled":false,"cycle_mode":"interval","cycle_interval":"5m","cycle_time":"06:00"}}`))
+	if err != nil {
+		t.Fatalf("parse explicit cycle defaults: %v", err)
+	}
+	if defaults.Wallpaper != explicitDefaults.Wallpaper {
+		t.Fatalf("implicit wallpaper defaults = %+v, explicit cycle defaults = %+v", defaults.Wallpaper, explicitDefaults.Wallpaper)
+	}
+
+	cfg, err := Parse([]byte(`{"wallpaper":{"cycle_enabled":true,"cycle_mode":"time","cycle_interval":"45m","cycle_time":"08:30"}}`))
+	if err != nil {
+		t.Fatalf("parse cycle policy: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if back.Wallpaper != cfg.Wallpaper {
+		t.Fatalf("cycle policy round trip = %+v, want %+v", back.Wallpaper, cfg.Wallpaper)
+	}
+}
+
+func TestWallpaperCyclePolicyRejectsInvalidValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		path string
+	}{
+		{"mode", `{"wallpaper":{"cycle_mode":"random"}}`, "wallpaper.cycle_mode"},
+		{"interval", `{"wallpaper":{"cycle_interval":"30s"}}`, "wallpaper.cycle_interval"},
+		{"time", `{"wallpaper":{"cycle_time":"25:00"}}`, "wallpaper.cycle_time"},
+		{"non-padded time", `{"wallpaper":{"cycle_time":"8:30"}}`, "wallpaper.cycle_time"},
+		{"seconds in time", `{"wallpaper":{"cycle_time":"08:30:00"}}`, "wallpaper.cycle_time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.body))
+			if err == nil {
+				t.Fatalf("Parse(%s) succeeded, want a validation error", tc.body)
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("error %q must name %q", err, tc.path)
+			}
+		})
 	}
 }
 
@@ -1344,8 +1530,13 @@ func TestTheWeatherCityAndCoordinatesAreMutuallyExclusive(t *testing.T) {
 
 func TestTheWeatherStillNeedsCityOrCoordinates(t *testing.T) {
 	t.Parallel()
-	if _, err := Parse([]byte(`{"weather":{}}`)); err == nil {
-		t.Fatal("a weather block with neither city nor coordinates was accepted")
+	for _, body := range []string{
+		`{"weather":{}}`,
+		`{"weather":{"latitude":0,"unit":"fahrenheit"}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("invalid weather block was accepted: %s", body)
+		}
 	}
 }
 
@@ -1550,6 +1741,236 @@ func TestTerminalArtBlurRoundTrip(t *testing.T) {
 	for _, value := range []int{-1, 65} {
 		if _, err := Parse([]byte(fmt.Sprintf(`{"terminal-art":{"blur":%d}}`, value))); err == nil {
 			t.Fatalf("blur %d accepted", value)
+		}
+	}
+}
+
+func TestLauncherActionConfigRoundTripsExactArgvAndDangerousOptIn(t *testing.T) {
+	const document = `{"launcher":{"actions":[
+		{"id":"open-search","label":"Open search","comment":"Search the web","argv":["browser","https://example.test/?q=a b",""]},
+		{"id":"cleanup","label":"Clean temporary files","argv":["cleaner","--temp"],"dangerous":true},
+		{"id":"wipe-cache","label":"Wipe cache","argv":["cleaner","--cache"],"dangerous":true,"allow_dangerous":true}
+	]}}`
+	cfg, err := Parse([]byte(document))
+	if err != nil {
+		t.Fatalf("parse launcher actions: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write launcher actions: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Launcher struct {
+			Actions []struct {
+				ID             string   `json:"id"`
+				Label          string   `json:"label"`
+				Comment        string   `json:"comment"`
+				Argv           []string `json:"argv"`
+				Dangerous      bool     `json:"dangerous"`
+				AllowDangerous bool     `json:"allow_dangerous"`
+			} `json:"actions"`
+		} `json:"launcher"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode written launcher actions: %v", err)
+	}
+	if len(got.Launcher.Actions) != 3 {
+		t.Fatalf("written actions = %+v", got.Launcher.Actions)
+	}
+	open := got.Launcher.Actions[0]
+	if open.ID != "open-search" || open.Label != "Open search" || open.Comment != "Search the web" ||
+		!reflect.DeepEqual(open.Argv, []string{"browser", "https://example.test/?q=a b", ""}) {
+		t.Fatalf("written safe action = %+v", open)
+	}
+	if !got.Launcher.Actions[1].Dangerous || got.Launcher.Actions[1].AllowDangerous {
+		t.Fatalf("dangerous action without opt-in = %+v", got.Launcher.Actions[1])
+	}
+	if !got.Launcher.Actions[2].Dangerous || !got.Launcher.Actions[2].AllowDangerous {
+		t.Fatalf("dangerous action with opt-in = %+v", got.Launcher.Actions[2])
+	}
+}
+
+func TestLauncherActionRejectsEmptyOrDuplicateIDs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"empty", `{"launcher":{"actions":[{"id":"","label":"Run","argv":["run"]}]}}`, "launcher.actions[0].id"},
+		{"duplicate", `{"launcher":{"actions":[{"id":"one","label":"One","argv":["one"]},{"id":"one","label":"Again","argv":["again"]}]}}`, "launcher.actions[1].id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse error = %v, want context %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLauncherActionRejectsOptInForSafeAction(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"launcher":{"actions":[{"id":"run","label":"Run","argv":["run"],"allow_dangerous":true}]}}`))
+	if err == nil || !strings.Contains(err.Error(), "launcher.actions[0].allow_dangerous") {
+		t.Fatalf("Parse error = %v, want allow_dangerous validation", err)
+	}
+}
+
+func TestLauncherActionRejectsEmptyArgv(t *testing.T) {
+	t.Parallel()
+	for _, argv := range []string{"[]", `[""]`, `[" "]`} {
+		doc := `{"launcher":{"actions":[{"id":"run","label":"Run","argv":` + argv + `}]}}`
+		if _, err := Parse([]byte(doc)); err == nil || !strings.Contains(err.Error(), "launcher.actions[0].argv") {
+			t.Fatalf("Parse error for argv %s = %v, want argv validation", argv, err)
+		}
+	}
+}
+
+func TestLauncherActionRejectsInvalidBounds(t *testing.T) {
+	t.Parallel()
+	tooManyArgs := make([]string, 33)
+	for i := range tooManyArgs {
+		tooManyArgs[i] = "x"
+	}
+	for _, tc := range []struct {
+		name   string
+		action map[string]any
+		want   string
+	}{
+		{"too many arguments", map[string]any{"id": "many", "label": "Many", "argv": tooManyArgs}, "launcher.actions[0].argv"},
+		{"argument too long", map[string]any{"id": "long", "label": "Long", "argv": []string{"run", strings.Repeat("x", 4097)}}, "launcher.actions[0].argv"},
+		{"label too long", map[string]any{"id": "label", "label": strings.Repeat("x", 129), "argv": []string{"run"}}, "launcher.actions[0].label"},
+		{"id too long", map[string]any{"id": strings.Repeat("x", 65), "label": "Long ID", "argv": []string{"run"}}, "launcher.actions[0].id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := json.Marshal(map[string]any{"launcher": map[string]any{"actions": []any{tc.action}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Parse(doc); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse error = %v, want context %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLauncherCommandProviderConfigRoundTripsArgvTemplates(t *testing.T) {
+	const document = `{"launcher":{"providers":[{"name":"Files","prefix":"/files","glyph":"glyph:description","description":"Search files","command":["file-list","--query={query}"],"on_select":["file-open","--query={query}","{selection}"]}]}}`
+	cfg, err := Parse([]byte(document))
+	if err != nil {
+		t.Fatalf("parse launcher provider: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write launcher provider: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Launcher struct {
+			Providers []struct {
+				Name        string   `json:"name"`
+				Prefix      string   `json:"prefix"`
+				Glyph       string   `json:"glyph"`
+				Description string   `json:"description"`
+				Command     []string `json:"command"`
+				OnSelect    []string `json:"on_select"`
+			} `json:"providers"`
+		} `json:"launcher"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode written launcher provider: %v", err)
+	}
+	wantCommand := []string{"file-list", "--query={query}"}
+	wantSelect := []string{"file-open", "--query={query}", "{selection}"}
+	if len(got.Launcher.Providers) != 1 {
+		t.Fatalf("written providers = %+v", got.Launcher.Providers)
+	}
+	provider := got.Launcher.Providers[0]
+	if provider.Name != "Files" || provider.Prefix != "/files" || provider.Glyph != "glyph:description" ||
+		provider.Description != "Search files" || !reflect.DeepEqual(provider.Command, wantCommand) ||
+		!reflect.DeepEqual(provider.OnSelect, wantSelect) {
+		t.Fatalf("written provider = %+v", provider)
+	}
+}
+
+func TestConfigCloneDeepCopiesLauncherArgv(t *testing.T) {
+	cfg := Config{Launcher: Launcher{
+		Providers: []LauncherCommandProvider{{
+			Command: []string{"file-list", "{query}"}, OnSelect: []string{"file-open", "{selection}"},
+		}},
+		Actions: []LauncherAction{{Argv: []string{"browser", "https://example.test"}}},
+	}}
+	clone := cfg.Clone()
+	clone.Launcher.Providers[0].Command[0] = "changed-list"
+	clone.Launcher.Providers[0].OnSelect[0] = "changed-open"
+	clone.Launcher.Actions[0].Argv[0] = "changed-browser"
+	if cfg.Launcher.Providers[0].Command[0] != "file-list" ||
+		cfg.Launcher.Providers[0].OnSelect[0] != "file-open" ||
+		cfg.Launcher.Actions[0].Argv[0] != "browser" {
+		t.Fatalf("launcher clone aliases original config: %+v", cfg.Launcher)
+	}
+}
+
+func TestLauncherCommandProviderRejectsInvalidRoutesAndCommands(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"missing prefix", `{"launcher":{"providers":[{"name":"Files","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[0].prefix"},
+		{"duplicate prefix", `{"launcher":{"providers":[{"name":"A","prefix":"/same","command":["list"],"on_select":["open"]},{"name":"B","prefix":"/same","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[1].prefix"},
+		{"built in prefix", `{"launcher":{"providers":[{"name":"Calculator","prefix":"/calc","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[0].prefix"},
+		{"query in executable", `{"launcher":{"providers":[{"name":"Files","prefix":"/files","command":["{query}"],"on_select":["open"]}]}}`, "launcher.providers[0].command"},
+		{"selection in executable", `{"launcher":{"providers":[{"name":"Files","prefix":"/files","command":["list"],"on_select":["{selection}"]}]}}`, "launcher.providers[0].on_select"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse error = %v, want context %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFrameCapConfigVocabulary(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		doc  string
+		want theme.RepaintCap
+	}{
+		{`{}`, theme.RepaintDisplay},
+		{`{"theme":{"frame-cap":null}}`, theme.RepaintDisplay},
+		{`{"theme":{"frame-cap":"display"}}`, theme.RepaintDisplay},
+		{`{"theme":{"frame-cap":"60"}}`, theme.Repaint60},
+		{`{"theme":{"frame-cap":"90"}}`, theme.Repaint90},
+		{`{"theme":{"frame-cap":"120"}}`, theme.Repaint120},
+		{`{"theme":{"preset":"expressive","frame-cap":"60"}}`, theme.Repaint60},
+	} {
+		c, err := Parse([]byte(tc.doc))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.doc, err)
+		}
+		if c.Theme.FrameCap != tc.want {
+			t.Fatalf("%s: frame cap = %q, want %q", tc.doc, c.Theme.FrameCap, tc.want)
+		}
+	}
+}
+
+func TestFrameCapConfigRejectsUnknown(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{`""`, `"30"`, `"165"`, `"unlimited"`, `"0"`, `0`, `60`} {
+		_, err := Parse([]byte(`{"theme":{"frame-cap":` + value + `}}`))
+		if err == nil || !strings.Contains(err.Error(), "theme.frame-cap") {
+			t.Fatalf("value %s: error = %v, want theme.frame-cap refusal", value, err)
 		}
 	}
 }

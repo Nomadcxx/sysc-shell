@@ -81,6 +81,7 @@ func TestOnboardingFontCopyUsesSelectedLanguage(t *testing.T) {
 	cfg := config.Default()
 	cfg.Session.Language = "es"
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 800, OutH: 500}); err != nil {
 		t.Fatal(err)
@@ -109,6 +110,7 @@ func TestOnboardingCJKCoverageSkipsInstallPrompt(t *testing.T) {
 	cfg := config.Default()
 	cfg.Session.Language = "ja"
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.onboardingFontCoverage = func(language string) bool { return language == "ja" }
 	reg.onboardingFontInstallAvailable = func() bool {
 		t.Error("covered fonts should skip the install availability check")

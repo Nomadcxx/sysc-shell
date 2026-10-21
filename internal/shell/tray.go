@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -197,12 +198,10 @@ func (r *Registry) BindTray(sender trayCommandSender) {
 	r.trayMenu = newTrayMenuHost(r, nil)
 	r.trayDrawer = newTrayDrawerHost(r, nil)
 	r.trayDrawer.itemAction = r.drawerItemAction
-	// A stale-item reply means the service replaced the key under a click that
-	// was already in flight. The projection is authoritative, so the retry is
-	// to reproject: the next command carries the live key or is not sent.
-	r.trayReplies = newTrayReplyTracker(r, func(tray.ItemKey) { r.reprojectTray() })
+	r.trayReplies = newTrayReplyTracker()
 	workerContext, cancel := context.WithCancel(context.Background())
 	r.trayIconCancel = cancel
+	r.shutdown.trayIconCancel.store(cancel)
 	r.trayIcons = icons.NewWorker(icons.NewResolver("", nil), r.applyTrayIcon)
 	go func() { _ = r.trayIcons.Run(workerContext) }()
 	for _, bar := range r.bars {
@@ -218,6 +217,12 @@ func (r *Registry) TrayMessages() chan trayclient.Message { return r.trayCh }
 // surface that shows it. Each kind states which correlations it breaks.
 func (r *Registry) ApplyTray(m trayclient.Message) {
 	r.tray.applyTray(m)
+
+	// A stale reply is reported after the lock is released: stderr is a
+	// socket under systemd, and a write that blocks there must not hold
+	// the registry.
+	var staleKey tray.ItemKey
+	var stale bool
 
 	r.mu.Lock()
 	switch m.Kind {
@@ -240,7 +245,17 @@ func (r *Registry) ApplyTray(m trayclient.Message) {
 		r.resumePendingTrayMenuLocked(m.Menu.Key)
 	case trayclient.KindReply:
 		if r.trayReplies != nil {
-			r.trayReplies.apply(m)
+			// A stale-item reply means the service replaced the key under a
+			// click that was already in flight. The projection is
+			// authoritative, so the shell recovers by reprojecting: the next
+			// command carries the live key or is not sent. Every message
+			// ends with that reprojection, so the tracker only has to
+			// decide — it must not act, because it runs under the lock this
+			// method holds and the reprojection takes that lock again.
+			key, isStale := r.trayReplies.apply(m)
+			if isStale {
+				staleKey, stale = key, true
+			}
 		}
 		if r.pendingTrayMenu.active && r.pendingTrayMenu.requestID == m.RequestID && !m.Reply.OK {
 			// The menu will never arrive for this request.
@@ -265,10 +280,15 @@ func (r *Registry) ApplyTray(m trayclient.Message) {
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if stale {
+		// The report comes after the invalidation: a write that blocks on
+		// stderr must not delay the surfaces.
+		log.Printf("tray: item %s%s went stale; reprojecting", staleKey.Owner, staleKey.ObjectPath)
+	}
 }
 
 // reprojectTray republishes tray state onto every surface without a client
-// message behind it. The icon worker and the reply tracker both reach it.
+// message behind it. The icon worker reaches it off the lock.
 func (r *Registry) reprojectTray() {
 	r.mu.Lock()
 	changed := r.syncTrayLocked()

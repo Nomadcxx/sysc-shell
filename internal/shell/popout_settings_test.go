@@ -3,12 +3,16 @@ package shell
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/buildinfo"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -20,6 +24,46 @@ import (
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
+// newSettingsRegistry builds the registry the settings tests use: the config
+// the test controls, no external program to look up, and a consumer for the
+// invalidations a registry without a bridge would never receive. A Registry
+// blocks its publisher once the bounded invalidation queue is full (GH #4),
+// and the background republishes fill that queue on their own, so a fixture
+// that does not drain it blocks the settings commit for good and hangs the
+// package instead of failing (sysc-1531).
+func newSettingsRegistry(t *testing.T, cfg config.Config) *Registry {
+	t.Helper()
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	keepInvalidationsDrained(t, reg)
+	return reg
+}
+
+// TestSettingsFixtureDrainsItsInvalidations pins the fixture contract the
+// settings tests depend on. The queue the background republishes fill holds a
+// handful of entries, so a fixture that does not drain it blocks its publisher
+// and the settings commit never returns.
+func TestSettingsFixtureDrainsItsInvalidations(t *testing.T) {
+	t.Parallel()
+	reg := newSettingsRegistry(t, config.Default())
+
+	filled := make(chan struct{})
+	go func() {
+		defer close(filled)
+		// One more than the queue holds: the last send is the one that
+		// blocks when nothing drains the queue.
+		for i := 0; i <= cap(reg.invalidations); i++ {
+			reg.publishSurface(7, "probe")
+		}
+	}()
+	select {
+	case <-filled:
+	case <-time.After(asyncTestWait):
+		t.Fatal("publishing blocked on the invalidation queue: the fixture does not drain it")
+	}
+}
+
 func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
@@ -29,6 +73,407 @@ func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
 	focus := ui.Focusables(h.root)
 	if len(focus) == 0 || focus[0].Kind != ui.KindTextField || focus[0].Name != "Search" {
 		t.Fatalf("first focusable = %+v, want Search field", focus)
+	}
+}
+
+func TestSettingsApplicationsShowsAccessibleControlsAndStaleFeedback(t *testing.T) {
+	cfg := config.Default()
+	cfg.Applications.Favourites = []string{"missing-favourite"}
+	cfg.Applications.Hidden = []string{"missing-hidden"}
+	cfg.Applications.DefaultTerminal = "missing-terminal"
+	reg, h := newApplicationSettingsHost(t, cfg, []launcher.Entry{
+		{ID: "photo-editor", Name: "Photo Editor", Comment: "Edit pictures"},
+		{ID: "foot", Name: "Foot", Categories: []string{"System", "TerminalEmulator"}, TerminalApp: true},
+	})
+	_ = reg
+
+	favourite := findAction(h.root, "applications:favourite:photo-editor")
+	if favourite == nil || favourite.Kind != ui.KindToggle || favourite.Role != "switch" ||
+		!favourite.Focusable || favourite.Name != "Mark Photo Editor as a favourite" {
+		t.Fatalf("favourite control = %+v, want an accessible switch for Photo Editor", favourite)
+	}
+	hidden := findAction(h.root, "applications:hidden:photo-editor")
+	if hidden == nil || hidden.Kind != ui.KindToggle || hidden.Role != "switch" ||
+		!hidden.Focusable || hidden.Name != "Hide Photo Editor from the launcher" {
+		t.Fatalf("hidden control = %+v, want an accessible switch for Photo Editor", hidden)
+	}
+	terminal := findAction(h.root, "applications:terminal:foot")
+	if terminal == nil || terminal.Kind != ui.KindButton || terminal.Role != "button" || !terminal.Focusable {
+		t.Fatalf("terminal control = %+v, want an accessible button for Foot", terminal)
+	}
+	stale := findAction(h.root, "applications:remove-stale")
+	if stale == nil || stale.Role != "button" || !stale.Focusable {
+		t.Fatalf("stale preference action = %+v, want an accessible cleanup button", stale)
+	}
+	foundFeedback := false
+	for _, n := range walk(h.root) {
+		if n.Role == "status" && strings.Contains(n.Text, "3 saved application preferences") {
+			foundFeedback = true
+			if strings.Contains(n.Text, "missing-") {
+				t.Fatalf("stale feedback exposed raw IDs: %q", n.Text)
+			}
+		}
+	}
+	if !foundFeedback {
+		t.Fatal("page did not report stale favourite, hidden, and default IDs")
+	}
+}
+
+func TestSettingsApplicationSwitchNamesFollowLocale(t *testing.T) {
+	for _, tc := range []struct {
+		locale, favourite, hidden string
+	}{
+		{"es", "Marcar Photo Editor como favorita", "Ocultar Photo Editor del lanzador"},
+		{"ja", "Photo Editor をお気に入りに追加", "Photo Editor をランチャーで非表示にする"},
+		{"ko", "Photo Editor 즐겨찾기에 추가", "런처에서 Photo Editor 숨기기"},
+		{"pt", "Adicionar Photo Editor aos favoritos", "Ocultar Photo Editor do iniciador"},
+		{"ru", "Добавить «Photo Editor» в избранное", "Скрыть «Photo Editor» из списка приложений"},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			h := newSettingsHost()
+			h.draft.Session.Language = tc.locale
+			row := applicationPreferenceRow(h, launcher.Entry{ID: "photo-editor", Name: "Photo Editor"}, false, false, false)
+			favourite := findAction(row, "applications:favourite:photo-editor")
+			hidden := findAction(row, "applications:hidden:photo-editor")
+			if favourite == nil || favourite.Name != tc.favourite {
+				t.Errorf("favourite accessible name = %q, want %q", nameOf(favourite), tc.favourite)
+			}
+			if hidden == nil || hidden.Name != tc.hidden {
+				t.Errorf("hidden accessible name = %q, want %q", nameOf(hidden), tc.hidden)
+			}
+		})
+	}
+}
+
+func TestExternalApplicationPreferenceChangeRefreshesLauncherQuery(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "firefox"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(result launcher.Result) bool {
+			return result.Entry.ID == "firefox.desktop"
+		})
+	})
+
+	reg.mu.Lock()
+	next := reg.cfg.Clone()
+	reg.mu.Unlock()
+	next.Applications.Hidden = []string{"firefox.desktop"}
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.query == "firefox" && !h.launcherAwaiting &&
+			!slices.ContainsFunc(h.launcherResults, func(result launcher.Result) bool {
+				return result.Entry.ID == "firefox.desktop"
+			})
+	})
+}
+
+func TestSettingsApplicationsChangesPersistAndReachLauncherService(t *testing.T) {
+	cfg := config.Default()
+	reg, h := newApplicationSettingsHost(t, cfg, []launcher.Entry{
+		{ID: "photo-editor", Name: "Photo Editor"},
+		{ID: "foot", Name: "Foot", TerminalApp: true},
+	})
+	reg.configPath = filepath.Join(t.TempDir(), "config.json")
+
+	activateSettingsAction(t, reg, h, "applications:favourite:photo-editor")
+	if !slices.Equal(reg.cfg.Applications.Favourites, []string{"photo-editor"}) {
+		t.Fatalf("saved favourites = %v, want photo-editor", reg.cfg.Applications.Favourites)
+	}
+	activateSettingsAction(t, reg, h, "applications:hidden:photo-editor")
+	if len(reg.cfg.Applications.Favourites) != 0 || !slices.Equal(reg.cfg.Applications.Hidden, []string{"photo-editor"}) {
+		t.Fatalf("hidden edit left conflicting preferences: %+v", reg.cfg.Applications)
+	}
+	activateSettingsAction(t, reg, h, "applications:terminal:foot")
+	if got := reg.launcherServiceConfig().TerminalDesktopID(); got != "foot" {
+		t.Fatalf("launcher terminal ID = %q, want foot after the settings edit", got)
+	}
+	loaded, err := config.Load(reg.configPath)
+	if err != nil {
+		t.Fatalf("Load saved config: %v", err)
+	}
+	if !slices.Equal(loaded.Applications.Hidden, []string{"photo-editor"}) || loaded.Applications.DefaultTerminal != "foot" {
+		t.Fatalf("persisted applications = %+v", loaded.Applications)
+	}
+}
+
+func TestSettingsApplicationsSearchFiltersInstalledEntries(t *testing.T) {
+	reg, h := newApplicationSettingsHost(t, config.Default(), []launcher.Entry{
+		{ID: "photo-editor", Name: "Photo Editor"},
+		{ID: "foot", Name: "Foot", TerminalApp: true},
+	})
+
+	reg.mu.Lock()
+	h.query = "foot"
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+
+	if findAction(h.root, "applications:favourite:foot") == nil {
+		t.Fatal("search for Foot did not keep the matching installed application")
+	}
+	if findAction(h.root, "applications:favourite:photo-editor") != nil {
+		t.Fatal("search for Foot kept the non-matching Photo Editor")
+	}
+}
+
+func TestSettingsApplicationsSnapshotRefreshDoesNotBlockRegistry(t *testing.T) {
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	entries := []launcher.Entry{{ID: "photo-editor", Name: "Photo Editor"}}
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return entries
+	}})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseScan) }) })
+	<-scanStarted
+
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.panelHosts[PanelSettings] = h
+	reg.mu.Unlock()
+
+	rendered := make(chan *ui.Node, 1)
+	go func() {
+		reg.mu.Lock()
+		h.root = settingsTree(reg, h)
+		root := h.root
+		reg.mu.Unlock()
+		rendered <- root
+	}()
+	select {
+	case root := <-rendered:
+		if !containsText(root, "Loading installed applications…") {
+			t.Fatal("initial applications view did not show loading status")
+		}
+	case <-time.After(100 * time.Millisecond):
+		releaseOnce.Do(func() { close(releaseScan) })
+		<-rendered
+		t.Fatal("Settings waited for the installed-app scan while holding Registry.mu")
+	}
+
+	releaseOnce.Do(func() { close(releaseScan) })
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		ready := findAction(reg.panelHosts[PanelSettings].root, "applications:favourite:photo-editor") != nil
+		reg.mu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("Settings did not rebuild from the completed application snapshot")
+}
+
+func TestSettingsApplicationsRefreshUpdatesReopenedHost(t *testing.T) {
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	entries := []launcher.Entry{{ID: "photo-editor", Name: "Photo Editor"}}
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return entries
+	}})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseScan) }) })
+
+	oldHost := newSettingsHost()
+	oldHost.section = "Applications"
+	oldHost.output = 7
+	oldHost.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.panelHosts[PanelSettings] = oldHost
+	oldHost.root = settingsTree(reg, oldHost)
+	reg.mu.Unlock()
+	select {
+	case <-scanStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial application scan did not start")
+	}
+
+	reg.mu.Lock()
+	reg.closePanelLocked(PanelSettings)
+	currentHost := newSettingsHost()
+	currentHost.section = "Applications"
+	currentHost.output = 7
+	currentHost.stopAnim = make(chan struct{})
+	reg.panelHosts[PanelSettings] = currentHost
+	currentHost.root = settingsTree(reg, currentHost)
+	reg.mu.Unlock()
+
+	releaseOnce.Do(func() { close(releaseScan) })
+	waitFor(t, func() bool {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return reg.panelHosts[PanelSettings] == currentHost &&
+			findAction(currentHost.root, "applications:favourite:photo-editor") != nil
+	})
+}
+
+func TestSettingsRefreshesStaleApplicationSnapshot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	oldEntries := []launcher.Entry{{ID: "old.desktop", Name: "Old"}}
+	var now atomic.Int64
+	now.Store(time.Now().UnixNano())
+	var scans atomic.Int32
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		if scans.Add(1) == 1 {
+			return oldEntries
+		}
+		return []launcher.Entry{
+			{ID: "old.desktop", Name: "Old"},
+			{ID: "new.desktop", Name: "New"},
+		}
+	}, Now: func() time.Time { return time.Unix(0, now.Load()) }, StaleAfter: time.Minute})
+	if _, err := svc.Applications(); err != nil {
+		t.Fatal(err)
+	}
+	now.Add(int64(2 * time.Minute))
+
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = svc
+	reg.launcherApplications.Store(&launcherApplicationSnapshot{
+		entries: oldEntries, attemptedAt: time.Now().Add(-2 * launcherApplicationsRefreshAfter), available: true,
+	})
+	reg.panelHosts[PanelSettings] = h
+	h.root = settingsTree(reg, h)
+	h.focus = ui.Focusables(h.root)
+	reg.mu.Unlock()
+
+	waitFor(t, func() bool {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return slices.ContainsFunc(h.focus, func(n *ui.Node) bool {
+			return n.Action == "applications:favourite:new.desktop"
+		})
+	})
+}
+
+func TestSettingsRetriesApplicationRefreshAfterServiceReplacement(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_DATA_DIRS", filepath.Join(home, "system-data"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseScan) }) }
+	defer release()
+	stale := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return []launcher.Entry{{ID: "stale.desktop", Name: "Stale"}}
+	}})
+
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.output = 7
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.launcherSvc = stale
+	reg.launcherServiceProviders = cloneLauncherCommandProviders(reg.cfg.Launcher.Providers)
+	reg.launcherServiceActions = cloneLauncherActions(reg.cfg.Launcher.Actions)
+	reg.panelHosts[PanelSettings] = h
+	reg.refreshLauncherApplicationsLocked(h)
+	reg.mu.Unlock()
+
+	select {
+	case <-scanStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial application scan did not start")
+	}
+
+	reg.mu.Lock()
+	reg.cfg.Launcher.Providers = []config.LauncherCommandProvider{{
+		Name: "Test", Prefix: "/test", Command: []string{"true"}, OnSelect: []string{"open"},
+	}}
+	current := reg.launcherServiceLocked()
+	reg.mu.Unlock()
+	if current == stale {
+		t.Fatal("launcher config change did not replace its service")
+	}
+
+	waitFor(t, func() bool {
+		snapshot := reg.launcherApplications.Load()
+		return snapshot != nil && snapshot.available
+	})
+	release()
+}
+
+func TestSettingsApplicationsPreferenceActionUsesCachedSnapshot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	scanStarted := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var releaseOnce sync.Once
+	entries := []launcher.Entry{{ID: "photo-editor", Name: "Photo Editor"}}
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry {
+		close(scanStarted)
+		<-releaseScan
+		return entries
+	}})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseScan) }) })
+	<-scanStarted
+
+	cfg := config.Default()
+	h := newSettingsHost()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	h.draft = cfg.Clone()
+	h.root = applicationPreferenceRow(h, entries[0], false, false, false)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+	reg.mu.Lock()
+	reg.cfg = cfg.Clone()
+	reg.configPath = filepath.Join(t.TempDir(), "config.json")
+	reg.launcherSvc = svc
+	reg.launcherApplications.Store(&launcherApplicationSnapshot{
+		entries: slices.Clone(entries), attemptedAt: time.Now(), available: true,
+	})
+	reg.panelHosts[PanelSettings] = h
+	reg.mu.Unlock()
+
+	n := findAction(h.root, "applications:favourite:photo-editor")
+	finished := make(chan bool, 1)
+	go func() {
+		reg.mu.Lock()
+		finished <- h.applicationSettingsAction(reg, n)
+		reg.mu.Unlock()
+	}()
+	select {
+	case handled := <-finished:
+		if !handled {
+			t.Fatal("favourite action was not handled")
+		}
+	case <-time.After(100 * time.Millisecond):
+		releaseOnce.Do(func() { close(releaseScan) })
+		<-finished
+		t.Fatal("Settings action waited for the installed-app scan while holding Registry.mu")
+	}
+	reg.mu.Lock()
+	favourited := slices.Equal(reg.cfg.Applications.Favourites, []string{"photo-editor"})
+	reg.mu.Unlock()
+	if !favourited {
+		t.Fatal("favourite action did not persist the cached application ID")
 	}
 }
 
@@ -59,6 +504,74 @@ func TestSettingsSearchSwapsSidebarForMatches(t *testing.T) {
 	}
 }
 
+func TestSettingsSearchDimsBarControlsThatDoNotApply(t *testing.T) {
+	h := newSettingsHost()
+	h.draft.Bar.Enabled = true
+	h.draft.Bar.Style = "solid"
+	h.set = settings.DefaultFor(h.draft)
+	h.query = "frost"
+
+	root := settingsSearchColumn(h, h.set.Search("frost"))
+	control := findSettingsControl(root, "bar.frost-opacity")
+	if control == nil {
+		t.Fatal("search did not render the frost opacity control")
+	}
+	if control.State&ui.StateDisabled == 0 {
+		t.Fatalf("inapplicable frost control state = %v, want disabled", control.State)
+	}
+	for _, node := range walk(root) {
+		if node.Kind == ui.KindText && node.Text == "Applies to the Frosted style." {
+			return
+		}
+	}
+	t.Fatal("search result did not explain why frost opacity is unavailable")
+}
+
+func TestSettingsSearchPreservesPageScroll(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	if h == nil {
+		t.Fatal("Settings panel did not create a host")
+	}
+	setBodyOffset := func(offset int) {
+		t.Helper()
+		for _, node := range walk(h.root) {
+			if node.Kind == ui.KindScroll && node.Key != settingsRailKey {
+				node.ScrollOffset = offset
+				return
+			}
+		}
+		t.Fatal("Settings tree has no body scroll")
+	}
+
+	setBodyOffset(120)
+	h.settingsSearchScroll = 40
+	h.search = ui.NewField("frost")
+	h.fieldChanged(reg, &ui.Node{Name: "Search"}, h.search)
+	if got := settingsScrollOffset(h.root); got != 0 {
+		t.Fatalf("new search starts at offset %d, want 0", got)
+	}
+
+	setBodyOffset(32)
+	h.search = ui.NewField("frost opacity")
+	h.fieldChanged(reg, &ui.Node{Name: "Search"}, h.search)
+	if got := settingsScrollOffset(h.root); got != 0 {
+		t.Fatalf("changed search starts at offset %d, want 0", got)
+	}
+
+	setBodyOffset(32)
+	h.search = ui.NewField("")
+	h.fieldChanged(reg, &ui.Node{Name: "Search"}, h.search)
+	if got := settingsScrollOffset(h.root); got != 120 {
+		t.Fatalf("page scroll after clearing search = %d, want 120", got)
+	}
+}
+
 func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
@@ -78,6 +591,475 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 			t.Fatalf("Bar section missing kind %d", k)
 		}
 	}
+}
+
+func TestSettingsExternalReloadRefreshesOpenControl(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistryWithoutBridge(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	initial := findSettingsControl(h.root, "bar.edge")
+	if initial == nil || initial.Text != "Top" {
+		reg.mu.Unlock()
+		t.Fatalf("initial Edge control = %+v, want Top", initial)
+	}
+	reg.mu.Unlock()
+
+	for len(reg.invalidations) > 0 {
+		<-reg.invalidations
+	}
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	wantSurface := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelSettings)}
+	published := false
+	for len(reg.invalidations) > 0 {
+		if got := <-reg.invalidations; got == wantSurface {
+			published = true
+		}
+	}
+	if !published {
+		t.Fatalf("config adoption did not invalidate Settings surface %q", wantSurface.SurfaceID)
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil {
+		t.Fatal("reloaded Settings tree has no Edge control")
+	} else if edge.Text != "Right" {
+		t.Fatalf("reloaded Edge control = %q, want Right", edge.Text)
+	}
+}
+
+func TestSettingsExternalReloadRefreshesOpenPicker(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	menu := h.menus["bar.edge"]
+	if menu == nil {
+		reg.mu.Unlock()
+		t.Fatal("Settings has no Edge menu")
+	}
+	menu.Open()
+	menu.Next()
+	pending := menu.options[menu.cursor]
+	h.menu, h.menuPath = menu, "bar.edge"
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.menus["bar.edge"] != menu || h.menu != menu || h.menuPath != "bar.edge" {
+		t.Fatal("reload replaced or detached the open Edge menu")
+	}
+	if !menu.Opened() {
+		t.Fatal("reload closed the Edge menu")
+	}
+	if got := menu.Value(); got != "right" {
+		t.Fatalf("open Edge menu committed value = %q, want right", got)
+	}
+	if got := menu.options[menu.cursor]; got != pending {
+		t.Fatalf("pending Edge option = %q, want preserved %q", got, pending)
+	}
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Right" {
+		t.Fatalf("open Edge control after reload = %+v, want Right", edge)
+	}
+}
+
+func TestSettingsExternalReloadClosesPickerWhenItBecomesAField(t *testing.T) {
+	t.Parallel()
+	previous := config.Default()
+	previous.ThemeGen.Source = "stock"
+	previous.ThemeGen.Seed = theme.StockNames()[0]
+	reg := newSettingsRegistry(t, previous)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Appearance"
+	h.settingsPage = "Appearance"
+	reg.rebuildPanel(h)
+	seed := findSettingsControl(h.root, "appearance.seed")
+	menu := h.menus["appearance.seed"]
+	if seed == nil || seed.Kind != ui.KindMenu || menu == nil {
+		reg.mu.Unlock()
+		t.Fatalf("initial Appearance seed = %+v, menu = %+v, want an openable picker", seed, menu)
+	}
+	menu.Open()
+	h.menu, h.menuPath = menu, "appearance.seed"
+	h.setFocus(seed)
+	reg.mu.Unlock()
+
+	next := previous.Clone()
+	next.ThemeGen.Source = "hex"
+	next.ThemeGen.Seed = "#123456"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	seed = findSettingsControl(h.root, "appearance.seed")
+	if seed == nil || seed.Kind != ui.KindTextField || seed.Text != "#123456" {
+		t.Fatalf("reloaded Appearance seed = %+v, want the hex text field", seed)
+	}
+	if menu.Opened() || h.menu != nil || h.menuPath != "" {
+		t.Fatalf("picker remained active after its control became a field: opened=%v active=%p path=%q", menu.Opened(), h.menu, h.menuPath)
+	}
+	if focused := h.focused(); focused == nil || focused.Action != "set:appearance.seed" || focused.Kind != ui.KindTextField {
+		t.Fatalf("focused control after reload = %+v, want Appearance seed field", focused)
+	}
+}
+
+func TestSettingsExternalReloadPreservesOpenPathBrowser(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	root := t.TempDir()
+	child := filepath.Join(root, "wallpapers")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const path = "wallpaper.image-directory"
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Wallpaper"
+	h.draft.Wallpaper.ImageDirectory = root
+	reg.rebuildPanel(h)
+	browse := byAction(h.root, "browse:"+path)
+	if browse == nil {
+		reg.mu.Unlock()
+		t.Fatal("wallpaper browse control is missing")
+	}
+	h.setFocus(browse)
+	h.settingsBrowseGeneration = 1
+	h.settingsBrowsePath, h.settingsBrowseDir = path, root
+	h.settingsBrowseFocus = browse.StableKey()
+	h.settingsBrowsePending = true
+	reg.mu.Unlock()
+
+	reg.finishSettingsBrowse(h, path, root, root, 1, os.ReadDir)
+	reg.mu.Lock()
+	menu := h.menus[path]
+	if menu == nil || !menu.Opened() {
+		reg.mu.Unlock()
+		t.Fatal("directory browser did not open")
+	}
+	if !slices.Contains(menu.options, child) {
+		reg.mu.Unlock()
+		t.Fatalf("directory browser options %v omit %q before reload", menu.options, child)
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	next.Wallpaper.ImageDirectory = root
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.menu != menu || h.menus[path] != menu || !menu.Opened() {
+		t.Fatal("reload replaced or closed the open directory browser")
+	}
+	if !slices.Contains(menu.options, child) {
+		t.Fatalf("reload erased directory browser options %v", menu.options)
+	}
+}
+
+func TestSettingsRebuildFallsBackWhenFocusedControlDisappears(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.query = "edge"
+	h.search = ui.NewField("edge")
+	reg.rebuildPanel(h)
+	edge := findSettingsControl(h.root, "bar.edge")
+	if edge == nil {
+		reg.mu.Unlock()
+		t.Fatal("search did not render the Edge control")
+	}
+	h.setFocus(edge)
+	h.query = "city"
+	h.search = ui.NewField("city")
+	reg.rebuildPanel(h)
+	defer reg.mu.Unlock()
+
+	focused := h.focused()
+	if focused == nil || focused != h.focus[0] || focused.Name != "Search" {
+		t.Fatalf("focus after Edge disappeared = %+v, want the default Search field", focused)
+	}
+}
+
+func TestSettingsExternalReloadClosesPathBrowserWhenDirectoryChanges(t *testing.T) {
+	t.Parallel()
+	oldRoot := t.TempDir()
+	oldChild := filepath.Join(oldRoot, "old-library")
+	if err := os.Mkdir(oldChild, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newRoot := t.TempDir()
+	newChild := filepath.Join(newRoot, "new-library")
+	if err := os.Mkdir(newChild, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const path = "wallpaper.image-directory"
+	previous := config.Default()
+	previous.Wallpaper.ImageDirectory = oldRoot
+	reg := newSettingsRegistry(t, previous)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Wallpaper"
+	reg.rebuildPanel(h)
+	browse := byAction(h.root, "browse:"+path)
+	if browse == nil {
+		reg.mu.Unlock()
+		t.Fatal("wallpaper browse control is missing")
+	}
+	h.setFocus(browse)
+	h.settingsBrowseGeneration = 1
+	h.settingsBrowsePath, h.settingsBrowseDir = path, oldRoot
+	h.settingsBrowseFocus = browse.StableKey()
+	h.settingsBrowsePending = true
+	reg.mu.Unlock()
+
+	reg.finishSettingsBrowse(h, path, oldRoot, oldRoot, 1, os.ReadDir)
+	reg.mu.Lock()
+	menu := h.menus[path]
+	if menu == nil || !menu.Opened() || !slices.Contains(menu.options, oldChild) {
+		reg.mu.Unlock()
+		t.Fatalf("old directory browser = %+v, want open options containing %q", menu, oldChild)
+	}
+	reg.mu.Unlock()
+
+	next := previous.Clone()
+	next.Wallpaper.ImageDirectory = newRoot
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if menu.Opened() || h.menu != nil || h.menuPath != "" || h.settingsBrowsePath != "" {
+		t.Fatalf("old directory browser remained active after reload: opened=%v menu=%p menuPath=%q browsePath=%q", menu.Opened(), h.menu, h.menuPath, h.settingsBrowsePath)
+	}
+	if field := h.fields[path]; field == nil || field.Text != newRoot {
+		t.Fatalf("reloaded image directory field = %+v, want %q", field, newRoot)
+	}
+}
+
+func TestSettingsExternalReloadPreservesViewState(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.settingsPage = "Appearance"
+	h.query = "edge"
+	h.search = ui.NewField("edge")
+	h.errLabel = "local write error"
+	reg.rebuildPanel(h)
+	edge := findSettingsControl(h.root, "bar.edge")
+	if edge == nil {
+		reg.mu.Unlock()
+		t.Fatal("search did not render the Edge control")
+	}
+	h.setFocus(edge)
+	for _, n := range walk(h.root) {
+		if n.Kind == ui.KindScroll && n.Key == settingsSearchBodyKey {
+			n.ScrollOffset = 48
+			break
+		}
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Bar.Edge = "right"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	assertView := func() {
+		t.Helper()
+		if h.section != "Bar" || h.settingsPage != "Appearance" {
+			t.Fatalf("page changed to %q/%q", h.section, h.settingsPage)
+		}
+		if h.query != "edge" || h.search == nil || h.search.Text != "edge" {
+			t.Fatalf("search changed to query=%q field=%v", h.query, h.search)
+		}
+		if h.errLabel != "local write error" {
+			t.Fatalf("local write error changed to %q", h.errLabel)
+		}
+		foundError := false
+		for _, n := range walk(h.root) {
+			foundError = foundError || n.Text == "local write error"
+		}
+		if !foundError {
+			t.Fatal("local write error disappeared from the Settings tree")
+		}
+		if got := settingsScrollOffset(h.root); got != 48 {
+			t.Fatalf("scroll offset = %d, want 48", got)
+		}
+		if focused := h.focused(); focused == nil || focused.Action != "set:bar.edge" {
+			t.Fatalf("focused control = %+v, want Edge", focused)
+		}
+		if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Right" {
+			t.Fatalf("searched Edge control after reload = %+v, want Right", edge)
+		}
+	}
+	reg.mu.Lock()
+	assertView()
+	reg.mu.Unlock()
+
+	noop, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noop.Commit()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	assertView()
+}
+
+func TestSettingsExternalReloadRefreshesOpenTextField(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Weather"
+	reg.rebuildPanel(h)
+	initial := findSettingsControl(h.root, "weather.city")
+	if initial == nil || initial.Kind != ui.KindTextField {
+		reg.mu.Unlock()
+		t.Fatalf("initial City control = %+v, want text field", initial)
+	}
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Weather.City = "Melbourne"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if city := findSettingsControl(h.root, "weather.city"); city == nil || city.Text != "Melbourne" || city.Cursor != len("Melbourne") {
+		t.Fatalf("reloaded City control = %+v, want Melbourne", city)
+	}
+}
+
+func TestRejectedSettingsReloadKeepsOpenControlAndError(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	h.errLabel = "local write error"
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+
+	broken := config.Default()
+	broken.Bar.Edge = "right"
+	broken.Bar.Height = 4
+	broken.Bar.Gap = 4
+	if _, err := reg.PrepareConfig(broken, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}}); err == nil {
+		t.Fatal("invalid config candidate was prepared")
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := h.draft.Bar.Edge; got != "top" {
+		t.Fatalf("rejected candidate changed draft Edge to %q", got)
+	}
+	if edge := findSettingsControl(h.root, "bar.edge"); edge == nil || edge.Text != "Top" {
+		t.Fatalf("rejected candidate changed Edge control to %+v", edge)
+	}
+	if h.errLabel != "local write error" {
+		t.Fatalf("rejected candidate cleared or changed local error to %q", h.errLabel)
+	}
+}
+
+func findSettingsControl(root *ui.Node, path string) *ui.Node {
+	for _, n := range walk(root) {
+		if n.Action == "set:"+path {
+			return n
+		}
+	}
+	return nil
 }
 
 func TestNightLightModeRendersAsSegmentedControl(t *testing.T) {
@@ -245,6 +1227,47 @@ func newSettingsHost() *PanelHost {
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	return h
+}
+
+func newApplicationSettingsHost(t *testing.T, cfg config.Config, entries []launcher.Entry) (*Registry, *PanelHost) {
+	t.Helper()
+	reg := newPanelRegistry(t)
+	svc := launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry { return entries }})
+	h := newSettingsHost()
+	h.draft = cfg.Clone()
+	h.section = "Applications"
+	h.stopAnim = make(chan struct{})
+	reg.mu.Lock()
+	reg.cfg = cfg.Clone()
+	reg.storeLauncherAppPreferences(cfg.Applications)
+	reg.launcherSvc = svc
+	reg.launcherApplications.Store(&launcherApplicationSnapshot{
+		entries: slices.Clone(entries), attemptedAt: time.Now(), available: true,
+	})
+	reg.panelHosts[PanelSettings] = h
+	h.root = settingsTree(reg, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+	reg.mu.Unlock()
+	return reg, h
+}
+
+func activateSettingsAction(t *testing.T, reg *Registry, h *PanelHost, action string) {
+	t.Helper()
+	reg.mu.Lock()
+	for i, n := range h.focus {
+		if n != nil && n.Action == action {
+			h.roving.Set(i)
+			activated := h.activate(reg)
+			reg.mu.Unlock()
+			if !activated {
+				t.Fatalf("activation returned false for %q", action)
+			}
+			return
+		}
+	}
+	reg.mu.Unlock()
+	t.Fatalf("focus list has no action %q", action)
 }
 
 func byRole(n *ui.Node, role string) []*ui.Node {
@@ -1018,6 +2041,464 @@ func TestSettingsDebouncesFieldWrites(t *testing.T) {
 	}
 	if got.Session.Locker != "three" {
 		t.Fatalf("file holds %q, want the last value typed", got.Session.Locker)
+	}
+}
+
+func TestSettingsDebouncedWriteDoesNotOverwriteReloadedConfig(t *testing.T) {
+	base := config.Default()
+	base.Accessibility.ReducedMotion = true
+	base.Session.Locker = "old-locker"
+	reg := newSettingsRegistry(t, base)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = 5 * time.Millisecond
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	// Hold the file writer after the debounce snapshots the draft. A successful
+	// external reload must invalidate that snapshot before it can write.
+	reg.configWriteMu.Lock()
+	reg.mu.Lock()
+	h.errLabel = "previous write failure"
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "stale locker"})
+	reg.mu.Unlock()
+
+	snapshotDeadline := time.NewTimer(time.Second)
+	defer snapshotDeadline.Stop()
+	for {
+		reg.mu.Lock()
+		snapshotPending := h.writeTimer != nil
+		reg.mu.Unlock()
+		if !snapshotPending {
+			break
+		}
+		select {
+		case <-snapshotDeadline.C:
+			reg.configWriteMu.Unlock()
+			t.Fatal("debounced write did not snapshot the draft")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	external := base.Clone()
+	external.Bar.Edge = "right"
+	if err := config.Write(path, external); err != nil {
+		reg.configWriteMu.Unlock()
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfig(external, nil)
+	if err != nil {
+		reg.configWriteMu.Unlock()
+		t.Fatal(err)
+	}
+	prepared.Commit()
+	for len(reg.invalidations) > 0 {
+		<-reg.invalidations
+	}
+	reg.configWriteMu.Unlock()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	wantSurface := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelSettings)}
+	for {
+		select {
+		case got := <-reg.invalidations:
+			if got == wantSurface {
+				goto written
+			}
+		case <-deadline.C:
+			t.Fatal("debounced write did not finish")
+		}
+	}
+
+written:
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bar.Edge != "right" || got.Session.Locker != base.Session.Locker {
+		t.Fatalf("stale Settings draft replaced external config: edge=%q locker=%q", got.Bar.Edge, got.Session.Locker)
+	}
+	if len(reloads) != 0 {
+		t.Fatal("discarded Settings draft queued a reload")
+	}
+	reg.mu.Lock()
+	errLabel := h.errLabel
+	reg.mu.Unlock()
+	if errLabel != "previous write failure" {
+		t.Fatalf("discarded Settings draft changed the local error to %q", errLabel)
+	}
+}
+
+func TestSettingsReloadAfterDebouncedWriteKeepsNewerEdit(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := newSettingsRegistry(t, base)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
+	generation := h.writeTimerGeneration
+	reg.settingsWriteMu.Lock()
+	revision := h.settingsWriteRevision
+	reg.settingsWriteMu.Unlock()
+	reg.mu.Unlock()
+
+	// Invoke the real timer path and wait until its write has released the
+	// settings lock. Its reload candidate remains unapplied in this test.
+	h.writeTimerExpired(reg, generation, revision)
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("first debounced write did not finish")
+	}
+	reg.settingsWriteMu.Lock()
+	reg.settingsWriteMu.Unlock()
+
+	configGeneration := reg.SettingsWriteGeneration()
+	candidate, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfigWithGeneration(candidate, nil, configGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "second"})
+	reg.mu.Unlock()
+	prepared.Commit()
+
+	reg.mu.Lock()
+	draft := h.draft.Session.Locker
+	timerPending := h.writeTimer != nil
+	if timerPending {
+		h.flushDraft(reg)
+	}
+	reg.mu.Unlock()
+	if draft != "second" || !timerPending {
+		t.Fatalf("self-reload discarded newer edit: draft=%q timerPending=%t", draft, timerPending)
+	}
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "second" {
+		t.Fatalf("flushing after self-reload wrote locker %q, want second", got.Session.Locker)
+	}
+}
+
+func TestSettingsExternalReloadAfterWriteRetiresWriterSnapshot(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := newSettingsRegistry(t, base)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "written"})
+	generation := h.writeTimerGeneration
+	reg.settingsWriteMu.Lock()
+	revision := h.settingsWriteRevision
+	reg.settingsWriteMu.Unlock()
+	reg.mu.Unlock()
+	h.writeTimerExpired(reg, generation, revision)
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("debounced write did not finish")
+	}
+
+	external, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external.Bar.Edge = "right"
+	if err := config.Write(path, external); err != nil {
+		t.Fatal(err)
+	}
+	configGeneration := reg.SettingsWriteGeneration()
+	candidate, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfigWithGeneration(candidate, nil, configGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "later edit"})
+	reg.mu.Unlock()
+	prepared.Commit()
+
+	reg.mu.Lock()
+	draft := h.draft.Clone()
+	timerPending := h.writeTimer != nil
+	reg.mu.Unlock()
+	reg.settingsWriteMu.Lock()
+	pendingSnapshots := len(reg.settingsWriteReloads)
+	reg.settingsWriteMu.Unlock()
+	if draft.Session.Locker != "written" || draft.Bar.Edge != "right" || timerPending || pendingSnapshots != 0 {
+		t.Fatalf("genuine reload did not replace the draft: locker=%q edge=%q timerPending=%t snapshots=%d",
+			draft.Session.Locker, draft.Bar.Edge, timerPending, pendingSnapshots)
+	}
+}
+
+func TestSettingsStaleReloadCommitKeepsLaterWriteSnapshot(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := newSettingsRegistry(t, base)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.configWriteMu.Lock()
+	writerLocked := true
+	t.Cleanup(func() {
+		if writerLocked {
+			reg.configWriteMu.Unlock()
+		}
+	})
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
+	timer := h.writeTimer
+	generation := h.writeTimerGeneration
+	reg.settingsWriteMu.Lock()
+	revision := h.settingsWriteRevision
+	reg.settingsWriteMu.Unlock()
+	reg.mu.Unlock()
+	if timer == nil {
+		t.Fatal("Settings edit did not arm a write timer")
+	}
+
+	// Run the real timer body while the file writer is held, so the reload
+	// candidate can be prepared before the Settings write publishes its snapshot.
+	h.writeTimerExpired(reg, generation, revision)
+	timer.Stop()
+
+	external := base.Clone()
+	external.Bar.Edge = "right"
+	externalGeneration := reg.SettingsWriteGeneration()
+	if err := config.Write(path, external); err != nil {
+		t.Fatal(err)
+	}
+	preparedExternal, err := reg.PrepareConfigWithGeneration(external, nil, externalGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reg.configWriteMu.Unlock()
+	writerLocked = false
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("debounced write did not finish")
+	}
+	reg.settingsWriteMu.Lock()
+	reg.settingsWriteMu.Unlock()
+	if got := reg.SettingsWriteGeneration(); got != externalGeneration+1 {
+		t.Fatalf("Settings-write generation = %d, want %d", got, externalGeneration+1)
+	}
+
+	// This candidate predates the writer but commits after its snapshot exists.
+	preparedExternal.Commit()
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "later edit"})
+	reg.mu.Unlock()
+	selfGeneration := reg.SettingsWriteGeneration()
+	written, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedSelf, err := reg.PrepareConfigWithGeneration(written, nil, selfGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedSelf.Commit()
+
+	reg.mu.Lock()
+	draft := h.draft.Session.Locker
+	timerPending := h.writeTimer != nil
+	if timerPending {
+		h.flushDraft(reg)
+	}
+	reg.mu.Unlock()
+	if draft != "later edit" || !timerPending {
+		t.Fatalf("stale reload discarded later edit: draft=%q timerPending=%t", draft, timerPending)
+	}
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "later edit" {
+		t.Fatalf("flushing after self-reload wrote locker %q, want later edit", got.Session.Locker)
+	}
+}
+
+func TestSettingsDebouncedWritePreservesExternalConfigLoadedBeforeCommit(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := newSettingsRegistry(t, base)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = 5 * time.Millisecond
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	// Keep the delayed worker behind its file-write lock while the external
+	// config is loaded. Letting the worker write before Commit reproduces the
+	// gap where a whole-draft write used to replace the external edit.
+	reg.configWriteMu.Lock()
+	writerLocked := true
+	t.Cleanup(func() {
+		if writerLocked {
+			reg.configWriteMu.Unlock()
+		}
+	})
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "settings-locker"})
+	reg.mu.Unlock()
+
+	snapshotDeadline := time.NewTimer(time.Second)
+	defer snapshotDeadline.Stop()
+	for {
+		reg.mu.Lock()
+		snapshotPending := h.writeTimer != nil
+		reg.mu.Unlock()
+		if !snapshotPending {
+			break
+		}
+		select {
+		case <-snapshotDeadline.C:
+			t.Fatal("debounced write did not snapshot the draft")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	external := base.Clone()
+	external.Bar.Edge = "right"
+	if err := config.Write(path, external); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := reg.PrepareConfig(external, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.configWriteMu.Unlock()
+	writerLocked = false
+	select {
+	case <-reloads:
+	case <-time.After(time.Second):
+		t.Fatal("debounced write did not finish")
+	}
+	prepared.Commit()
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bar.Edge != "right" || got.Session.Locker != "settings-locker" {
+		t.Fatalf("debounced write lost an external config edit: edge=%q locker=%q", got.Bar.Edge, got.Session.Locker)
+	}
+}
+
+func TestSettingsStaleTimerDoesNotHideReplacementFromFlush(t *testing.T) {
+	base := config.Default()
+	base.Session.Locker = "old-locker"
+	reg := newSettingsRegistry(t, base)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, base); err != nil {
+		t.Fatal(err)
+	}
+	reloads := make(chan struct{}, 8)
+	reg.BindPersist(path, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "first"})
+	staleGeneration := h.writeTimerGeneration
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "latest"})
+	replacement := h.writeTimer
+	reg.mu.Unlock()
+
+	// ponytail: invoke the timer body directly so this regression check does
+	// not depend on callback scheduling.
+	h.writeTimerExpired(reg, staleGeneration, 1)
+
+	reg.mu.Lock()
+	if h.writeTimer != replacement {
+		reg.mu.Unlock()
+		t.Fatal("stale callback cleared the replacement timer")
+	}
+	h.flushDraft(reg)
+	reg.mu.Unlock()
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "latest" {
+		t.Fatalf("flush wrote locker %q, want latest", got.Session.Locker)
 	}
 }
 

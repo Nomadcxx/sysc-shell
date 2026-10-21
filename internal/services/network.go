@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Connectivity names what the active connection runs over.
@@ -69,6 +70,53 @@ type AccessPoint struct {
 	Saved      bool
 }
 
+// VPNStatus is the state of one installed NetworkManager VPN profile.
+type VPNStatus uint8
+
+const (
+	VPNDisconnected VPNStatus = iota + 1
+	VPNConnecting
+	VPNConnected
+	VPNDisconnecting
+)
+
+// VPNProfile contains only identity and runtime state. Stored credentials
+// remain in NetworkManager and never enter the shell snapshot.
+type VPNProfile struct {
+	UUID   string
+	Name   string
+	Status VPNStatus
+}
+
+// ManualSecurity is the supported security choice for a network entered by
+// SSID. Enterprise authentication has a separate identity flow.
+type ManualSecurity uint8
+
+const (
+	ManualSecurityOpen ManualSecurity = iota + 1
+	ManualSecurityWPAPersonal
+	ManualSecurityWPAEnterprise
+)
+
+// ManualNetworkRequest deliberately carries no passphrase. The backend asks
+// the existing secret agent for WPA-Personal credentials when it needs them.
+type ManualNetworkRequest struct {
+	SSID     string
+	Security ManualSecurity
+}
+
+func (r ManualNetworkRequest) Validate() error {
+	if len(r.SSID) == 0 || len(r.SSID) > 32 || !utf8.ValidString(r.SSID) || strings.IndexByte(r.SSID, 0) >= 0 {
+		return errors.New("services: SSID must be between 1 and 32 bytes")
+	}
+	switch r.Security {
+	case ManualSecurityOpen, ManualSecurityWPAPersonal:
+		return nil
+	default:
+		return errors.New("services: unsupported wireless security")
+	}
+}
+
 // SignalBand buckets 0..100 into the five bands the glyphs draw.
 //
 // Sorting and glyph choice each key on the band rather than the raw percent,
@@ -100,7 +148,11 @@ type backend interface {
 	Scan() error
 	SetWirelessEnabled(bool) error
 	Activate(ap AccessPoint) error
+	ConnectManual(ManualNetworkRequest) error
 	Forget(ssid string) error
+	VPNProfiles() ([]VPNProfile, error)
+	ConnectVPN(uuid string) error
+	DisconnectVPN(uuid string) error
 	// Watch reports readiness to re-read by sending on wake, until stop closes.
 	// It never sends state itself: one decode path, in the service.
 	Watch(wake chan<- struct{}, stop <-chan struct{}) error
@@ -121,15 +173,21 @@ type poller interface {
 // starts and stops. A backend with nothing to push names its own cadence
 // through poller; that is a property of the tier, not of any lease.
 type Network struct {
-	mu      sync.Mutex
-	leases  leaseSet
-	be      backend
-	last    NetworkState
-	aps     []AccessPoint
-	ok      bool
-	stop    chan struct{}
-	wake    chan struct{}
-	changes chan NetworkState
+	mu sync.Mutex
+	// Separate locks let DisconnectVPN cancel a ConnectVPN waiting for activation.
+	vpnConnectMu    sync.Mutex
+	vpnDisconnectMu sync.Mutex
+	vpnRefreshMu    sync.Mutex
+	leases          leaseSet
+	be              backend
+	last            NetworkState
+	aps             []AccessPoint
+	vpns            []VPNProfile
+	vpnErr          error
+	ok              bool
+	stop            chan struct{}
+	wake            chan struct{}
+	changes         chan NetworkState
 
 	// secrets holds the one in-flight passphrase prompt. It is always
 	// non-nil: the panel calls CancelSecret on close whether or not a prompt
@@ -180,6 +238,72 @@ func (n *Network) CachedAccessPoints() []AccessPoint {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return slices.Clone(n.aps)
+}
+
+// CachedVPNProfiles returns the last VPN profile snapshot without bus I/O.
+// Panel code calls this under Registry.mu and on the Wayland owner.
+func (n *Network) CachedVPNProfiles() []VPNProfile {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Clone(n.vpns)
+}
+
+// CachedVPNError returns a listing error from the last refresh, if any.
+func (n *Network) CachedVPNError() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.vpnErr == nil {
+		return ""
+	}
+	return n.vpnErr.Error()
+}
+
+// RefreshVPNProfiles reads profile metadata off the owner loop and replaces
+// the cached snapshot. A failed read keeps the last useful list and records
+// the error for the panel.
+func (n *Network) RefreshVPNProfiles() error {
+	n.vpnRefreshMu.Lock()
+	defer n.vpnRefreshMu.Unlock()
+	profiles, err := n.be.VPNProfiles()
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if err != nil {
+		n.vpnErr = err
+		return err
+	}
+	n.vpns = sortVPNProfiles(profiles)
+	n.vpnErr = nil
+	return nil
+}
+
+func sortVPNProfiles(profiles []VPNProfile) []VPNProfile {
+	out := slices.Clone(profiles)
+	slices.SortFunc(out, func(a, b VPNProfile) int {
+		if d := strings.Compare(a.Name, b.Name); d != 0 {
+			return d
+		}
+		return strings.Compare(a.UUID, b.UUID)
+	})
+	return out
+}
+
+func validVPNUUID(uuid string) bool {
+	if len(uuid) != 36 {
+		return false
+	}
+	for i := range uuid {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if uuid[i] != '-' {
+				return false
+			}
+			continue
+		}
+		c := uuid[i]
+		if !('0' <= c && c <= '9') && !('a' <= c && c <= 'f') && !('A' <= c && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // State reads through to the backend, falling back to the cache on error. It
@@ -371,13 +495,65 @@ func (unavailableBackend) AccessPoints() ([]AccessPoint, error)         { return
 func (unavailableBackend) Scan() error                                  { return errNoNetworkManager }
 func (unavailableBackend) SetWirelessEnabled(bool) error                { return errNoNetworkManager }
 func (unavailableBackend) Activate(AccessPoint) error                   { return errNoNetworkManager }
+func (unavailableBackend) ConnectManual(ManualNetworkRequest) error     { return errNoNetworkManager }
 func (unavailableBackend) Forget(string) error                          { return errNoNetworkManager }
+func (unavailableBackend) VPNProfiles() ([]VPNProfile, error)           { return nil, errNoNetworkManager }
+func (unavailableBackend) ConnectVPN(string) error                      { return errNoNetworkManager }
+func (unavailableBackend) DisconnectVPN(string) error                   { return errNoNetworkManager }
 func (unavailableBackend) Watch(chan<- struct{}, <-chan struct{}) error { return nil }
 func (unavailableBackend) Close() error                                 { return nil }
 
 var errNoNetworkManager = errors.New("services: NetworkManager is not available")
+var errVPNUnsupported = errors.New("services: VPN controls require NetworkManager")
 
 func (n *Network) Scan() error                      { return n.be.Scan() }
 func (n *Network) SetWirelessEnabled(on bool) error { return n.be.SetWirelessEnabled(on) }
 func (n *Network) Activate(ap AccessPoint) error    { return n.be.Activate(ap) }
-func (n *Network) Forget(ssid string) error         { return n.be.Forget(ssid) }
+func (n *Network) ConnectManual(req ManualNetworkRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	return n.be.ConnectManual(req)
+}
+func (n *Network) ConnectVPN(uuid string) error {
+	if !validVPNUUID(uuid) {
+		return errors.New("services: invalid VPN profile identity")
+	}
+	n.vpnConnectMu.Lock()
+	defer n.vpnConnectMu.Unlock()
+	if status, ok := n.cachedVPNStatus(uuid); ok && (status == VPNConnecting || status == VPNConnected) {
+		return nil
+	}
+	if err := n.be.ConnectVPN(uuid); err != nil {
+		return err
+	}
+	_ = n.RefreshVPNProfiles()
+	return nil
+}
+func (n *Network) DisconnectVPN(uuid string) error {
+	if !validVPNUUID(uuid) {
+		return errors.New("services: invalid VPN profile identity")
+	}
+	n.vpnDisconnectMu.Lock()
+	defer n.vpnDisconnectMu.Unlock()
+	if status, ok := n.cachedVPNStatus(uuid); ok && (status == VPNDisconnected || status == VPNDisconnecting) {
+		return nil
+	}
+	if err := n.be.DisconnectVPN(uuid); err != nil {
+		return err
+	}
+	_ = n.RefreshVPNProfiles()
+	return nil
+}
+
+func (n *Network) cachedVPNStatus(uuid string) (VPNStatus, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, profile := range n.vpns {
+		if profile.UUID == uuid {
+			return profile.Status, true
+		}
+	}
+	return 0, false
+}
+func (n *Network) Forget(ssid string) error { return n.be.Forget(ssid) }

@@ -39,6 +39,17 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStatusEnvelopeIncludesConfigReloadState(t *testing.T) {
+	srv := NewServer("", Handlers{Status: func() map[string]any {
+		return map[string]any{"config_error": "config: bar.height: invalid", "config_error_at": "2026-10-15T10:00:00Z"}
+	}})
+	got := string(srv.handleLine(`{"id":1,"method":"status"}`))
+	if !strings.Contains(got, `"config_error":"config: bar.height: invalid"`) ||
+		!strings.Contains(got, `"config_error_at":"2026-10-15T10:00:00Z"`) {
+		t.Fatalf("status envelope omitted reload state: %s", got)
+	}
+}
+
 func TestNightLightNamespaceUsesItsHandler(t *testing.T) {
 	out := string(NewServer("", Handlers{}).handleLine(`{"id":1,"method":"nightlight.status"}`))
 	if !strings.Contains(out, "night light handler unset") {
@@ -230,6 +241,31 @@ func TestListenHoldsEarlyConnectionsUntilServe(t *testing.T) {
 	case <-answered:
 	case <-time.After(3 * time.Second):
 		t.Fatal("early call was never answered after Serve started")
+	}
+}
+
+// TestCloseDuringListenIsRaceFree covers the shutdown order the helpers above
+// create: startServer serves on a goroutine and t.Cleanup closes the server,
+// so Close can run while Serve is still inside Listen. The listener field is
+// shared across those goroutines and has to be synchronised rather than read
+// and written plainly; the race detector reports the pair when it is not.
+func TestCloseDuringListenIsRaceFree(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for i := 0; i < 64; i++ {
+		sock := filepath.Join(dir, fmt.Sprintf("ipc.%d.sock", i))
+		srv := NewServer(sock, Handlers{})
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = srv.Serve(ctx)
+		}()
+		// No waitSock: Close must be safe while Serve is still binding the
+		// socket, which is exactly what the harness cleanup does.
+		_ = srv.Close()
+		cancel()
+		<-done
 	}
 }
 

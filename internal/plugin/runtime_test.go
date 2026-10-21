@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -164,6 +165,41 @@ func TestRuntimeRefusesToStartARejectedCandidate(t *testing.T) {
 	}
 	if got := r.Status().State; got != StateFailed {
 		t.Fatalf("state = %q, want %q", got, StateFailed)
+	}
+}
+
+// TestRuntimeRestartsAPluginThatDiesBehindADescendant is the runtime-level half
+// of the exit watcher: the process leaves, a descendant holds the pipes, and
+// the runtime must still spend its restart budget instead of reporting the
+// plugin as running for the rest of the session.
+func TestRuntimeRestartsAPluginThatDiesBehindADescendant(t *testing.T) {
+	t.Parallel()
+
+	children := filepath.Join(t.TempDir(), "children")
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "crash-with-child:"+children)}, helperOptions())
+	defer r.Stop()
+	defer func() { killChildren(findChildPIDs(t, children)) }()
+
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.Status().State == StateFailed {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	st := r.Status()
+	if st.State != StateFailed {
+		t.Fatalf("state = %q, want %q after the budget ran out", st.State, StateFailed)
+	}
+	if st.Starts != MaxAutoStarts {
+		t.Errorf("starts = %d, want the %d the budget allows", st.Starts, MaxAutoStarts)
+	}
+	if st.Failure == "" {
+		t.Error("a failed plugin carries no reason")
 	}
 }
 
@@ -516,5 +552,29 @@ func TestEarlyHostCallOverflowIsAnsweredWithAnError(t *testing.T) {
 		if id := fmt.Sprintf("f%d", i); !overflowed[id] {
 			t.Fatalf("call %s got no reply", id)
 		}
+	}
+}
+
+func TestStoppingARuntimeEndsItsDescendants(t *testing.T) {
+	t.Parallel()
+
+	pidPath := filepath.Join(t.TempDir(), "child.pid")
+	opts := helperOptions()
+	// The helper answers the handshake and then ignores host.shutdown, so the
+	// stop runs out the grace and takes the forced path. Short because the
+	// grace is what is being waited out, not something being proven.
+	opts.ShutdownGrace = 100 * time.Millisecond
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "spawn-child-slow-shutdown:"+pidPath)}, opts)
+
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	child := readChildPID(t, pidPath)
+	defer killIfAlive(child)
+
+	// This is what disabling the plugin in settings does.
+	r.Stop()
+	if !waitForExit(t, child, time.Second) {
+		t.Fatalf("descendant %d survived the plugin being stopped", child)
 	}
 }

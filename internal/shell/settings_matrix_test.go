@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
@@ -16,6 +18,14 @@ import (
 func TestEverySettingsPageLaysOutEverywhere(t *testing.T) {
 	for _, out := range [][2]int{{1280, 720}, {1536, 864}, {3440, 1440}} {
 		reg := newPanelRegistry(t)
+		entries := []launcher.Entry{
+			{ID: "photo-editor", Name: "Photo Editor", Comment: "Edit photographs"},
+			{ID: "foot", Name: "Foot", Comment: "Terminal emulator", TerminalApp: true},
+		}
+		reg.launcherSvc = launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry { return entries }})
+		reg.launcherApplications.Store(&launcherApplicationSnapshot{
+			entries: entries, attemptedAt: time.Now(), available: true,
+		})
 		withTestBar(t, reg, 7, reg.cfg)
 		if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: out[0], OutH: out[1]}); err != nil {
 			t.Fatal(err)
@@ -40,11 +50,34 @@ func TestEverySettingsPageLaysOutEverywhere(t *testing.T) {
 					// Layout accepts a short body without complaint; the live
 					// gate found one cut at the 240 fallback.
 					reg.mu.Lock()
-					body := findScroll(reg.panelHosts[PanelSettings].root)
-					reg.mu.Unlock()
-					if body == nil || body.Bounds.H < int(panel.Height)/2 {
+					body := keyedScroll(reg.panelHosts[PanelSettings].root, settingsBodyKey)
+					if body == nil {
+						t.Errorf("%dx%d %s/%s @%d: no scroll body", out[0], out[1], section, page, scale)
+					} else if body.Bounds.H < int(panel.Height)/2 {
 						t.Errorf("%dx%d %s/%s @%d: body %+v in a %d-tall pane", out[0], out[1], section, page, scale, body.Bounds, panel.Height)
 					}
+					if section == "Applications" && body != nil {
+						for _, action := range []string{
+							"applications:favourite:photo-editor",
+							"applications:hidden:photo-editor",
+							"applications:terminal:foot",
+						} {
+							node := findAction(reg.panelHosts[PanelSettings].root, action)
+							if node == nil {
+								t.Errorf("%dx%d %s/%s @%d: control %q is missing", out[0], out[1], section, page, scale, action)
+								continue
+							}
+							if node.Bounds.W <= 0 || node.Bounds.H <= 0 ||
+								node.Bounds.X < body.Bounds.X ||
+								node.Bounds.X+node.Bounds.W > body.Bounds.X+body.Bounds.W ||
+								node.Bounds.Y < body.Bounds.Y ||
+								node.Bounds.Y+node.Bounds.H > body.Bounds.Y+body.Bounds.H {
+								t.Errorf("%dx%d %s/%s @%d: control %q has bounds %+v outside body %+v",
+									out[0], out[1], section, page, scale, action, node.Bounds, body.Bounds)
+							}
+						}
+					}
+					reg.mu.Unlock()
 				}
 			}
 		}

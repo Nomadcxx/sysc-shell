@@ -874,6 +874,49 @@ func TestCaffeineToggleUpdatesOpenScreensaverSettings(t *testing.T) {
 	}
 }
 
+func TestCaffeineMenuOffUpdatesOpenScreensaverSettings(t *testing.T) {
+	snapshot := readyWallsSnapshot()
+	snapshot.UnitFileState, snapshot.ActiveState, snapshot.SubState = "enabled", "active", "running"
+	r, settingsHost, service := newOpenWallsSettings(t, snapshot)
+	r.mu.Lock()
+	r.inhibitWanted = true
+	r.inhibit = closerFunc(func() error { return nil })
+	r.rebuildPanel(settingsHost)
+	r.mu.Unlock()
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(renderText(settingsHost.root), "Caffeine does not pause the screensaver") {
+		t.Fatal("Caffeine caption is missing before selecting Off")
+	}
+
+	r.mu.Lock()
+	controlHost := r.panelHosts[PanelControlCenter]
+	menu := controlHost.menus[caffeineMenuAction]
+	menu.Open()
+	for range menu.Index() {
+		menu.Prev()
+	}
+	menu.Select()
+	controlHost.applyMenu(r, caffeineMenuAction)
+	r.rebuildPanel(controlHost)
+	if r.inhibitWanted {
+		r.mu.Unlock()
+		t.Fatal("Off menu selection kept the shell inhibitor active")
+	}
+	if got := renderText(settingsHost.root); strings.Contains(got, "Caffeine does not pause the screensaver") {
+		r.mu.Unlock()
+		t.Fatalf("open Screensaver Settings kept the Caffeine caption after Off: %q", got)
+	}
+	r.mu.Unlock()
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if len(service.patches) != 0 || len(service.enables) != 0 || len(service.runtime) != 0 || service.previews != 0 || service.stops != 0 {
+		t.Fatalf("Caffeine menu sent screensaver work: %+v", service)
+	}
+}
+
 func TestCaffeineFailureUpdatesOpenScreensaverSettings(t *testing.T) {
 	snapshot := readyWallsSnapshot()
 	snapshot.UnitFileState, snapshot.ActiveState, snapshot.SubState = "enabled", "active", "running"

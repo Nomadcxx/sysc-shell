@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -21,10 +23,49 @@ import (
 // are the ones that explain it.
 const MaxStderrBytes = 64 << 10
 
+// startBusyAttempts and startBusyDelay bound how long the supervisor keeps
+// trying to exec a program the kernel still refuses to start.
+//
+// The kernel refuses to exec a file that was written a moment ago: the file
+// stays busy until every process that inherited the write handle is gone.
+// That is a question of milliseconds for a plugin installed seconds ago, and
+// it is not a fault in the plugin, so a start is retried rather than failed.
+const (
+	startBusyAttempts = 100
+	startBusyDelay    = 10 * time.Millisecond
+)
+
 // shutdownSendTimeout bounds the best-effort host.shutdown write. A plugin
 // that stopped reading its standard input must not be able to hold Close in
 // Send; closing the pipe below unblocks the write either way.
 const shutdownSendTimeout = 100 * time.Millisecond
+
+// defaultShutdownGrace leaves time for plugins to flush state and stop owned
+// child processes before the host kills an unresponsive process.
+const defaultShutdownGrace = 4 * time.Second
+
+// killGroupSoftWait is how long a forced stop gives the group to act on SIGTERM
+// before SIGKILL. It is short on purpose: this is the arm a plugin reached only
+// after ignoring the whole shutdown grace, so nothing is waiting on a
+// cooperative exit any more.
+const killGroupSoftWait = 250 * time.Millisecond
+
+// exitedWaitDelay bounds how long cmd.Wait keeps reading a plugin's pipes after
+// the process has left or has been killed. A descendant holding a pipe would
+// wait out the whole shutdown grace, and that grace is for a process that can
+// still be asked to stop.
+//
+// The command carries this one value for its whole life: os/exec's context
+// watcher reads Cmd.WaitDelay from its own goroutine as soon as the command
+// context is done, so the field is set before Start and never written again
+// (sysc-1532).
+const exitedWaitDelay = 250 * time.Millisecond
+
+// exitDrainDelay is how long a reader gets to empty the standard output after
+// the process leaves, before the exit watcher closes the pipe. Closing it
+// discards unread bytes, and a plugin's last snapshot is often the interesting
+// one; a pipe holds at most 64 KiB, which a reader takes well inside this.
+const exitDrainDelay = 50 * time.Millisecond
 
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
@@ -138,6 +179,11 @@ type Session struct {
 	sendMu sync.Mutex
 	recvMu sync.Mutex
 
+	// exited is closed once the process has been seen to leave. It is the
+	// death signal end of stream cannot be: a descendant that inherited the
+	// standard output keeps that pipe open long after the plugin is gone.
+	exited chan struct{}
+
 	closeOnce sync.Once
 	reason    ExitReason
 	// started is when the process began, so a caller can tell a crash loop
@@ -162,6 +208,34 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 			s.Manifest.ID, missing, plural(len(missing), "is", "are"))
 	}
 
+	sess, err := s.startSession(ctx)
+	if err != nil {
+		// A program the kernel still considers busy is not a broken plugin.
+		// The file stays busy until every process that inherited the write
+		// handle is gone, which for a plugin installed a moment ago is a
+		// question of milliseconds. Wait for it and try again.
+		for attempt := 0; isProgramBusy(err) && attempt < startBusyAttempts; attempt++ {
+			if ctx.Err() != nil {
+				break
+			}
+			time.Sleep(startBusyDelay)
+			sess, err = s.startSession(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := s.handshake(ctx, sess); err != nil {
+		s.reap(sess)
+		return nil, err
+	}
+	return sess, nil
+}
+
+// startSession builds the plugin process and starts it. The handshake belongs
+// to the caller: this is the part that can fail because of the program itself.
+func (s *Supervisor) startSession(ctx context.Context) (*Session, error) {
 	// An explicit empty argument array: the host passes nothing the manifest
 	// could have chosen, and starts the executable directly rather than
 	// through a command shell.
@@ -175,6 +249,15 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 		cmd = exec.CommandContext(ctx, s.Launcher, args...)
 	}
 	cmd.Dir = s.Manifest.Dir
+	// A plugin gets its own process group. It inherits the shell's group
+	// otherwise, and a plugin that forks would then share one with the shell
+	// and the compositor: signalling the group to stop a plugin would reach
+	// both, which is why the forced paths below signal the group at all.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Cancelling the host context is a forced stop, so it takes the same group
+	// signal a grace expiry does rather than killing the leader alone and
+	// leaving the plugin's children reparented to the user manager.
+	cmd.Cancel = func() error { return killGroup(cmd, syscall.SIGKILL) }
 	// GH #11: a third-party process gets the handful of variables it needs to
 	// find the compositor and its own config, not the whole session
 	// environment (which can carry tokens, proxy credentials, search paths).
@@ -182,6 +265,17 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	if s.Env != nil {
 		cmd.Env = s.Env
 	}
+	grace := s.ShutdownGrace
+	if grace <= 0 {
+		grace = defaultShutdownGrace
+	}
+	stderr := newTail(MaxStderrBytes)
+	// Cmd.Wait owns the pipe copy and does not close stderr until it finishes.
+	cmd.Stderr = stderr
+	// The post-exit I/O bound is fixed before Start: os/exec reads this field
+	// from its own goroutine when the command context is done, so nothing may
+	// assign it afterwards (sysc-1532).
+	cmd.WaitDelay = exitedWaitDelay
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -191,11 +285,6 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("plugin: %s: stdout: %w", s.Manifest.ID, err)
 	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("plugin: %s: stderr: %w", s.Manifest.ID, err)
-	}
-
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("plugin: start %s: %w", s.Manifest.ID, err)
 	}
@@ -205,18 +294,52 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 		stdin:   stdin,
 		enc:     v1.NewEncoder(stdin),
 		dec:     v1.NewDecoder(stdout, v1.ToHost),
-		stderr:  newTail(MaxStderrBytes),
-		grace:   s.ShutdownGrace,
+		stderr:  stderr,
+		grace:   grace,
 		inbound: NewInbound(nil, s.Limits),
 		started: time.Now(),
+		exited:  make(chan struct{}),
 	}
-	go sess.stderr.drain(stderrPipe)
-
-	if err := s.handshake(ctx, sess); err != nil {
-		s.reap(sess)
-		return nil, err
-	}
+	sess.watchExit(stdout)
 	return sess, nil
+}
+
+// isProgramBusy reports whether the kernel refused to exec a program because
+// the file was still open for writing.
+func isProgramBusy(err error) bool {
+	return errors.Is(err, syscall.ETXTBSY)
+}
+
+// watchExit notices the process leaving without reaping it, so cmd.Wait stays
+// the only reaper and ProcessState keeps its meaning.
+//
+// End of stream on the standard output is not a death signal on its own: a
+// descendant that inherited that pipe keeps it open, and a session waiting for
+// EOF alone reports a dead plugin as running for as long as the descendant
+// lives. Closing the read side is what unblocks a reader held that way.
+func (s *Session) watchExit(stdout io.Closer) {
+	pid := s.PID()
+	go func() {
+		var info unix.Siginfo
+		for {
+			// WNOWAIT observes the exit and leaves the zombie behind for
+			// cmd.Wait to reap. P_PID and never P_ALL: the shell's other
+			// children are not this session's to reap.
+			err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+			if err != unix.EINTR {
+				break
+			}
+		}
+		close(s.exited)
+		// A descendant's copy of the pipe keeps ReadFrame blocked for good.
+		// Closing the read side is what unblocks it, but closing it discards
+		// whatever the dying plugin had already written, so give the reader a
+		// moment to empty the pipe first.
+		time.Sleep(exitDrainDelay)
+		// The standard error tail is a separate pipe and is left alone: it is
+		// what explains a failure, so it must survive this.
+		_ = stdout.Close()
+	}()
 }
 
 // reap ends a process whose start was rejected and records any that survived.
@@ -224,6 +347,10 @@ func (s *Supervisor) reap(sess *Session) {
 	pid := sess.PID()
 	sess.Close()
 	if sess.cmd.ProcessState == nil {
+		// Close already signalled the group; if the leader is still unreaped
+		// something survived the kill, so insist once before recording it as
+		// stray rather than leaving it to the user manager.
+		_ = killGroup(sess.cmd, syscall.SIGKILL)
 		s.lastStrayPID = pid
 	}
 }
@@ -374,6 +501,18 @@ func (s *Session) PID() int {
 // Started is when the process began.
 func (s *Session) Started() time.Time { return s.started }
 
+// Exited reports whether the process has been seen to leave. It reaps
+// nothing, and it is true whatever the plugin's descendants do with the pipes
+// they inherited.
+func (s *Session) Exited() bool {
+	select {
+	case <-s.exited:
+		return true
+	default:
+		return false
+	}
+}
+
 // Stderr returns the retained tail of the plugin's standard error.
 func (s *Session) Stderr() []byte { return s.stderr.bytes() }
 
@@ -414,6 +553,10 @@ func (s *Session) Recv() (v1.Message, error) {
 // one cannot evade: ask it to stop, close its standard input so a plugin
 // blocked on a read also learns, wait out the grace period, then kill. Calling
 // Close twice reports the same reason as the first call.
+//
+// A process that has already been seen to leave skips the asking and the
+// grace, so closing a plugin that crashed behind a descendant holding its
+// pipes returns promptly instead of waiting out a grace nobody can use.
 func (s *Session) Close() ExitReason {
 	s.closeOnce.Do(func() { s.reason = s.shutdown() })
 	return s.reason
@@ -422,6 +565,13 @@ func (s *Session) Close() ExitReason {
 func (s *Session) shutdown() ExitReason {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return ExitReason{Kind: ExitCrashed, Detail: "never started"}
+	}
+	// Already gone. There is nothing left to ask to stop and no grace a dead
+	// process could use, so skip both. Its descendants may still be holding
+	// the I/O pipes, which is what makes cmd.Wait slow here; the command's
+	// post-exit I/O bound is set before Start and already covers that.
+	if s.Exited() {
+		return classify(s.cmd.Wait())
 	}
 	sent := make(chan struct{})
 	go func() {
@@ -436,7 +586,7 @@ func (s *Session) shutdown() ExitReason {
 
 	grace := s.grace
 	if grace <= 0 {
-		grace = time.Second
+		grace = defaultShutdownGrace
 	}
 	done := make(chan error, 1)
 	go func() { done <- s.cmd.Wait() }()
@@ -448,10 +598,45 @@ func (s *Session) shutdown() ExitReason {
 	case err := <-done:
 		return classify(err)
 	case <-timer.C:
-		_ = s.cmd.Process.Kill()
-		<-done
+		// The plugin did not take host.shutdown. Ask the whole group once,
+		// briefly, then insist: the leader may exit before a descendant that
+		// ignores SIGTERM, so its Wait result does not end the group's grace.
+		_ = killGroup(s.cmd, syscall.SIGTERM)
+		softTimer := time.NewTimer(killGroupSoftWait)
+		defer softTimer.Stop()
+		leaderExited := false
+		select {
+		case <-done:
+			leaderExited = true
+			<-softTimer.C
+		case <-softTimer.C:
+		}
+		_ = killGroup(s.cmd, syscall.SIGKILL)
+		if !leaderExited {
+			<-done
+		}
 		return ExitReason{Kind: ExitKilled}
 	}
+}
+
+// killGroup signals a plugin's whole process group, falling back to the leader.
+//
+// Cmd.Cancel and the grace-expiry arm both call it. A negative pid addresses
+// the group Setpgid gave the plugin, so a forced stop reaches the children the
+// plugin forked; a signal to the leader alone leaves them reparented and
+// running after the user disabled the plugin, after an automatic restart, and
+// after the shell exits. When there is no group left to signal — because every
+// member is gone, or because the leader moved out of it — the leader is the
+// last place to look, and signalling a finished process reports
+// os.ErrProcessDone rather than a spurious failure.
+func killGroup(cmd *exec.Cmd, sig syscall.Signal) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil {
+		return cmd.Process.Signal(sig)
+	}
+	return nil
 }
 
 // classify turns a Wait error into a reason a user can read.
@@ -496,20 +681,6 @@ func (t *tail) bytes() []byte {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]byte(nil), t.data...)
-}
-
-// drain copies a stream into the window until it ends.
-func (t *tail) drain(r io.Reader) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			_, _ = t.Write(buf[:n])
-		}
-		if err != nil {
-			return
-		}
-	}
 }
 
 // pluginEnvironment is the allowlisted view of the host environment a plugin

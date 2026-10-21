@@ -296,6 +296,47 @@ func TestDensitySettingDoesNotPersistAStaleDerivedBar(t *testing.T) {
 	}
 }
 
+func TestWallpaperCycleSettingsExposeAndValidatePolicy(t *testing.T) {
+	cfg := config.Default()
+	settings := DefaultFor(cfg)
+	for _, tc := range []struct {
+		path  string
+		value string
+		want  string
+	}{
+		{"wallpaper.cycle-enabled", "true", "true"},
+		{"wallpaper.cycle-mode", "time", "time"},
+		{"wallpaper.cycle-interval", "30m", "30m0s"},
+		{"wallpaper.cycle-time", "08:30", "08:30"},
+	} {
+		e := settings.ByPath(tc.path)
+		if e == nil {
+			t.Fatalf("missing setting %q", tc.path)
+		}
+		if err := e.Set(&cfg, tc.value); err != nil {
+			t.Fatalf("set %s: %v", tc.path, err)
+		}
+		if got := e.Get(cfg); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+
+	for _, tc := range []struct{ path, value string }{
+		{"wallpaper.cycle-mode", "random"},
+		{"wallpaper.cycle-interval", "30s"},
+		{"wallpaper.cycle-time", "25:00"},
+		{"wallpaper.cycle-time", "8:30"},
+	} {
+		e := settings.ByPath(tc.path)
+		if e == nil {
+			t.Fatalf("missing setting %q", tc.path)
+		}
+		if err := e.Set(&cfg, tc.value); err == nil {
+			t.Errorf("setting %s accepted %q", tc.path, tc.value)
+		}
+	}
+}
+
 // TestEntryUsesItsOwnAccessors is the whole point of D1: an entry carries the
 // code that reads and writes its field, so a new setting cannot be declared
 // without one and no switch can fall through to an empty string.
@@ -374,9 +415,10 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Night Light adds one section to the Look cluster, Sounds one to System.
-	if len(names) != 18 {
-		t.Fatalf("SectionNames = %d sections, want eighteen", len(names))
+	// Night Light adds one section to the Look cluster, Sounds one to System,
+	// and Applications adds one to Shell.
+	if len(names) != 19 {
+		t.Fatalf("SectionNames = %d sections, want nineteen", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
@@ -453,6 +495,41 @@ func TestWeatherPlaceIsOneWayOrTheOther(t *testing.T) {
 	}
 	if back.Weather.Latitude != 51.45 || back.Weather.Longitude != -2.58 {
 		t.Errorf("coordinates came back as %v,%v", back.Weather.Latitude, back.Weather.Longitude)
+	}
+}
+
+func TestWeatherPreferencesPersistBeforeAPlaceIsSet(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path, value, wantUnit string
+		wantInterval                time.Duration
+	}{
+		{"unit", "weather.unit", "fahrenheit", "fahrenheit", 15 * time.Minute},
+		{"interval", "weather.interval", "30m", "celsius", 30 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := Default()
+			cfg := config.Default()
+			if err := r.ByPath(tc.path).Set(&cfg, tc.value); err != nil {
+				t.Fatalf("set %s: %v", tc.path, err)
+			}
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(path, cfg); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			back, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if back.Weather.Unit != tc.wantUnit || back.Weather.Interval != tc.wantInterval {
+				t.Fatalf("weather preferences = %q/%v, want %q/%v", back.Weather.Unit, back.Weather.Interval, tc.wantUnit, tc.wantInterval)
+			}
+			if back.Weather.Configured || back.Weather.City != "" || back.Weather.Latitude != 0 || back.Weather.Longitude != 0 {
+				t.Fatalf("preferences configured a place: %+v", back.Weather)
+			}
+		})
 	}
 }
 
@@ -737,6 +814,41 @@ func TestAnOptionWriteMintsTheWidgetsId(t *testing.T) {
 	}
 }
 
+func TestWidgetScrollActionEntryIsScopedAndBounded(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.Parse([]byte(`{"bar":{"items":{"left":[{"id":"group","items":["clock","volume"]}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r := DefaultFor(cfg)
+	clock := r.ByPath("widgets.left.0.0.scroll")
+	volume := r.ByPath("widgets.left.0.1.scroll")
+	if clock == nil || volume == nil {
+		t.Fatalf("scroll entries = clock:%v volume:%v, want one row per bar item", clock != nil, volume != nil)
+	}
+	if clock.Kind != KindEnum || len(clock.Options) != 3 {
+		t.Fatalf("scroll entry kind/options = %d/%v, want a three-action enum", clock.Kind, clock.Options)
+	}
+	if got := clock.Get(cfg); got != "none" {
+		t.Fatalf("clock scroll action = %q, want none", got)
+	}
+	if got := volume.Get(cfg); got != "volume" {
+		t.Fatalf("volume scroll action = %q, want the existing volume default", got)
+	}
+	if err := clock.Set(&cfg, "brightness"); err != nil {
+		t.Fatalf("Set brightness: %v", err)
+	}
+	if got := clock.Get(cfg); got != "brightness" {
+		t.Fatalf("clock scroll action after edit = %q, want brightness", got)
+	}
+	if got := volume.Get(cfg); got != "volume" {
+		t.Fatalf("editing the clock changed volume scroll action to %q", got)
+	}
+	if err := clock.Set(&cfg, "command"); err == nil {
+		t.Fatal("accepted a scroll action outside the bounded enum")
+	}
+}
+
 // Task 14 and D9. The three comma-separated string entries are gone, replaced
 // by the lane editor. They were the only way to reach lane arrangement before
 // it existed, which is why their retirement came last rather than first.
@@ -956,6 +1068,14 @@ func TestOnlyCompleteTemplatesGetToggles(t *testing.T) {
 	}
 	if !seen["niri"] {
 		t.Errorf("complete template niri has no toggle: %v", seen)
+	}
+	for _, name := range []string{"gtk3", "gtk4"} {
+		if !seen[name] {
+			t.Errorf("GTK template %s has no opt-in toggle", name)
+		}
+		if (config.Config{}).TemplateEnabled(name) {
+			t.Errorf("GTK template %s is enabled by default", name)
+		}
 	}
 }
 
@@ -1214,5 +1334,43 @@ func TestTerminalArtBlurEntry(t *testing.T) {
 		if err := e.Set(&cfg, v); err == nil {
 			t.Fatalf("%q accepted", v)
 		}
+	}
+}
+
+func TestFrameCapSettingsContract(t *testing.T) {
+	t.Parallel()
+	e := Default().ByPath("appearance.frame-cap")
+	if e == nil || e.Kind != KindEnum || e.Section != "Appearance" || e.Group != "Animation" {
+		t.Fatal("missing Appearance/Animation frame-cap enum")
+	}
+	if e.Label != "Maximum repaint rate" {
+		t.Fatalf("label = %q", e.Label)
+	}
+	cfg := config.Default()
+	for _, value := range []string{"display", "60", "90", "120"} {
+		if err := e.Set(&cfg, value); err != nil {
+			t.Fatal(err)
+		}
+		if e.Get(cfg) != value {
+			t.Fatalf("set %s did not roundtrip", value)
+		}
+	}
+	before := e.Get(cfg)
+	if err := e.Set(&cfg, "30"); err == nil || e.Get(cfg) != before {
+		t.Fatal("bad cap accepted or mutated config")
+	}
+	if e.Default(cfg) != "display" {
+		t.Fatal("reset must use display")
+	}
+	paths := []string{}
+	for _, entry := range Default().All() {
+		paths = append(paths, entry.Path)
+	}
+	speed := slices.Index(paths, "appearance.motion-speed")
+	if speed < 0 || speed+1 >= len(paths) || paths[speed+1] != "appearance.frame-cap" {
+		t.Fatal("frame cap must follow Animation speed")
+	}
+	if !slices.Contains(presetAxisPaths(), "appearance.frame-cap") {
+		t.Fatal("frame cap is not a preset axis")
 	}
 }

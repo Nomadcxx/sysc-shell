@@ -83,6 +83,47 @@ func TestSliderArrowKeysAdjust(t *testing.T) {
 	}
 }
 
+func TestSliderCanReachMaximumWhenStepExceedsRange(t *testing.T) {
+	t.Parallel()
+	n := &Node{
+		Kind: KindSlider, Min: 0, Max: 1, Step: 3, Value: 0,
+		Bounds: Rect{X: 10, Y: 10, W: 100, H: 14},
+	}
+
+	if !ControlKey(n, KeyEnd) || n.Value != n.Max {
+		t.Fatalf("End value = %v, want %v", n.Value, n.Max)
+	}
+	n.Value = n.Min
+	SliderAt(n, n.Bounds.X+n.Bounds.W)
+	if n.Value != n.Max {
+		t.Fatalf("right-edge value = %v, want %v", n.Value, n.Max)
+	}
+}
+
+func TestDisabledSliderIgnoresPointerAndKeyboardInput(t *testing.T) {
+	t.Parallel()
+	n := &Node{
+		Kind: KindSlider, Min: 0, Max: 100, Step: 1, Value: 40,
+		State: StateDisabled, Focusable: true,
+		Bounds: Rect{X: 10, Y: 10, W: 100, H: 14},
+	}
+
+	SliderAt(n, 110)
+	if n.Value != 40 {
+		t.Fatalf("disabled pointer value = %v, want 40", n.Value)
+	}
+	if ControlKey(n, KeyRight) {
+		t.Fatal("disabled slider accepted keyboard input")
+	}
+	if n.Value != 40 {
+		t.Fatalf("disabled keyboard value = %v, want 40", n.Value)
+	}
+	SliderSet(n, 80)
+	if n.Value != 40 {
+		t.Fatalf("disabled direct set value = %v, want 40", n.Value)
+	}
+}
+
 func TestMenuGeometryHonorsPaddingAndDeclaredSize(t *testing.T) {
 	measure := func(string, TextAttrs) (int, int) { return 80, 18 }
 	makeMenu := func() *Node {

@@ -25,6 +25,8 @@ const BarHeight = 48
 // BarGap is the outer gap between the screen edge and the painted body.
 const BarGap = 4
 
+const barScrollActionPrefix = "bar-scroll:"
+
 // Bar owns the model, the retained tree, the text renderer and style, and one
 // buffered invalidation channel, for exactly one output.
 //
@@ -32,11 +34,13 @@ const BarGap = 4
 // is held only while copying or changing state; shaping and painting happen
 // after the state has been copied out.
 type Bar struct {
-	mu      sync.Mutex
-	pressed string
-	hover   ui.Rect
-	hoverAt struct{ x, y int }
-	inside  bool
+	mu                    sync.Mutex
+	pressed               string
+	hover                 ui.Rect
+	hoverAt               struct{ x, y int }
+	inside                bool
+	axisValue120Action    string
+	axisValue120Remainder int64
 
 	// Sections are arranged by ui.ArrangeBar into absolute bounds, so painting
 	// and hit testing walk them as one flat list.
@@ -315,6 +319,11 @@ func (b *Bar) themeSnapshot() Theme {
 // geometry already supplied by the Wayland configure path.
 func (b *Bar) retheme(theme Theme) {
 	b.mu.Lock()
+	if b.anim != nil {
+		// A speed or reduced-motion change reaches a running bar animation
+		// instead of waiting for the next surface.
+		b.anim.Configure(theme.Motion, theme.Motion.Reduced)
+	}
 	scale, body := b.style.Scale120, b.style.Body
 	b.theme = theme
 	b.style = barStyle(theme)
@@ -866,6 +875,48 @@ func (b *Bar) hitLocked(x, y int) (string, bool) {
 	return "", false
 }
 
+func (b *Bar) scrollActionAtLocked(x, y int) (config.BarScrollAction, string, bool) {
+	sections := b.widgets()
+	for sectionIndex := len(sections) - 1; sectionIndex >= 0; sectionIndex-- {
+		section := sections[sectionIndex]
+		for widgetIndex := len(section) - 1; widgetIndex >= 0; widgetIndex-- {
+			key := fmt.Sprintf("%d:%d", sectionIndex, widgetIndex)
+			if action, key, ok := scrollActionInWidget(section[widgetIndex], x, y, key); ok {
+				return action, key, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func scrollActionInWidget(w textWidget, x, y int, key string) (config.BarScrollAction, string, bool) {
+	node := visibleWidgetNode(w)
+	if node == nil || !node.Bounds.Contains(x, y) {
+		return "", "", false
+	}
+	for memberIndex := len(w.members) - 1; memberIndex >= 0; memberIndex-- {
+		memberKey := fmt.Sprintf("%s:%d", key, memberIndex)
+		if action, memberKey, ok := scrollActionInWidget(w.members[memberIndex], x, y, memberKey); ok {
+			return action, memberKey, true
+		}
+	}
+	if w.scrollAction == "" || w.scrollAction == config.ScrollActionNone {
+		return "", "", false
+	}
+	return w.scrollAction, key, true
+}
+
+func (b *Bar) axisTargetLocked(x, y int) (clickAction, axisAction, axisKey string, ok bool) {
+	clickAction, ok = b.hitLocked(x, y)
+	axisAction, axisKey = clickAction, clickAction
+	if scrollAction, scrollKey, found := b.scrollActionAtLocked(x, y); found {
+		axisAction = barScrollActionPrefix + string(scrollAction)
+		axisKey = fmt.Sprintf("%s:%s:%s", barScrollActionPrefix, scrollKey, scrollAction)
+		ok = true
+	}
+	return
+}
+
 // tooltipAt reports the tooltip text and bounds under a point.
 func (b *Bar) tooltipAt(x, y int) (string, *ui.Node, ui.Rect, bool) {
 	b.mu.Lock()
@@ -932,9 +983,12 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		b.hoverAt.x = int(math.Floor(event.X))
 		b.hoverAt.y = int(math.Floor(event.Y))
 		b.inside = true
-		// A bar item's action is already its stable key. Only a change of
-		// resolved target repaints; sliding along one pill costs nothing.
-		action, _ := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
+		// Keep partial wheel deltas with the same resolved item/action target.
+		action, _, axisKey, _ := b.axisTargetLocked(b.hoverAt.x, b.hoverAt.y)
+		if b.axisValue120Action != axisKey {
+			b.axisValue120Action = ""
+			b.axisValue120Remainder = 0
+		}
 		changed := b.pointer.setHover(action)
 		b.mu.Unlock()
 		return changed
@@ -942,6 +996,8 @@ func (b *Bar) Handle(event wayland.Event) bool {
 	case wayland.EventPointerLeave:
 		b.inside = false
 		b.pressed = ""
+		b.axisValue120Action = ""
+		b.axisValue120Remainder = 0
 		changed := b.pointer.clear()
 		b.mu.Unlock()
 		return changed
@@ -1000,24 +1056,29 @@ func (b *Bar) Handle(event wayland.Event) bool {
 
 	case wayland.EventPointerAxis:
 		// A wheel has no press to pair with, so it acts where it lands.
-		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
+		action, axisAction, axisKey, ok := b.axisTargetLocked(b.hoverAt.x, b.hoverAt.y)
 		if !ok || !b.inside {
 			b.mu.Unlock()
 			return false
 		}
+		delta := int(event.AxisDiscrete)
+		if delta != 0 {
+			// Discrete steps remain authoritative when a compositor supplies them.
+			b.axisValue120Action = ""
+			b.axisValue120Remainder = 0
+		} else if event.AxisValue120 != 0 {
+			if b.axisValue120Action != axisKey {
+				b.axisValue120Action = axisKey
+				b.axisValue120Remainder = 0
+			}
+			b.axisValue120Remainder += int64(event.AxisValue120)
+			delta = int(b.axisValue120Remainder / 120)
+			b.axisValue120Remainder %= 120
+		}
 		axisFn := b.onAxis
 		gesture, isTray := b.trayGestureLocked(action)
 		b.mu.Unlock()
-		delta := int(event.AxisDiscrete)
-		if delta == 0 {
-			switch {
-			case event.AxisValue120 > 0:
-				delta = 1
-			case event.AxisValue120 < 0:
-				delta = -1
-			}
-		}
-		if axisFn != nil && axisFn(action, delta) {
+		if axisFn != nil && axisFn(axisAction, delta) {
 			return true
 		}
 		// The overflow control does not scroll: only an item forwards a wheel.
@@ -1079,9 +1140,11 @@ func barStyle(theme Theme) render.Style {
 		style.EdgeFillet, style.EdgeLeft, style.EdgeRight = theme.Fillet, true, true
 	}
 	// A translucent pill is lifted toward the foreground by (1 - alpha) x 0.3,
-	// so it stays distinct from the translucent ground behind it (design D3).
+	// scaled by the inverse wallpaper luminance, so it stays distinct from the
+	// translucent ground behind it (design D3).
 	if a := theme.PillAlpha; a > 0 && a < 0xff {
-		style.Capsule = render.LerpColor(style.Capsule, style.Foreground, 0.3*(1-float64(a)/255))
+		lift := 0.3 * (1 - float64(a)/255) * (1 - theme.WallpaperLuminance)
+		style.Capsule = render.LerpColor(style.Capsule, style.Foreground, lift)
 		style.Capsule.A = a
 	}
 	return style

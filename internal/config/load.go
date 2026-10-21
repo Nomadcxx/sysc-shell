@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -32,6 +34,7 @@ type wireFont struct {
 // max-width has nowhere else to live.
 type wireItem struct {
 	ID       string  `json:"id"`
+	Scroll   *string `json:"scroll,omitempty"`
 	Format   *string `json:"format,omitempty"`
 	MaxWidth *int    `json:"max-width,omitempty"`
 
@@ -115,6 +118,7 @@ type wireTheme struct {
 	Glass          *string `json:"glass,omitempty"`
 	GlassIntensity *int    `json:"glass-intensity,omitempty"`
 	Elevation      *string `json:"elevation,omitempty"`
+	FrameCap       *string `json:"frame-cap,omitempty"`
 }
 
 type wireThemeGen struct {
@@ -133,6 +137,29 @@ type wireSession struct {
 	Locker      *string `json:"locker,omitempty"`
 	PolkitAgent *string `json:"polkit_agent,omitempty"`
 	Language    *string `json:"language,omitempty"`
+}
+
+type wireLauncher struct {
+	Providers []wireLauncherCommandProvider `json:"providers,omitempty"`
+	Actions   []wireLauncherAction          `json:"actions,omitempty"`
+}
+
+type wireLauncherCommandProvider struct {
+	Name        string   `json:"name"`
+	Prefix      string   `json:"prefix"`
+	Glyph       string   `json:"glyph,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Command     []string `json:"command"`
+	OnSelect    []string `json:"on_select"`
+}
+
+type wireLauncherAction struct {
+	ID             string   `json:"id"`
+	Label          string   `json:"label"`
+	Comment        string   `json:"comment,omitempty"`
+	Argv           []string `json:"argv"`
+	Dangerous      bool     `json:"dangerous,omitempty"`
+	AllowDangerous bool     `json:"allow_dangerous,omitempty"`
 }
 
 type wireIdle struct {
@@ -185,6 +212,12 @@ type wireMedia struct {
 	Blacklist []string `json:"blacklist,omitempty"`
 }
 
+type wireApplicationPreferences struct {
+	Favourites      []string `json:"favourites,omitempty"`
+	Hidden          []string `json:"hidden,omitempty"`
+	DefaultTerminal *string  `json:"default-terminal,omitempty"`
+}
+
 type wireSounds struct {
 	Notification *bool `json:"notification,omitempty"`
 	Volume       *int  `json:"volume,omitempty"`
@@ -209,6 +242,10 @@ type wireWallpaper struct {
 	Fade           *bool    `json:"fade,omitempty"`
 	FadeDuration   *float64 `json:"fade_duration,omitempty"`
 	Hidden         *string  `json:"hidden,omitempty"`
+	CycleEnabled   *bool    `json:"cycle_enabled,omitempty"`
+	CycleMode      *string  `json:"cycle_mode,omitempty"`
+	CycleInterval  *string  `json:"cycle_interval,omitempty"`
+	CycleTime      *string  `json:"cycle_time,omitempty"`
 
 	PauseCovered    *bool   `json:"pause_covered,omitempty"`
 	PauseLocked     *bool   `json:"pause_locked,omitempty"`
@@ -222,23 +259,25 @@ type wireTerminalArt struct {
 }
 
 type wireConfig struct {
-	Bar           *wireBar             `json:"bar,omitempty"`
-	Theme         *wireTheme           `json:"theme,omitempty"`
-	ThemeGen      *wireThemeGen        `json:"theme-gen,omitempty"`
-	Accessibility *wireAccessibility   `json:"accessibility,omitempty"`
-	Session       *wireSession         `json:"session,omitempty"`
-	Idle          *wireIdle            `json:"idle,omitempty"`
-	Panels        *wirePanels          `json:"panels,omitempty"`
-	Tray          *wireTrayPreferences `json:"tray,omitempty"`
-	Weather       *wireWeather         `json:"weather,omitempty"`
-	NightLight    *wireNightLight      `json:"night-light,omitempty"`
-	Media         *wireMedia           `json:"media,omitempty"`
-	Monitor       *wireMonitor         `json:"monitor,omitempty"`
-	Sounds        *wireSounds          `json:"sounds,omitempty"`
-	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
-	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
-	Outputs       []wireOutput         `json:"outputs,omitempty"`
-	Templates     map[string]bool      `json:"templates,omitempty"`
+	Bar           *wireBar                    `json:"bar,omitempty"`
+	Theme         *wireTheme                  `json:"theme,omitempty"`
+	ThemeGen      *wireThemeGen               `json:"theme-gen,omitempty"`
+	Accessibility *wireAccessibility          `json:"accessibility,omitempty"`
+	Session       *wireSession                `json:"session,omitempty"`
+	Launcher      *wireLauncher               `json:"launcher,omitempty"`
+	Idle          *wireIdle                   `json:"idle,omitempty"`
+	Panels        *wirePanels                 `json:"panels,omitempty"`
+	Tray          *wireTrayPreferences        `json:"tray,omitempty"`
+	Weather       *wireWeather                `json:"weather,omitempty"`
+	NightLight    *wireNightLight             `json:"night-light,omitempty"`
+	Media         *wireMedia                  `json:"media,omitempty"`
+	Monitor       *wireMonitor                `json:"monitor,omitempty"`
+	Sounds        *wireSounds                 `json:"sounds,omitempty"`
+	Wallpaper     *wireWallpaper              `json:"wallpaper,omitempty"`
+	TerminalArt   *wireTerminalArt            `json:"terminal-art,omitempty"`
+	Outputs       []wireOutput                `json:"outputs,omitempty"`
+	Templates     map[string]bool             `json:"templates,omitempty"`
+	Applications  *wireApplicationPreferences `json:"applications,omitempty"`
 	// TerminalOpacity is Config.TerminalOpacity; absent means 100.
 	TerminalOpacity *int         `json:"terminal-opacity,omitempty"`
 	Plugins         *wirePlugins `json:"plugins,omitempty"`
@@ -258,6 +297,23 @@ type wirePluginSource struct {
 }
 
 var sourceNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+const (
+	maxApplicationPreferenceIDs = 4096
+	maxApplicationDesktopIDSize = 4095
+)
+
+func validApplicationDesktopID(id string) bool {
+	if id == "" || len(id) > maxApplicationDesktopIDSize || !utf8.ValidString(id) {
+		return false
+	}
+	for _, r := range id {
+		if r == '/' || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
 
 // validSourceURL admits https repositories and local file:// ones, which is
 // how an author tests a catalog before publishing it.
@@ -308,33 +364,73 @@ func DefaultPath() string {
 // Load reads and validates a configuration file. A missing file is not an
 // error: the built-in defaults apply.
 func Load(path string) (Config, error) {
+	return load(path, false)
+}
+
+// LoadRequired reads and validates an existing configuration file. Reloads use
+// this entry point so a temporarily absent file cannot replace live settings
+// with startup defaults.
+func LoadRequired(path string) (Config, error) {
+	return load(path, true)
+}
+
+func load(path string, required bool) (Config, error) {
 	if path == "" {
-		return Default(), nil
+		if !required {
+			return Default(), nil
+		}
+		return Config{}, &Diagnostic{Message: "configuration path is empty"}
 	}
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) && !required {
 		return Default(), nil
 	}
 	if err != nil {
-		return Config{}, fmt.Errorf("config: read %s: %w", path, err)
+		return Config{}, readDiagnostic(path, err)
 	}
-	return Parse(data)
+	cfg, err := parseCandidate(data)
+	if err != nil {
+		return Config{}, diagnosticAt(path, data, decoderOffset(err), err)
+	}
+	return cfg, nil
 }
 
 // Parse decodes and validates a complete candidate, returning a resolved
 // Config only when every field passes.
 func Parse(data []byte) (Config, error) {
+	cfg, err := parseCandidate(data)
+	if err != nil {
+		return Config{}, diagnosticAt("<config>", data, decoderOffset(err), err)
+	}
+	return cfg, nil
+}
+
+// parseCandidate contains the strict decode and validation path shared by
+// startup, public Parse calls and reloads. Callers bind failures to a filename
+// and the bytes from that exact read.
+func parseCandidate(data []byte) (Config, error) {
 	var wire wireConfig
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return Config{}, fmt.Errorf("config: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			err = fmt.Errorf("more than one JSON value")
+		offset := decoderOffset(err)
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			offset = int64(len(data)) + 1
 		}
-		return Config{}, fmt.Errorf("config: %w", err)
+		return Config{}, parseIssueFor(err, offset)
+	}
+	firstEnd := decoder.InputOffset()
+	// The trailing value decodes as raw JSON: the strict field check applies to
+	// the configuration, and a second object carrying fields is still just a
+	// second value. Malformed trailing bytes stay a syntax error.
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		offset := decoderOffset(err)
+		if err == nil {
+			err = extraJSONValueError{}
+			offset = offsetAfterFirstValue(data, firstEnd)
+		}
+		return Config{}, parseIssueFor(err, offset)
 	}
 
 	cfg := Default()
@@ -364,6 +460,13 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Session = session
+	}
+	if wire.Launcher != nil {
+		launcher, err := applyLauncher(*wire.Launcher, "launcher")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Launcher = launcher
 	}
 	if wire.Idle != nil {
 		idle, err := applyIdle(cfg.Idle, *wire.Idle)
@@ -441,6 +544,13 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Media = media
 	}
+	if wire.Applications != nil {
+		applications, err := applyApplicationPreferences(*wire.Applications, "applications")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Applications = applications
+	}
 	if wire.Sounds != nil {
 		sounds, err := applySounds(*wire.Sounds, "sounds")
 		if err != nil {
@@ -499,6 +609,108 @@ func Parse(data []byte) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+const (
+	launcherActionMaxIDBytes    = 64
+	launcherActionMaxLabelBytes = 128
+	launcherActionMaxArgvCount  = 32
+	launcherActionMaxArgBytes   = 4096
+)
+
+func applyLauncher(w wireLauncher, path string) (Launcher, error) {
+	out := Launcher{
+		Providers: make([]LauncherCommandProvider, 0, len(w.Providers)),
+		Actions:   make([]LauncherAction, 0, len(w.Actions)),
+	}
+	reservedPrefixes := map[string]struct{}{
+		LauncherAppsPrefix: {}, LauncherCalcPrefix: {}, LauncherEmojiPrefix: {},
+		LauncherNotesPrefix: {}, LauncherSessionPrefix: {}, LauncherActionsPrefix: {},
+	}
+	seenPrefixes := make(map[string]struct{}, len(w.Providers))
+	for i, provider := range w.Providers {
+		field := fmt.Sprintf("%s.providers[%d]", path, i)
+		if strings.TrimSpace(provider.Name) == "" || len(provider.Name) > launcherActionMaxLabelBytes {
+			return Launcher{}, pathErr(field+".name", "must be non-empty and at most %d bytes", launcherActionMaxLabelBytes)
+		}
+		if len(provider.Prefix) < 2 || len(provider.Prefix) > launcherActionMaxIDBytes ||
+			provider.Prefix[0] != '/' || strings.TrimSpace(provider.Prefix) != provider.Prefix ||
+			strings.IndexFunc(provider.Prefix, unicode.IsSpace) >= 0 {
+			return Launcher{}, pathErr(field+".prefix", "must be a slash prefix without whitespace and at most %d bytes", launcherActionMaxIDBytes)
+		}
+		if _, exists := reservedPrefixes[provider.Prefix]; exists {
+			return Launcher{}, pathErr(field+".prefix", "%q is reserved", provider.Prefix)
+		}
+		if _, exists := seenPrefixes[provider.Prefix]; exists {
+			return Launcher{}, pathErr(field+".prefix", "%q appears more than once", provider.Prefix)
+		}
+		seenPrefixes[provider.Prefix] = struct{}{}
+		if err := validateLauncherArgv(provider.Command, field+".command", "{query}"); err != nil {
+			return Launcher{}, err
+		}
+		if err := validateLauncherArgv(provider.OnSelect, field+".on_select", "{query}", "{selection}"); err != nil {
+			return Launcher{}, err
+		}
+		if len(provider.Glyph) > launcherActionMaxLabelBytes {
+			return Launcher{}, pathErr(field+".glyph", "must be at most %d bytes", launcherActionMaxLabelBytes)
+		}
+		if len(provider.Description) > 512 {
+			return Launcher{}, pathErr(field+".description", "must be at most 512 bytes")
+		}
+		out.Providers = append(out.Providers, LauncherCommandProvider{
+			Name: provider.Name, Prefix: provider.Prefix, Glyph: provider.Glyph,
+			Description: provider.Description, Command: slices.Clone(provider.Command),
+			OnSelect: slices.Clone(provider.OnSelect),
+		})
+	}
+	seen := make(map[string]struct{}, len(w.Actions))
+	for i, action := range w.Actions {
+		field := fmt.Sprintf("%s.actions[%d]", path, i)
+		if strings.TrimSpace(action.ID) == "" || len(action.ID) > launcherActionMaxIDBytes {
+			return Launcher{}, pathErr(field+".id", "must be non-empty and at most %d bytes", launcherActionMaxIDBytes)
+		}
+		if _, exists := seen[action.ID]; exists {
+			return Launcher{}, pathErr(field+".id", "%q appears more than once", action.ID)
+		}
+		seen[action.ID] = struct{}{}
+		if strings.TrimSpace(action.Label) == "" || len(action.Label) > launcherActionMaxLabelBytes {
+			return Launcher{}, pathErr(field+".label", "must be non-empty and at most %d bytes", launcherActionMaxLabelBytes)
+		}
+		if action.AllowDangerous && !action.Dangerous {
+			return Launcher{}, pathErr(field+".allow_dangerous", "requires dangerous to be true")
+		}
+		if len(action.Argv) == 0 || len(action.Argv) > launcherActionMaxArgvCount || strings.TrimSpace(action.Argv[0]) == "" {
+			return Launcher{}, pathErr(field+".argv", "must contain 1..%d arguments and a non-empty executable", launcherActionMaxArgvCount)
+		}
+		for j, arg := range action.Argv {
+			if len(arg) > launcherActionMaxArgBytes {
+				return Launcher{}, pathErr(fmt.Sprintf("%s.argv[%d]", field, j), "exceeds %d bytes", launcherActionMaxArgBytes)
+			}
+		}
+		out.Actions = append(out.Actions, LauncherAction{
+			ID: action.ID, Label: action.Label, Comment: action.Comment,
+			Argv: slices.Clone(action.Argv), Dangerous: action.Dangerous,
+			AllowDangerous: action.AllowDangerous,
+		})
+	}
+	return out, nil
+}
+
+func validateLauncherArgv(argv []string, field string, forbiddenExecutableTemplates ...string) error {
+	if len(argv) == 0 || len(argv) > launcherActionMaxArgvCount || strings.TrimSpace(argv[0]) == "" {
+		return pathErr(field, "must contain 1..%d arguments and a non-empty executable", launcherActionMaxArgvCount)
+	}
+	for _, template := range forbiddenExecutableTemplates {
+		if strings.Contains(argv[0], template) {
+			return pathErr(field, "executable cannot contain %s", template)
+		}
+	}
+	for i, arg := range argv {
+		if len(arg) > launcherActionMaxArgBytes {
+			return pathErr(fmt.Sprintf("%s[%d]", field, i), "exceeds %d bytes", launcherActionMaxArgBytes)
+		}
+	}
+	return nil
 }
 
 // applyPlugins validates the plugin section.
@@ -671,13 +883,12 @@ func applyTrayPreferences(w wireTrayPreferences) (TrayPreferences, error) {
 	return TrayPreferences{Enabled: enabled, Hidden: hidden, Pinned: pinned, Order: order}, nil
 }
 
-// applyWeather resolves and validates the weather block. A block names its
-// place exactly one way: a city the shell geocodes, or explicit coordinates.
+// applyWeather validates weather preferences and, when present, one place:
+// a city the shell geocodes or explicit coordinates.
 func applyWeather(w wireWeather, path string) (Weather, error) {
 	out := Weather{
-		Unit:       defaultWeatherUnit,
-		Interval:   defaultWeatherInterval,
-		Configured: true,
+		Unit:     defaultWeatherUnit,
+		Interval: defaultWeatherInterval,
 	}
 
 	if w.City != nil && *w.City != "" {
@@ -689,7 +900,8 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		if w.Latitude != nil || w.Longitude != nil {
 			return Weather{}, pathErr(path+".city", "cannot be set together with latitude and longitude")
 		}
-	} else {
+		out.Configured = true
+	} else if w.Latitude != nil || w.Longitude != nil {
 		if w.Latitude == nil {
 			return Weather{}, pathErr(path+".latitude", "is required")
 		}
@@ -705,6 +917,9 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 			return Weather{}, pathErr(path+".longitude", "%v is outside -180 through 180", *w.Longitude)
 		}
 		out.Longitude = *w.Longitude
+		out.Configured = true
+	} else if w.Unit == nil && w.Interval == nil {
+		return Weather{}, pathErr(path+".latitude", "is required")
 	}
 
 	if w.Unit != nil {
@@ -727,6 +942,9 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		label, err := weatherPlaceLabel(*w.Location, path+".location")
 		if err != nil {
 			return Weather{}, err
+		}
+		if label != "" && !out.Configured {
+			return Weather{}, pathErr(path+".location", "requires a configured city or coordinates")
 		}
 		out.Location = label
 	}
@@ -935,6 +1153,52 @@ func applyMedia(w wireMedia, path string) (Media, error) {
 	return out, nil
 }
 
+func applyApplicationPreferences(w wireApplicationPreferences, path string) (ApplicationPreferences, error) {
+	validate := func(field string, ids []string) error {
+		if len(ids) > maxApplicationPreferenceIDs {
+			return pathErr(path+"."+field, "has more than %d desktop IDs", maxApplicationPreferenceIDs)
+		}
+		seen := make(map[string]struct{}, len(ids))
+		for i, id := range ids {
+			itemPath := fmt.Sprintf("%s.%s[%d]", path, field, i)
+			if !validApplicationDesktopID(id) {
+				return pathErr(itemPath, "%q is not a valid desktop ID", id)
+			}
+			if _, ok := seen[id]; ok {
+				return pathErr(itemPath, "%q appears more than once", id)
+			}
+			seen[id] = struct{}{}
+		}
+		return nil
+	}
+	if err := validate("favourites", w.Favourites); err != nil {
+		return ApplicationPreferences{}, err
+	}
+	if err := validate("hidden", w.Hidden); err != nil {
+		return ApplicationPreferences{}, err
+	}
+	favouriteIDs := make(map[string]struct{}, len(w.Favourites))
+	for _, id := range w.Favourites {
+		favouriteIDs[id] = struct{}{}
+	}
+	for i, id := range w.Hidden {
+		if _, ok := favouriteIDs[id]; ok {
+			return ApplicationPreferences{}, pathErr(fmt.Sprintf("%s.hidden[%d]", path, i), "%q also appears in favourites", id)
+		}
+	}
+	out := ApplicationPreferences{
+		Favourites: slices.Clone(w.Favourites),
+		Hidden:     slices.Clone(w.Hidden),
+	}
+	if w.DefaultTerminal != nil {
+		if !validApplicationDesktopID(*w.DefaultTerminal) {
+			return ApplicationPreferences{}, pathErr(path+".default-terminal", "%q is not a valid desktop ID", *w.DefaultTerminal)
+		}
+		out.DefaultTerminal = *w.DefaultTerminal
+	}
+	return out, nil
+}
+
 // requireWeatherWhenUsed is the configuration's one cross-section rule: a
 // weather widget needs coordinates, and they live in a different block.
 //
@@ -1016,13 +1280,13 @@ func applyBar(base Bar, w wireBar, path string) (Bar, error) {
 	}
 	if w.Style != nil {
 		if !slices.Contains(BarStyles, *w.Style) {
-			return Bar{}, pathErr(path+".style", "%q is not one of %s", *w.Style, strings.Join(BarStyles, ", "))
+			return Bar{}, pathErr(path+".style", "%q is not one of frosted, solid, islands", *w.Style)
 		}
 		out.Style = *w.Style
 	}
 	if w.Shape != nil {
 		if !slices.Contains(BarShapes, *w.Shape) {
-			return Bar{}, pathErr(path+".shape", "%q is not one of %s", *w.Shape, strings.Join(BarShapes, ", "))
+			return Bar{}, pathErr(path+".shape", "%q is not one of attached, floating", *w.Shape)
 		}
 		out.Shape = *w.Shape
 	}
@@ -1131,6 +1395,7 @@ func resolvePlacement(w wireItem, path string) (Item, error) {
 		set  bool
 	}{
 		{"format", w.Format != nil}, {"max-width", w.MaxWidth != nil},
+		{"scroll", w.Scroll != nil},
 		{"display", w.Display != nil}, {"interval", w.Interval != nil},
 		{"path", w.Path != nil}, {"device", w.Device != nil},
 		{"interface", w.Interface != nil}, {"direction", w.Direction != nil},
@@ -1175,6 +1440,17 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	}
 	if w.ID == "plugin" {
 		return resolvePlacement(w, path)
+	}
+	if w.Scroll != nil {
+		switch w.ID {
+		case "workspace":
+			return Item{}, pathErr(path+".scroll", "is reserved for workspace cycling")
+		case "group":
+			return Item{}, pathErr(path+".scroll", "belongs to a group member")
+		}
+		if !validBarScrollAction(*w.Scroll) {
+			return Item{}, pathErr(path+".scroll", "%q is not one of none, volume, brightness", *w.Scroll)
+		}
 	}
 	for _, misplaced := range []struct {
 		name string
@@ -1350,8 +1626,20 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	// switch is discarded for those seven ids -- which silently cost a nested
 	// cpu widget its id. Setting identity after the switch means a branch that
 	// rebuilds the item cannot drop it.
+	if w.Scroll != nil {
+		item.Scroll = BarScrollAction(*w.Scroll)
+	}
 	item.Instance = instance
 	return item, nil
+}
+
+func validBarScrollAction(action string) bool {
+	switch BarScrollAction(action) {
+	case ScrollActionNone, ScrollActionVolume, ScrollActionBrightness:
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveMetric validates one metric item and fills in its defaults.
@@ -1538,6 +1826,14 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 		}
 		out.Elevation = e
 	}
+	if w.FrameCap != nil {
+		c := theme.RepaintCap(*w.FrameCap)
+		if !slices.Contains(theme.RepaintCaps(), c) {
+			return Theme{}, pathErr(path+".frame-cap",
+				"%q is not one of display, 60, 90, 120", *w.FrameCap)
+		}
+		out.FrameCap = c
+	}
 	// A bool has no range to check, so it takes no row in the table below.
 	if w.BlurBehind != nil {
 		out.BlurBehind = *w.BlurBehind
@@ -1670,7 +1966,7 @@ func applySession(base Session, w wireSession) (Session, error) {
 		base.Language = *w.Language
 	}
 	if base.Language != "" && !slices.Contains(i18n.Codes, base.Language) {
-		return base, pathErr("session.language", "%q is not one of %s", base.Language, strings.Join(i18n.Codes, ", "))
+		return base, pathErr("session.language", "%q is not a supported language code", base.Language)
 	}
 	return base, nil
 }
@@ -1729,6 +2025,22 @@ func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, er
 	if w.Hidden != nil {
 		out.Hidden = *w.Hidden
 	}
+	if w.CycleEnabled != nil {
+		out.CycleEnabled = *w.CycleEnabled
+	}
+	if w.CycleMode != nil {
+		out.CycleMode = *w.CycleMode
+	}
+	if w.CycleInterval != nil {
+		interval, err := time.ParseDuration(*w.CycleInterval)
+		if err != nil {
+			return Wallpaper{}, pathErr(path+".cycle_interval", "%q is not a duration such as 30m", *w.CycleInterval)
+		}
+		out.CycleInterval = interval
+	}
+	if w.CycleTime != nil {
+		out.CycleTime = *w.CycleTime
+	}
 	if w.PauseCovered != nil {
 		out.PauseCovered = *w.PauseCovered
 	}
@@ -1750,6 +2062,16 @@ func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, er
 	}
 	if !wallpaperHidden[out.Hidden] {
 		return Wallpaper{}, pathErr(path+".hidden", "%q is not a known hidden policy", out.Hidden)
+	}
+	if !wallpaperCycleModes[out.CycleMode] {
+		return Wallpaper{}, pathErr(path+".cycle_mode", "%q is not interval or time", out.CycleMode)
+	}
+	if out.CycleInterval < time.Minute {
+		return Wallpaper{}, pathErr(path+".cycle_interval", "%s is shorter than one minute", out.CycleInterval)
+	}
+	parsedCycleTime, err := time.Parse("15:04", out.CycleTime)
+	if err != nil || parsedCycleTime.Format("15:04") != out.CycleTime {
+		return Wallpaper{}, pathErr(path+".cycle_time", "%q is not a local time in HH:MM form", out.CycleTime)
 	}
 	if !wallpaperOnBattery[out.OnBattery] {
 		return Wallpaper{}, pathErr(path+".on_battery", "%q is not a known battery policy", out.OnBattery)

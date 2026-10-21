@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -20,6 +21,8 @@ type barView struct {
 	Now       time.Time
 	Workspace string
 	Title     string
+	Layouts   niri.KeyboardLayouts
+	Locale    string
 	// Pills are this output's workspaces in index order.
 	Pills []workspacePill
 	// Metrics is the newest sampling pass. Its nil fields mean unleased or
@@ -46,6 +49,7 @@ type barView struct {
 	// the radio off, which the wifi widget paints as the no-signal glyph.
 	Network   services.NetworkState
 	Bluetooth services.BluetoothState
+	Privacy   privacyState
 	// Media is the active player's snapshot. Its zero value renders the widget
 	// absent: a bar with nothing playing reserves no gap.
 	Media    services.MediaState
@@ -62,9 +66,10 @@ type barView struct {
 type textWidget struct {
 	// node is the capsule the bar lays out and hits. inner is the content it
 	// wraps, and is what format writes to.
-	node   *ui.Node
-	inner  *ui.Node
-	format func(barView) string
+	node         *ui.Node
+	inner        *ui.Node
+	scrollAction config.BarScrollAction
+	format       func(barView) string
 	// refresh rebuilds a widget whose content is a subtree rather than a
 	// string. It reports whether the tree changed. Widgets with a format do
 	// not set it.
@@ -86,12 +91,13 @@ type textWidget struct {
 // groupGap separates members inside a group capsule. noCapsule tells
 // buildWidgets to leave a member unwrapped.
 const (
-	groupGap               = 10
-	noCapsule              = -1
-	clockWidthFloor        = "Wed 30 Sep"
-	gradientTrip           = 2 * time.Second
-	marqueePixelsPerSecond = 30
-	panelLauncherAction    = "panel:launcher"
+	groupGap                  = 10
+	noCapsule                 = -1
+	clockWidthFloor           = "Wed 30 Sep"
+	gradientTrip              = 2 * time.Second
+	marqueePixelsPerSecond    = 30
+	panelLauncherAction       = "panel:launcher"
+	panelKeyboardLayoutAction = "panel:keyboard-layout"
 )
 
 // capsuled wraps one built widget in its pill. Wrapping happens in a single
@@ -163,6 +169,7 @@ func clockFloorFor(items []config.Item) string {
 func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFloor string, side bool, contentWidth int) []textWidget {
 	out := make([]textWidget, 0, len(items))
 	for _, item := range items {
+		widgetStart := len(out)
 		switch item.ID {
 		case "launcher":
 			out = append(out, textWidget{
@@ -208,6 +215,8 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 			w := textWidget{node: stack}
 			w.refresh = func(v barView) bool { return refreshWorkspacePills(stack, v, m, side) }
 			out = append(out, w)
+		case "keyboard-layout":
+			out = append(out, buildKeyboardLayoutWidget())
 		case "window-title":
 			out = append(out, textWidget{
 				node:    &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},
@@ -260,6 +269,8 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 			})
 		case "notifications":
 			out = append(out, buildNotifyWidget(m))
+		case "privacy":
+			out = append(out, buildPrivacyWidget(pad, m))
 		case "wallpaper":
 			out = append(out, buildWallpaperWidget())
 		case "terminal-art":
@@ -295,6 +306,9 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 				w = capsuled(w, 0)
 			}
 			out = append(out, w)
+		}
+		if len(out) > widgetStart && item.ID != "group" {
+			out[len(out)-1].scrollAction = item.EffectiveScrollAction()
 		}
 	}
 	for i := range out {

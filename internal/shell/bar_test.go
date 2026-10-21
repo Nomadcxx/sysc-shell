@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
@@ -71,6 +72,41 @@ func newTestBar(t *testing.T) *Bar {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestBarAxisValue120WaitsForFullDetent(t *testing.T) {
+	bar := newTestBar(t)
+	t.Cleanup(bar.stopAnimation)
+	bar.left = []textWidget{{node: &ui.Node{
+		Kind: ui.KindButton, Bounds: ui.Rect{W: 48, H: 48}, Action: "workspace:11",
+	}}}
+	var got []int
+	bar.setAxisHandler(func(action string, delta int) bool {
+		if action != "workspace:11" {
+			t.Fatalf("axis action = %q, want workspace:11", action)
+		}
+		got = append(got, delta)
+		return true
+	})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: 20, Y: 20})
+
+	for i := 0; i < 3; i++ {
+		if !bar.Handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 30}) {
+			t.Fatal("fractional workspace scroll was not consumed")
+		}
+	}
+	if len(got) != 3 || got[0] != 0 || got[1] != 0 || got[2] != 0 {
+		t.Fatalf("steps after three quarter-detents = %v, want [0 0 0]", got)
+	}
+	if !bar.Handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 30}) {
+		t.Fatal("completed workspace detent was not consumed")
+	}
+	if !bar.Handle(wayland.Event{Kind: wayland.EventPointerAxis, AxisDiscrete: 2}) {
+		t.Fatal("discrete workspace scroll was not consumed")
+	}
+	if len(got) != 5 || got[3] != 1 || got[4] != 2 {
+		t.Fatalf("workspace scroll steps = %v, want [0 0 0 1 2]", got)
+	}
 }
 
 func TestSideBarLayoutUsesVerticalAxis(t *testing.T) {
@@ -780,7 +816,11 @@ func TestOnlyClickableCapsulesAnimate(t *testing.T) {
 	// chrome the pointer can light up; only actionable pills animate.
 	p := newTestBar(t)
 	withSyntheticAction(t, p, 1920)
+	// Settlement and value resolution write back spring state, so the caller
+	// holds the bar lock here just as Render does.
+	p.mu.Lock()
 	root, _ := p.renderViewLocked()
+	p.mu.Unlock()
 
 	clickable, display := 0, 0
 	var walk func(*ui.Node)
@@ -807,5 +847,42 @@ func TestOnlyClickableCapsulesAnimate(t *testing.T) {
 		if n.Kind == ui.KindCapsule && n.Action == "" && ui.Animated(n) {
 			t.Errorf("display capsule %q animates", nodeText(n))
 		}
+	}
+}
+
+// A theme change reaches the bar's running animator: the table and the
+// reduced-motion flag move, the animator is kept, and the accepted geometry is
+// untouched.
+func TestBarRethemeAppliesMotion(t *testing.T) {
+	t.Parallel()
+	p := newTestBar(t)
+	withSyntheticAction(t, p, 1920)
+	p.mu.Lock()
+	anim := p.anim
+	anim.Target("synthetic-action", animHover, 1)
+	scale, body := p.style.Scale120, p.style.Body
+	p.mu.Unlock()
+
+	next := DefaultTheme()
+	next.Motion = render.MotionSet{
+		Durations: theme.BaseMotion.AtSpeed(25),
+		Spatial:   theme.CurveOutQuart,
+		Reduced:   true,
+	}
+	p.retheme(next)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.anim != anim {
+		t.Fatal("retheme replaced the bar animator")
+	}
+	if !p.anim.reduced {
+		t.Fatal("reduced motion did not reach the bar animator")
+	}
+	if p.style.Scale120 != scale || p.style.Body != body {
+		t.Fatal("retheme disturbed the accepted bar geometry")
+	}
+	if got := p.anim.Value("synthetic-action", animHover); got != 1 {
+		t.Fatalf("hover did not settle under reduced motion: %g", got)
 	}
 }

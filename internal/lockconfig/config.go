@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-terminal/renderer"
 )
 
@@ -20,8 +21,9 @@ const MaxBytes = 64 << 10
 
 const EffectNone = "none"
 
-// atomicReplace follows shell config writing, with a test seam for rename failure.
-var atomicReplace = os.Rename
+// atomicReplace follows shell config writing, with a test seam for rename
+// failure. The guard keeps a test's swap from racing a concurrent save.
+var atomicReplace = seam.New(os.Rename)
 
 type Config struct {
 	FollowShell        *bool   `json:"follow_shell"`
@@ -254,7 +256,7 @@ func Save(path string, c Config) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err = atomicReplace(f.Name(), path); err != nil {
+	if err = atomicReplace.Get()(f.Name(), path); err != nil {
 		return err
 	}
 	if d, err := os.Open(dir); err == nil {

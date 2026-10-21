@@ -112,6 +112,46 @@ pkill -HUP sysc-shell
 Each bar must adopt the candidate together. Then write `{"bar": {"height": 4, "gap": 4}}`, send
 `SIGHUP`, and confirm that each bar retains its prior state and the error names `bar.height`.
 
+## Config save, refusal and panel retention
+
+The shell watches the directory holding its config file and reloads after a save settles. A refused
+file leaves the running config in place. Settings, the message OSD and `sysc-shell ipc status` report
+it until a later save succeeds.
+
+Never run these steps against the owner's config without their approval and a backup. Before
+starting, copy the exact bytes with their mode, record whether the path is a symlink and where it
+points, and take a SHA-256. Do not print the file's contents. Restore by writing the backup to a
+temporary file in the same directory and renaming it over the config. `config.Write` re-encodes the
+file sparsely and changes unrelated content, so never restore through it.
+
+After each step, record `sysc-shell ipc status` (`config_error`, `config_error_at`) and
+`niri msg -j layers`.
+
+| # | Action | Passing observation |
+|---|---|---|
+| 1 | Open Clock, Monitor and Settings; save a harmless spacing edit in place | Spacing updates; the panels stay mapped with their focus and scroll; `config_error` is empty |
+| 2 | Write an editor temp file and rename it over the config | Same as 1, with no restart and no duplicate notice |
+| 3 | Save malformed JSON, then an out-of-range `bar.height` | One `Config not applied` notice per distinct error; Settings shows the redacted diagnostic; bar and panel geometry unchanged |
+| 4 | Save the identical bad bytes again | `config_error_at` unchanged; no new notice |
+| 5 | Restore bytes equal to the last good config | Error fields clear; no panel closes or reopens |
+| 6 | Move the bar top → right → bottom with panels open, then restore the original edge | Panel surfaces stay mapped and follow the edge without overlapping; the keyboard stays on the same control |
+| 7 | With a local Settings write error showing, save an invalid file externally, then a valid one | Both errors readable together; the valid save removes only the reload error |
+| 8 | Delete the config after a good apply, then rename a valid file into place | The delete is refused and does not load defaults; the rename recovers |
+| 9 | Start with the watcher failing, then send SIGHUP | A warning names the manual fallback; SIGHUP still reloads and refuses |
+| 10 | Point the config symlink at a target outside its directory and edit the target | No automatic reload; SIGHUP applies it. Replacing the symlink itself is watched |
+| 11 | Enable reduced motion and high contrast, then save an invalid file | The notice appears without sliding, in the error tone |
+| 12 | Save an invalid file while a lock is running or pending, then unlock | No notice during the lock and none after; status keeps the error |
+| 13 | Leave the shell idle, then stop it | No periodic file reads or frames while idle; descriptor count unchanged after the watcher and relay exit |
+
+Send SIGHUP to the shell process only, with
+`systemctl --user kill --kill-whom=main --signal=HUP sysc-shell.service`. The whole-unit form also
+signals the wallpaper process and restarts it. Check `pgrep -c gslapper` after the run.
+Record the Niri version, outputs and scale, idle wakeups and CPU before and after, descriptor counts,
+and the observed save-to-apply time. Do not set a latency or CPU budget before measuring one.
+Two-output and fractional-scale cases need a machine that has them; record them as unrun otherwise.
+Diagnostic positions for validation errors, as opposed to JSON syntax errors, wait on `sysc-734`'s
+config origin index.
+
 ## Tranche 3A: built-in widget foundation
 
 Run only after Milestone 2 passes its own live matrix. Record connector names,
@@ -551,3 +591,75 @@ ours rather than foreign.
   paths are unit-tested and were live-tested on 2026-09-04 earlier in the day.
 - GIF. gSlapper lists it as an image while the library classifies it as video,
   so the Pause control follows what `query` reports. Not exercised live.
+
+## Repaint ceiling and regional damage
+
+Settings > Appearance > Animation > Maximum repaint rate offers Display, 60, 90 and 120. The value
+is `theme.frame-cap` in the config, and Display is written by omitting the key. A numeric cap limits
+animation-driven publishes; clock ticks, service updates and input still repaint at once. Settled
+bar, panel, toast and OSD changes repaint only the regions that changed. Reveals, slides, the
+control-centre page wash, and trees with menus, scrollers or lazy lists paint full.
+
+Run these checks on the test bench with one traced shell client at a time. Use the existing isolated
+Niri test-bench runner so the active shell and its configuration are restored after the gate. Record
+the Niri version and each output's connector, logical and physical size, scale and refresh.
+
+| # | Action | Passing observation |
+|---|---|---|
+| 1 | Select each cap while a panel reveals and while a toast slides | Motion keeps its duration and lands on its end state; no restart |
+| 2 | Reset the cap, then reload a config with `"frame-cap": "30"` | Reset returns Display; reload is refused and the running cap is kept |
+| 3 | Leave the shell idle with the clock on the bar | One repaint per clock boundary; no frames between |
+| 4 | Step the volume twice and inspect the OSD commits in the trace | Each settled step damages the meter only |
+| 5 | Keep the weather panel open and settled; inspect the trace | Each frame damages the effect box and focus ring, not the whole panel |
+| 6 | Inspect the trace during a panel reveal | Each reveal frame damages the full buffer |
+| 7 | Dismiss a toast between two others, then type in a reply | The gap shows through; no stale card pixels |
+| 8 | Hide and reopen each surface; unplug and replug an output where available | The first frame after each paints full; no stale pixels |
+
+The shell uses the pure Go `sysc-wayland` client. `WAYLAND_DEBUG` does not emit its wire trace;
+`tools/wlspy` records protocol damage. The proxy passes one client connection and its file
+descriptors to the compositor. Its log contains timestamps, surface namespaces, buffer sizes and
+damage rectangles; it skips event payloads.
+
+Build the proxy from the repository root. Start it from the existing isolated test-bench runner,
+with the compositor display as its upstream and a unique name for the proxy socket and log:
+
+```bash
+set -e
+: "${XDG_RUNTIME_DIR:?run inside the Niri test session}"
+: "${WAYLAND_DISPLAY:?run inside the Niri test session}"
+go build -o /tmp/wlspy ./tools/wlspy
+TRACE_DISPLAY="wl-t1spy-$$"
+TRACE_LOG="$XDG_RUNTIME_DIR/$TRACE_DISPLAY.log"
+/tmp/wlspy "$TRACE_DISPLAY" "$WAYLAND_DISPLAY" "$TRACE_LOG" &
+TRACE_PID=$!
+attempt=0
+while [ ! -S "$XDG_RUNTIME_DIR/$TRACE_DISPLAY" ] \
+  && kill -0 "$TRACE_PID" 2>/dev/null \
+  && [ "$attempt" -lt 100 ]; do
+  sleep 0.05
+  attempt=$((attempt + 1))
+done
+if [ ! -S "$XDG_RUNTIME_DIR/$TRACE_DISPLAY" ]; then
+  kill "$TRACE_PID" 2>/dev/null || true
+  echo "wlspy did not start" >&2
+  exit 1
+fi
+```
+
+Start the isolated shell with `WAYLAND_DISPLAY="$TRACE_DISPLAY"`. After it exits, stop the proxy
+and wait for the log to close:
+
+```bash
+kill "$TRACE_PID" 2>/dev/null || true
+wait "$TRACE_PID" 2>/dev/null || true
+```
+
+Inspect the saved trace after the shell exits with `rg 'damage(_buffer)?' "$TRACE_LOG"`. The tool
+handles proxy-socket cleanup when it receives SIGTERM. Keep the trace outside the repository. Use
+the existing `SIGUSR2` diagnostics for same-fixture CPU, wakeups, RSS, paint time and binary size.
+Do not claim savings that the measurements do not show. Two-output and mixed-scale cases need
+hardware that has them; record them as unrun otherwise.
+
+To roll back the setting to a build that predates it, remove only `theme.frame-cap` from the config
+while still on the newer build, keep a backup, and confirm the older build accepts the file before
+deploying it. Older builds reject the key even when its value is Display.

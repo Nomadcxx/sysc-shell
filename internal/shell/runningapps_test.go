@@ -339,7 +339,8 @@ func TestRunningAppMenuProjectsWindowRowsAndMRUWorkspaceTarget(t *testing.T) {
 
 	rows := runningAppMenu(slot, workspaces)
 	want := []string{
-		"Mail (2 windows)", "Close all and force quit", "Draft — Current", "Inbox — Research",
+		"Mail (2 windows)", "Close all and force quit", "Draft — Current", "Move Draft to floating",
+		"Inbox — Research", "Move Inbox to floating",
 		"New window", "Move Draft to Research",
 	}
 	if got := runningAppMenuLabels(rows); !slices.Equal(got, want) {
@@ -364,7 +365,7 @@ func TestRunningAppMenuUsesUntitledFallbackAndSingularClose(t *testing.T) {
 		MRU:     niri.Window{ID: 50, AppID: "terminal"},
 	}
 	rows := runningAppMenu(slot, nil)
-	want := []string{"Terminal (1 window)", "Close all and force quit", "Untitled window"}
+	want := []string{"Terminal (1 window)", "Close all and force quit", "Untitled window", "Move Untitled window to floating"}
 	if got := runningAppMenuLabels(rows); !slices.Equal(got, want) {
 		t.Fatalf("menu = %v, want %v", got, want)
 	}
@@ -383,7 +384,10 @@ func TestRunningAppMenuGroupsFoldedSteamGamesAndExcludesThemFromClose(t *testing
 		MRU: niri.Window{ID: 80, AppID: "steam", Title: "Store", FocusTimestamp: 30},
 	}
 	rows := runningAppMenu(slot, nil)
-	want := []string{"Steam (3 windows)", "Close all and force quit", "Store", "Games", "Portal", "Half-Life"}
+	want := []string{
+		"Steam (3 windows)", "Close all and force quit", "Store", "Move Store to floating",
+		"Games", "Portal", "Move Portal to floating", "Half-Life", "Move Half-Life to floating",
+	}
 	if got := runningAppMenuLabels(rows); !slices.Equal(got, want) {
 		t.Fatalf("menu = %v, want %v", got, want)
 	}

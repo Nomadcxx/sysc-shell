@@ -42,6 +42,105 @@ func Stream(ctx context.Context, socketPath string) (<-chan Snapshot, <-chan err
 	return snapshots, errs
 }
 
+// GetWindows requests an authoritative one-shot window list. It is used to
+// resolve an action whose reply was lost after the request may have reached
+// the compositor.
+func GetWindows(ctx context.Context, socketPath string) ([]Window, error) {
+	response, err := oneShot(ctx, socketPath, "Windows")
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Windows *[]wireWindow `json:"Windows"`
+	}
+	if err := json.Unmarshal(response, &result); err != nil {
+		return nil, fmt.Errorf("niri: decode windows result: %w", err)
+	}
+	if result.Windows == nil {
+		return nil, fmt.Errorf("niri: windows reply carried no result")
+	}
+	windows := make([]Window, 0, len(*result.Windows))
+	for _, wire := range *result.Windows {
+		window, err := wire.project()
+		if err != nil {
+			return nil, err
+		}
+		windows = append(windows, window)
+	}
+	return windows, nil
+}
+
+// GetKeyboardLayouts reads the compositor's authoritative keyboard layout
+// list and active index.
+func GetKeyboardLayouts(ctx context.Context, socketPath string) (KeyboardLayouts, error) {
+	response, err := oneShot(ctx, socketPath, "KeyboardLayouts")
+	if err != nil {
+		return KeyboardLayouts{}, err
+	}
+	var result struct {
+		KeyboardLayouts *struct {
+			Names      []string `json:"names"`
+			CurrentIdx *int     `json:"current_idx"`
+		} `json:"KeyboardLayouts"`
+	}
+	if err := json.Unmarshal(response, &result); err != nil {
+		return KeyboardLayouts{}, fmt.Errorf("niri: decode keyboard layouts result: %w", err)
+	}
+	if result.KeyboardLayouts == nil || result.KeyboardLayouts.CurrentIdx == nil {
+		return KeyboardLayouts{}, fmt.Errorf("niri: keyboard layouts reply carried no result")
+	}
+	current := *result.KeyboardLayouts.CurrentIdx
+	if current < 0 || current >= len(result.KeyboardLayouts.Names) {
+		return KeyboardLayouts{}, fmt.Errorf("niri: keyboard layouts reply has invalid current_idx %d", current)
+	}
+	return KeyboardLayouts{
+		Names:   result.KeyboardLayouts.Names,
+		Current: current,
+	}, nil
+}
+
+func oneShot(ctx context.Context, socketPath, command string) (json.RawMessage, error) {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("niri: connect to %s: %w", socketPath, err)
+	}
+	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
+
+	request := []byte(fmt.Sprintf("%q\n", command))
+	written, err := conn.Write(request)
+	if err != nil {
+		return nil, fmt.Errorf("niri: send %s request: %w", command, err)
+	}
+	if written != len(request) {
+		return nil, fmt.Errorf("niri: short %s request: %d of %d bytes", command, written, len(request))
+	}
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("niri: read %s reply: %w", command, err)
+		}
+		return nil, fmt.Errorf("niri: no %s reply", command)
+	}
+	var reply struct {
+		Ok  json.RawMessage `json:"Ok"`
+		Err *string         `json:"Err"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &reply); err != nil {
+		return nil, fmt.Errorf("niri: decode %s reply: %w", command, err)
+	}
+	if reply.Err != nil {
+		return nil, fmt.Errorf("niri: %s: %s", command, *reply.Err)
+	}
+	if reply.Ok == nil {
+		return nil, fmt.Errorf("niri: %s reply carried no result", command)
+	}
+	return reply.Ok, nil
+}
+
 // handshake dials the socket, sends the request, and validates the reply.
 func handshake(ctx context.Context, socketPath string) (net.Conn, *bufio.Scanner, error) {
 	var dialer net.Dialer

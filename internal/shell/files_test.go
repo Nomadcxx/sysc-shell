@@ -32,6 +32,7 @@ func TestFilesPanelFitsAtTargetAndLaptopSize(t *testing.T) {
 	}
 	cfg := config.Default()
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.mu.Lock()
 	reg.files = &filesSession{root: root, cwd: root, title: "Files", mode: files.ModeOpen, entries: ents}
@@ -120,14 +121,13 @@ func TestFilesActivateEntersOpensAndPicks(t *testing.T) {
 		t.Fatal(err)
 	}
 	opened := make(chan string, 1)
-	orig := filesOpenPath
-	filesOpenPath = func(path string, _ func(error)) {
+	t.Cleanup(filesOpenPath.Swap(func(path string, _ func(error)) {
 		opened <- path
-	}
-	t.Cleanup(func() { filesOpenPath = orig })
+	}))
 
 	cfg := config.Default()
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	ents, err := files.List(root, root)
 	if err != nil {
@@ -390,6 +390,7 @@ func TestFilesCrossOutputReopenKeepsNewSession(t *testing.T) {
 func TestFilesStaleContextDoesNotCloseNewerPanel(t *testing.T) {
 	root := t.TempDir()
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	go func() {
 		for range reg.AuxRequests() {
@@ -466,7 +467,7 @@ func TestFilesOpenPathSurvivesHandlerStart(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	reported := make(chan error, 1)
-	filesOpenPath("/tmp/example", func(err error) { reported <- err })
+	filesOpenPath.Get()("/tmp/example", func(err error) { reported <- err })
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(marker); err == nil {
@@ -524,6 +525,7 @@ func TestFilesChooseDuringLoadPicksPendingDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	go func() {
 		for range reg.AuxRequests() {
@@ -582,6 +584,7 @@ func TestFilesUpDuringLoadTargetsPendingParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	go func() {
 		for range reg.AuxRequests() {
@@ -842,11 +845,9 @@ func filesSessionWithTwo(t *testing.T) *filesSession {
 
 func TestFilesPointerSelectsWithoutOpening(t *testing.T) {
 	opened := make(chan string, 1)
-	orig := filesOpenPath
-	filesOpenPath = func(path string, _ func(error)) {
+	t.Cleanup(filesOpenPath.Swap(func(path string, _ func(error)) {
 		opened <- path
-	}
-	t.Cleanup(func() { filesOpenPath = orig })
+	}))
 
 	sess := filesSessionWithTwo(t)
 	if sess.pointerOnEntry(0, 0, 1) {
@@ -896,6 +897,7 @@ func TestFilesEscapeClearsSelectionFirst(t *testing.T) {
 	sess := filesSessionWithTwo(t)
 	sess.pointerOnEntry(0, 0, 1)
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.mu.Lock()
 	reg.files = sess
@@ -1057,6 +1059,7 @@ func TestFilesEscapeCancelsRenameFirst(t *testing.T) {
 	sess := filesSessionWithTwo(t)
 	sess.pointerOnEntry(0, 0, 1)
 	reg := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, reg)
 	t.Cleanup(reg.Close)
 	reg.mu.Lock()
 	reg.files = sess
@@ -1206,11 +1209,9 @@ func TestFilesCutButtonCutsTheClip(t *testing.T) {
 // control, not only through a double click.
 func TestFilesOpenControlActsOnTheSelectedFile(t *testing.T) {
 	opened := make(chan string, 1)
-	orig := filesOpenPath
-	filesOpenPath = func(path string, _ func(error)) {
+	t.Cleanup(filesOpenPath.Swap(func(path string, _ func(error)) {
 		opened <- path
-	}
-	t.Cleanup(func() { filesOpenPath = orig })
+	}))
 
 	sess := filesSessionWithTwo(t)
 	reg := NewRegistry(config.Default())
@@ -1246,9 +1247,7 @@ func TestFilesOpenControlActsOnTheSelectedFile(t *testing.T) {
 // on the panel instead of opening nothing in silence.
 func TestFilesOpenFailureReachesThePanel(t *testing.T) {
 	reports := make(chan func(error), 1)
-	orig := filesOpenPath
-	filesOpenPath = func(path string, report func(error)) { reports <- report }
-	t.Cleanup(func() { filesOpenPath = orig })
+	t.Cleanup(filesOpenPath.Swap(func(path string, report func(error)) { reports <- report }))
 
 	sess := filesSessionWithTwo(t)
 	reg := NewRegistry(config.Default())

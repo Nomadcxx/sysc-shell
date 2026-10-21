@@ -88,6 +88,7 @@ func (r *Registry) attachWallsService(svc wallsController) {
 	default:
 	}
 	r.wallsService = svc
+	r.shutdown.walls.store(svc)
 	r.wallsSnapshot = svc.Snapshot()
 	r.mu.Unlock()
 	go r.relayWalls(svc)

@@ -127,15 +127,25 @@ type Engine interface {
 	RefreshTerminalCatalog() Capabilities
 }
 
+// stoppedRestoreFailure marks a Restore error returned after the animated
+// engine stopped, so the service can persist the static assignment.
+type stoppedRestoreFailure interface {
+	error
+	restoreStopped()
+}
+
 // Snapshot is an immutable view of everything the picker draws.
 type Snapshot struct {
 	Library     *Library
 	Connectors  []string
 	Assignments map[string]Assignment
-	Runtime     map[string]Runtime
-	Caps        Capabilities
-	Seed        string
-	Err         string
+	// ImageLuminance is the computed relative luminance of each assigned still.
+	// An absent connector means no readable still was available.
+	ImageLuminance map[string]float64
+	Runtime        map[string]Runtime
+	Caps           Capabilities
+	Seed           string
+	Err            string
 	// ThumbsDone and ThumbsTotal report preview generation over the library;
 	// the Folder counts cover ThumbsFolder, the folder the picker had open
 	// when the walk started, which is generated first. Without them a first
@@ -165,6 +175,7 @@ type Snapshot struct {
 type ServiceConfig struct {
 	Engine      Engine
 	Settings    Settings
+	CyclePolicy CyclePolicy
 	Connectors  []string
 	Roots       []string
 	PersistPath string
@@ -195,24 +206,33 @@ type engineResult struct {
 type Service struct {
 	engine      Engine
 	set         Settings
+	cyclePolicy CyclePolicy
+	cycleStart  time.Time
+	cycleDate   string
 	roots       []string
 	persistPath string
 
-	cmds    chan Command
-	results chan engineResult
-	updates chan Snapshot
-	quit    chan struct{}
-	done    chan struct{}
-	closing sync.Once
-	work    sync.WaitGroup
+	cmds             chan Command
+	cycleUpdates     chan CyclePolicy
+	cycleUpdateMu    sync.Mutex
+	results          chan engineResult
+	luminanceResults chan imageLuminanceResult
+	updates          chan Snapshot
+	quit             chan struct{}
+	done             chan struct{}
+	closing          sync.Once
+	work             sync.WaitGroup
 
 	coverage func() (map[string]string, error)
 	thumbs   *Thumbnailer
 	stopWork context.CancelFunc
 
-	// store, lib, caps, and covered are touched only by the loop goroutine.
-	store Store
-	lib   *Library
+	// Store, library, capabilities, coverage, and luminance are touched only by
+	// the loop goroutine.
+	store           Store
+	lib             *Library
+	imageLuminance  map[string]assignedImageLuminance
+	luminanceBudget *decodeBudget
 	// thumbFolder is the folder the picker has open; its previews go first.
 	thumbFolder string
 	caps        Capabilities
@@ -241,20 +261,28 @@ type Service struct {
 
 // NewService starts the service loop.
 func NewService(cfg ServiceConfig) *Service {
+	cycleNow := time.Now()
 	s := &Service{
-		engine:         cfg.Engine,
-		restarted:      make(map[string]bool),
-		auto:           make(map[string]Reasons),
-		paused:         make(map[string]bool),
-		fps:            make(map[string]int),
-		fpsUnsupported: make(map[string]bool),
-		set:            cfg.Settings,
-		roots:          slices.Clone(cfg.Roots),
-		persistPath:    cfg.PersistPath,
-		coverage:       cfg.Coverage,
-		cfgHook:        cfg.ConfigHook,
-		cmds:           make(chan Command, 32),
-		results:        make(chan engineResult, 32),
+		engine:           cfg.Engine,
+		cyclePolicy:      cfg.CyclePolicy,
+		cycleStart:       cycleNow,
+		cycleDate:        dailyCycleBaseline(cycleNow, cfg.CyclePolicy.Time),
+		restarted:        make(map[string]bool),
+		auto:             make(map[string]Reasons),
+		paused:           make(map[string]bool),
+		fps:              make(map[string]int),
+		fpsUnsupported:   make(map[string]bool),
+		set:              cfg.Settings,
+		roots:            slices.Clone(cfg.Roots),
+		persistPath:      cfg.PersistPath,
+		coverage:         cfg.Coverage,
+		cfgHook:          cfg.ConfigHook,
+		cmds:             make(chan Command, 32),
+		cycleUpdates:     make(chan CyclePolicy, 1),
+		results:          make(chan engineResult, 32),
+		luminanceResults: make(chan imageLuminanceResult, 32),
+		imageLuminance:   make(map[string]assignedImageLuminance),
+		luminanceBudget:  newDecodeBudget(thumbDecodeBudget),
 		// One slot, coalescing: a picker that is closed or slow must never
 		// block an apply.
 		updates: make(chan Snapshot, 1),
@@ -284,7 +312,12 @@ func NewService(cfg ServiceConfig) *Service {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.stopWork = cancel
 		s.thumbs = NewThumbnailer(cfg.CacheDir)
-		go s.thumbs.Run(ctx)
+		s.luminanceBudget = s.thumbs.budget
+		s.work.Add(1)
+		go func() {
+			defer s.work.Done()
+			s.thumbs.Run(ctx)
+		}()
 		s.enqueueThumbs()
 	}
 	go s.run()
@@ -337,13 +370,37 @@ func (s *Service) Enqueue(c Command) {
 	}
 }
 
+// SetCyclePolicy hands a live configuration update to the service loop. The
+// one-slot channel coalesces reloads so the most recent committed policy wins.
+func (s *Service) SetCyclePolicy(policy CyclePolicy) {
+	s.cycleUpdateMu.Lock()
+	defer s.cycleUpdateMu.Unlock()
+	select {
+	case <-s.quit:
+		return
+	default:
+	}
+	select {
+	case s.cycleUpdates <- policy:
+	default:
+		select {
+		case <-s.cycleUpdates:
+		default:
+		}
+		select {
+		case s.cycleUpdates <- policy:
+		case <-s.quit:
+		}
+	}
+}
+
 // RefreshTerminalCatalog asks the service loop to refresh the installed
 // sysc-terminal registry and publish the updated capabilities.
 func (s *Service) RefreshTerminalCatalog() {
 	s.Enqueue(Command{Op: OpRefreshTerminalCatalog})
 }
 
-// Close stops the loop and waits for in-flight engine work to report back, so
+// Close stops the loop and waits for in-flight engine and thumbnail work, so
 // no goroutine outlives the service.
 func (s *Service) Close() {
 	s.closing.Do(func() {
@@ -370,10 +427,15 @@ func (s *Service) run() {
 			return
 		case c := <-s.cmds:
 			s.handle(c)
+		case policy := <-s.cycleUpdates:
+			s.updateCyclePolicy(policy, time.Now())
 		case r := <-s.results:
 			s.finish(r)
+		case r := <-s.luminanceResults:
+			s.recordImageLuminance(r)
 		case <-ticker.C:
 			s.supervise()
+			s.runCycle(time.Now())
 		case <-s.thumbProgress():
 			// A preview landed on disk; the picker only picks it up on a
 			// snapshot, so publish one.
@@ -416,6 +478,49 @@ func (s *Service) thumbProgress() <-chan struct{} {
 	return s.thumbs.Progress()
 }
 
+func (s *Service) updateCyclePolicy(policy CyclePolicy, now time.Time) {
+	if s.cyclePolicy == policy {
+		return
+	}
+	s.cyclePolicy = policy
+	s.cycleStart = now
+	s.cycleDate = dailyCycleBaseline(now, policy.Time)
+}
+
+// runCycle evaluates one schedule event and queues a normal, generation-aware
+// apply for each assigned output. Schedule timing stays in this owner loop.
+func (s *Service) runCycle(now time.Time) {
+	if !cycleDue(s.cyclePolicy, now, s.cycleStart, s.cycleDate) {
+		return
+	}
+	switch s.cyclePolicy.Mode {
+	case CycleModeInterval:
+		s.cycleStart = now
+	case CycleModeTime:
+		s.cycleDate = now.Local().Format("2006-01-02")
+	}
+	if s.engine == nil || s.lib == nil {
+		return
+	}
+	entries := s.lib.All()
+	var jobs []Job
+	for _, connector := range s.store.Connectors() {
+		assignment, ok := s.store.Assignment(connector)
+		if !ok || s.store.Runtime(connector).State == StateStarting {
+			continue
+		}
+		entry, ok := nextCycleEntry(entries, assignment.Path)
+		if !ok {
+			continue
+		}
+		delete(s.restarted, connector)
+		jobs = append(jobs, s.store.Apply(connector, entry.Path, entry.Kind)...)
+	}
+	if len(jobs) > 0 {
+		s.dispatch(jobs)
+	}
+}
+
 // enqueueThumbs hands the current library to the generator.
 func (s *Service) enqueueThumbs() {
 	if s.thumbs == nil || s.lib == nil {
@@ -427,6 +532,7 @@ func (s *Service) enqueueThumbs() {
 func (s *Service) handle(c Command) {
 	switch c.Op {
 	case OpApply:
+		s.cycleStart = time.Now()
 		if c.Token == AllOutputs {
 			clear(s.restarted)
 		} else {
@@ -569,6 +675,9 @@ func (s *Service) finish(r engineResult) {
 	}
 	s.persist()
 	s.refreshCoverage()
+	if a, ok := s.store.Assignment(r.job.Connector); ok {
+		s.queueImageLuminance(r.job.Connector, a)
+	}
 	s.publish()
 	s.notifySeed(s.store.SeedPath())
 }
@@ -721,6 +830,10 @@ func (s *Service) restore(token string) {
 		s.engine.AdvanceGeneration(connector, generation)
 		a, _ := s.store.Assignment(connector)
 		if err := s.engine.Restore(connector, stillFor(a)); err != nil {
+			var stopped stoppedRestoreFailure
+			if errors.As(err, &stopped) {
+				s.store.SetRestored(connector, s.caps.Static())
+			}
 			s.store.noteRuntimeErr(connector, err)
 			continue
 		}
@@ -751,10 +864,19 @@ func (s *Service) persist() {
 // publish rebuilds the snapshot and offers it to the updates channel,
 // replacing an unread one rather than blocking on a closed picker.
 func (s *Service) publish() {
+	assignments := s.store.All()
+	imageLuminance := make(map[string]float64)
+	for connector, assignment := range assignments {
+		cached, ok := s.imageLuminance[connector]
+		if ok && cached.path == stillFor(assignment) {
+			imageLuminance[connector] = cached.value
+		}
+	}
 	snap := Snapshot{
 		Library:        s.lib,
 		Connectors:     s.store.Connectors(),
-		Assignments:    s.store.All(),
+		Assignments:    assignments,
+		ImageLuminance: imageLuminance,
 		Runtime:        s.store.AllRuntime(),
 		Caps:           s.caps,
 		Seed:           s.store.SeedPath(),
@@ -807,6 +929,7 @@ func cloneSnapshot(s Snapshot) Snapshot {
 	out := s
 	out.Connectors = slices.Clone(s.Connectors)
 	out.Assignments = maps.Clone(s.Assignments)
+	out.ImageLuminance = maps.Clone(s.ImageLuminance)
 	out.Runtime = maps.Clone(s.Runtime)
 	out.Covered = maps.Clone(s.Covered)
 	out.PausedBy = maps.Clone(s.PausedBy)

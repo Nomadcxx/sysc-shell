@@ -297,8 +297,8 @@ func TestCenterScheduleShowsDurationPresets(t *testing.T) {
 
 func TestCenterPresetOneHourMatchesSetDNDPresetAt(t *testing.T) {
 	r := NewRegistry(config.Default())
-	now := time.Unix(1_756_000_000, 0)
-	r.now = now
+	staleClock := time.Unix(1_756_000_000, 0)
+	r.now = staleClock
 	r.applyNotify(snap(1))
 	h := &PanelHost{id: PanelNotifications, notifyMenu: true}
 	r.rebuildPanel(h)
@@ -309,9 +309,12 @@ func TestCenterPresetOneHourMatchesSetDNDPresetAt(t *testing.T) {
 			break
 		}
 	}
-	end, on := r.dndStateAt(now)
-	if !on || !end.Equal(now.Add(time.Hour)) {
-		t.Fatalf("end = %v on=%v, want now+1h", end, on)
+	r.notify.mu.Lock()
+	start := r.notify.dndSince
+	r.notify.mu.Unlock()
+	end, on := r.dndStateAt(time.Now())
+	if !on || !start.After(staleClock) || !end.Equal(start.Add(time.Hour)) {
+		t.Fatalf("start = %v, end = %v on=%v, want a current start and end one hour later", start, end, on)
 	}
 }
 
@@ -411,7 +414,7 @@ func TestCentreOpenMarksNewHistorySeen(t *testing.T) {
 // The bar badge reads unread history, so a notify message that changes it
 // must repaint the bar rather than wait for the next clock tick.
 func TestNotifyMessageRepaintsTheBarBadge(t *testing.T) {
-	r := newPanelRegistry(t)
+	r := newPanelRegistryWithoutBridge(t)
 	withTestBar(t, r, 7, config.Default())
 	r.applyNotify(snap(1))
 	for len(r.invalidations) > 0 {
@@ -483,6 +486,7 @@ func TestUnreadBadgeCountsUnseenHistory(t *testing.T) {
 
 func TestDNDBoundsPresetsToOneEndTime(t *testing.T) {
 	r := NewRegistry(config.Default())
+	r.notify.onDND = nil // Keep the test's fixed clock separate from OSD callbacks.
 	now := time.Unix(1_756_000_000, 0)
 	r.setDNDPresetAt(now, time.Hour)
 
