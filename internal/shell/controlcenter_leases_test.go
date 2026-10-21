@@ -107,6 +107,64 @@ func TestControlCentreKeepsSubjectsThroughAFailedPass(t *testing.T) {
 	}
 }
 
+// resolveLockWindow bounds how long the lock probe waits for a foreign
+// holder to let go of Registry.mu.
+const resolveLockWindow = 2 * time.Second
+
+// resolveLockHeld reports whether Registry.mu is held while a caller
+// resolves the root device.
+//
+// The probe answers a global question: the lock is either held or not. The
+// caller of the resolve callback must not hold Registry.mu itself, but
+// another goroutine of the package may hold it at that moment, and that is
+// not what the test is about. A foreign holder lets go of the lock on its
+// own, so the probe retries for a bounded window before it calls the lock
+// held. A caller that holds the lock keeps it for the whole window, so the
+// probe still reports it.
+func resolveLockHeld(r *Registry, window time.Duration) bool {
+	deadline := time.Now().Add(window)
+	for {
+		if r.mu.TryLock() {
+			r.mu.Unlock()
+			return false
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestResolveLockHeldTellsACallerHeldLockFromAForeignHolder is the check
+// that the probe keeps its meaning. The probe retries for a foreign holder,
+// so without this check the retry could hide the regression the root device
+// test guards.
+func TestResolveLockHeldTellsACallerHeldLockFromAForeignHolder(t *testing.T) {
+	r := newPanelRegistry(t)
+
+	r.mu.Lock()
+	held := resolveLockHeld(r, 50*time.Millisecond)
+	r.mu.Unlock()
+	if !held {
+		t.Fatal("a caller that holds Registry.mu must be reported as holding it")
+	}
+
+	holding := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		r.mu.Lock()
+		close(holding)
+		time.Sleep(50 * time.Millisecond)
+		r.mu.Unlock()
+		close(done)
+	}()
+	<-holding
+	if resolveLockHeld(r, resolveLockWindow) {
+		t.Fatal("a foreign holder that lets go of the lock must not be reported as holding it")
+	}
+	<-done
+}
+
 // Both hosts that chart a device resolve the root source off Registry.mu,
 // once per source.
 func TestRateSubjectHostsResolveRootDeviceOncePerSource(t *testing.T) {
@@ -124,9 +182,7 @@ func TestRateSubjectHostsResolveRootDeviceOncePerSource(t *testing.T) {
 			calls, resolvedUnlocked := 0, true
 			resolve := func(source string) (string, error) {
 				calls++
-				if r.mu.TryLock() {
-					r.mu.Unlock()
-				} else {
+				if resolveLockHeld(r, resolveLockWindow) {
 					resolvedUnlocked = false
 				}
 				if source == "/dev/mapper/root" {
