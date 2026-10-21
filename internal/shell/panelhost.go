@@ -5015,13 +5015,7 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		defer r.mu.Unlock()
 		return h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)
 	}, func() {
-		r.mu.Lock()
-		if r.panelHosts[h.id] == h && mediaBodyVisible(h) {
-			r.rebuildPanel(h)
-		}
-		out := h.output
-		r.mu.Unlock()
-		r.publishSurface(out, panelSurfaceID(h.id))
+		r.publishPanelFrame(h)
 	}, frameCap, func() (time.Duration, bool) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -5030,6 +5024,28 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		}
 		return h.anim.SpriteRest()
 	})
+}
+
+// publishPanelFrame publishes a frame for the panel host and rebuilds it when
+// its media body changed.
+//
+// A tick that was already in flight when the panel closed runs this after the
+// close removed the host, and the surface it would paint is then gone:
+// publishing for it asks the compositor to redraw a surface that no longer
+// exists. It also made the ticker look like it was still running after the
+// close, because the frame arrived after the test had drained.
+func (r *Registry) publishPanelFrame(h *PanelHost) {
+	r.mu.Lock()
+	if r.panelHosts[h.id] != h {
+		r.mu.Unlock()
+		return
+	}
+	if mediaBodyVisible(h) {
+		r.rebuildPanel(h)
+	}
+	out := h.output
+	r.mu.Unlock()
+	r.publishSurface(out, panelSurfaceID(h.id))
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {
