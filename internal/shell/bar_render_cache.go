@@ -2,6 +2,7 @@ package shell
 
 import (
 	"reflect"
+	"sync"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -118,8 +119,9 @@ func barDamageRegions(previous, current *ui.Node, scale ui.Scale120, width, heig
 
 func samePaintNode(a, b *ui.Node) bool {
 	left, right := reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()
+	children := nodeChildrenFieldIndex()
 	for i := 0; i < left.NumField(); i++ {
-		if i == nodeChildrenFieldIndex {
+		if i == children {
 			continue
 		}
 		if !samePaintValue(left.Field(i), right.Field(i)) {
@@ -129,13 +131,21 @@ func samePaintNode(a, b *ui.Node) bool {
 	return true
 }
 
-var nodeChildrenFieldIndex = func() int {
+// nodeChildrenFieldIndex is the field index of ui.Node.Children. It is a
+// function rather than a package-level variable so no test can swap it out
+// from under the bar's render goroutine, and it is computed once.
+var nodeChildrenFieldIndex = sync.OnceValue(func() int {
 	field, ok := reflect.TypeOf(ui.Node{}).FieldByName("Children")
 	if !ok {
 		panic("shell: ui.Node.Children field is missing")
 	}
 	return field.Index[0]
-}()
+})
+
+// nodeChildrenFieldIndexReady forces the index to be resolved at start-up, so
+// a ui.Node without a Children field fails the process rather than the first
+// frame that compares two nodes.
+var _ = nodeChildrenFieldIndex()
 
 func samePaintValue(a, b reflect.Value) bool {
 	if a.Type() != b.Type() {

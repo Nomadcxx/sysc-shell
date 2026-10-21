@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
@@ -57,7 +58,9 @@ func (op *pluginStorePendingOp) status(l store.Listing) string {
 	}
 }
 
-var openURL = openURLDefault
+// openURL opens a link the user asked for. Tests replace it. The guard keeps
+// a test's swap from racing the panel goroutine that reads it.
+var openURL = seam.New(openURLDefault)
 
 func openURLDefault(raw string) error {
 	parsed, err := url.Parse(raw)
@@ -67,7 +70,10 @@ func openURLDefault(raw string) error {
 	return launchURL(parsed.String(), nil)
 }
 
-var openNotificationURL = openNotificationURLDefault
+// openNotificationURL opens a link from a notification. Tests replace it. The
+// guard keeps a test's swap from racing the toast host goroutine that reads
+// it.
+var openNotificationURL = seam.New(openNotificationURLDefault)
 
 func openNotificationURLDefault(raw string) error {
 	target, ok := notificationURL(raw)
@@ -479,7 +485,7 @@ func (h *PanelHost) pluginStoreOpenLink(r *Registry, action string) {
 	}
 	key := h.pluginStoreDetail
 	go func() {
-		err := openURL(link)
+		err := openURL.Get()(link)
 		if err == nil {
 			return
 		}

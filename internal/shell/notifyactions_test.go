@@ -233,8 +233,7 @@ func TestToastHostStartsLinkOpenerAfterRegistryUnlock(t *testing.T) {
 	r := &Registry{}
 	host := &toastHost{r: r}
 	started := make(chan bool, 1)
-	previous := openNotificationURL
-	openNotificationURL = func(href string) error {
+	t.Cleanup(openNotificationURL.Swap(func(href string) error {
 		if href != "https://example.test" {
 			t.Errorf("opened %q, want the notification URL", href)
 		}
@@ -244,8 +243,7 @@ func TestToastHostStartsLinkOpenerAfterRegistryUnlock(t *testing.T) {
 		}
 		started <- acquired
 		return nil
-	}
-	defer func() { openNotificationURL = previous }()
+	}))
 
 	r.mu.Lock()
 	host.openLink("https://example.test")

@@ -8,12 +8,14 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // atomicReplace is os.Rename except in tests that force a failure after the
-// temp file exists.
-var atomicReplace = os.Rename
+// temp file exists. The guard keeps a test's swap from racing a concurrent
+// write: the config writer runs on whichever goroutine asked for the save.
+var atomicReplace = seam.New(os.Rename)
 
 // Write encodes c as a wire document sparse relative to its selected preset.
 // The preset itself is always recorded so a current default is distinguishable
@@ -94,7 +96,7 @@ func Write(path string, c Config) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("config: close temp: %w", err)
 	}
-	if err := atomicReplace(tmp, path); err != nil {
+	if err := atomicReplace.Get()(tmp, path); err != nil {
 		return fmt.Errorf("config: replace %s: %w", path, err)
 	}
 	ok = true

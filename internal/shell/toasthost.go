@@ -833,7 +833,7 @@ func (h *toastHost) reply(id uint32, text string) {
 }
 func (h *toastHost) hover(uint32, bool) {}
 func (h *toastHost) openLink(href string) {
-	opener := openNotificationURL
+	opener := openNotificationURL.Get()
 	if opener == nil || h.r == nil {
 		return
 	}

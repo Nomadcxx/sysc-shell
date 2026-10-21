@@ -115,7 +115,7 @@ func TestPluginStoreRemoveNeedsInlineConfirmation(t *testing.T) {
 }
 
 func TestOpenURLRejectsHTTP(t *testing.T) {
-	if err := openURL("http://example.com"); err == nil {
+	if err := openURL.Get()("http://example.com"); err == nil {
 		t.Fatalf("openURL(http) error = %v, want insecure URL error", err)
 	}
 }

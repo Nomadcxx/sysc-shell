@@ -111,11 +111,9 @@ func TestWriteFailureKeepsOriginalAndCleansTemp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := atomicReplace
-	t.Cleanup(func() { atomicReplace = old })
-	atomicReplace = func(string, string) error {
+	t.Cleanup(atomicReplace.Swap(func(string, string) error {
 		return os.ErrPermission
-	}
+	}))
 
 	next := Default()
 	next.Bar.Height = 42
