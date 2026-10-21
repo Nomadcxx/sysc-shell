@@ -18,6 +18,7 @@ func TestAcceptSettingsPanelOpens(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	reg := shell.NewRegistry(cfg)
 	t.Cleanup(reg.Close)
+	keepInvalidationsDrained(t, reg)
 	if err := reg.OpenPanel(shell.PanelSettings, 7, shell.Trigger{Align: "center"}); err != nil {
 		t.Fatal(err)
 	}
