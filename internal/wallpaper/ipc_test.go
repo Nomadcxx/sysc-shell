@@ -17,7 +17,7 @@ import (
 // gSlapper does. A client that waited for EOF would block until its deadline.
 func fakeGSlapper(t *testing.T, reply string) (socket string, received func() string) {
 	t.Helper()
-	socket = filepath.Join(t.TempDir(), "g.sock")
+	socket = filepath.Join(shortTempDir(t), "g.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
