@@ -188,7 +188,7 @@ func TestManagedLockCancellationInvalidatesUnconfirmedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := New("session", "niri")
-	conn, err := dialFn()
+	conn, err := dialSessionBus()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func managedOwnerRaceClient(t *testing.T, release bool) *Client {
 		t.Fatal(err)
 	}
 	c := New("session", "niri")
-	conn, err := dialFn()
+	conn, err := dialSessionBus()
 	if err != nil {
 		t.Fatal(err)
 	}
