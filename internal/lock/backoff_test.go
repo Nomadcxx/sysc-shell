@@ -101,15 +101,6 @@ func (b *fakeBus) RequestLock(context.Context, string) (string, error) {
 	return "", errors.New("fake bus does not lock")
 }
 
-// swapSeams replaces dialFn and waitFn for one test and restores them after.
-func swapSeams(t *testing.T, dial func() (busConn, error), wait func(time.Duration) <-chan time.Time) {
-	t.Helper()
-	oldDial, oldWait := dialFn, waitFn
-	dialFn = dial
-	waitFn = wait
-	t.Cleanup(func() { dialFn, waitFn = oldDial, oldWait })
-}
-
 func idleSnapshot() Snapshot {
 	return Snapshot{
 		Session:    "session",
@@ -172,7 +163,7 @@ func TestNoOwnerDoesNotRedial(t *testing.T) {
 	var mu sync.Mutex
 	dials := 0
 	var bus *fakeBus
-	swapSeams(t, func() (busConn, error) {
+	dial := func() (busConn, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		dials++
@@ -180,11 +171,11 @@ func TestNoOwnerDoesNotRedial(t *testing.T) {
 			bus = newFakeBus()
 		}
 		return bus, nil
-	}, waitFn)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := New("session", "niri")
+	c := newClient("session", "niri", dial, waitAfter)
 	c.Start(ctx)
 
 	mu.Lock()
@@ -220,7 +211,7 @@ func TestOwnerAppearsTriggersSnapshot(t *testing.T) {
 	var mu sync.Mutex
 	dials := 0
 	var bus *fakeBus
-	swapSeams(t, func() (busConn, error) {
+	dial := func() (busConn, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		dials++
@@ -228,11 +219,11 @@ func TestOwnerAppearsTriggersSnapshot(t *testing.T) {
 			bus = newFakeBus()
 		}
 		return bus, nil
-	}, waitFn)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := New("session", "niri")
+	c := newClient("session", "niri", dial, waitAfter)
 	c.Start(ctx)
 
 	mu.Lock()
@@ -258,26 +249,29 @@ func TestOwnerAppearsTriggersSnapshot(t *testing.T) {
 	mu.Unlock()
 }
 
+// backoffStep is one reconnect wait handed from a client to the test. The
+// test releases the step, so the reconnect loop advances exactly one step per
+// release and can never outrun the reader.
+type backoffStep struct {
+	delay   time.Duration
+	release chan time.Time
+}
+
 func TestBusUnavailableBacksOff(t *testing.T) {
 	fail := errors.New("no bus")
-	waits := make(chan time.Duration, 8)
-	swapSeams(t, func() (busConn, error) {
-		return nil, fail
-	}, func(d time.Duration) <-chan time.Time {
-		select {
-		case waits <- d:
-			return time.After(0)
-		default:
-			// The test has seen enough retries. Park the loop on a nil
-			// channel so seam restoration cannot race with another dial.
-			return nil
-		}
-	})
+	steps := make(chan backoffStep, 16)
+	c := newClient("session", "niri",
+		func() (busConn, error) { return nil, fail },
+		func(d time.Duration) <-chan time.Time {
+			release := make(chan time.Time, 1)
+			steps <- backoffStep{delay: d, release: release}
+			return release
+		})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := New("session", "niri")
-	c.Start(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); c.run(ctx, nil) }()
 
 	want := []time.Duration{
 		time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second,
@@ -285,10 +279,11 @@ func TestBusUnavailableBacksOff(t *testing.T) {
 	}
 	for i, w := range want {
 		select {
-		case got := <-waits:
-			if got != w {
-				t.Fatalf("wait %d = %v, want %v", i, got, w)
+		case step := <-steps:
+			if step.delay != w {
+				t.Fatalf("wait %d = %v, want %v", i, step.delay, w)
 			}
+			step.release <- time.Now()
 		case <-time.After(2 * time.Second):
 			t.Fatalf("only %d retries arrived", i)
 		}
@@ -296,11 +291,69 @@ func TestBusUnavailableBacksOff(t *testing.T) {
 
 	// A cancelled context ends the backoff wait promptly.
 	cancel()
-	done := make(chan struct{})
-	go func() { c.run(ctx, nil); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("run did not return after cancel")
+	}
+}
+
+// A client's reconnect loop must wait on its own seam. A seam shared by the
+// whole package would let one client's wait land in another client's channel.
+func TestBackoffSeamsArePerClient(t *testing.T) {
+	fail := errors.New("no bus")
+	first := make(chan time.Duration, 4)
+	second := make(chan time.Duration, 4)
+	waiting := func(waits chan time.Duration) func(time.Duration) <-chan time.Time {
+		return func(d time.Duration) <-chan time.Time {
+			select {
+			case waits <- d:
+			default:
+			}
+			// A nil channel parks the loop until the context is cancelled.
+			return nil
+		}
+	}
+	a := newClient("session", "niri", func() (busConn, error) { return nil, fail }, waiting(first))
+	b := newClient("session", "niri", func() (busConn, error) { return nil, fail }, waiting(second))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{}, 2)
+	go func() { defer func() { done <- struct{}{} }(); a.run(ctx, nil) }()
+	go func() { defer func() { done <- struct{}{} }(); b.run(ctx, nil) }()
+
+	for _, tc := range []struct {
+		name  string
+		waits chan time.Duration
+	}{{"first", first}, {"second", second}} {
+		select {
+		case d := <-tc.waits:
+			if d != time.Second {
+				t.Fatalf("%s client wait = %v, want %v", tc.name, d, time.Second)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s client did not wait", tc.name)
+		}
+	}
+	// Neither client recorded a wait in the other client's channel.
+	for _, tc := range []struct {
+		name  string
+		waits chan time.Duration
+	}{{"first", first}, {"second", second}} {
+		select {
+		case d := <-tc.waits:
+			t.Fatalf("%s client recorded an extra wait %v", tc.name, d)
+		default:
+		}
+	}
+
+	cancel()
+	for range 2 {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("reconnect loop did not return after cancel")
+		}
 	}
 }
