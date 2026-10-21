@@ -106,7 +106,17 @@ export WAYLAND_DISPLAY=wayland-1
 export XDG_RUNTIME_DIR=/run/user/1000
 ```
 
-This machine has one output (`DP-1`, 3440×1440, scale 1.0). Niri has no runtime virtual output, so
-every two-output check is unrunnable here. `niri msg -j layers` is the live assertion for mapped
-surfaces. Never `pkill -f` a binary name also typed in the command; that pattern matches the agent
-shell. Kill by pid from `pgrep -f 'scratchpad/<name>'`.
+This machine has two outputs, measured with `niri msg -j outputs`: `DP-1` (Acer X34 P, 3440×1440,
+scale 1.0, logical x=2560) and `DP-3` (Samsung LS32CG51x, 2560×1440, scale 1.0, logical x=0). Niri
+has no runtime virtual output, so a third output is unrunnable here, but a two-output check is not.
+`niri msg -j layers` is the live assertion for mapped surfaces. Never `pkill -f` a binary name also
+typed in the command; that pattern matches the agent shell. Kill by pid from
+`pgrep -f 'scratchpad/<name>'`.
+
+Two live facts that cost time:
+
+- The session may be locked by `sysc-lock` (`--session` and `--ambient`). While it is held, key
+  injection reaches only the lock surface and ordinary windows cannot take focus, so a live
+  input-driven check cannot be completed. Ask the owner to unlock rather than trying to pass it.
+- `wtype` is installed at `/usr/bin/wtype`, but it has no `--version` flag, and it cannot reach a
+  layer-shell panel, so a panel's own field is not drivable by key injection.
