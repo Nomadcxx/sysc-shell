@@ -554,3 +554,27 @@ func TestEarlyHostCallOverflowIsAnsweredWithAnError(t *testing.T) {
 		}
 	}
 }
+
+func TestStoppingARuntimeEndsItsDescendants(t *testing.T) {
+	t.Parallel()
+
+	pidPath := filepath.Join(t.TempDir(), "child.pid")
+	opts := helperOptions()
+	// The helper answers the handshake and then ignores host.shutdown, so the
+	// stop runs out the grace and takes the forced path. Short because the
+	// grace is what is being waited out, not something being proven.
+	opts.ShutdownGrace = 100 * time.Millisecond
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "spawn-child-slow-shutdown:"+pidPath)}, opts)
+
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	child := readChildPID(t, pidPath)
+	defer killIfAlive(child)
+
+	// This is what disabling the plugin in settings does.
+	r.Stop()
+	if !waitForExit(t, child, time.Second) {
+		t.Fatalf("descendant %d survived the plugin being stopped", child)
+	}
+}
