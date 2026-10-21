@@ -1023,7 +1023,7 @@ func settleHostAnimation(reg *Registry, h *PanelHost) {
 // run on a loaded machine.
 const asyncTestWait = 10 * time.Second
 
-func drainAux(t *testing.T, reg *Registry, n int) []wayland.AuxRequest {
+func drainAux(t testing.TB, reg *Registry, n int) []wayland.AuxRequest {
 	t.Helper()
 	out := make([]wayland.AuxRequest, 0, n)
 	deadline := time.After(asyncTestWait)

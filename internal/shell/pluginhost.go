@@ -26,6 +26,8 @@ type PluginHostOptions struct {
 	Roots    []plugin.Root
 	StateDir string
 	Notify   func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	// recordInputs keeps the test-only sent-input history. Production leaves it off.
+	recordInputs bool
 }
 
 type pluginSlot struct {
@@ -101,6 +103,7 @@ type pluginHost struct {
 	// resurrect the old copy while its directory is mid-swap.
 	swapping            map[string]bool
 	nextID              uint64
+	recordInputs        bool
 	inputs              []v1.InputEvent
 	textOut             plugin.TextOut
 	flushPending        bool
@@ -144,16 +147,17 @@ var hostPluginCaps = []plugin.Capability{
 func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 	ctx, stop := context.WithCancel(context.Background())
 	h := &pluginHost{
-		r:          r,
-		opts:       opts,
-		ctx:        ctx,
-		stop:       stop,
-		prep:       plugin.NewPreparer(2, plugin.Measure),
-		slots:      make(map[string]*pluginSlot),
-		views:      make(map[string]*hostedView),
-		surfaces:   make(map[string]*pluginSurfaceHost),
-		lastAnchor: make(map[string]pluginAnchor),
-		swapping:   make(map[string]bool),
+		r:            r,
+		opts:         opts,
+		ctx:          ctx,
+		stop:         stop,
+		prep:         plugin.NewPreparer(2, plugin.Measure),
+		slots:        make(map[string]*pluginSlot),
+		views:        make(map[string]*hostedView),
+		surfaces:     make(map[string]*pluginSurfaceHost),
+		lastAnchor:   make(map[string]pluginAnchor),
+		swapping:     make(map[string]bool),
+		recordInputs: opts.recordInputs,
 	}
 	h.images = icons.NewWorker(icons.FileResolver{}, h.applyPluginImage)
 	go h.images.Run(ctx)
@@ -203,7 +207,7 @@ func (h *pluginHost) Close() {
 	// Keystrokes still waiting on the flush timer have to reach the plugin
 	// before Stop. Clearing the views first is what made flushText drop them.
 	pending := h.textOut.Flush()
-	h.inputs = append(h.inputs, pending...)
+	h.noteInputsLocked(pending)
 	h.slots = nil
 	h.views = make(map[string]*hostedView)
 	surfaces := h.surfaces
@@ -536,7 +540,7 @@ func (h *pluginHost) detachPluginLocked(id string) detachedPlugin {
 		detached.views = append(detached.views, detachedPluginView{
 			id: viewID, surface: h.surfaces[viewID], pending: pending,
 		})
-		h.inputs = append(h.inputs, pending...)
+		h.noteInputsLocked(pending)
 		delete(h.views, viewID)
 		delete(h.surfaces, viewID)
 		h.closed = append(h.closed, viewID)
@@ -1006,7 +1010,7 @@ func (h *pluginHost) closeViewUsing(id string, slot *pluginSlot) {
 	// Text typed in the last frame is still waiting for the flush timer,
 	// which drops changes for a view that has gone. It goes out first.
 	pending := h.textOut.Take(id)
-	h.inputs = append(h.inputs, pending...)
+	h.noteInputsLocked(pending)
 	delete(h.views, id)
 	surface := h.surfaces[id]
 	delete(h.surfaces, id)
@@ -1542,7 +1546,7 @@ func (h *pluginHost) deliverValue(hit pluginHit, event v1.EventKind, button v1.P
 			Event: event, Button: button, Text: text, Value: value, Output: v.Output, Generation: v.Generation,
 		}
 		toSend = h.textOut.Push(ev)
-		h.inputs = append(h.inputs, toSend...)
+		h.noteInputsLocked(toSend)
 		if event == v1.EventChange && len(toSend) == 0 {
 			h.scheduleTextFlushLocked()
 		}
@@ -1657,7 +1661,7 @@ func (h *pluginHost) deliverShortcut(key string, modifiers []string) bool {
 		Event: v1.EventShortcut, Key: key, Modifiers: append([]string(nil), modifiers...),
 		Output: v.Output, Generation: v.Generation,
 	}
-	h.inputs = append(h.inputs, ev)
+	h.noteInputLocked(ev)
 	h.mu.Unlock()
 	_ = slot.rt.Send(&ev)
 	return true
@@ -1695,7 +1699,7 @@ func (h *pluginHost) flushText() {
 	h.flushPending = false
 	h.flushTimer = nil
 	pending := h.textOut.Flush()
-	h.inputs = append(h.inputs, pending...)
+	h.noteInputsLocked(pending)
 	slots := make([]*pluginSlot, 0, len(pending))
 	for _, ev := range pending {
 		v := h.views[ev.ViewID]
@@ -1720,6 +1724,22 @@ func (h *pluginHost) lastInputs() []v1.InputEvent {
 	out := make([]v1.InputEvent, len(h.inputs))
 	copy(out, h.inputs)
 	return out
+}
+
+// noteInputsLocked records the input history only for tests that opt in.
+// Callers already hold h.mu, so production event delivery allocates no history.
+func (h *pluginHost) noteInputsLocked(events []v1.InputEvent) {
+	if h.recordInputs {
+		h.inputs = append(h.inputs, events...)
+	}
+}
+
+// noteInputLocked is the single-event form, avoiding a temporary slice when
+// input recording is disabled.
+func (h *pluginHost) noteInputLocked(event v1.InputEvent) {
+	if h.recordInputs {
+		h.inputs = append(h.inputs, event)
+	}
 }
 
 func (h *pluginHost) closedViews() []string {
@@ -1986,7 +2006,7 @@ func (h *pluginHost) retryLocked(id string) error {
 			pending = append(pending, h.textOut.Take(v.ID)...)
 		}
 	}
-	h.inputs = append(h.inputs, pending...)
+	h.noteInputsLocked(pending)
 	h.mu.Unlock()
 	for i := range pending {
 		_ = slot.rt.Send(&pending[i])
