@@ -110,6 +110,9 @@ fi
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := waitExecable(path); err != nil {
+		t.Fatal(err)
+	}
 	return &fakeCmd{path: path, dir: dir}
 }
 
