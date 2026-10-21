@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 func readPrivacyFixture(t *testing.T) []byte {
@@ -249,7 +251,7 @@ func TestPrivacyServiceReportsUnknownAfterCommandFailureAndRecovers(t *testing.T
 		t.Fatal(err)
 	}
 	script := "#!/bin/sh\nif [ -f '" + fail + "' ]; then exit 1; fi\ncat '" + result + "'\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := fakebin.Write(bin, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	p := NewPrivacy(15*time.Millisecond, bin)

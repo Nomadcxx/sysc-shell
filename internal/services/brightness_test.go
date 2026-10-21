@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 // testBrightness builds a service that never touches real hardware: empty
@@ -912,10 +914,7 @@ func fakeBrightnessctl(t *testing.T) *fakeCmd {
 echo "$*" >> "` + dir + `/log"
 `
 	path := filepath.Join(dir, "brightnessctl")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitExecable(path); err != nil {
+	if err := fakebin.Write(path, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return &fakeCmd{path: path, dir: dir}
