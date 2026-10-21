@@ -14,30 +14,45 @@ import (
 // Without the guard the swap is a plain write to a package-level variable and
 // the race detector reports it against the reads below.
 func TestFilesOpenPathSwapIsSafeAgainstAConcurrentOpen(t *testing.T) {
+	const readers = 500
+
 	var calls atomic.Int64
 	restore := filesOpenPath.Swap(func(string, func(error)) { calls.Add(1) })
 	defer restore()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	// Two groups, because the loops and the reads are different things.
+	// "loops" covers the two loops below; "reads" covers every reader each
+	// of them starts. Joining the readers before the check is what makes the
+	// count meaningful, and it also keeps the deferred restore from putting
+	// the real open back while a reader is still running.
+	var loops, reads sync.WaitGroup
+	loops.Add(2)
 	go func() {
-		defer wg.Done()
-		for range 500 {
-			// The shape production uses: the panel launches the handler off
-			// the Registry lock.
-			go filesOpenPath.Get()("/tmp/example", func(error) {})
+		defer loops.Done()
+		for range readers {
+			reads.Add(1)
+			go func() {
+				defer reads.Done()
+				// The shape production uses: the panel launches the handler off
+				// the Registry lock.
+				filesOpenPath.Get()("/tmp/example", func(error) {})
+			}()
 		}
 	}()
 	go func() {
-		defer wg.Done()
-		for range 500 {
+		defer loops.Done()
+		for range readers {
 			r := filesOpenPath.Swap(func(string, func(error)) { calls.Add(1) })
 			r()
 		}
 	}()
-	wg.Wait()
+	loops.Wait()
+	reads.Wait()
 
-	if calls.Load() == 0 {
-		t.Fatal("the swapped seam was never called")
+	// Every reader has to have reached a swapped seam. A reader that saw the
+	// real open instead would leave the count short, because the real open
+	// does not answer here.
+	if got := calls.Load(); got != readers {
+		t.Fatalf("the swapped seam was called %d times, want %d: a reader saw the real open", got, readers)
 	}
 }
