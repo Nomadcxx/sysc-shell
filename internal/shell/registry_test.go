@@ -109,7 +109,7 @@ func TestThemePreviewHideRepaintsBeforeUnlock(t *testing.T) {
 }
 
 // newHosts is the common setup: one registry with hosts at the given globals.
-func newHosts(t *testing.T, reg *Registry, hosts map[uint32]string) {
+func newHosts(t testing.TB, reg *Registry, hosts map[uint32]string) {
 	t.Helper()
 	for global, connector := range hosts {
 		if _, err := reg.NewHost(global, connector); err != nil {

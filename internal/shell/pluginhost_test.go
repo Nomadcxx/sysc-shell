@@ -249,15 +249,16 @@ func bindTestPluginMotion(t *testing.T, mode string, reduced bool) *Registry {
 	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	if err := reg.BindPlugins(PluginHostOptions{
-		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
-		StateDir: t.TempDir(),
+		Roots:        []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir:     t.TempDir(),
+		recordInputs: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return reg
 }
 
-func waitPluginText(t *testing.T, bar *Bar, want string) {
+func waitPluginText(t testing.TB, bar *Bar, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -1229,8 +1230,56 @@ func TestPluginPanelTextChangeSubmitAndClose(t *testing.T) {
 	t.Fatalf("inputs=%+v closed=%v", reg.plugins.lastInputs(), reg.plugins.closedViews())
 }
 
+func TestPluginInputsAreNotRetainedInProduction(t *testing.T) {
+	const pluginID = "org.sysc.shortcuts"
+	reg := bindManifestPluginWithInputRecording(t, "ok", pluginID, testPanelShortcutManifest, []string{pluginID}, false)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	opened, err := reg.plugins.openPanel(pluginID, v1.PanelParams{Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-input-retention"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+	action := pluginActionPrefix + opened.ViewID + ":note"
+	for i := 0; i < 10_000; i++ {
+		if !reg.deliverPluginText(action, "sample", v1.EventSubmit) {
+			t.Fatalf("submit %d was not accepted", i)
+		}
+	}
+	reg.plugins.mu.Lock()
+	retained, capacity := len(reg.plugins.inputs), cap(reg.plugins.inputs)
+	reg.plugins.mu.Unlock()
+	if retained != 0 || capacity != 0 {
+		t.Fatalf("production retained %d plugin input events (capacity %d), want no history", retained, capacity)
+	}
+}
+
+func BenchmarkPluginDeliverSubmit(b *testing.B) {
+	const pluginID = "org.sysc.shortcuts"
+	reg := bindManifestPluginWithInputRecording(b, "ok", pluginID, testPanelShortcutManifest, []string{pluginID}, false)
+	newHosts(b, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(b, reg.bars[7], "hello")
+	opened, err := reg.plugins.openPanel(pluginID, v1.PanelParams{Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-submit-benchmark"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	_ = drainAux(b, reg, 2)
+	waitPluginPanelRoot(b, reg)
+	action := pluginActionPrefix + opened.ViewID + ":note"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !reg.deliverPluginText(action, "sample", v1.EventSubmit) {
+			b.Fatalf("submit %d was not accepted", i)
+		}
+	}
+}
+
 func TestPluginSliderCommitSendsAnExplicitNumericValue(t *testing.T) {
 	host := &pluginHost{
+		recordInputs: true,
 		views: map[string]*hostedView{"panel": {
 			ID: "panel", Plugin: "org.sysc.test", Kind: v1.ViewPanel, Revision: 4,
 			Events: map[string][]v1.EventKind{"level": {v1.EventChange}},
@@ -1259,6 +1308,7 @@ func TestPluginSliderCommitSendsAnExplicitNumericValue(t *testing.T) {
 
 func TestPluginBarSecondaryClickEmitsPointerEvent(t *testing.T) {
 	host := &pluginHost{
+		recordInputs: true,
 		views: map[string]*hostedView{"bar": {
 			ID: "bar", Plugin: "org.sysc.test", Kind: v1.ViewBar,
 			Events: map[string][]v1.EventKind{"open": {v1.EventActivate, v1.EventPointer}},
@@ -1380,6 +1430,10 @@ const testRecorderPanelManifest = `{
 }`
 
 func bindManifestPlugin(t *testing.T, mode, id, manifest string, enabled []string) *Registry {
+	return bindManifestPluginWithInputRecording(t, mode, id, manifest, enabled, true)
+}
+
+func bindManifestPluginWithInputRecording(t testing.TB, mode, id, manifest string, enabled []string, recordInputs bool) *Registry {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -1398,15 +1452,16 @@ func bindManifestPlugin(t *testing.T, mode, id, manifest string, enabled []strin
 	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	if err := reg.BindPlugins(PluginHostOptions{
-		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
-		StateDir: t.TempDir(),
+		Roots:        []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir:     t.TempDir(),
+		recordInputs: recordInputs,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return reg
 }
 
-func waitPluginPanelRoot(t *testing.T, reg *Registry) *ui.Node {
+func waitPluginPanelRoot(t testing.TB, reg *Registry) *ui.Node {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -2695,9 +2750,10 @@ func TestRetryLockedSendsPendingTextBeforeStop(t *testing.T) {
 // drops changes for a view that has gone. The close sends it instead.
 func TestClosingAViewSendsItsPendingTextFirst(t *testing.T) {
 	h := &pluginHost{
-		views:    map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
-		slots:    map[string]*pluginSlot{},
-		surfaces: map[string]*pluginSurfaceHost{},
+		recordInputs: true,
+		views:        map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
+		slots:        map[string]*pluginSlot{},
+		surfaces:     map[string]*pluginSurfaceHost{},
 	}
 	h.textOut.Push(v1.InputEvent{ViewID: "v1", Node: "body", Event: v1.EventChange, Text: "last words"})
 	h.closeView("v1")

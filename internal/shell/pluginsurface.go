@@ -242,7 +242,7 @@ func (h *pluginHost) dropFloatingSurface(surface *pluginSurfaceHost) {
 	slot := (*pluginSlot)(nil)
 	// As in closeView: the sticky's last keystrokes go out before its close.
 	pending := h.textOut.Take(id)
-	h.inputs = append(h.inputs, pending...)
+	h.noteInputsLocked(pending)
 	if view != nil {
 		slot = h.slots[view.Plugin]
 		h.closed = append(h.closed, id)
