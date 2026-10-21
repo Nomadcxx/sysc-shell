@@ -479,6 +479,7 @@ func TestSideAuxiliarySurfaceRenderUsesSpecBody(t *testing.T) {
 				cfg.Theme.BlurBehind = false
 				cfg.Accessibility.ReducedMotion = true
 				reg := NewRegistry(cfg)
+				keepInvalidationsDrained(t, reg)
 				reg.lookPath = func(string) (string, error) { return "", fmt.Errorf("not installed") }
 				t.Cleanup(reg.Close)
 				bar := withTestBar(t, reg, 7, cfg)

@@ -83,6 +83,7 @@ func TestSessionTreeShowsBatteryWhenPresent(t *testing.T) {
 	cfg.Session.Locker = "swaylock"
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
@@ -135,6 +136,7 @@ func TestOpenPanelLoadsProfileTabsFromList(t *testing.T) {
 	cfg.Session.Locker = "swaylock"
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
+	keepInvalidationsDrained(t, reg)
 	listed := make(chan struct{})
 	release := make(chan struct{})
 	reg.lookPath = func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }

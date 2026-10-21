@@ -456,6 +456,7 @@ func TestThemePreviewOpensPanelsWithCandidatePalette(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
 	r := NewRegistry(cfg)
+	keepInvalidationsDrained(t, r)
 	t.Cleanup(r.Close)
 	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
 
