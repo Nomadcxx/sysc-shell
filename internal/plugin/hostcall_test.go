@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -290,17 +289,20 @@ func TestHostCallRejectsAFullPendingQueue(t *testing.T) {
 		Store:      &blockingStore{started: started, release: release},
 	})
 
-	var first atomic.Pointer[v1.HostReply]
+	// The call signals its own completion, so the wait does not depend on the
+	// test being scheduled: how busy the machine is must not decide whether
+	// the dispatcher behaved correctly.
+	params := jsonOf(t, v1.StateGetParams{Key: "deadline"})
+	first := make(chan v1.HostReply, 1)
 	go func() {
-		r := d.Handle(context.Background(), &v1.HostCall{
+		first <- d.Handle(context.Background(), &v1.HostCall{
 			ID: "slow", Call: v1.CallStateGet,
-			Params: jsonOf(t, v1.StateGetParams{Key: "deadline"}),
+			Params: params,
 		})
-		first.Store(&r)
 	}()
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-time.After(hostCallWait):
 		t.Fatal("the first call never started")
 	}
 
@@ -312,7 +314,11 @@ func TestHostCallRejectsAFullPendingQueue(t *testing.T) {
 		t.Fatalf("busy = %+v", busy)
 	}
 	close(release)
-	waitReply(t, &first)
+	select {
+	case <-first:
+	case <-time.After(hostCallWait):
+		t.Fatal("the blocking call never returned")
+	}
 }
 
 func TestHostCallDeadlineAndCancellation(t *testing.T) {
@@ -531,17 +537,10 @@ func mustStore(t *testing.T) *Store {
 	return s
 }
 
-func waitReply(t *testing.T, p *atomic.Pointer[v1.HostReply]) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if p.Load() != nil {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("the blocking call never returned")
-}
+// hostCallWait bounds a wait for a call that is expected to return. It is a
+// backstop against a hang, not the assertion: the deadline must not decide
+// whether the dispatcher behaved correctly.
+const hostCallWait = 30 * time.Second
 
 // blockingStore stalls Get until release is closed, so the pending-call
 // ceiling can be proven without a fake clock.
