@@ -121,28 +121,34 @@ func TestRateSubjectHostsResolveRootDeviceOncePerSource(t *testing.T) {
 			snap.Filesystem = &metrics.FilesystemSnapshot{Filesystems: []metrics.Filesystem{{
 				MountPoint: "/", Source: "/dev/mapper/root",
 			}}}
-			calls, resolvedUnlocked := 0, true
+			calls := 0
 			resolve := func(source string) (string, error) {
 				calls++
-				if r.mu.TryLock() {
-					r.mu.Unlock()
-				} else {
-					resolvedUnlocked = false
-				}
+				// The resolver takes the registry lock itself, which proves
+				// the caller holds none. The lock is not reentrant, so a
+				// caller that resolved under it would leave this waiting for
+				// a lock that only comes back when the caller returns, and
+				// the caller is waiting for the resolver. Asking instead
+				// whether the lock happened to be free proves nothing: the
+				// panel's own workers take it, so the answer changed with the
+				// load on the machine and the check failed for a lock it
+				// never owned.
+				r.mu.Lock()
+				r.mu.Unlock()
 				if source == "/dev/mapper/root" {
 					return "/dev/dm-0", nil
 				}
 				return "/dev/nvme0n1", nil
 			}
 			for i := 0; i < 3; i++ {
-				r.updateRootDevice(snap, resolve)
+				callUpdateRootDevice(t, r, snap, resolve)
 				r.mu.Lock()
 				h := r.panelHosts[id]
 				r.syncRateSubjectsLocked(h, snap, time.Second)
 				r.mu.Unlock()
 			}
-			if calls != 1 || !resolvedUnlocked {
-				t.Fatalf("resolve calls = %d, unlocked = %v; want one call outside Registry.mu", calls, resolvedUnlocked)
+			if calls != 1 {
+				t.Fatalf("resolve calls = %d; want one call per source", calls)
 			}
 			r.mu.Lock()
 			h := r.panelHosts[id]
@@ -153,13 +159,13 @@ func TestRateSubjectHostsResolveRootDeviceOncePerSource(t *testing.T) {
 			}
 			failedFilesystem := snap
 			failedFilesystem.Filesystem = nil
-			r.updateRootDevice(failedFilesystem, resolve)
+			callUpdateRootDevice(t, r, failedFilesystem, resolve)
 			if calls != 1 {
 				t.Fatalf("a failed filesystem pass re-resolved the root %d times", calls)
 			}
 
 			snap.Filesystem.Filesystems[0].Source = "/dev/mapper/new-root"
-			r.updateRootDevice(snap, resolve)
+			callUpdateRootDevice(t, r, snap, resolve)
 			r.mu.Lock()
 			r.syncRateSubjectsLocked(h, snap, time.Second)
 			got = h.ccDevice
@@ -168,5 +174,29 @@ func TestRateSubjectHostsResolveRootDeviceOncePerSource(t *testing.T) {
 				t.Fatalf("changed root source: resolve calls = %d, device = %q; want 2 and nvme0n1", calls, got)
 			}
 		})
+	}
+}
+
+// resolveLockWait bounds how long the resolver may wait for the registry
+// lock. It sits far above the time any holder keeps it: the wait is a
+// watchdog against a caller that resolves under the lock, not a measure of
+// how long a worker holds the lock.
+const resolveLockWait = 5 * time.Second
+
+// callUpdateRootDevice runs updateRootDevice and fails the test when the
+// resolver does not come back. The resolver waits for the registry lock when
+// the caller holds it, so a caller that resolved under the lock would hang
+// the test instead of failing it.
+func callUpdateRootDevice(t *testing.T, r *Registry, snap services.Snapshot, resolve func(string) (string, error)) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.updateRootDevice(snap, resolve)
+	}()
+	select {
+	case <-done:
+	case <-time.After(resolveLockWait):
+		t.Fatal("the root-device resolver waited for the registry lock: the caller held it")
 	}
 }
