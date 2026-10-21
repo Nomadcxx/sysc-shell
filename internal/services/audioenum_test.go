@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 func TestPwdumpIgnoresHeterogeneousUnrelatedMetadata(t *testing.T) {
@@ -265,7 +267,7 @@ func newFakeAudioRoutingCommands(t *testing.T, dump, inputs, sinks string) fakeA
 		}
 	}
 	dumpBin := filepath.Join(dir, "pw-dump")
-	if err := os.WriteFile(dumpBin, []byte("#!/bin/sh\ncat '"+filepath.Join(dir, "dump.json")+"'\n"), 0o755); err != nil {
+	if err := fakebin.Write(dumpBin, "#!/bin/sh\ncat '"+filepath.Join(dir, "dump.json")+"'\n", 0o755); err != nil {
 		t.Fatal(err)
 	}
 	logPath := filepath.Join(dir, "pactl.log")
@@ -279,7 +281,7 @@ case "$*" in
   *) exit 2 ;;
 esac
 `
-	if err := os.WriteFile(pactlBin, []byte(script), 0o755); err != nil {
+	if err := fakebin.Write(pactlBin, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return fakeAudioRoutingCommands{dumpBin: dumpBin, pactlBin: pactlBin, logPath: logPath}

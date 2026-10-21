@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 func TestHelperSetuidProtocol(t *testing.T) {
@@ -23,7 +25,7 @@ func TestHelperSetuidProtocol(t *testing.T) {
 		"export POLKIT_HELPER_TEST_USERNAME=\"$1\"\n" +
 		"exec " + shellQuote(helper) + " -test.run='^TestHelperProcess$'\n"
 	binary := filepath.Join(dir, "helper")
-	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+	if err := fakebin.Write(binary, script, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +55,7 @@ func TestHelperProcessExitsNormallyAfterSuccess(t *testing.T) {
 		"export POLKIT_HELPER_TEST_MARKER=" + shellQuote(marker) + "\n" +
 		"exec " + shellQuote(helper) + " -test.run='^TestHelperProcess$'\n"
 	binary := filepath.Join(dir, "helper")
-	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+	if err := fakebin.Write(binary, script, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	session := HelperSession{SocketPath: filepath.Join(dir, "missing.sock"), BinaryPath: binary, Username: "alice", Cookie: "cookie"}
@@ -77,7 +79,7 @@ func TestHelperEchoOnPromptIsNotMasked(t *testing.T) {
 		"export POLKIT_HELPER_TEST_ECHO=on\n" +
 		"exec " + shellQuote(helper) + " -test.run='^TestHelperProcess$'\n"
 	binary := filepath.Join(dir, "helper")
-	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+	if err := fakebin.Write(binary, script, 0o700); err != nil {
 		t.Fatal(err)
 	}
 

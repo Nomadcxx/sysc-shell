@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 type fakeProcess struct {
@@ -56,7 +58,7 @@ func TestEngineRefreshTerminalCatalogReadsCurrentList(t *testing.T) {
 	dir := t.TempDir()
 	catalogPath := filepath.Join(dir, "catalog")
 	binaryPath := filepath.Join(dir, "sysc-terminal")
-	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\nif [ \"$1\" != \"--list\" ]; then exit 2; fi\nexec /bin/cat \"$SYSC_TERMINAL_TEST_CATALOG\"\n"), 0o755); err != nil {
+	if err := fakebin.Write(binaryPath, "#!/bin/sh\nif [ \"$1\" != \"--list\" ]; then exit 2; fi\nexec /bin/cat \"$SYSC_TERMINAL_TEST_CATALOG\"\n", 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)

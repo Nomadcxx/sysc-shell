@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
 
 func TestAudioParsesWpctlVolume(t *testing.T) {
@@ -107,10 +109,7 @@ if [ "$cmd" = get-volume ]; then
 fi
 `
 	path := filepath.Join(dir, "wpctl")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitExecable(path); err != nil {
+	if err := fakebin.Write(path, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return &fakeCmd{path: path, dir: dir}
