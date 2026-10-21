@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os/exec"
 	"testing"
-	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -18,6 +17,10 @@ import (
 // benchmark renders the real page through the real panel callbacks, the path
 // the compositor drives, so the change is measured where a user feels it.
 //
+// BenchmarkControlCentreMediaFrame in frame_bench_test.go paints the same
+// frame with the group in place. This one adds the cleared baseline beside
+// it, so the gap between the two runs is what the group costs.
+//
 // What to watch in the output: B/op at 2x should be a small fraction of the
 // output surface (3440x1440x4 is about 18 MiB), and ns/op should sit close to
 // the same run with the group's opacity cleared.
@@ -25,7 +28,7 @@ import (
 // mediaBenchScale120 lists the scales the issue measured at; 240 is 2x.
 var mediaBenchScale120 = []int{120, 240}
 
-func BenchmarkControlCentreMediaFrame(b *testing.B) {
+func BenchmarkControlCentreMediaFrameOpacity(b *testing.B) {
 	for _, scale120 := range mediaBenchScale120 {
 		b.Run(fmt.Sprintf("scale=%d", scale120/120), func(b *testing.B) {
 			benchmarkControlCentreMediaFrame(b, scale120, false)
@@ -45,19 +48,7 @@ func benchRegistry(b *testing.B) *Registry {
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	b.Cleanup(reg.Close)
-	stop := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-reg.invalidations:
-			case <-reg.closed:
-				return
-			case <-stop:
-				return
-			}
-		}
-	}()
-	b.Cleanup(func() { close(stop) })
+	benchInvalidationsDrained(b, reg)
 	return reg
 }
 
@@ -68,19 +59,8 @@ func benchOpenPanel(b *testing.B, reg *Registry, id PanelID) *wayland.AuxSpec {
 	if err := reg.OpenPanel(id, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: assetOutW, OutH: assetOutH}); err != nil {
 		b.Fatal(err)
 	}
-	var spec *wayland.AuxSpec
-	deadline := time.After(10 * time.Second)
-	for got := 0; got < 2; {
-		select {
-		case req := <-reg.AuxRequests():
-			got++
-			if req.Open != nil {
-				spec = req.Open
-			}
-		case <-deadline:
-			b.Fatalf("got %d aux requests, want 2", got)
-		}
-	}
+	reqs := benchDrainAux(b, reg)
+	spec := reqs[1].Open
 	if spec == nil {
 		b.Fatal("no panel spec arrived")
 	}

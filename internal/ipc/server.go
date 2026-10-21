@@ -152,8 +152,26 @@ func (s *Server) Listen() error {
 		_ = ln.Close()
 		return err
 	}
-	s.ln = ln
+	s.setListener(ln)
 	return nil
+}
+
+// listener returns the bound listener, if Listen has run. Close can run while
+// Serve is still inside Listen, so the field is shared between those
+// goroutines and every read and write of it goes through s.mu.
+func (s *Server) listener() net.Listener {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ln
+}
+
+// setListener records the bound listener. The mutex release publishes the
+// listener together with every field net.Listen wrote while building it, so a
+// concurrent Close either sees a fully initialised listener or none at all.
+func (s *Server) setListener(ln net.Listener) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ln = ln
 }
 
 // SetHandlers installs the request handlers. It must run before Serve: the
@@ -170,12 +188,16 @@ func (s *Server) SetHandlers(h Handlers) {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.ln == nil {
+	ln := s.listener()
+	if ln == nil {
 		if err := s.Listen(); err != nil {
 			return err
 		}
+		ln = s.listener()
 	}
-	ln := s.ln
+	if ln == nil {
+		return ErrSingleInstance
+	}
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -251,10 +273,11 @@ func sameUser(conn net.Conn) bool {
 }
 
 func (s *Server) Close() error {
-	if s.ln == nil {
+	ln := s.listener()
+	if ln == nil {
 		return nil
 	}
-	err := s.ln.Close()
+	err := ln.Close()
 	_ = os.Remove(s.path)
 	return err
 }
