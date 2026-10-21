@@ -204,6 +204,20 @@ func TestWeatherPanelFitsLaptopScale(t *testing.T) {
 	if err := ui.LayoutColumn(root, ui.Rect{W: 460, H: 560}, h.measureText()); err != nil {
 		t.Fatalf("weather panel does not fit 460x560 at scale 1.25: %v", err)
 	}
+	day := true
+	for i := 0; i < 8; i++ {
+		r.reading.Hourly = append(r.reading.Hourly, services.Hour{
+			Time:        time.Date(2026, time.October, 21, 8+i, 0, 0, 0, time.UTC).Format("2006-01-02T15:04"),
+			Code:        0,
+			Temperature: 18,
+			IsDay:       &day,
+		})
+	}
+	h.weatherView = "hourly"
+	root = weatherTree(r, h)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 460, H: 560}, h.measureText()); err != nil {
+		t.Fatalf("hourly weather panel does not fit 460x560 at scale 1.25: %v", err)
+	}
 }
 
 func TestWeatherDaylightFollowsSunriseAndSunset(t *testing.T) {
