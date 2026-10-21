@@ -312,6 +312,7 @@ type Registry struct {
 	trayReplies          *trayReplyTracker
 	trayCloses           *trayCloseTracker
 	trayIcons            *icons.Worker
+	shutdown             shutdownState
 	wallpaperSvc         *wallpaper.Service
 	wallsService         wallsController
 	wallsSnapshot        walls.Snapshot
@@ -791,6 +792,7 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 func (r *Registry) mediaArtFor() *mediaArtWorker {
 	if r.mediaArt == nil {
 		r.mediaArt = newMediaArtWorker(r.applyMediaArt)
+		r.shutdown.mediaArt.store(r.mediaArt)
 	}
 	return r.mediaArt
 }
@@ -980,6 +982,7 @@ func (r *Registry) setBluetooth(bluetooth *services.Bluetooth) {
 		_ = r.bluetooth.Close()
 	}
 	r.bluetooth = bluetooth
+	r.shutdown.bluetooth.store(bluetooth)
 	if bluetooth == nil {
 		r.bluetoothState = services.BluetoothState{}
 		return
@@ -1901,6 +1904,7 @@ func (r *Registry) adoptBar(
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
+	r.shutdown.bars.store(r.barListLocked())
 	// Route this bar's invalidations -- animation frames included -- to the
 	// owner through the registry. Without this the frame loop writes a
 	// private channel nothing reads and every settling frame is dropped.
@@ -2323,6 +2327,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 				}
 				r.bars = bars
 				r.leases = leases
+				r.shutdown.bars.store(r.barListLocked())
 				panelOutputs := make(map[uint32]bool)
 				for _, h := range r.panelHosts {
 					if h != nil && !disabledOutputs[h.output] {
@@ -2426,6 +2431,7 @@ func (r *Registry) DropHost(global uint32) {
 	}
 	delete(r.bars, global)
 	delete(r.leases, global)
+	r.shutdown.bars.store(r.barListLocked())
 	r.trayOutputLostLocked(global)
 	r.mediaStrip.outputLostLocked(global)
 	r.tooltips.outputLost(global)
@@ -2482,6 +2488,17 @@ func (r *Registry) Close() {
 	locked := r.lockWithin(closeLockGrace)
 	if !locked {
 		log.Printf("shell: closing without r.mu; could not acquire r.mu within shutdown grace")
+		// r.mu is stranded, so the locked cleanup below cannot run. Release
+		// what the shell owns anyway: the handles are recorded where each
+		// resource is created, so the shutdown path reaches them without the
+		// lock. The panel, tray and toast teardown stays behind the lock,
+		// because those hold registry state. The plugin host is closed
+		// through its slot as well, and r.plugins is left alone: a render
+		// may hold the lock while it reads that field, and rewriting it
+		// here is the data race the fallback must not have. A closed host
+		// renders the same as a nil one -- frames() is internally
+		// synchronized and Close has emptied its views.
+		r.shutdown.release()
 	}
 	var osdAux []wayland.AuxRequest
 	var leases []*services.Lease
@@ -2499,6 +2516,7 @@ func (r *Registry) Close() {
 	var depthEffects depthClockEffects
 	var privacySvc *services.Privacy
 	var plugins *pluginHost
+	var launcherSvc *launcher.Service
 	if locked {
 		if r.polkitHost != nil && r.polkitHost.open_ {
 			r.polkitHost.finishLocked(true)
@@ -2553,6 +2571,8 @@ func (r *Registry) Close() {
 		r.privacySvc = nil
 		plugins = r.plugins
 		r.plugins = nil
+		launcherSvc = r.launcherSvc
+		r.launcherSvc = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -2564,16 +2584,6 @@ func (r *Registry) Close() {
 		r.clearCaffeineLocked()
 		r.pushIdleInputsLocked()
 		r.mu.Unlock()
-	}
-	if !locked {
-		// r.mu is stranded: a handler panicked between Lock and Unlock, and a
-		// render can hold that lock mid-read of r.plugins right now. Close the
-		// host through a local copy and leave the field alone, the way
-		// r.launcherSvc below is only nil'd under the lock. A closed host
-		// renders the same as a nil one -- frames() is internally
-		// synchronized and Close has emptied its views -- so nothing is lost
-		// by keeping the pointer stable.
-		plugins = r.plugins
 	}
 	if plugins != nil {
 		plugins.Close()
@@ -2607,14 +2617,8 @@ func (r *Registry) Close() {
 		_ = inhibit.Close()
 	}
 	releaseAll(leases)
-	var launcherSvc *launcher.Service
-	if r.lockWithin(closeLockGrace) {
-		launcherSvc = r.launcherSvc
-		r.launcherSvc = nil
-		r.mu.Unlock()
-	}
 	if launcherSvc != nil {
-		launcherSvc.Close()
+		r.shutdown.closeLauncher(launcherSvc)
 	}
 	if wallpaperThumbCancel != nil {
 		wallpaperThumbCancel()

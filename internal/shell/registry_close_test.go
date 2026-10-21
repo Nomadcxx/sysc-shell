@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
 
 // TestCloseGivesUpOnAStrandedLock pins shutdown behavior when r.mu remains
@@ -95,4 +96,64 @@ func TestCloseWithoutTheLockLeavesPluginsStable(t *testing.T) {
 	if r.plugins != installed {
 		t.Fatalf("Close rewrote r.plugins without r.mu: got %p, want %p", r.plugins, installed)
 	}
+}
+
+// TestCloseWithoutTheLockStopsTheOwnedServices pins that a Close which cannot
+// take r.mu still stops the services the shell owns. The handles are recorded
+// where each resource is created, so the shutdown path reaches them without
+// the lock, and the shutdown stays inside its grace: it waits for the lock
+// once, not twice.
+func TestCloseWithoutTheLockStopsTheOwnedServices(t *testing.T) {
+	r := NewRegistry(config.Config{})
+	service := newFakeWallsService(walls.Snapshot{})
+	r.attachWallsService(service)
+
+	// A holder that keeps r.mu past the grace strands it for the shutdown.
+	r.mu.Lock()
+
+	done := make(chan struct{})
+	go func() {
+		r.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(closeLockGrace + 2*time.Second):
+		t.Fatal("Close stayed blocked beyond its lock-acquisition grace with r.mu held")
+	}
+
+	if _, _, _, closes := service.counts(); closes != 1 {
+		t.Fatalf("the walls service was closed %d times, want 1", closes)
+	}
+	r.mu.Unlock()
+}
+
+// TestCloseTwiceWithoutTheLockReleasesOnce pins that a second Close does not
+// release the same resources again. A test that closes the registry and also
+// leaves the close to its cleanup is ordinary, and the launcher service panics
+// when it is closed twice.
+func TestCloseTwiceWithoutTheLockReleasesOnce(t *testing.T) {
+	r := NewRegistry(config.Config{})
+	service := newFakeWallsService(walls.Snapshot{})
+	r.attachWallsService(service)
+
+	r.mu.Lock()
+
+	for attempt := range 2 {
+		done := make(chan struct{})
+		go func() {
+			r.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(closeLockGrace + 2*time.Second):
+			t.Fatalf("Close %d stayed blocked beyond its lock-acquisition grace with r.mu held", attempt+1)
+		}
+	}
+
+	if _, _, _, closes := service.counts(); closes != 1 {
+		t.Fatalf("the walls service was closed %d times, want 1", closes)
+	}
+	r.mu.Unlock()
 }

@@ -87,6 +87,7 @@ func (r *Registry) launcherServiceLocked() *launcher.Service {
 		!sameLauncherActions(r.launcherServiceActions, r.cfg.Launcher.Actions)) {
 		stale := r.launcherSvc
 		r.launcherSvc = nil
+		r.shutdown.launcher.store(nil)
 		r.launcherServiceProviders = nil
 		r.launcherServiceActions = nil
 		r.launcherMu.Lock()
@@ -109,6 +110,7 @@ func (r *Registry) launcherServiceLocked() *launcher.Service {
 		cfg := r.launcherServiceConfig()
 		cfg.History = launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil)
 		r.launcherSvc = launcher.NewService(cfg)
+		r.shutdown.launcher.store(r.launcherSvc)
 		r.launcherServiceProviders = cloneLauncherCommandProviders(r.cfg.Launcher.Providers)
 		r.launcherServiceActions = cloneLauncherActions(r.cfg.Launcher.Actions)
 		if !r.launcherRelayStarted {

@@ -201,6 +201,7 @@ func (r *Registry) BindTray(sender trayCommandSender) {
 	r.trayReplies = newTrayReplyTracker()
 	workerContext, cancel := context.WithCancel(context.Background())
 	r.trayIconCancel = cancel
+	r.shutdown.trayIconCancel.store(cancel)
 	r.trayIcons = icons.NewWorker(icons.NewResolver("", nil), r.applyTrayIcon)
 	go func() { _ = r.trayIcons.Run(workerContext) }()
 	for _, bar := range r.bars {

@@ -53,6 +53,7 @@ func (r *Registry) configurePolkit() {
 	default:
 	}
 	r.polkitAgent, r.polkitCancel, r.polkitDone = agent, cancel, done
+	r.shutdown.polkitCancel.store(cancel)
 	agent.Hold(r.polkitLockerRunningLocked())
 	r.mu.Unlock()
 	go r.runPolkitAgent(ctx, cancel, agent, done)

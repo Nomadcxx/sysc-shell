@@ -469,6 +469,7 @@ func (r *Registry) setCaffeinePreset(h *PanelHost, value string) {
 		}
 		hold := r.inhibit
 		r.inhibit = nil
+		r.shutdown.inhibit.store(nil)
 		r.scheduleControl(h, hold.Close)
 		return
 	}
@@ -497,6 +498,7 @@ func (r *Registry) setCaffeinePreset(h *PanelHost, value string) {
 		keep := r.inhibitWanted && !stopped
 		if keep {
 			r.inhibit = hold
+			r.shutdown.inhibit.store(hold)
 		}
 		r.mu.Unlock()
 		r.refreshScreensaverSettingsPanel()
@@ -525,6 +527,7 @@ func (r *Registry) expireCaffeineLocked(now time.Time) (io.Closer, bool) {
 	}
 	hold := r.inhibit
 	r.inhibit = nil
+	r.shutdown.inhibit.store(nil)
 	r.clearCaffeineLocked()
 	r.pushIdleInputsLocked()
 	return hold, true
