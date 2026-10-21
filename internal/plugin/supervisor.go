@@ -540,16 +540,22 @@ func (s *Session) shutdown() ExitReason {
 		return classify(err)
 	case <-timer.C:
 		// The plugin did not take host.shutdown. Ask the whole group once,
-		// briefly, then insist: descendants that survived the leader would
-		// otherwise outlive the session in the user manager's care.
+		// briefly, then insist: the leader may exit before a descendant that
+		// ignores SIGTERM, so its Wait result does not end the group's grace.
 		_ = killGroup(s.cmd, syscall.SIGTERM)
+		softTimer := time.NewTimer(killGroupSoftWait)
+		defer softTimer.Stop()
+		leaderExited := false
 		select {
 		case <-done:
-			return ExitReason{Kind: ExitKilled}
-		case <-time.After(killGroupSoftWait):
+			leaderExited = true
+			<-softTimer.C
+		case <-softTimer.C:
 		}
 		_ = killGroup(s.cmd, syscall.SIGKILL)
-		<-done
+		if !leaderExited {
+			<-done
+		}
 		return ExitReason{Kind: ExitKilled}
 	}
 }

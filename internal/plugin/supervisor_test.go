@@ -741,6 +741,10 @@ func killIfAlive(pid int) {
 	}
 }
 
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
 func TestCloseKillsPluginDescendantsWhenGraceExpires(t *testing.T) {
 	t.Parallel()
 
@@ -767,6 +771,43 @@ func TestCloseKillsPluginDescendantsWhenGraceExpires(t *testing.T) {
 	// waiting of its own.
 	if elapsed := time.Since(began); elapsed > 3*time.Second {
 		t.Fatalf("Close took %v, want it bounded by the grace period", elapsed)
+	}
+}
+
+func TestCloseKillsPluginDescendantThatIgnoresSIGTERM(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "child.pid")
+	readyPath := filepath.Join(dir, "child.ready")
+	m := installHelper(t, "slow-shutdown")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Start an in-group child that has installed SIGTERM ignore before the
+	// plugin completes its handshake, then exec the normal slow-shutdown helper.
+	script := fmt.Sprintf("#!/bin/sh\n/bin/sh -c 'trap \"\" TERM; : > \"$1\"; exec sleep 60' sh %s </dev/null >/dev/null 2>&1 &\necho $! > %s\nwhile [ ! -f %s ]; do sleep 0.01; done\nexec %s %s %s\n",
+		shellQuote(readyPath), shellQuote(pidPath), shellQuote(readyPath),
+		shellQuote(self), shellQuote(HelperFlag), shellQuote("slow-shutdown"))
+	if err := os.WriteFile(m.ExecPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	s := supervisor(m)
+	s.ShutdownGrace = 100 * time.Millisecond
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	child := readChildPID(t, pidPath)
+	defer killIfAlive(child)
+
+	if reason := sess.Close(); reason.Kind != ExitKilled {
+		t.Fatalf("exit = %+v, want a kill after the grace expired", reason)
+	}
+	if !waitForExit(t, child, time.Second) {
+		t.Fatalf("SIGTERM-ignoring descendant %d survived the forced stop", child)
 	}
 }
 
