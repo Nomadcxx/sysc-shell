@@ -32,10 +32,15 @@ const shutdownSendTimeout = 100 * time.Millisecond
 // child processes before the host kills an unresponsive process.
 const defaultShutdownGrace = 4 * time.Second
 
-// exitedWaitDelay bounds the I/O copy cmd.Wait still waits for once the
-// process has been seen to leave. A descendant holding a pipe would wait it
-// out for the whole shutdown grace, and that grace is for a process that can
+// exitedWaitDelay bounds how long cmd.Wait keeps reading a plugin's pipes after
+// the process has left or has been killed. A descendant holding a pipe would
+// wait out the whole shutdown grace, and that grace is for a process that can
 // still be asked to stop.
+//
+// The command carries this one value for its whole life: os/exec's context
+// watcher reads Cmd.WaitDelay from its own goroutine as soon as the command
+// context is done, so the field is set before Start and never written again
+// (sysc-1532).
 const exitedWaitDelay = 250 * time.Millisecond
 
 // exitDrainDelay is how long a reader gets to empty the standard output after
@@ -194,7 +199,10 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	stderr := newTail(MaxStderrBytes)
 	// Cmd.Wait owns the pipe copy and does not close stderr until it finishes.
 	cmd.Stderr = stderr
-	cmd.WaitDelay = grace
+	// The post-exit I/O bound is fixed before Start: os/exec reads this field
+	// from its own goroutine when the command context is done, so nothing may
+	// assign it afterwards (sysc-1532).
+	cmd.WaitDelay = exitedWaitDelay
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -482,10 +490,9 @@ func (s *Session) shutdown() ExitReason {
 	}
 	// Already gone. There is nothing left to ask to stop and no grace a dead
 	// process could use, so skip both. Its descendants may still be holding
-	// the I/O pipes, which is what makes cmd.Wait slow here, so wait that copy
-	// out briefly rather than for the whole shutdown grace.
+	// the I/O pipes, which is what makes cmd.Wait slow here; the command's
+	// post-exit I/O bound is set before Start and already covers that.
 	if s.Exited() {
-		s.cmd.WaitDelay = exitedWaitDelay
 		return classify(s.cmd.Wait())
 	}
 	sent := make(chan struct{})
