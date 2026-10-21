@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -163,27 +164,121 @@ func TestThumbPublishesFinalCountsWhenNothingNewIsMade(t *testing.T) {
 	}
 }
 
+// thumbCancelWait is the backstop for the generator to notice a cancel. It is
+// a backstop, not a budget: the test holds one item in flight itself, so the
+// generator has nothing left to do but notice.
+const thumbCancelWait = 10 * time.Second
+
+// TestThumbStopsOnCancel holds one item in the decoder, cancels while it is
+// there, and checks that the generator stops and leaves no preview behind.
+//
+// The old check waited two seconds for the generator to stop after a cancel
+// that could land anywhere in a batch of forty large images, so the load on
+// the machine decided whether it passed. Here the test says when the item is
+// in flight and when the decode may finish, so the only thing left to observe
+// is the generator's own reaction.
 func TestThumbStopsOnCancel(t *testing.T) {
 	root := t.TempDir()
 	cache := t.TempDir()
 	var entries []Entry
-	for i := range 40 {
+	for i := range 4 {
 		p := filepath.Join(root, fmt.Sprintf("w%02d.png", i))
-		writePNG(t, p, 1600, 900)
+		writePNG(t, p, 64, 36)
 		entries = append(entries, Entry{Name: filepath.Base(p), Path: p, Kind: KindImage})
 	}
+
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	restore := decodeImage.Swap(func(ctx context.Context, r io.Reader) (image.Image, error) {
+		select {
+		case <-inFlight:
+		default:
+			close(inFlight)
+		}
+		<-release
+		return image.NewRGBA(image.Rect(0, 0, 64, 36)), nil
+	})
+	t.Cleanup(restore)
 
 	th := NewThumbnailer(cache)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { th.Run(ctx); close(done) }()
 	th.Enqueue(entries, "")
-	time.Sleep(20 * time.Millisecond)
+
+	select {
+	case <-inFlight:
+	case <-time.After(thumbCancelWait):
+		t.Fatal("the generator never took an item in flight")
+	}
 	cancel()
+	close(release)
+
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(thumbCancelWait):
 		t.Fatal("cancel did not stop the generator")
+	}
+	for _, entry := range entries {
+		if _, err := os.Stat(th.pathFor(entry.Path)); err == nil {
+			t.Fatalf("%s: a cancelled generator wrote a preview", entry.Name)
+		}
+	}
+	if c := th.Counts(); c.Done != 0 {
+		t.Fatalf("counts after the cancel: %d done, want 0", c.Done)
+	}
+}
+
+// TestRenderStillSkipsTheSourceWhenTheScanIsCancelled pins the first place
+// the work can be dropped: a scan that is already cancelled must not decode
+// the source at all.
+func TestRenderStillSkipsTheSourceWhenTheScanIsCancelled(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "w.png")
+	writePNG(t, src, 64, 36)
+	th := NewThumbnailer(t.TempDir())
+
+	called := false
+	restore := decodeImage.Swap(func(ctx context.Context, r io.Reader) (image.Image, error) {
+		called = true
+		return image.NewRGBA(image.Rect(0, 0, 4, 4)), nil
+	})
+	t.Cleanup(restore)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := th.renderStill(ctx, src, th.pathFor(src)); err == nil {
+		t.Fatal("a cancelled render reported success")
+	}
+	if called {
+		t.Fatal("a cancelled render decoded the source")
+	}
+}
+
+// TestRenderStillDropsThePreviewWhenTheCancelLandsOnTheDecode pins the
+// second place: a cancel that lands while the source is being decoded must
+// not leave a preview behind. The decode is the one stretch of the work that
+// cannot be interrupted from the outside, so what happens after it decides
+// whether the cancelled work is thrown away or finished off.
+func TestRenderStillDropsThePreviewWhenTheCancelLandsOnTheDecode(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "w.png")
+	writePNG(t, src, 64, 36)
+	th := NewThumbnailer(t.TempDir())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	restore := decodeImage.Swap(func(ctx context.Context, r io.Reader) (image.Image, error) {
+		cancel()
+		return image.NewRGBA(image.Rect(0, 0, 64, 36)), nil
+	})
+	t.Cleanup(restore)
+
+	dst := th.pathFor(src)
+	if err := th.renderStill(ctx, src, dst); err == nil {
+		t.Fatal("a cancelled render reported success")
+	}
+	if _, err := os.Stat(dst); err == nil {
+		t.Fatal("a cancelled render wrote a preview")
 	}
 }
 
