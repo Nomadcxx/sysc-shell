@@ -2050,6 +2050,206 @@ func TestCalendarPageRendersPluginSnapshotEvents(t *testing.T) {
 	}
 }
 
+const privacySnapshotFixture = `{"schema":1,"available":true,"generated_at":"2026-10-20T12:00:00Z","catalog_rev":"r1","overall":{"grade":"red","findings":1,"high":1},"network":{"vpn":{"state":"unknown","default_route_via_tunnel":false,"dns_contained":false,"ipv6_contained":true,"defects":[]},"telemetry_connections_unknown":true},"categories":[{"id":"browser","name":"Browser","grade":"red","installed":[{"id":"chrome","name":"Google Chrome","grade":"red"}],"installed_shown":1,"installed_total":1,"installed_truncated":false,"worst":{"id":"chrome","name":"Google Chrome","grade":"red"}}],"categories_shown":1,"categories_total":1,"categories_truncated":false,"findings":[{"id":"browser.chrome","severity":"high","grade":"red","category":"browser","title":"Google Chrome","summary":"Catalogue risk","actions":[]}],"findings_shown":1,"findings_total":1,"findings_truncated":false,"reduced":[{"fact":"network.telemetry","effect":"Live endpoint attribution is unavailable."}],"reduced_shown":1,"reduced_total":1,"reduced_truncated":false}`
+const privacyUnavailableSnapshotFixture = `{"schema":1,"available":false,"reason":"privacybit was not found","hint":"Install privacybit and make sure it is available on PATH.","generated_at":"2026-10-20T12:00:00Z","overall":{"grade":"unknown"},"network":{"vpn":{"state":"unknown","defects":[]},"telemetry_connections_unknown":true},"categories":[],"categories_shown":0,"categories_total":0,"categories_truncated":false,"findings":[],"findings_shown":0,"findings_total":0,"findings_truncated":false,"reduced":[],"reduced_shown":0,"reduced_total":0,"reduced_truncated":false}`
+
+func TestParsePrivacySnapshotAcceptsBoundedAvailableAndUnavailableStates(t *testing.T) {
+	t.Parallel()
+
+	got, err := parseCCPrivacySnapshot([]byte(privacySnapshotFixture))
+	if err != nil {
+		t.Fatalf("parse available snapshot: %v", err)
+	}
+	if !got.Available || got.Overall.Grade != "red" || len(got.Categories) != 1 || !got.Network.TelemetryConnectionsUnknown {
+		t.Fatalf("parsed snapshot lost audit state: %+v", got)
+	}
+
+	got, err = parseCCPrivacySnapshot([]byte(privacyUnavailableSnapshotFixture))
+	if err != nil {
+		t.Fatalf("parse unavailable snapshot: %v", err)
+	}
+	if got.Available || got.Overall.Grade != "unknown" || got.Reason == "" || got.Hint == "" {
+		t.Fatalf("unavailable state was not explicit and unknown: %+v", got)
+	}
+}
+
+func TestParsePrivacySnapshotRejectsInvalidOrUnboundedStates(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"empty":           "",
+		"malformed":       "{",
+		"future schema":   strings.Replace(privacySnapshotFixture, `"schema":1`, `"schema":2`, 1),
+		"invalid grade":   strings.Replace(privacySnapshotFixture, `"overall":{"grade":"red"`, `"overall":{"grade":"excellent"`, 1),
+		"telemetry false": strings.Replace(privacySnapshotFixture, `"telemetry_connections_unknown":true`, `"telemetry_connections_unknown":false`, 1),
+		"bad list count":  strings.Replace(privacySnapshotFixture, `"findings_shown":1`, `"findings_shown":6`, 1),
+		"oversized":       strings.Repeat("x", 128*1024+1),
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseCCPrivacySnapshot([]byte(raw)); err == nil {
+				t.Fatal("invalid snapshot was accepted")
+			}
+		})
+	}
+}
+
+func TestPrivacySnapshotReaderTreatsMissingPluginStateAsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	if got := ccPrivacySnapshotFor(nil); got != nil {
+		t.Fatalf("nil registry produced a snapshot: %+v", got)
+	}
+	if got := ccPrivacySnapshotFor(&Registry{}); got != nil {
+		t.Fatalf("registry without plugin state produced a snapshot: %+v", got)
+	}
+
+	r := &Registry{}
+	withPrivacyPlugin(t, r, `{"control_center":`+privacySnapshotFixture+`}`)
+	got := ccPrivacySnapshotFor(r)
+	if got == nil || !got.Available || got.Overall.Grade != "red" {
+		t.Fatalf("valid running-plugin state was not read: %+v", got)
+	}
+}
+
+func withPrivacyPlugin(t *testing.T, r *Registry, state string) {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, ccPrivacyPluginID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, plugin.StateFileName), []byte(state), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := plugin.OpenStore(root, ccPrivacyPluginID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := r.plugins
+	t.Cleanup(func() { r.plugins = prev })
+	r.plugins = &pluginHost{r: r, slots: map[string]*pluginSlot{ccPrivacyPluginID: {store: store}}}
+}
+
+func TestPrivacyPageKeepsCaptureRowsAndShowsUnavailableAudit(t *testing.T) {
+	t.Parallel()
+
+	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
+	page := ccPrivacy(nil, h)
+	if len(page.Children) != 3 {
+		t.Fatalf("privacy page has %d cards, want capture, audit, and saved report", len(page.Children))
+	}
+	got := renderText(page)
+	for _, want := range []string{
+		"Capture activity", "Microphone", "Camera", "Screen sharing",
+		"Privacy audit", "Audit snapshot unavailable", "Saved report", "No saved report has been checked yet", "Run scan",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("privacy page lost %q: %q", want, got)
+		}
+	}
+}
+
+func TestPrivacyGradePresentationUsesWordsAndThemeTones(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		grade string
+		word  string
+		tone  ui.Tone
+	}{
+		{"green", "Good", ui.ToneNormal},
+		{"amber", "Review", ui.ToneActivity},
+		{"red", "Risky", ui.ToneError},
+		{"unknown", "Unrated", ui.ToneSubtle},
+		{"future", "Unrated", ui.ToneSubtle},
+	} {
+		word, tone := ccPrivacyGradeLabel(tc.grade)
+		if word != tc.word || tone != tc.tone {
+			t.Errorf("grade %q = %q/%v, want %q/%v", tc.grade, word, tone, tc.word, tc.tone)
+		}
+	}
+}
+
+func TestPrivacyPageRendersSnapshotTotalsAndCoverageLimits(t *testing.T) {
+	t.Parallel()
+
+	raw := strings.Replace(privacySnapshotFixture, `"categories_total":1,"categories_truncated":false`,
+		`"categories_total":10,"categories_truncated":true`, 1)
+	raw = strings.Replace(raw, `"overall":{"grade":"red","findings":1,"high":1}`, `"overall":{"grade":"red","findings":7,"high":1}`, 1)
+	raw = strings.Replace(raw, `"findings_total":1,"findings_truncated":false`,
+		`"findings_total":7,"findings_truncated":true`, 1)
+	r := &Registry{now: time.Date(2026, time.October, 20, 12, 1, 0, 0, time.UTC)}
+	withPrivacyPlugin(t, r, `{"control_center":`+raw+`}`)
+	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
+	page := ccPrivacy(r, h)
+	got := renderText(page)
+	for _, want := range []string{
+		"Privacy audit", "Overall", "Risky", "Updated", "VPN", "Unknown",
+		"Default route", "Outside tunnel", "DNS", "IPv6", "Contained",
+		"Telemetry attribution is unavailable", "Browser", "Google Chrome",
+		"7 findings", "1 high", "9 more categories not shown",
+		"6 more findings not shown", "Live endpoint attribution is unavailable.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("privacy summary lost %q: %q", want, got)
+		}
+	}
+	for _, node := range findAllKind(page, ui.KindText) {
+		if node.Text == "Risky" && node.Tone != ui.ToneError {
+			t.Fatalf("red grade tone = %v, want error", node.Tone)
+		}
+	}
+}
+
+func TestPrivacyPageShowsPluginUnavailableReasonAndHint(t *testing.T) {
+	t.Parallel()
+	r := &Registry{}
+	withPrivacyPlugin(t, r, `{"control_center":`+privacyUnavailableSnapshotFixture+`}`)
+	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
+	got := renderText(ccPrivacy(r, h))
+	for _, want := range []string{"Unrated", "privacybit was not found", "Install privacybit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("unavailable privacy card lost %q: %q", want, got)
+		}
+	}
+}
+
+func TestPrivacyPageDowngradesStaleSnapshotToUnrated(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+		want string
+	}{
+		{"old", time.Date(2026, time.October, 20, 12, 20, 0, 0, time.UTC), "Last report"},
+		{"future", time.Date(2026, time.October, 20, 11, 59, 0, 0, time.UTC), "future"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &Registry{now: tc.now}
+			withPrivacyPlugin(t, r, `{"control_center":`+privacySnapshotFixture+`}`)
+			h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
+			page := ccPrivacy(r, h)
+			got := renderText(page)
+			for _, want := range []string{"Overall", "Unrated", "stale", tc.want, "Last result", "Risky"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("stale privacy card lost %q: %q", want, got)
+				}
+			}
+			for _, notWant := range []string{"Browser", "7 findings"} {
+				if strings.Contains(got, notWant) {
+					t.Errorf("stale privacy card presented current details %q: %q", notWant, got)
+				}
+			}
+			for _, node := range findAllKind(page, ui.KindText) {
+				if node.Text == "Risky" && node.Tone != ui.ToneSubtle {
+					t.Fatalf("stale grade tone = %v, want subtle", node.Tone)
+				}
+			}
+		})
+	}
+}
+
 // A plugin that is not running publishes nothing, whatever it left on disk:
 // the page takes the no-snapshot path rather than showing a stale month.
 func TestCalendarPageIgnoresAStoppedPluginsState(t *testing.T) {
