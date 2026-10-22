@@ -145,6 +145,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 		h.pageDirection = -1
 	}
 	h.section = section
+	if section == "privacy" {
+		r.refreshPrivacySavedReportLocked()
+	}
 	if section == "home" {
 		r.refreshWallsLocked()
 	}
@@ -334,6 +337,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		target = PanelMonitor
 	case "cc:close":
 		r.closePanelLocked(h.id)
+		return true
+	case ccPrivacyScanAction:
+		r.startPrivacyScanLocked(h)
 		return true
 	case "cc:caffeine":
 		r.setCaffeine(h, !r.inhibitWanted)
