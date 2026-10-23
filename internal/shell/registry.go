@@ -75,7 +75,6 @@ type Registry struct {
 	niriSnapshot       niri.Snapshot
 	privacyPipe        services.PrivacySnapshot
 	privacy            privacyState
-	privacyScan        ccPrivacyScanStatus
 	privacySvc         *services.Privacy
 	privacyOSD         chan []privacyChange
 	now                time.Time

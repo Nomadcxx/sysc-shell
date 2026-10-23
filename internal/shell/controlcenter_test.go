@@ -2136,37 +2136,59 @@ func TestPrivacyPageKeepsCaptureRowsAndShowsUnavailableAudit(t *testing.T) {
 
 	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
 	page := ccPrivacy(nil, h)
-	if len(page.Children) != 3 {
-		t.Fatalf("privacy page has %d cards, want capture, audit, and saved report", len(page.Children))
+	if len(page.Children) != 2 {
+		t.Fatalf("privacy page has %d cards, want capture activity and one audit summary", len(page.Children))
 	}
 	got := renderText(page)
 	for _, want := range []string{
 		"Capture activity", "Microphone", "Camera", "Screen sharing",
-		"Privacy audit", "Audit snapshot unavailable", "Saved report", "No saved report has been checked yet", "Run scan",
+		"Privacy audit", "Unrated", "No audit result is available", "Open full audit",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("privacy page lost %q: %q", want, got)
 		}
 	}
+	for _, stale := range []string{"Saved report", "Run scan", "Categories", "Google Chrome"} {
+		if strings.Contains(got, stale) {
+			t.Fatalf("privacy summary repeats full audit detail %q: %q", stale, got)
+		}
+	}
+	if button := findAction(page, "cc:privacy-open"); button == nil || button.Name == "" {
+		t.Fatalf("full audit button = %+v", button)
+	}
 }
 
-func TestPrivacyGradePresentationUsesWordsAndThemeTones(t *testing.T) {
+func TestPrivacyGradePresentationUsesWordsAndThemeFills(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		grade string
 		word  string
-		tone  ui.Tone
+		fill  ui.Fill
+		icon  string
 	}{
-		{"green", "Good", ui.ToneNormal},
-		{"amber", "Review", ui.ToneActivity},
-		{"red", "Risky", ui.ToneError},
-		{"unknown", "Unrated", ui.ToneSubtle},
-		{"future", "Unrated", ui.ToneSubtle},
+		{"green", "Good", ui.FillAccent, "verified_user"},
+		{"amber", "Review", ui.FillOutline, "flag"},
+		{"red", "Risky", ui.FillErrorContainer, "gpp_bad"},
+		{"unknown", "Unrated", ui.FillSoft, "shield"},
+		{"future", "Unrated", ui.FillSoft, "shield"},
 	} {
-		word, tone := ccPrivacyGradeLabel(tc.grade)
-		if word != tc.word || tone != tc.tone {
-			t.Errorf("grade %q = %q/%v, want %q/%v", tc.grade, word, tone, tc.word, tc.tone)
+		raw := strings.Replace(privacySnapshotFixture, `"grade":"red"`, `"grade":"`+tc.grade+`"`, 1)
+		r := &Registry{now: time.Date(2026, time.October, 20, 12, 1, 0, 0, time.UTC)}
+		withPrivacyPlugin(t, r, `{"control_center":`+raw+`}`)
+		h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
+		page := ccPrivacy(r, h)
+		chip := findNode(page, func(n *ui.Node) bool { return n.Key == "privacy-grade" })
+		if chip == nil || chip.Kind != ui.KindCapsule || chip.Fill != tc.fill || !strings.Contains(renderText(chip), tc.word) {
+			t.Errorf("grade %q chip = %+v, want %q on fill %v", tc.grade, chip, tc.word, tc.fill)
+			continue
+		}
+		if len(chip.Children) != 1 || chip.Children[0].Kind != ui.KindRow {
+			t.Errorf("grade %q capsule content = %+v, want one row child", tc.grade, chip.Children)
+		}
+		icon := findNode(chip, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
+		if icon == nil || icon.Icon != tc.icon {
+			t.Errorf("grade %q icon = %+v, want %q", tc.grade, icon, tc.icon)
 		}
 	}
 }
@@ -2184,20 +2206,14 @@ func TestPrivacyPageRendersSnapshotTotalsAndCoverageLimits(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
 	page := ccPrivacy(r, h)
 	got := renderText(page)
-	for _, want := range []string{
-		"Privacy audit", "Overall", "Risky", "Updated", "VPN", "Unknown",
-		"Default route", "Outside tunnel", "DNS", "IPv6", "Contained",
-		"Telemetry attribution is unavailable", "Browser", "Google Chrome",
-		"7 findings", "1 high", "9 more categories not shown",
-		"6 more findings not shown", "Live endpoint attribution is unavailable.",
-	} {
-		if !strings.Contains(got, want) {
+	for _, want := range []string{"Privacy audit", "Risky", "Updated", "coverage limits", "Open full audit"} {
+		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Errorf("privacy summary lost %q: %q", want, got)
 		}
 	}
-	for _, node := range findAllKind(page, ui.KindText) {
-		if node.Text == "Risky" && node.Tone != ui.ToneError {
-			t.Fatalf("red grade tone = %v, want error", node.Tone)
+	for _, notWant := range []string{"Browser", "Google Chrome", "VPN", "7 findings", "1 high"} {
+		if strings.Contains(got, notWant) {
+			t.Errorf("privacy summary showed detailed audit field %q: %q", notWant, got)
 		}
 	}
 }
@@ -2222,7 +2238,7 @@ func TestPrivacyPageDowngradesStaleSnapshotToUnrated(t *testing.T) {
 		now  time.Time
 		want string
 	}{
-		{"old", time.Date(2026, time.October, 20, 12, 20, 0, 0, time.UTC), "Last report"},
+		{"old", time.Date(2026, time.October, 20, 12, 20, 0, 0, time.UTC), "Last scan"},
 		{"future", time.Date(2026, time.October, 20, 11, 59, 0, 0, time.UTC), "future"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2231,23 +2247,81 @@ func TestPrivacyPageDowngradesStaleSnapshotToUnrated(t *testing.T) {
 			h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
 			page := ccPrivacy(r, h)
 			got := renderText(page)
-			for _, want := range []string{"Overall", "Unrated", "stale", tc.want, "Last result", "Risky"} {
+			for _, want := range []string{"Unrated", tc.want} {
 				if !strings.Contains(got, want) {
 					t.Errorf("stale privacy card lost %q: %q", want, got)
 				}
 			}
-			for _, notWant := range []string{"Browser", "7 findings"} {
+			if !strings.Contains(got, "Open full audit") {
+				t.Errorf("stale summary lost route to full audit: %q", got)
+			}
+			for _, notWant := range []string{"Browser", "7 findings", "Risky"} {
 				if strings.Contains(got, notWant) {
 					t.Errorf("stale privacy card presented current details %q: %q", notWant, got)
 				}
 			}
-			for _, node := range findAllKind(page, ui.KindText) {
-				if node.Text == "Risky" && node.Tone != ui.ToneSubtle {
-					t.Fatalf("stale grade tone = %v, want subtle", node.Tone)
-				}
-			}
 		})
 	}
+}
+
+func TestPrivacyPageOpenAuditUsesCurrentOutputAndReportsMissingPlugin(t *testing.T) {
+	t.Run("current output", func(t *testing.T) {
+		const manifest = `{"schema":1,"id":"org.sysc.privacy","name":"Privacybit","version":"1.0.0","protocol":{"major":1,"minor":8},"exec":"bin/sysc-plugin-timer","capabilities":["panels"],"widgets":[{"id":"bar"}],"panels":[{"id":"panel","width":620,"height":720,"placement":"attached"}]}`
+		reg := bindManifestPlugin(t, "ok", ccPrivacyPluginID, manifest, []string{ccPrivacyPluginID})
+		newHosts(t, reg, map[uint32]string{7: "DP-1"})
+		waitPluginText(t, reg.bars[7], "hello")
+		if err := reg.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+			t.Fatal(err)
+		}
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelControlCenter]
+		if !h.activateControlCentre(reg, &ui.Node{Action: "cc:privacy-open"}) {
+			reg.mu.Unlock()
+			t.Fatal("Open full audit action was not handled")
+		}
+		reg.mu.Unlock()
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			reg.plugins.mu.Lock()
+			panel := reg.plugins.panel
+			reg.plugins.mu.Unlock()
+			if panel != nil && panel.Plugin == ccPrivacyPluginID {
+				if panel.Entry != "panel" || panel.Output != "DP-1" || panel.Generation != 7 {
+					t.Fatalf("opened privacy panel = %+v", panel)
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("Control Centre did not open the privacy panel")
+	})
+
+	t.Run("missing plugin has visible error", func(t *testing.T) {
+		reg := newPanelRegistry(t)
+		newHosts(t, reg, map[uint32]string{7: "DP-1"})
+		if err := reg.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+			t.Fatal(err)
+		}
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelControlCenter]
+		if !h.activateControlCentre(reg, &ui.Node{Action: "cc:privacy-open"}) {
+			reg.mu.Unlock()
+			t.Fatal("Open full audit action was not handled")
+		}
+		reg.mu.Unlock()
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			reg.mu.Lock()
+			got := h.errLabel
+			reg.mu.Unlock()
+			if strings.Contains(got, "Privacybit plugin is unavailable") {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("missing plugin did not produce a visible error")
+	})
 }
 
 // A plugin that is not running publishes nothing, whatever it left on disk:
