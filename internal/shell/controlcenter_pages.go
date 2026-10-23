@@ -390,11 +390,9 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 
 func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
 	state := privacyState{}
-	status := ccPrivacyScanStatus{}
 	now := time.Now()
 	if r != nil {
 		state = r.privacy
-		status = r.privacyScan
 		if !r.now.IsZero() {
 			now = r.now
 		}
@@ -406,10 +404,13 @@ func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
 		privacyStatusSection("Screen sharing", state.screenShare, privacySignalDetail(state, privacyScreenShare)),
 	}
 	m := h.metrics()
+	errLabel := ""
+	if h != nil {
+		errLabel = h.errLabel
+	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
 		monitorCard(m, rows),
-		ccPrivacyAuditCard(m, ccPrivacySnapshotFor(r), now),
-		ccPrivacySavedReportCard(m, status, now),
+		ccPrivacyAuditCard(m, ccPrivacySnapshotFor(r), now, errLabel),
 	}}
 }
 
@@ -638,17 +639,23 @@ func validCCPrivacyGrade(grade string) bool {
 	}
 }
 
-func ccPrivacyGradeLabel(grade string) (string, ui.Tone) {
+func ccPrivacyGradeChip(grade string) *ui.Node {
+	word, icon, fill := "Unrated", "shield", ui.FillSoft
 	switch grade {
 	case "green":
-		return "Good", ui.ToneNormal
+		word, icon, fill = "Good", "verified_user", ui.FillAccent
 	case "amber":
-		return "Review", ui.ToneActivity
+		word, icon, fill = "Review", "flag", ui.FillOutline
 	case "red":
-		return "Risky", ui.ToneError
-	default:
-		return "Unrated", ui.ToneSubtle
+		word, icon, fill = "Risky", "gpp_bad", ui.FillErrorContainer
 	}
+	return &ui.Node{Kind: ui.KindCapsule, Key: "privacy-grade", Fill: fill, Shape: ui.ShapeStadium,
+		Gap: theme.MarginXS, Padding: theme.MarginS, Children: []*ui.Node{{
+			Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
+				{Kind: ui.KindIcon, Icon: icon},
+				{Kind: ui.KindText, Text: word, TextRole: theme.RoleLabel, Name: word},
+			},
+		}}}
 }
 
 func ccPrivacyCountsValid(shown, total int, truncated bool, actual int) bool {
@@ -659,134 +666,53 @@ func ccPrivacyTextFits(value string, limit int) bool {
 	return len(value) <= limit
 }
 
-func ccPrivacyAuditCard(m theme.Metrics, snapshot *ccPrivacySnapshot, now time.Time) *ui.Node {
+func ccPrivacyAuditCard(m theme.Metrics, snapshot *ccPrivacySnapshot, now time.Time, errLabel string) *ui.Node {
 	rows := []*ui.Node{monitorCardTitle("Privacy audit", 0)}
-	if snapshot == nil {
-		rows = append(rows,
-			ccPrivacyValueRow("Overall", "Unrated", ui.ToneSubtle),
-			ccPrivacyTextLine("Audit snapshot unavailable.", ui.ToneSubtle),
-			ccPrivacyTextLine("No valid report is available from the privacy plugin.", ui.ToneSubtle),
-		)
-		return monitorCard(m, rows)
-	}
-	if !snapshot.Available {
-		rows = append(rows,
-			ccPrivacyValueRow("Overall", "Unrated", ui.ToneSubtle),
-			ccPrivacyTextLine(snapshot.Reason, ui.ToneSubtle),
-			ccPrivacyTextLine(snapshot.Hint, ui.ToneSubtle),
-		)
-		return monitorCard(m, rows)
-	}
-	age := now.Sub(snapshot.GeneratedAt)
-	if age < 0 || age >= ccPrivacyStaleAfter {
-		rows = append(rows,
-			ccPrivacyValueRow("Overall", "Unrated", ui.ToneSubtle),
-			ccPrivacyTextLine("The last audit is stale; its grade is not current.", ui.ToneSubtle),
-		)
-		if age < 0 {
-			rows = append(rows, ccPrivacyTextLine("The report timestamp is in the future.", ui.ToneSubtle))
-		} else {
-			rows = append(rows, ccPrivacyValueRow("Last report", ccPrivacyAgeText(age), ui.ToneSubtle))
-		}
-		lastGrade, _ := ccPrivacyGradeLabel(snapshot.Overall.Grade)
-		rows = append(rows, ccPrivacyValueRow("Last result", lastGrade, ui.ToneSubtle))
-		return monitorCard(m, rows)
-	}
-	rows = append(rows, ccPrivacyValueRow("Updated", ccPrivacyAgeText(age), ui.ToneSubtle))
-
-	grade, gradeTone := ccPrivacyGradeLabel(snapshot.Overall.Grade)
-	rows = append(rows, ccPrivacyValueRow("Overall", grade, gradeTone))
-	vpnLabel, vpnTone := "Unknown", ui.ToneSubtle
-	if snapshot.Network.VPN.State == "connected" {
-		vpnLabel, vpnTone = "Connected", ui.ToneNormal
-		if snapshot.Network.VPN.Client != "" {
-			vpnLabel += " (" + snapshot.Network.VPN.Client + ")"
+	grade := "unknown"
+	detail := "No audit result is available. Check that the Privacybit plugin is enabled."
+	if snapshot != nil {
+		switch {
+		case !snapshot.Available:
+			detail = strings.TrimSpace(snapshot.Reason + " " + snapshot.Hint)
+		case now.Before(snapshot.GeneratedAt):
+			detail = "Last scan timestamp is in the future. Check the system clock and scan again."
+		case now.Sub(snapshot.GeneratedAt) >= ccPrivacyStaleAfter:
+			detail = "Last scan is stale · " + ccPrivacyAgeText(now.Sub(snapshot.GeneratedAt)) + ". Scan again to restore a current grade."
+		default:
+			grade = snapshot.Overall.Grade
+			detail = "Updated " + ccPrivacyAgeText(now.Sub(snapshot.GeneratedAt))
+			if ccPrivacyHasCoverageLimits(snapshot) {
+				detail += " · Coverage limits are listed in the full audit."
+			}
 		}
 	}
 	rows = append(rows,
-		ccPrivacyValueRow("VPN", vpnLabel, vpnTone),
-		ccPrivacyContainmentRow("Default route via tunnel", snapshot.Network.VPN.DefaultRouteViaTunnel),
-		ccPrivacyContainmentRow("DNS containment", snapshot.Network.VPN.DNSContained),
-		ccPrivacyContainmentRow("IPv6 containment", snapshot.Network.VPN.IPv6Contained),
+		&ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Overall", Name: "Overall"},
+			ccPrivacyGradeChip(grade),
+		}},
+		&ui.Node{Kind: ui.KindText, Text: detail, Name: detail, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 	)
-	if snapshot.Network.VPN.KillSwitchNote != "" {
-		rows = append(rows, ccPrivacyTextLine(snapshot.Network.VPN.KillSwitchNote, ui.ToneSubtle))
+	if errLabel != "" {
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: errLabel, Name: errLabel, TextRole: theme.RoleCaption, Tone: ui.ToneError})
 	}
-	for _, defect := range snapshot.Network.VPN.Defects {
-		rows = append(rows, ccPrivacyTextLine(defect.Title, ui.ToneError))
-		if defect.Detail != "" {
-			rows = append(rows, ccPrivacyTextLine(defect.Detail, ui.ToneSubtle))
-		}
-	}
-	if snapshot.Network.VPN.DefectsTruncated {
-		rows = append(rows, ccPrivacyTextLine(fmt.Sprintf("%d more VPN findings not shown", snapshot.Network.VPN.DefectsTotal-snapshot.Network.VPN.DefectsShown), ui.ToneSubtle))
-	}
-
-	rows = append(rows, monitorCardTitle("Categories", 0))
-	for _, category := range snapshot.Categories {
-		categoryGrade, tone := ccPrivacyGradeLabel(category.Grade)
-		value := fmt.Sprintf("%s · %d installed", categoryGrade, category.InstalledTotal)
-		if category.Worst != nil {
-			value += " · worst: " + category.Worst.Name
-		}
-		rows = append(rows, ccPrivacyValueRow(category.Name, value, tone))
-	}
-	if snapshot.CategoriesTruncated {
-		rows = append(rows, ccPrivacyTextLine(fmt.Sprintf("%d more categories not shown", snapshot.CategoriesTotal-snapshot.CategoriesShown), ui.ToneSubtle))
-	}
-
-	rows = append(rows, monitorCardTitle("Findings", 0))
-	findingCount := fmt.Sprintf("%d findings", snapshot.FindingsTotal)
-	if snapshot.Overall.High > 0 {
-		findingCount += fmt.Sprintf(" · %d high", snapshot.Overall.High)
-	}
-	rows = append(rows, ccPrivacyTextLine(findingCount, ui.ToneSubtle))
-	for _, finding := range snapshot.Findings {
-		findingGrade, tone := ccPrivacyGradeLabel(finding.Grade)
-		rows = append(rows, ccPrivacyValueRow(finding.Title, finding.Severity+" · "+findingGrade, tone))
-		if finding.Summary != "" {
-			rows = append(rows, ccPrivacyTextLine(finding.Summary, ui.ToneSubtle))
-		}
-	}
-	if snapshot.FindingsTruncated {
-		rows = append(rows, ccPrivacyTextLine(fmt.Sprintf("%d more findings not shown", snapshot.FindingsTotal-snapshot.FindingsShown), ui.ToneSubtle))
-	}
-
-	rows = append(rows, monitorCardTitle("Coverage limits", 0),
-		ccPrivacyTextLine("Telemetry attribution is unavailable.", ui.ToneSubtle))
-	for _, item := range snapshot.Reduced {
-		rows = append(rows, ccPrivacyTextLine(item.Effect, ui.ToneSubtle))
-	}
-	if snapshot.ReducedTruncated {
-		rows = append(rows, ccPrivacyTextLine(fmt.Sprintf("%d more coverage limits not shown", snapshot.ReducedTotal-snapshot.ReducedShown), ui.ToneSubtle))
-	}
+	open := ccSegment("shield", "Open full audit", ccPrivacyOpenAction, false)
+	open.Height, open.Fill = m.StandardControl, ui.FillAccent
+	rows = append(rows, open)
 	return monitorCard(m, rows)
 }
 
-func ccPrivacyValueRow(label, value string, tone ui.Tone) *ui.Node {
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: label, Name: label},
-		{Kind: ui.KindText, Text: value, Name: value, Tone: tone},
-	}}
-}
-
-func ccPrivacyTextLine(value string, tone ui.Tone) *ui.Node {
-	return &ui.Node{Kind: ui.KindText, Text: value, Name: value, TextRole: theme.RoleCaption, Tone: tone}
-}
-
-func ccPrivacyContainment(value *bool) (string, ui.Tone) {
-	if value == nil {
-		return "Unknown", ui.ToneSubtle
+func ccPrivacyHasCoverageLimits(snapshot *ccPrivacySnapshot) bool {
+	if snapshot.Network.TelemetryConnectionsUnknown || snapshot.ReducedTotal > 0 || snapshot.ReducedTruncated ||
+		snapshot.CategoriesTruncated || snapshot.FindingsTruncated || snapshot.Network.VPN.DefectsTruncated {
+		return true
 	}
-	if *value {
-		return "Contained", ui.ToneNormal
+	for _, category := range snapshot.Categories {
+		if category.InstalledTruncated {
+			return true
+		}
 	}
-	return "Outside tunnel", ui.ToneError
-}
-
-func ccPrivacyContainmentRow(label string, value *bool) *ui.Node {
-	status, tone := ccPrivacyContainment(value)
-	return ccPrivacyValueRow(label, status, tone)
+	return false
 }
 
 func ccPrivacyAgeText(age time.Duration) string {
