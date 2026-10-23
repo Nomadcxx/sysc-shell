@@ -149,7 +149,7 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 	}
 	if detail.Readme != "" {
 		children = append(children, &ui.Node{Kind: ui.KindSeparator, Width: body})
-		children = append(children, markdownNodes(detail.Readme, body, metrics)...)
+		children = append(children, markdownNodes(detail.Readme, body, metrics, h.measureText())...)
 	}
 	header := pluginStoreDetailHeader(detail, width, metrics)
 	headerH, _ := ui.ContentHeight(header, width, h.measureText())

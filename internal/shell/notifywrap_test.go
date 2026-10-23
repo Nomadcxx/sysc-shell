@@ -25,6 +25,27 @@ func TestWrapLines(t *testing.T) {
 	}
 }
 
+func TestWrapLinesMeasuresLongWordInBoundedChunks(t *testing.T) {
+	word := strings.Repeat("x", 1000)
+	measuredBytes := 0
+	measure := func(s string) int {
+		measuredBytes += len(s)
+		return len(s) * 8
+	}
+	got := wrapLines(word, 80, measure, 0)
+	if strings.Join(got, "") != word {
+		t.Fatal("wrapping changed the long word")
+	}
+	for _, line := range got {
+		if len(line)*8 > 80 {
+			t.Fatalf("line %q exceeds 80px", line)
+		}
+	}
+	if measuredBytes > 3*len(word) {
+		t.Fatalf("measured %d bytes for a %d-byte word, want bounded chunk measurements", measuredBytes, len(word))
+	}
+}
+
 func TestExpandedNotificationCardUsesWrappedBody(t *testing.T) {
 	root := ExpandedNotificationCard(protocol.Notification{ID: 1, Body: "one two"}, nil, false, nil,
 		func(string) []string { return []string{"one", "two"} })
