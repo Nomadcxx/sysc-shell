@@ -751,8 +751,13 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		c.StrokeRounded(field, radius, max(style.Scale120.Physical(1), 1), boundary)
 	}
 	pad := style.Scale120.Physical(n.Padding)
-	textBox := ui.Rect{X: field.X + pad, Y: field.Y + pad,
-		W: max(field.W-2*pad, 0), H: max(field.H-2*pad, 0)}
+	// Scale the logical inset edges rather than subtracting two rounded pad
+	// lengths from the edge-scaled field: the latter can leave a fitted label
+	// one buffer pixel narrower than the width its measurement reserved.
+	textLeft := style.Scale120.Physical(n.Bounds.X + n.Padding)
+	textRight := style.Scale120.Physical(n.Bounds.X + n.Bounds.W - n.Padding)
+	textBox := ui.Rect{X: textLeft, Y: field.Y + pad,
+		W: max(textRight-textLeft, 0), H: max(field.H-2*pad, 0)}
 	textBox = centreLine(textBox, text, style, n)
 	_ = paintTextColor(c, n.Text, textBox, text, style, textSpec(style, n), n.Tabular, foreground, n.Underline)
 	paintMenuChevron(c, n, text, style)
