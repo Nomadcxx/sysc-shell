@@ -82,7 +82,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 			ccHomeWeather(m, now, reading, tr),
 			ccHomeSystem(m, snap, tr),
 		}},
-		ccHomeTiles(h, snap, audio, audioOK, dnd, ccHomeRightW(body), tr),
+		ccHomeTiles(m, h, snap, audio, audioOK, dnd, ccHomeRightW(body), tr),
 	}}
 	sliders := ccHomeSliders(m, audio, audioOK, brightness, brightnessOK, displays, body, tr)
 	children := append([]*ui.Node{top, toggles, split}, sliders...)
@@ -292,7 +292,7 @@ func ccHomeSystem(m theme.Metrics, snap services.Snapshot, tr translateFunc) *ui
 	return card
 }
 
-func ccHomeTiles(h *PanelHost, snap services.Snapshot, audio services.AudioState, audioOK, dnd bool, width int, tr translateFunc) *ui.Node {
+func ccHomeTiles(m theme.Metrics, h *PanelHost, snap services.Snapshot, audio services.AudioState, audioOK, dnd bool, width int, tr translateFunc) *ui.Node {
 	tileW := (width - ccHomeGap) / 2
 	tileH := (ccHomeSplitH - ccHomeGap) / 2
 	battery := ccDash
@@ -303,21 +303,21 @@ func ccHomeTiles(h *PanelHost, snap services.Snapshot, audio services.AudioState
 	if h != nil && h.profileActive != "" {
 		profile = cardT(tr, "session.profile."+h.profileActive, powerProfileLabel(h.profileActive))
 	}
-	mute := ccQuickTile(tileW, "volume_off", cardT(tr, "cc.mute", "Mute"), ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
+	mute := ccQuickTile(m, tileW, "volume_off", cardT(tr, "cc.mute", "Mute"), ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
 	if !audioOK {
 		ccDisable(mute)
 	}
-	dndTile := ccQuickTile(tileW, "do_not_disturb_on", cardT(tr, "cc.dnd", "DND"), ccOnOff(dnd, tr), "cc:dnd", dnd)
+	dndTile := ccQuickTile(m, tileW, "do_not_disturb_on", cardT(tr, "cc.dnd", "DND"), ccOnOff(dnd, tr), "cc:dnd", dnd)
 	dndTile.Name = cardT(tr, "notify.dnd", "Do not disturb")
 	nextProfile := hProfileNext(h)
-	profileTile := ccQuickTile(tileW, "balance", cardT(tr, "cc.profile", "Profile"), profile, "cc:profile:"+nextProfile, false)
+	profileTile := ccQuickTile(m, tileW, "balance", cardT(tr, "cc.profile", "Profile"), profile, "cc:profile:"+nextProfile, false)
 	profileTile.Name = cardT(tr, "session.power_profile", "Power profile")
 	if nextProfile == "" {
 		ccDisable(profileTile)
 	}
 	// Battery is a readout in the same filled tile as its neighbours: one
 	// tile style for every state on the page.
-	batteryTile := ccQuickTile(tileW, "battery_full", cardT(tr, "session.battery", "Battery"), battery, "", false)
+	batteryTile := ccQuickTile(m, tileW, "battery_full", cardT(tr, "session.battery", "Battery"), battery, "", false)
 	batteryTile.Role, batteryTile.Focusable = "group", false
 	for _, t := range []*ui.Node{mute, dndTile, profileTile, batteryTile} {
 		t.Height = tileH
