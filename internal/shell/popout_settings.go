@@ -2287,9 +2287,17 @@ func (r *Registry) updateConfig(update func(*config.Config, func(config.Config) 
 	r.configWriteMu.Lock()
 	defer r.configWriteMu.Unlock()
 	if path != "" {
-		if loaded, err := config.Load(path); err == nil {
-			cfg = loaded
+		// A file that does not parse is the user's file, not the shell's to
+		// replace: writing the live config over it would drop every hand
+		// edit in it, and the edit that triggered this would report success.
+		// Refuse the write and let the caller show the parse error.
+		loaded, err := config.LoadRequired(path)
+		if errors.Is(err, os.ErrNotExist) {
+			loaded = cfg
+		} else if err != nil {
+			return config.Config{}, err
 		}
+		cfg = loaded
 	}
 	cfg.Templates = maps.Clone(cfg.Templates)
 	registryFor := func(cfg config.Config) *settings.Registry {
