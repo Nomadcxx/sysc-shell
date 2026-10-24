@@ -2501,6 +2501,76 @@ func TestPaintMenuUsesStadiumShapeAndSelectedFill(t *testing.T) {
 	}
 }
 
+func TestPaintMenuKeepsMeasuredLabelAtFractionalScale(t *testing.T) {
+	t.Parallel()
+
+	style := testStyle
+	style.Scale120 = 150 // Niri 1.25
+	text := NewTextRenderer(mustTestFace(t))
+	const padding = 18
+
+	// A menu sized to its measured text should leave at least that many buffer
+	// pixels inside the two padded edges. Find a fixed-font run that exercises
+	// the rounding case instead of tying the test to one label's advance.
+	var menu *ui.Node
+	var measuredWidth int
+	for count := 1; count <= 128; count++ {
+		label := string(bytes.Repeat([]byte("a"), count))
+		attrs := ui.TextAttrs{}
+		width, height, err := text.Measure(label, SpecFor(style, attrs), false)
+		if err != nil {
+			t.Fatalf("measure %q: %v", label, err)
+		}
+		logicalWidth := style.Scale120.Logical(width)
+		logicalHeight := style.Scale120.Logical(height)
+		candidate := &ui.Node{
+			Kind: ui.KindMenu, Text: label, Padding: padding,
+			Bounds: ui.Rect{W: logicalWidth + 2*padding, H: logicalHeight + 2*padding},
+		}
+		field := style.Scale120.PhysicalRect(candidate.Bounds)
+		pad := style.Scale120.Physical(padding)
+		if field.W-2*pad < width {
+			menu, measuredWidth = candidate, width
+			break
+		}
+	}
+	if menu == nil {
+		t.Fatal("no test label exposed the rounded-padding loss")
+	}
+
+	field := style.Scale120.PhysicalRect(menu.Bounds)
+	pad := style.Scale120.Physical(menu.Padding)
+	actual := newTestCanvas(t, field.W+40, field.H+40)
+	if err := paintMenu(actual, menu, text, style, style.Size); err != nil {
+		t.Fatalf("paint menu: %v", err)
+	}
+
+	// Paint the same chrome with no label, then the full measured run at the
+	// logical edge inset. This is the expected image when the menu honors the
+	// measured width across fractional edge rounding.
+	expected := newTestCanvas(t, field.W+40, field.H+40)
+	blank := *menu
+	blank.Text = ""
+	if err := paintMenu(expected, &blank, nil, style, style.Size); err != nil {
+		t.Fatalf("paint menu chrome: %v", err)
+	}
+	textBox := ui.Rect{
+		X: style.Scale120.Physical(menu.Bounds.X + menu.Padding),
+		Y: field.Y + pad,
+		W: measuredWidth,
+		H: max(field.H-2*pad, 0),
+	}
+	textBox = centreLine(textBox, text, style, menu)
+	_, foreground := chromeFill(style, menu, style.containerHighest())
+	if err := paintTextColor(expected, menu.Text, textBox, text, style,
+		textSpec(style, menu), menu.Tabular, foreground, menu.Underline); err != nil {
+		t.Fatalf("paint expected label: %v", err)
+	}
+	if !bytes.Equal(actual.Pix, expected.Pix) {
+		t.Fatal("painted menu label differs from the full measured text")
+	}
+}
+
 func TestPaintMenuPopupOverlaysFollowingContent(t *testing.T) {
 	t.Parallel()
 	const width, height = 140, 80
