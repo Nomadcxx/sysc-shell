@@ -2,7 +2,6 @@ package shell
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"slices"
 	"sort"
@@ -833,19 +832,10 @@ func (h *toastHost) reply(id uint32, text string) {
 }
 func (h *toastHost) hover(uint32, bool) {}
 func (h *toastHost) openLink(href string) {
-	opener := openNotificationURL.Get()
-	if opener == nil || h.r == nil {
+	if h.r == nil {
 		return
 	}
-	go func() {
-		// Wait for the pointer handler's Registry.mu critical section to end
-		// before starting the desktop opener.
-		h.r.mu.Lock()
-		h.r.mu.Unlock()
-		if err := opener(href); err != nil {
-			log.Printf("shell: notification link opener: %v", err)
-		}
-	}()
+	h.r.openNotificationLink(href)
 }
 
 // updateHover recomputes the hovered set for one output and reports whether

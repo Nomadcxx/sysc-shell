@@ -4132,6 +4132,13 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 		if len(parts) == 2 {
 			r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: parts[1]})
 		}
+	case "link":
+		// A link in a card body is not a notification command: it hands the
+		// target to the desktop opener. The href is bounded again before it
+		// leaves, and the opener starts after the registry lock is released.
+		if len(parts) == 2 {
+			r.openNotificationLink(parts[1])
+		}
 	}
 	return true
 }

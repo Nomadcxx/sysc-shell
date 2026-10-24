@@ -220,6 +220,16 @@ func bodyNodes(id uint32, body string, allowLinks bool, wrap func(string) []stri
 		node := &ui.Node{Kind: ui.KindText, Text: text, Bold: r.Bold, Italic: r.Italic, Underline: r.Underline, Tone: ui.ToneSubtle}
 		if r.Link {
 			node.Action = fmt.Sprintf("notify:%d:link:%s", id, r.Href)
+			// A link is a control in the notification centre, so it has to
+			// carry a name and a role and join the focus order: the panel
+			// resolves a press against its focusable nodes, and without
+			// this the anchor was drawn but could not be reached.
+			node.Focusable = true
+			node.Role = "link"
+			node.Name = text
+			if node.Name == "" {
+				node.Name = r.Href
+			}
 		}
 		return node
 	}
