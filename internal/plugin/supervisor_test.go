@@ -53,6 +53,30 @@ func startHelper(t *testing.T, mode string) *Session {
 	return sess
 }
 
+// recvWithin reads one message, giving up after the deadline.
+//
+// A fixture that never answers has to fail the test rather than hang it, and
+// the deadline has to be wide enough for a loaded machine: the point of the
+// tests that use it is that the machine's speed is not what they measure.
+func recvWithin(t *testing.T, sess *Session, d time.Duration) (v1.Message, error) {
+	t.Helper()
+	type result struct {
+		msg v1.Message
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		msg, err := sess.Recv()
+		done <- result{msg, err}
+	}()
+	select {
+	case got := <-done:
+		return got.msg, got.err
+	case <-time.After(d):
+		return nil, fmt.Errorf("no message within %v", d)
+	}
+}
+
 // TestStartWaitsOutABusyProgram proves the supervisor starts a program the
 // kernel still refuses to exec.
 //
@@ -577,6 +601,42 @@ func TestCloseRetainsStderrWrittenJustBeforeExit(t *testing.T) {
 	}
 }
 
+// TestHelperReportsStderrChildBeforeShutdown proves the fixture the bound
+// test leans on: the descendant is reported before the host asks the plugin
+// to stop.
+//
+// The grace in TestCloseBoundsStderrPipeHeldByChild starts when Close asks
+// for the shutdown, so the pid has to be on the wire before that. A fixture
+// that reported it afterwards would make the bound test depend on how fast
+// the machine can fork.
+func TestHelperReportsStderrChildBeforeShutdown(t *testing.T) {
+	t.Parallel()
+
+	s := supervisor(installHelper(t, "stderr-inherited-child"))
+	s.ShutdownGrace = 100 * time.Millisecond
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	msg, err := recvWithin(t, sess, 30*time.Second)
+	if err != nil {
+		t.Fatalf("Recv(stderr-child): %v", err)
+	}
+	snapshot, ok := msg.(*v1.ViewSnapshot)
+	if !ok || snapshot.ViewID != "stderr-child" || snapshot.Root == nil {
+		t.Fatalf("message = %#v, want stderr-child snapshot", msg)
+	}
+	var pid int
+	if _, err := fmt.Sscan(snapshot.Root.Text, &pid); err != nil || pid <= 0 {
+		t.Fatalf("child PID = %q, err = %v", snapshot.Root.Text, err)
+	}
+	if sess.Exited() {
+		t.Error("the session exited before it was asked to stop")
+	}
+}
+
 func TestCloseBoundsStderrPipeHeldByChild(t *testing.T) {
 	t.Parallel()
 
@@ -587,11 +647,18 @@ func TestCloseBoundsStderrPipeHeldByChild(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	closed := make(chan ExitReason, 1)
+	closeStarted := false
 	closeFinished := false
 	var child *os.Process
 	defer func() {
 		if child != nil {
 			_ = child.Kill()
+		}
+		if !closeStarted {
+			// The test gave up before it asked the session to stop, so
+			// stop it here instead of leaving the plugin running.
+			_ = sess.Close()
+			return
 		}
 		if !closeFinished {
 			select {
@@ -602,8 +669,12 @@ func TestCloseBoundsStderrPipeHeldByChild(t *testing.T) {
 		}
 	}()
 
-	go func() { closed <- sess.Close() }()
-	msg, err := sess.Recv()
+	// The helper starts the descendant and reports its pid before it reads
+	// the shutdown request, so the snapshot is on the wire before any grace
+	// can begin. The grace then bounds the shutdown and nothing else, which
+	// is what the assertion below is about: a machine too slow to fork the
+	// descendant cannot make this test fail.
+	msg, err := recvWithin(t, sess, 30*time.Second)
 	if err != nil {
 		t.Fatalf("Recv(stderr-child): %v", err)
 	}
@@ -620,6 +691,8 @@ func TestCloseBoundsStderrPipeHeldByChild(t *testing.T) {
 		t.Fatalf("find stderr child: %v", err)
 	}
 
+	closeStarted = true
+	go func() { closed <- sess.Close() }()
 	select {
 	case <-closed:
 		closeFinished = true
