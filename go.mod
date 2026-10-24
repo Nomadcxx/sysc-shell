@@ -7,7 +7,7 @@ require (
 	github.com/Nomadcxx/sysc-wayland v0.3.2
 	github.com/go-freedesktop/desktopentry v0.1.0
 	github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d
-	golang.org/x/image v0.44.0
+	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
 )
 
@@ -46,7 +46,7 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/net v0.0.0-20211118161319-6a13c67c3ce4 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	gonum.org/v1/gonum v0.16.0 // indirect
 )
 
