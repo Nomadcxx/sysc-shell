@@ -52,6 +52,7 @@ var registry = map[Direction]map[string]func() Message{
 		TypeViewOpen:        func() Message { return &ViewOpen{} },
 		TypeViewClose:       func() Message { return &ViewClose{} },
 		TypeViewResync:      func() Message { return &ViewResync{} },
+		TypeViewError:       func() Message { return &ViewError{} },
 		TypeInputEvent:      func() Message { return &InputEvent{} },
 		TypeSettingsChanged: func() Message { return &SettingsChanged{} },
 		TypeHostReply:       func() Message { return &HostReply{} },
@@ -124,6 +125,8 @@ func stamp(m Message) error {
 	case *ViewClose:
 		v.Type = name
 	case *ViewResync:
+		v.Type = name
+	case *ViewError:
 		v.Type = name
 	case *InputEvent:
 		v.Type = name
