@@ -655,6 +655,10 @@ func panelsDiff(got, base Panels) *wirePanels {
 		v := got.OSD
 		w.OSD = &v
 	}
+	if got.OSDLockKeys != base.OSDLockKeys {
+		v := got.OSDLockKeys
+		w.OSDLockKeys = &v
+	}
 	return &w
 }
 

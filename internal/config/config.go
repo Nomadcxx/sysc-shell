@@ -442,6 +442,10 @@ type Panels struct {
 	Gap     int // offset from the bar edge, logical px
 	Padding int // output edge inset for clamping, logical px
 	OSD     string
+	// OSDLockKeys turns the Caps and Num Lock OSD on. It is on by default.
+	// With it off nothing reads the keyboard LED class, so the shell does
+	// not wake up four times a second for a state it never shows.
+	OSDLockKeys bool
 }
 
 // TrayPreferences are stable service-independent item tokens. Service
@@ -804,7 +808,7 @@ func Default() Config {
 			Scheme: "scheme-tonal-spot",
 			Mode:   "dark",
 		},
-		Panels:     Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
+		Panels:     Panels{Gap: 0, Padding: 8, OSD: "bottom-center", OSDLockKeys: true},
 		Session:    Session{PolkitAgent: "auto"},
 		Monitor:    defaultMonitor(),
 		Sounds:     defaultSounds(),
