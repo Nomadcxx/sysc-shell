@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 
 func TestServerRoundTrip(t *testing.T) {
 	t.Parallel()
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	var got string
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -113,7 +114,7 @@ func TestThemePreviewCallAllowsGeneratorDuration(t *testing.T) {
 
 func TestIpcPowerAliasTogglesSession(t *testing.T) {
 	t.Parallel()
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	var got string
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -152,7 +153,7 @@ func TestUnknownMethodErrors(t *testing.T) {
 
 func TestStaleSocketReplaced(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "ipc")
 	sock := filepath.Join(dir, "ipc.v1.sock")
 	if err := os.WriteFile(sock, []byte("dead"), 0o600); err != nil {
 		t.Fatal(err)
@@ -192,7 +193,7 @@ func TestListenRejectsALiveSocket(t *testing.T) {
 
 func TestListenReplacesAStaleSocket(t *testing.T) {
 	t.Parallel()
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	if err := os.WriteFile(sock, []byte("dead"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +211,7 @@ func TestListenReplacesAStaleSocket(t *testing.T) {
 
 func TestListenHoldsEarlyConnectionsUntilServe(t *testing.T) {
 	t.Parallel()
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := NewServer(sock, Handlers{})
@@ -251,7 +252,7 @@ func TestListenHoldsEarlyConnectionsUntilServe(t *testing.T) {
 // and written plainly; the race detector reports the pair when it is not.
 func TestCloseDuringListenIsRaceFree(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "ipc")
 	for i := 0; i < 64; i++ {
 		sock := filepath.Join(dir, fmt.Sprintf("ipc.%d.sock", i))
 		srv := NewServer(sock, Handlers{})
@@ -495,7 +496,7 @@ func TestPluginsMethodsRouteToTheHandler(t *testing.T) {
 
 func startServer(t *testing.T, h Handlers) (string, context.CancelFunc) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := NewServer(sock, h)
 	go func() { _ = srv.Serve(ctx) }()
@@ -596,7 +597,7 @@ func TestThemeVerbsRouteToTheHandler(t *testing.T) {
 // gh #74: cancelling Serve must end open connections and wait for the request
 // each is running, so the caller can tear down what handlers use.
 func TestServeCancelClosesIdleConnections(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := NewServer(sock, Handlers{})
@@ -622,7 +623,7 @@ func TestServeCancelClosesIdleConnections(t *testing.T) {
 }
 
 func TestServeWaitsForInFlightRequestBeforeReturning(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	started := make(chan struct{})
 	release := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())

@@ -98,6 +98,17 @@ func TestCheckSocketPaths(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "a bus address under t.TempDir",
+			body: `dir := t.TempDir()
+				addr := "unix:path=" + filepath.Join(dir, "bus")`,
+			want: true,
+		},
+		{
+			name: "a bus address under a short dir",
+			body: `addr := "unix:path=" + filepath.Join(sockpath.Dir(t, "dbus"), "bus")`,
+			want: false,
+		},
+		{
 			name: "no socket at all",
 			body: `dir := t.TempDir()
 				_ = filepath.Join(dir, "config.json")`,
@@ -116,6 +127,20 @@ func TestCheckSocketPaths(t *testing.T) {
 				t.Fatalf("the check rejected a sound socket path: %v", err)
 			}
 		})
+	}
+}
+
+// TestCountSocketBindsCountsWhatTheCheckSees pins the count a package uses
+// to tell a passing check from a check that stopped reading its tests.
+func TestCountSocketBindsCountsWhatTheCheckSees(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "fixture_test.go", `listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "niri.sock"))`)
+	count, err := CountSocketBinds(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("the count is %d, want 1", count)
 	}
 }
 
