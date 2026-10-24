@@ -193,6 +193,13 @@ func (c *Clock) stopIfUnusedLocked() chan struct{} {
 func (c *Clock) run(stop, done chan struct{}) {
 	defer close(done)
 
+	// Publish the start time before the first deadline. A bar paints its
+	// clock and date pills from the newest snapshot, so a clock that waits
+	// for the first boundary leaves them empty for up to a minute. The
+	// goroutine stays the only sender, so the retry in send always finds
+	// room.
+	send(c.updates, time.Now())
+
 	for {
 		c.mu.Lock()
 		boundary := c.leases.finest()

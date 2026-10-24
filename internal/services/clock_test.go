@@ -177,6 +177,37 @@ func TestNextBoundaryAligns(t *testing.T) {
 	}
 }
 
+// nextSnapshot waits for one snapshot, failing the test when none arrives.
+func nextSnapshot(t *testing.T, c *Clock, within time.Duration) time.Time {
+	t.Helper()
+	select {
+	case now := <-c.Updates():
+		return now
+	case <-time.After(within):
+		t.Fatalf("no snapshot arrived within %v", within)
+		return time.Time{}
+	}
+}
+
+// The first snapshot must arrive at once. A bar paints its clock and date
+// pills from the newest snapshot, so a clock that waits for the first
+// boundary leaves them empty for up to a minute.
+func TestTheFirstSnapshotArrivesWithoutWaitingForTheBoundary(t *testing.T) {
+	t.Parallel()
+	c := NewClock()
+	t.Cleanup(c.Close)
+
+	lease, err := c.Acquire(time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	if now := nextSnapshot(t, c, 2*time.Second); now.IsZero() {
+		t.Fatal("the first snapshot carries no time")
+	}
+}
+
 // One tick reaches the consumer, aligned to the second boundary.
 func TestASecondBoundaryTickIsDelivered(t *testing.T) {
 	t.Parallel()
@@ -189,6 +220,9 @@ func TestASecondBoundaryTickIsDelivered(t *testing.T) {
 	}
 	defer lease.Release()
 
+	// The first snapshot carries the time the clock started at, which is not
+	// aligned by design; the next one lands on the second boundary.
+	nextSnapshot(t, c, 3*time.Second)
 	select {
 	case now := <-c.Updates():
 		// The publish happens just after the boundary, so the sub-second
