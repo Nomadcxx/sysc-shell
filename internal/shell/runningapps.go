@@ -61,6 +61,7 @@ const (
 	runningAppMenuForceQuitConfirm
 	runningAppMenuForceQuitCancel
 	runningAppMenuForceQuitDismiss
+	runningAppMenuCloseAll
 )
 
 type runningAppMenuRow struct {
@@ -256,6 +257,11 @@ func runningAppMenu(slot runningAppSlot, workspaces []niri.Workspace) []runningA
 		Label: fmt.Sprintf("%s (%s)", name, windowCount(len(slot.Members))),
 	}}
 	if len(slot.Members) > 0 {
+		if count := len(closableRunningAppWindows(slot)); count > 0 {
+			rows = append(rows, runningAppMenuRow{
+				Kind: runningAppMenuCloseAll, Label: closeAllRunningAppLabel(count),
+			})
+		}
 		rows = append(rows, runningAppMenuRow{
 			Kind: runningAppMenuForceQuit, Label: "Close all and force quit",
 		})
@@ -398,6 +404,34 @@ func runningAppWindowTitle(window niri.Window) string {
 func foldedSteamGameWindow(slot runningAppSlot, window niri.Window) bool {
 	_, ok := slot.SteamGameIDs[window.ID]
 	return ok
+}
+
+// closableRunningAppWindows returns the slot's own windows, without the
+// games folded into it.
+//
+// A game belongs to the game, not to the launcher that shows it. Closing the
+// launcher must not close the game with it, and a game can still be closed on
+// its own from the window list.
+func closableRunningAppWindows(slot runningAppSlot) []niri.Window {
+	windows := make([]niri.Window, 0, len(slot.Members))
+	for _, window := range slot.Members {
+		if foldedSteamGameWindow(slot, window) {
+			continue
+		}
+		windows = append(windows, window)
+	}
+	return windows
+}
+
+// closeAllRunningAppLabel names the graceful close for a window count.
+//
+// The close goes through the compositor, so the app runs its own close path
+// and can still ask the user to confirm.
+func closeAllRunningAppLabel(count int) string {
+	if count <= 1 {
+		return "Close window"
+	}
+	return fmt.Sprintf("Close all %d windows", count)
 }
 
 func steamGameAppID(appID string) bool {
