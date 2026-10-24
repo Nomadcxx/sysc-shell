@@ -2287,9 +2287,17 @@ func (r *Registry) updateConfig(update func(*config.Config, func(config.Config) 
 	r.configWriteMu.Lock()
 	defer r.configWriteMu.Unlock()
 	if path != "" {
-		if loaded, err := config.Load(path); err == nil {
-			cfg = loaded
+		// LoadRequired refuses a file the shell cannot read, so a parse
+		// failure is reported to the caller instead of the file being
+		// written over with the in-memory copy. A file that is not there
+		// keeps the live configuration, the way a reload does.
+		loaded, err := config.LoadRequired(path)
+		if errors.Is(err, os.ErrNotExist) {
+			loaded = cfg
+		} else if err != nil {
+			return config.Config{}, err
 		}
+		cfg = loaded
 	}
 	cfg.Templates = maps.Clone(cfg.Templates)
 	registryFor := func(cfg config.Config) *settings.Registry {
