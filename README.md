@@ -285,6 +285,20 @@ to search it. `on_select` receives the full output line as `{selection}` and the
 evaluation. Fixed actions appear in launcher search; actions marked `"dangerous": true` stay hidden
 until you also set `"allow_dangerous": true`.
 
+### Checking the config file
+
+```bash
+sysc-shell config check
+sysc-shell config check /path/to/config.json
+```
+
+`config check` answers whether the shell would accept a configuration file, without a compositor, a
+Niri socket or a Wayland connection, so you can run it from a script or before restarting the shell.
+The path defaults to `$XDG_CONFIG_HOME/sysc-shell/config.json`. An absent default file is reported as
+ok with `(defaults, file not found)`: the shell starts with its built-in defaults, and that is the
+answer. The exit codes are a contract: 0 accepted, 1 the loader rejected the content, 2 usage or a
+read failure. On a rejection the loader's message goes to stderr, naming the problem.
+
 ## Panels and integrations
 
 The shell draws through `wl_shm` and talks to Niri over its IPC socket.
