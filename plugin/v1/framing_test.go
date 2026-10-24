@@ -355,6 +355,38 @@ func TestPatchAndResyncRoundTrip(t *testing.T) {
 	}
 }
 
+func TestViewErrorTravelsHostToPluginOnly(t *testing.T) {
+	t.Parallel()
+
+	// The host's answer to a refused publish is a host-to-plugin message: a
+	// plugin that claims it is the one refusing its own view is talking
+	// nonsense, and the host must not believe it.
+	out := encodeOne(t, &ViewError{
+		ViewID:   "v1",
+		Revision: 4,
+		Reason:   "view root must be a row",
+	})
+	got, err := NewDecoder(bytes.NewReader(out), ToPlugin).Decode()
+	if err != nil {
+		t.Fatalf("decode view.error: %v", err)
+	}
+	ve, ok := got.(*ViewError)
+	if !ok {
+		t.Fatalf("decoded %T, want *ViewError", got)
+	}
+	if ve.Type != TypeViewError || ve.ViewID != "v1" || ve.Revision != 4 {
+		t.Fatalf("view.error = %+v", ve)
+	}
+	if ve.Reason != "view root must be a row" {
+		t.Fatalf("reason = %q", ve.Reason)
+	}
+
+	_, err = NewDecoder(bytes.NewReader(out), ToHost).Decode()
+	if !errors.Is(err, ErrUnknownType) {
+		t.Fatalf("err = %v, want ErrUnknownType", err)
+	}
+}
+
 // chunkedSink mimics a writer that is not frame-atomic: every Write lands in
 // two pieces with a yield between them, so two concurrent Encode calls on an
 // unserialised encoder interleave and corrupt the stream.

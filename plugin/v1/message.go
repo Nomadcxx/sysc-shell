@@ -24,8 +24,17 @@ const (
 	// Minor 20 adds the manifest's filesystem declaration: the paths a
 	// plugin reads and changes beyond its own directories. A plugin that
 	// declares it is confined to them where the kernel offers Landlock.
-	ProtocolMinor = 20
+	// Minor 21 adds view.error, the host's answer to a publish it refused:
+	// the plugin learns why its view is not on screen instead of guessing.
+	ProtocolMinor = 21
 )
+
+// ViewErrorMinor is the first protocol minor that carries view.error.
+//
+// A host speaks it only to a plugin that negotiated this minor or newer,
+// because a plugin built against an older minor rejects a message name it
+// does not know instead of ignoring it.
+const ViewErrorMinor = 21
 
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
@@ -37,6 +46,7 @@ const (
 	TypeViewOpen        = "view.open"
 	TypeViewClose       = "view.close"
 	TypeViewResync      = "view.resync"
+	TypeViewError       = "view.error"
 	TypeInputEvent      = "input.event"
 	TypeSettingsChanged = "settings.changed"
 	TypeHostReply       = "host.reply"
@@ -180,6 +190,22 @@ type ViewResync struct {
 }
 
 func (*ViewResync) messageType() string { return TypeViewResync }
+
+// ViewError reports that the host refused a publish.
+//
+// A refused publish is not a silent drop: the plugin learns which rule its
+// tree broke, so a blank panel has an explanation on the plugin's side too.
+// The host sends it only to a plugin that negotiated ViewErrorMinor or newer.
+type ViewError struct {
+	Type   string `json:"type"`
+	ViewID string `json:"view_id"`
+	// Revision is the revision the host refused.
+	Revision uint64 `json:"revision,omitempty"`
+	// Reason names the rule the tree broke, in the host's words.
+	Reason string `json:"reason"`
+}
+
+func (*ViewError) messageType() string { return TypeViewError }
 
 // Replacement is one keyed subtree in a ViewPatch.
 type Replacement struct {

@@ -693,9 +693,13 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 		h.mu.Unlock()
 		if resync {
 			_ = slot.rt.Send(&v1.ViewResync{ViewID: m.ViewID})
-			return
 		}
 		if err != nil {
+			// A refused patch is as silent as a refused snapshot was: the
+			// tree stays as it was and the plugin is told nothing. The
+			// resync asks for a fresh tree; the error says why this one
+			// was not taken.
+			h.rejectView(pluginID, kind, m.ViewID, m.Revision, err)
 			return
 		}
 		h.prep.Submit(plugin.Job{
@@ -715,11 +719,6 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 	}
 	v.Revision = res.Revision
 	if res.Err != nil {
-		// A rejected view must reach the operator's journal: the failure
-		// surface shows the message, but silence here makes a layout bug
-		// indistinguishable from a dead plugin.
-		slog.Warn("plugin view rejected", "plugin", v.Plugin, "view", v.Kind,
-			"revision", res.Revision, "err", res.Err)
 		v.Failed = true
 		v.Root = nil
 		v.Events = nil
@@ -734,7 +733,14 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 	}
 	kind := v.Kind
 	viewID := v.ID
+	pluginID := v.Plugin
 	h.mu.Unlock()
+	if res.Err != nil {
+		// A rejected view must reach the operator's journal and the plugin
+		// that sent it: the failure surface shows the message, but silence
+		// here makes a layout bug indistinguishable from a dead plugin.
+		h.rejectView(pluginID, kind, viewID, res.Revision, res.Err)
+	}
 	if kind == v1.ViewPanel {
 		h.refreshPanel()
 		return
@@ -744,6 +750,34 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 		return
 	}
 	h.r.refreshPluginBars()
+}
+
+// rejectView reports a publish the host refused.
+//
+// The journal line is what the operator reads and the view.error is what the
+// plugin author reads. Without the second, a plugin whose view never appears
+// can only see a blank panel and has to guess which rule it broke.
+//
+// The error goes only to a plugin that negotiated a protocol minor that
+// carries view.error: a plugin built against an older minor rejects a message
+// name it does not know, so sending it would take the plugin down instead of
+// telling it anything.
+func (h *pluginHost) rejectView(pluginID string, kind v1.ViewKind, viewID string, revision uint64, err error) {
+	slog.Warn("plugin view rejected", "plugin", pluginID, "view", kind,
+		"view_id", viewID, "revision", revision, "err", err)
+	if pluginID == "" {
+		return
+	}
+	h.mu.Lock()
+	slot := h.slots[pluginID]
+	h.mu.Unlock()
+	if slot == nil || slot.rt == nil {
+		return
+	}
+	if slot.rt.Protocol().Minor < v1.ViewErrorMinor {
+		return
+	}
+	_ = slot.rt.Send(&v1.ViewError{ViewID: viewID, Revision: revision, Reason: err.Error()})
 }
 
 // pluginImageKey names the decode a node wants: the path plus the box the

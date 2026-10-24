@@ -301,6 +301,11 @@ func HelperServe(args []string) int {
 					Root: &v1.Node{Kind: v1.KindText, Text: "hello"}})
 				break
 			}
+			if mode == "too-many-nodes" && m.View == v1.ViewBar {
+				_ = out.Encode(&v1.ViewSnapshot{ViewID: m.ViewID, Revision: 1,
+					Root: oversizedRoot()})
+				break
+			}
 			if mode == "image-panel" && m.View == v1.ViewPanel {
 				_ = out.Encode(&v1.ViewSnapshot{ViewID: m.ViewID, Revision: 1, Root: imagePanelRoot()})
 				break
@@ -340,6 +345,17 @@ func HelperServe(args []string) int {
 				params, _ := json.Marshal(v1.PanelParams{Entry: "panel", Output: m.Output})
 				_ = out.Encode(&v1.HostCall{ID: "c1", Call: v1.CallPanelOpen, Params: params})
 			}
+		case *v1.ViewError:
+			// The host's answer to a publish it refused. A plugin that
+			// records it proves the refusal reached the plugin rather than
+			// only the operator's journal.
+			if path := os.Getenv("SYSC_HELPER_VIEW_ERROR"); path != "" {
+				f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+				if err == nil {
+					_, _ = fmt.Fprintf(f, "%s\t%d\t%s\n", m.ViewID, m.Revision, m.Reason)
+					_ = f.Close()
+				}
+			}
 		}
 	}
 }
@@ -364,6 +380,22 @@ func progressPanelRoot(value float64) *v1.Node {
 	}}
 }
 
+// oversizedRoot is a tree past the node budget: the shape of a plugin that
+// lists every container it knows about and stops publishing when the host
+// refuses the tree.
+func oversizedRoot() *v1.Node {
+	root := &v1.Node{Kind: v1.KindRow}
+	for group := 0; group < 5; group++ {
+		column := &v1.Node{Kind: v1.KindColumn}
+		for child := 0; child < 250; child++ {
+			column.Children = append(column.Children, &v1.Node{Kind: v1.KindText, Text: "x"})
+		}
+		root.Children = append(root.Children, column)
+	}
+	return root
+}
+
+// helperSnapshot builds the snapshot a mode publishes for a view.
 func helperSnapshot(viewID string, view v1.ViewKind) *v1.ViewSnapshot {
 	var root *v1.Node
 	switch view {
