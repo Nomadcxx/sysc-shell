@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 // fakeScreenshotNiri serves one event stream and one action connection. The
@@ -32,7 +34,7 @@ type fakeScreenshotNiri struct {
 func newFakeScreenshotNiri(t *testing.T, events []string, closeStream bool, actionReply string) *fakeScreenshotNiri {
 	t.Helper()
 	f := &fakeScreenshotNiri{
-		socket:           filepath.Join(t.TempDir(), "niri.sock"),
+		socket:           filepath.Join(sockpath.Dir(t, "niri"), "niri.sock"),
 		events:           events,
 		closeStream:      closeStream,
 		actionReply:      actionReply,

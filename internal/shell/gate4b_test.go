@@ -168,7 +168,19 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 	reg.setAudio(services.NewAudio(15*time.Millisecond, bin))
 	reg.setTestBar(1, &Bar{conn: "DP-1"})
 	reg.setTestBar(2, &Bar{conn: "DP-2"})
-	time.Sleep(40 * time.Millisecond)
+	baselineDeadline := time.After(3 * time.Second)
+	baselinePoll := time.NewTicker(5 * time.Millisecond)
+	defer baselinePoll.Stop()
+	for {
+		if _, ready := reg.audio.CachedState(); ready {
+			break
+		}
+		select {
+		case <-baselinePoll.C:
+		case <-baselineDeadline:
+			t.Fatal("audio service did not establish its baseline")
+		}
+	}
 	if err := os.WriteFile(filepath.Join(dir, "vol"), []byte("0.70\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

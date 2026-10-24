@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 func TestHelperSetuidProtocol(t *testing.T) {
@@ -97,7 +98,7 @@ func TestHelperEchoOnPromptIsNotMasked(t *testing.T) {
 }
 
 func TestHelperRelaysErrorAndInfoLines(t *testing.T) {
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "polkit"), "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +181,7 @@ func (w *capturedWrites) Write(p []byte) (int, error) {
 }
 
 func TestHelperSessionStopsOnContextCancellation(t *testing.T) {
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "polkit"), "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +241,7 @@ func TestHelperSessionStopsOnContextCancellation(t *testing.T) {
 }
 
 func TestHelperSessionCancellationDuringDialReturnsCancelled(t *testing.T) {
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "helper.sock"))
+	listener, err := net.Listen("unix", filepath.Join(sockpath.Dir(t, "polkit"), "helper.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

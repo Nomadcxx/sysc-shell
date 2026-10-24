@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"github.com/Nomadcxx/sysc-tray/protocol"
 )
 
@@ -129,14 +130,11 @@ func await(t *testing.T, messages chan Message, kind Kind) Message {
 
 func runtimeDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "syt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Unix socket addresses are capped near 108 bytes, so the base stays short.
+	dir := sockpath.Dir(t, "syt")
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
 

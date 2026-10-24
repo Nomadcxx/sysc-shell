@@ -13,19 +13,23 @@ func wrapLines(s string, width int, measure func(string) int, maxLines int) []st
 	line := ""
 	flush := func() { lines = append(lines, line); line = "" }
 	for _, word := range strings.Fields(s) {
-		candidate := word
 		if line != "" {
-			candidate = line + " " + word
-		}
-		if measure(candidate) <= width {
-			line = candidate
-			continue
-		}
-		if line != "" {
+			if measure(line+" "+word) <= width {
+				line += " " + word
+				continue
+			}
 			flush()
 		}
-		for measure(word) > width {
-			cut := len(word)
+		if measure(word) <= width {
+			line = word
+			continue
+		}
+		for len(word) > 0 {
+			cut := 0
+			for runes := max(width/8, 1); cut < len(word) && runes > 0; runes-- {
+				_, size := utf8.DecodeRuneInString(word[cut:])
+				cut += size
+			}
 			for cut > 0 && measure(word[:cut]) > width {
 				_, size := utf8.DecodeLastRuneInString(word[:cut])
 				cut -= size
@@ -34,10 +38,11 @@ func wrapLines(s string, width int, measure func(string) int, maxLines int) []st
 				_, cut = utf8.DecodeRuneInString(word)
 			}
 			line = word[:cut]
-			flush()
 			word = word[cut:]
+			if word != "" {
+				flush()
+			}
 		}
-		line = word
 	}
 	if line != "" {
 		flush()

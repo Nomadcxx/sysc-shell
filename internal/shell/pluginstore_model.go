@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
@@ -312,7 +313,7 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 	action, reason := detailAction(listing)
 	needsConsent := action == ActionInstall
 	if action == ActionUpdate && listing.Installed != nil {
-		needsConsent = !catalog.SameSet(listing.Installed.Capabilities, release.Capabilities) ||
+		needsConsent = !plugin.SameGrants(listing.Installed.Capabilities, release.Capabilities) ||
 			!catalog.SameSet(listing.Installed.Requires, release.Requires.Commands)
 	}
 	description := listing.Entry.LongDescription
@@ -336,20 +337,103 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 		detail.InstalledVersion = listing.Installed.Version
 	}
 	if action == ActionInstall || action == ActionUpdate {
+		versionLine := "Version: " + version
+		if action == ActionUpdate && listing.Installed != nil {
+			versionLine = "Version: " + listing.Installed.Version + " → " + version
+		}
 		detail.ConsentLines = []string{
 			"Source: " + detail.SourceBadge,
-			"Version: " + version,
+			versionLine,
 			"Catalog commit: " + listing.CatalogCommit,
 			"SHA-256: " + sha,
-			"Capabilities: " + joinOrNone(detail.Capabilities),
+			"Capabilities: " + joinOrNone(describeCapabilities(detail.Capabilities)),
 			"Required commands: " + joinOrNone(detail.RequiredCommands),
-			"It runs as your user with full file and network access.",
 		}
+		if action == ActionUpdate && listing.Installed != nil {
+			if !plugin.SameGrants(listing.Installed.Capabilities, detail.Capabilities) {
+				detail.ConsentLines = append(detail.ConsentLines, changeLines("Capabilities", listing.Installed.Capabilities, detail.Capabilities)...)
+			}
+			detail.ConsentLines = append(detail.ConsentLines, changeLines("Required commands", listing.Installed.Requires, detail.RequiredCommands)...)
+		}
+		detail.ConsentLines = append(detail.ConsentLines, boundaryLine(release.Filesystem, plugin.LandlockABI()))
 		if enabled {
 			detail.ConsentLines = append(detail.ConsentLines, "It is still enabled, so it will start immediately.")
 		}
 	}
 	return detail
+}
+
+// changeLines names what an update adds to and removes from one list of
+// asks, so a consent to changed asks reads as the change, not as a list to
+// compare by eye.
+func changeLines(what string, from, to []string) []string {
+	var added, removed []string
+	for _, v := range to {
+		if !slices.Contains(from, v) {
+			added = append(added, v)
+		}
+	}
+	for _, v := range from {
+		if !slices.Contains(to, v) {
+			removed = append(removed, v)
+		}
+	}
+	var lines []string
+	if len(added) > 0 {
+		lines = append(lines, what+" added: "+strings.Join(added, ", "))
+	}
+	if len(removed) > 0 {
+		lines = append(lines, what+" removed: "+strings.Join(removed, ", "))
+	}
+	return lines
+}
+
+// unconfinedLine is what a consent says when nothing holds a plugin's files.
+const unconfinedLine = "It runs as your user with full file and network access."
+
+// boundaryLine states the boundary a release will run inside on this
+// kernel. It never claims more than the launcher enforces: a declaration a
+// kernel without Landlock cannot hold reads as unconfined; below the socket
+// right (ABI 9) the session stays reachable, and through it the programs it
+// can start; below the scopes (ABI 6), and when declared, so do signals to
+// other programs; and the network, which no boundary restricts, is always
+// said to be open.
+func boundaryLine(fs *catalog.Filesystem, abi int) string {
+	switch {
+	case fs == nil:
+		return unconfinedLine
+	case abi < 1:
+		return "This kernel provides no filesystem confinement. " + unconfinedLine
+	}
+	var reach []string
+	if len(fs.Read) > 0 {
+		reach = append(reach, "read "+strings.Join(fs.Read, ", "))
+	}
+	if len(fs.ReadWrite) > 0 {
+		reach = append(reach, "change "+strings.Join(fs.ReadWrite, ", "))
+	}
+	line := "It can reach only its own files."
+	if len(reach) > 0 {
+		line = "It can " + strings.Join(reach, " and ") + ", and no other files of yours."
+	}
+	if len(fs.Sockets) > 0 {
+		line += " It can connect to " + strings.Join(fs.Sockets, ", ") + "."
+	}
+	if !plugin.EnforcesSockets(abi) {
+		line += " This kernel cannot hold it to its declared sockets, so it can still reach your session and start programs through it."
+	}
+	if fs.SignalAny() || !plugin.EnforcesScopes(abi) {
+		line += " It can also signal your other programs."
+	}
+	return line + " Network access is not restricted."
+}
+
+func describeCapabilities(names []string) []string {
+	out := make([]string, len(names))
+	for i, name := range names {
+		out[i] = plugin.DescribeCapability(name)
+	}
+	return out
 }
 
 func joinOrNone(values []string) string {

@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 // Wire fixtures captured from `niri msg -j event-stream` on Niri 26.04. They
@@ -49,11 +50,7 @@ func startFakeNiri(t *testing.T, lines ...string) *fakeNiri {
 	t.Helper()
 
 	// Keep the path short; a Unix socket path is limited to ~108 bytes.
-	dir, err := os.MkdirTemp("", "niri")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	dir := sockpath.Dir(t, "niri")
 
 	f := &fakeNiri{path: filepath.Join(dir, "s"), requests: make(chan string, 1)}
 	listener, err := net.Listen("unix", f.path)

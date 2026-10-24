@@ -390,8 +390,12 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 
 func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
 	state := privacyState{}
+	now := time.Now()
 	if r != nil {
 		state = r.privacy
+		if !r.now.IsZero() {
+			now = r.now
+		}
 	}
 	rows := []*ui.Node{
 		monitorCardTitle("Capture activity", 0),
@@ -399,9 +403,327 @@ func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
 		privacyStatusSection("Camera", state.camera, privacySignalDetail(state, privacyCamera)),
 		privacyStatusSection("Screen sharing", state.screenShare, privacySignalDetail(state, privacyScreenShare)),
 	}
-	card := monitorCard(h.metrics(), rows)
-	card.Height = ccPageH
-	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
+	m := h.metrics()
+	errLabel := ""
+	if h != nil {
+		errLabel = h.errLabel
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
+		monitorCard(m, rows),
+		ccPrivacyAuditCard(m, ccPrivacySnapshotFor(r), now, errLabel),
+	}}
+}
+
+const (
+	ccPrivacyPluginID     = "org.sysc.privacy"
+	ccPrivacyStateKey     = "control_center"
+	ccPrivacySchema       = 1
+	ccPrivacyStateLimit   = 128 << 10
+	ccPrivacyLabelLimit   = 160
+	ccPrivacySummaryLimit = 512
+	ccPrivacyStaleAfter   = 15 * time.Minute
+	ccPrivacyCategoryMax  = 16
+	ccPrivacyAppMax       = 4
+	ccPrivacyFindingMax   = 5
+	ccPrivacyReducedMax   = 12
+	ccPrivacyDefectMax    = 4
+)
+
+type ccPrivacySnapshot struct {
+	Schema              int                 `json:"schema"`
+	Available           bool                `json:"available"`
+	Reason              string              `json:"reason"`
+	Hint                string              `json:"hint"`
+	GeneratedAt         time.Time           `json:"generated_at"`
+	Overall             ccPrivacyOverall    `json:"overall"`
+	Network             ccPrivacyNetwork    `json:"network"`
+	Categories          []ccPrivacyCategory `json:"categories"`
+	CategoriesShown     int                 `json:"categories_shown"`
+	CategoriesTotal     int                 `json:"categories_total"`
+	CategoriesTruncated bool                `json:"categories_truncated"`
+	Findings            []ccPrivacyFinding  `json:"findings"`
+	FindingsShown       int                 `json:"findings_shown"`
+	FindingsTotal       int                 `json:"findings_total"`
+	FindingsTruncated   bool                `json:"findings_truncated"`
+	Reduced             []ccPrivacyReduced  `json:"reduced"`
+	ReducedShown        int                 `json:"reduced_shown"`
+	ReducedTotal        int                 `json:"reduced_total"`
+	ReducedTruncated    bool                `json:"reduced_truncated"`
+}
+
+type ccPrivacyOverall struct {
+	Grade    string `json:"grade"`
+	Findings int    `json:"findings"`
+	High     int    `json:"high"`
+}
+
+type ccPrivacyNetwork struct {
+	VPN                         ccPrivacyVPN `json:"vpn"`
+	TelemetryConnectionsUnknown bool         `json:"telemetry_connections_unknown"`
+}
+
+type ccPrivacyVPN struct {
+	State                 string               `json:"state"`
+	Client                string               `json:"client"`
+	DefaultRouteViaTunnel *bool                `json:"default_route_via_tunnel"`
+	DNSContained          *bool                `json:"dns_contained"`
+	IPv6Contained         *bool                `json:"ipv6_contained"`
+	KillSwitchNote        string               `json:"kill_switch_note"`
+	Defects               []ccPrivacyVPNDefect `json:"defects"`
+	DefectsShown          int                  `json:"defects_shown"`
+	DefectsTotal          int                  `json:"defects_total"`
+	DefectsTruncated      bool                 `json:"defects_truncated"`
+}
+
+type ccPrivacyVPNDefect struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+}
+
+type ccPrivacyCategory struct {
+	Name               string         `json:"name"`
+	Grade              string         `json:"grade"`
+	Installed          []ccPrivacyApp `json:"installed"`
+	InstalledShown     int            `json:"installed_shown"`
+	InstalledTotal     int            `json:"installed_total"`
+	InstalledTruncated bool           `json:"installed_truncated"`
+	Worst              *ccPrivacyApp  `json:"worst"`
+}
+
+type ccPrivacyApp struct {
+	Name  string `json:"name"`
+	Grade string `json:"grade"`
+}
+
+type ccPrivacyFinding struct {
+	Severity string `json:"severity"`
+	Grade    string `json:"grade"`
+	Title    string `json:"title"`
+	Summary  string `json:"summary"`
+}
+
+type ccPrivacyReduced struct {
+	Effect string `json:"effect"`
+}
+
+// ccPrivacySnapshotFor reads only the running privacy plugin's bounded schema-1 state.
+func ccPrivacySnapshotFor(r *Registry) *ccPrivacySnapshot {
+	if r == nil || r.plugins == nil {
+		return nil
+	}
+	raw, ok := r.plugins.stateValue(ccPrivacyPluginID, ccPrivacyStateKey)
+	if !ok {
+		return nil
+	}
+	snapshot, err := parseCCPrivacySnapshot(raw)
+	if err != nil {
+		return nil
+	}
+	return snapshot
+}
+
+func parseCCPrivacySnapshot(raw []byte) (*ccPrivacySnapshot, error) {
+	if len(raw) == 0 || len(raw) > ccPrivacyStateLimit {
+		return nil, fmt.Errorf("privacy snapshot is empty or exceeds %d bytes", ccPrivacyStateLimit)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("decode privacy snapshot: %w", err)
+	}
+	if _, ok := fields["available"]; !ok {
+		return nil, fmt.Errorf("privacy snapshot has no availability state")
+	}
+	var snapshot ccPrivacySnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil, fmt.Errorf("decode privacy snapshot: %w", err)
+	}
+	if snapshot.Schema != ccPrivacySchema {
+		return nil, fmt.Errorf("unsupported privacy snapshot schema %d", snapshot.Schema)
+	}
+	if snapshot.GeneratedAt.IsZero() {
+		return nil, fmt.Errorf("privacy snapshot has no timestamp")
+	}
+	if !validCCPrivacyGrade(snapshot.Overall.Grade) {
+		return nil, fmt.Errorf("invalid privacy overall grade %q", snapshot.Overall.Grade)
+	}
+	if snapshot.Overall.Findings < 0 || snapshot.Overall.High < 0 || snapshot.Overall.High > snapshot.Overall.Findings {
+		return nil, fmt.Errorf("invalid privacy finding totals")
+	}
+	if snapshot.Network.VPN.State != "unknown" && snapshot.Network.VPN.State != "connected" {
+		return nil, fmt.Errorf("invalid VPN state %q", snapshot.Network.VPN.State)
+	}
+	if !snapshot.Network.TelemetryConnectionsUnknown {
+		return nil, fmt.Errorf("privacy snapshot must report telemetry attribution as unknown")
+	}
+	if !ccPrivacyTextFits(snapshot.Reason, ccPrivacySummaryLimit) || !ccPrivacyTextFits(snapshot.Hint, ccPrivacySummaryLimit) ||
+		!ccPrivacyTextFits(snapshot.Network.VPN.Client, ccPrivacyLabelLimit) ||
+		!ccPrivacyTextFits(snapshot.Network.VPN.KillSwitchNote, ccPrivacySummaryLimit) {
+		return nil, fmt.Errorf("privacy snapshot contains oversized text")
+	}
+	if len(snapshot.Categories) > ccPrivacyCategoryMax ||
+		!ccPrivacyCountsValid(snapshot.CategoriesShown, snapshot.CategoriesTotal, snapshot.CategoriesTruncated, len(snapshot.Categories)) {
+		return nil, fmt.Errorf("invalid privacy category totals")
+	}
+	if len(snapshot.Findings) > ccPrivacyFindingMax ||
+		!ccPrivacyCountsValid(snapshot.FindingsShown, snapshot.FindingsTotal, snapshot.FindingsTruncated, len(snapshot.Findings)) {
+		return nil, fmt.Errorf("invalid privacy finding totals")
+	}
+	if snapshot.Overall.Findings != snapshot.FindingsTotal {
+		return nil, fmt.Errorf("inconsistent privacy finding totals")
+	}
+	if len(snapshot.Reduced) > ccPrivacyReducedMax ||
+		!ccPrivacyCountsValid(snapshot.ReducedShown, snapshot.ReducedTotal, snapshot.ReducedTruncated, len(snapshot.Reduced)) {
+		return nil, fmt.Errorf("invalid privacy coverage totals")
+	}
+	if len(snapshot.Network.VPN.Defects) > ccPrivacyDefectMax ||
+		!ccPrivacyCountsValid(snapshot.Network.VPN.DefectsShown, snapshot.Network.VPN.DefectsTotal,
+			snapshot.Network.VPN.DefectsTruncated, len(snapshot.Network.VPN.Defects)) {
+		return nil, fmt.Errorf("invalid VPN defect totals")
+	}
+	if !snapshot.Available {
+		if snapshot.Overall.Grade != "unknown" || snapshot.Reason == "" || snapshot.Hint == "" ||
+			snapshot.CategoriesTotal != 0 || snapshot.FindingsTotal != 0 || snapshot.ReducedTotal != 0 ||
+			snapshot.Network.VPN.DefectsTotal != 0 {
+			return nil, fmt.Errorf("unavailable privacy snapshot is incomplete")
+		}
+		return &snapshot, nil
+	}
+	if snapshot.CategoriesTotal == 0 || len(snapshot.Categories) == 0 {
+		return nil, fmt.Errorf("available privacy snapshot has no category judgement")
+	}
+	for _, category := range snapshot.Categories {
+		if category.Name == "" || !ccPrivacyTextFits(category.Name, ccPrivacyLabelLimit) ||
+			!validCCPrivacyGrade(category.Grade) || len(category.Installed) > ccPrivacyAppMax ||
+			!ccPrivacyCountsValid(category.InstalledShown, category.InstalledTotal,
+				category.InstalledTruncated, len(category.Installed)) {
+			return nil, fmt.Errorf("invalid privacy category")
+		}
+		for _, app := range category.Installed {
+			if app.Name == "" || !ccPrivacyTextFits(app.Name, ccPrivacyLabelLimit) || !validCCPrivacyGrade(app.Grade) {
+				return nil, fmt.Errorf("invalid installed privacy app")
+			}
+		}
+		if category.Worst != nil && (category.Worst.Name == "" || !ccPrivacyTextFits(category.Worst.Name, ccPrivacyLabelLimit) ||
+			!validCCPrivacyGrade(category.Worst.Grade)) {
+			return nil, fmt.Errorf("invalid worst privacy app")
+		}
+	}
+	for _, finding := range snapshot.Findings {
+		if finding.Title == "" || !ccPrivacyTextFits(finding.Title, ccPrivacyLabelLimit) ||
+			!ccPrivacyTextFits(finding.Summary, ccPrivacySummaryLimit) || !validCCPrivacyGrade(finding.Grade) ||
+			(finding.Severity != "low" && finding.Severity != "medium" && finding.Severity != "high") {
+			return nil, fmt.Errorf("invalid privacy finding")
+		}
+	}
+	for _, defect := range snapshot.Network.VPN.Defects {
+		if defect.Title == "" || !ccPrivacyTextFits(defect.Title, ccPrivacyLabelLimit) ||
+			!ccPrivacyTextFits(defect.Detail, ccPrivacySummaryLimit) {
+			return nil, fmt.Errorf("invalid VPN defect")
+		}
+	}
+	for _, item := range snapshot.Reduced {
+		if item.Effect == "" || !ccPrivacyTextFits(item.Effect, ccPrivacySummaryLimit) {
+			return nil, fmt.Errorf("invalid privacy coverage caveat")
+		}
+	}
+	return &snapshot, nil
+}
+
+func validCCPrivacyGrade(grade string) bool {
+	switch grade {
+	case "green", "amber", "red", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func ccPrivacyGradeChip(grade string) *ui.Node {
+	word, icon, fill := "Unrated", "shield", ui.FillSoft
+	switch grade {
+	case "green":
+		word, icon, fill = "Good", "verified_user", ui.FillAccent
+	case "amber":
+		word, icon, fill = "Review", "flag", ui.FillOutline
+	case "red":
+		word, icon, fill = "Risky", "gpp_bad", ui.FillErrorContainer
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Key: "privacy-grade", Fill: fill, Shape: ui.ShapeStadium,
+		Gap: theme.MarginXS, Padding: theme.MarginS, Children: []*ui.Node{{
+			Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
+				{Kind: ui.KindIcon, Icon: icon},
+				{Kind: ui.KindText, Text: word, TextRole: theme.RoleLabel, Name: word},
+			},
+		}}}
+}
+
+func ccPrivacyCountsValid(shown, total int, truncated bool, actual int) bool {
+	return shown >= 0 && total >= shown && shown == actual && (total == shown || truncated)
+}
+
+func ccPrivacyTextFits(value string, limit int) bool {
+	return len(value) <= limit
+}
+
+func ccPrivacyAuditCard(m theme.Metrics, snapshot *ccPrivacySnapshot, now time.Time, errLabel string) *ui.Node {
+	rows := []*ui.Node{monitorCardTitle("Privacy audit", 0)}
+	grade := "unknown"
+	detail := "No audit result is available. Check that the Privacybit plugin is enabled."
+	if snapshot != nil {
+		switch {
+		case !snapshot.Available:
+			detail = strings.TrimSpace(snapshot.Reason + " " + snapshot.Hint)
+		case now.Before(snapshot.GeneratedAt):
+			detail = "Last scan timestamp is in the future. Check the system clock and scan again."
+		case now.Sub(snapshot.GeneratedAt) >= ccPrivacyStaleAfter:
+			detail = "Last scan is stale · " + ccPrivacyAgeText(now.Sub(snapshot.GeneratedAt)) + ". Scan again to restore a current grade."
+		default:
+			grade = snapshot.Overall.Grade
+			detail = "Updated " + ccPrivacyAgeText(now.Sub(snapshot.GeneratedAt))
+			if ccPrivacyHasCoverageLimits(snapshot) {
+				detail += " · Coverage limits are listed in the full audit."
+			}
+		}
+	}
+	rows = append(rows,
+		&ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Overall", Name: "Overall"},
+			ccPrivacyGradeChip(grade),
+		}},
+		&ui.Node{Kind: ui.KindText, Text: detail, Name: detail, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+	)
+	if errLabel != "" {
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: errLabel, Name: errLabel, TextRole: theme.RoleCaption, Tone: ui.ToneError})
+	}
+	open := ccSegment("shield", "Open full audit", ccPrivacyOpenAction, false)
+	open.Height, open.Fill = m.StandardControl, ui.FillAccent
+	rows = append(rows, open)
+	return monitorCard(m, rows)
+}
+
+func ccPrivacyHasCoverageLimits(snapshot *ccPrivacySnapshot) bool {
+	if snapshot.Network.TelemetryConnectionsUnknown || snapshot.ReducedTotal > 0 || snapshot.ReducedTruncated ||
+		snapshot.CategoriesTruncated || snapshot.FindingsTruncated || snapshot.Network.VPN.DefectsTruncated {
+		return true
+	}
+	for _, category := range snapshot.Categories {
+		if category.InstalledTruncated {
+			return true
+		}
+	}
+	return false
+}
+
+func ccPrivacyAgeText(age time.Duration) string {
+	switch {
+	case age < time.Minute:
+		return "just now"
+	case age < time.Hour:
+		return fmt.Sprintf("%d min ago", int(age.Minutes()))
+	default:
+		return fmt.Sprintf("%d h ago", int(age.Hours()))
+	}
 }
 
 func privacyStatusSection(label string, activity privacyActivity, detail string) *ui.Node {

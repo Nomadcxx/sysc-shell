@@ -33,6 +33,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == plugin.HelperFlag {
 		os.Exit(plugin.HelperServe(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == plugin.LaunchFlag {
+		os.Exit(plugin.LaunchMain(os.Args[2:]))
+	}
 	dir, err := os.MkdirTemp("", "sysc-shell-test-config-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

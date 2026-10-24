@@ -9,13 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
 func newDispatchTestOwner(t *testing.T) (*owner, *net.UnixConn) {
 	t.Helper()
 
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(t.TempDir(), "wayland.sock"), Net: "unix"})
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(sockpath.Dir(t, "wayland"), "wayland.sock"), Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,11 +16,31 @@ import (
 func TestRegistryCoversAllSections(t *testing.T) {
 	t.Parallel()
 	r := Default()
-	sections := []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility"}
+	sections := []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility", "Tray"}
 	for _, s := range sections {
 		if len(r.Section(s)) == 0 {
 			t.Fatalf("section %s empty", s)
 		}
+	}
+}
+
+func TestShowPassiveTraySettingIsDiscoverable(t *testing.T) {
+	e := Default().ByPath("tray.show-passive")
+	if e == nil {
+		t.Fatal("tray.show-passive is not registered")
+	}
+	if e.Section != "Tray" {
+		t.Fatalf("section = %q, want Tray", e.Section)
+	}
+	cfg := config.Default()
+	if got := e.Get(cfg); got != "false" {
+		t.Fatalf("default = %q, want false", got)
+	}
+	if err := e.Set(&cfg, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Get(cfg); got != "true" {
+		t.Fatalf("after setting true = %q", got)
 	}
 }
 

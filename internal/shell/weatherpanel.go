@@ -36,14 +36,21 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	bodyW := max(panelW-2*m.PanelPadding, 0)
 	forecastH := weatherForecastHeight(m)
+	var forecast *ui.Node
+	if h.weatherView == "hourly" {
+		forecastH = weatherHourlyHeight(m)
+		forecast = weatherHourlyList(reading, m, tr, forecastH)
+	} else {
+		forecast = weatherForecastStrip(reading, m, bodyW, forecastH)
+	}
 	heroH := max(bodyH-theme.MarginL-forecastH, 0)
 	hero := weatherHero(reading, location, m, heroH, tr)
 
 	children := []*ui.Node{
-		weatherHeader(m, tr),
+		weatherHeader(m, tr, h.weatherView),
 		{Kind: ui.KindColumn, Gap: theme.MarginL, Height: bodyH, Children: []*ui.Node{
 			hero,
-			weatherForecastStrip(reading, m, bodyW, forecastH),
+			forecast,
 		}},
 	}
 	if h.errLabel != "" {
@@ -93,7 +100,7 @@ func weatherHeaderHeight(m theme.Metrics) int {
 	return m.StandardControl + 2*m.CardPadding
 }
 
-func weatherHeader(m theme.Metrics, tr translateFunc) *ui.Node {
+func weatherHeader(m theme.Metrics, tr translateFunc, view string) *ui.Node {
 	well := m.StandardControl
 	title := &ui.Node{
 		Kind: ui.KindText, Text: cardT(tr, "wx.title", "Weather"),
@@ -104,12 +111,38 @@ func weatherHeader(m theme.Metrics, tr translateFunc) *ui.Node {
 		Focusable: true, Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}
-	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, PinEnd: true, Children: []*ui.Node{title, close}}
+	right := &ui.Node{Kind: ui.KindRow, Height: well, Gap: theme.MarginM, Children: []*ui.Node{
+		weatherViewTabs(view, m, tr), close,
+	}}
+	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, PinEnd: true, Children: []*ui.Node{title, right}}
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding, Height: weatherHeaderHeight(m),
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{top},
 	}
+}
+
+func weatherViewTabs(view string, m theme.Metrics, tr translateFunc) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindSegmented, Key: "weather-view", Gap: theme.MarginXXS, Height: m.StandardControl,
+		Name: cardT(tr, "wx.forecast_view", "Forecast view"), Role: "tablist",
+		Children: []*ui.Node{
+			weatherViewTab(m, "weather-view:daily", cardT(tr, "wx.daily", "Daily"), view != "hourly"),
+			weatherViewTab(m, "weather-view:hourly", cardT(tr, "wx.hourly", "Hourly"), view == "hourly"),
+		},
+	}
+}
+
+func weatherViewTab(m theme.Metrics, action, label string, selected bool) *ui.Node {
+	n := &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: label, Role: "tab",
+		Focusable: true, Height: m.CompactControl,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+	}
+	if selected {
+		n.State |= ui.StateSelected
+	}
+	return n
 }
 
 // weatherDayRange is today's low/high line, or the dash before a body.
@@ -291,6 +324,15 @@ func weatherForecastHeight(m theme.Metrics) int {
 	return m.IconLarge + m.StandardControl + 2*m.CardPadding + 2*theme.MarginS
 }
 
+func weatherHourlyHeight(m theme.Metrics) int {
+	const visibleRows = 7
+	return visibleRows*weatherHourlyRowHeight(m) + (visibleRows-1)*theme.MarginXXS
+}
+
+func weatherHourlyRowHeight(m theme.Metrics) int {
+	return m.IconSmall + 2*theme.MarginXXS
+}
+
 func weatherForecastStrip(reading services.Reading, m theme.Metrics, width, height int) *ui.Node {
 	const forecastSlots = 4
 	slotW := max((width-(forecastSlots-1)*theme.MarginM)/forecastSlots, 0)
@@ -324,6 +366,61 @@ func weatherForecastSlot(m theme.Metrics, width, height int, day *services.Day, 
 			{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleCaption, Tabular: true},
 		}}},
 	}
+}
+
+func weatherHourlyList(reading services.Reading, m theme.Metrics, tr translateFunc, height int) *ui.Node {
+	rows := make([]*ui.Node, 0, len(reading.Hourly))
+	if len(reading.Hourly) == 0 {
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "wx.no_hourly_forecast", "No hourly forecast yet"), TextRole: theme.RoleLabel})
+	} else {
+		for _, hour := range reading.Hourly {
+			rows = append(rows, weatherHourlyRow(hour, reading.Unit, m, tr))
+		}
+	}
+	return &ui.Node{
+		Kind: ui.KindScroll, Key: "weather-hourly", Height: height, Gap: theme.MarginXXS,
+		Children: rows,
+	}
+}
+
+func weatherHourlyRow(hour services.Hour, unit services.Unit, m theme.Metrics, tr translateFunc) *ui.Node {
+	condition := render.WeatherCondition(hour.Code)
+	condition = cardT(tr, condKey(condition), condition)
+	precip := weatherOptional(hour.PrecipProbability, func(v float64) string { return fmt.Sprintf("%.0f%%", v) })
+	summary := condition
+	if hour.PrecipProbability != nil {
+		summary += " · " + cardT(tr, "wx.rain", "Rain") + " " + precip
+	}
+	humidity := weatherOptional(hour.Humidity, func(v float64) string { return fmt.Sprintf("%.0f%%", v) })
+	wind := weatherOptional(hour.WindSpeed, func(v float64) string { return fmt.Sprintf("%.1f km/h", v) })
+	tooltip := strings.Join([]string{
+		cardT(tr, "wx.condition", "Condition") + ": " + condition,
+		cardT(tr, "wx.rain", "Rain") + ": " + precip,
+		cardT(tr, "wx.humidity", "Humidity") + ": " + humidity,
+		cardT(tr, "wx.wind", "Wind") + ": " + wind,
+	}, "\n")
+	isDay := hour.IsDay == nil || *hour.IsDay
+	tone := ui.ToneNormal
+	if isDay {
+		tone = ui.ToneAccent
+	}
+	return &ui.Node{
+		Kind: ui.KindRow, Height: weatherHourlyRowHeight(m), Gap: theme.MarginM, Tooltip: tooltip,
+		Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: render.WeatherIconName(hour.Code, isDay), IconSize: m.IconSmall, Tone: tone},
+			{Kind: ui.KindText, Text: weatherHourLabel(hour.Time), TextRole: theme.RoleCaption, Tabular: true},
+			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", hour.Temperature, unitSuffix(unit)), TextRole: theme.RoleLabel, Tabular: true},
+			{Kind: ui.KindText, Text: summary, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		},
+	}
+}
+
+func weatherHourLabel(value string) string {
+	parsed, err := time.Parse("2006-01-02T15:04", value)
+	if err != nil {
+		return value
+	}
+	return parsed.Format("15:04")
 }
 
 func weatherWind(reading services.Reading) string {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,32 @@ func TestTrayPreferencesRoundTripThroughStrictConfig(t *testing.T) {
 func TestDefaultDisablesTrayProjection(t *testing.T) {
 	if config := Default(); config.Tray.Enabled {
 		t.Fatal("built-in desktop configuration enables tray projection")
+	}
+}
+
+func TestShowPassiveTrayPreferencePersistsAcrossLoad(t *testing.T) {
+	cfg, err := Parse([]byte(`{"tray":{"show-passive":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := t.TempDir() + "/config.json"
+	if err := Write(first, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := t.TempDir() + "/config.json"
+	if err := Write(second, loaded); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"show-passive": true`) {
+		t.Fatalf("show-passive was not preserved through load and write: %s", data)
 	}
 }
 

@@ -242,8 +242,8 @@ func (b *Bar) setTray(items []tray.Item, prefs config.TrayPreferences, images ma
 	b.mu.Lock()
 	b.trayItems = append([]tray.Item(nil), items...)
 	b.trayPrefs = config.TrayPreferences{
-		Enabled: prefs.Enabled,
-		Hidden:  append([]string(nil), prefs.Hidden...), Pinned: append([]string(nil), prefs.Pinned...),
+		Enabled: prefs.Enabled, ShowPassive: prefs.ShowPassive,
+		Hidden: append([]string(nil), prefs.Hidden...), Pinned: append([]string(nil), prefs.Pinned...),
 		Order: append([]string(nil), prefs.Order...),
 	}
 	b.trayImages = make(map[tray.ItemKey]*ui.Image, len(images))

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
@@ -251,6 +252,36 @@ func TestInstallerRefusesAnInvalidID(t *testing.T) {
 		}
 		if err := in.Rollback(id); KindOf(err) != KindNotListed {
 			t.Errorf("Rollback(%q) = %v", id, err)
+		}
+	}
+}
+
+func TestInstallRejectsACatalogThatUnderstatesFilesystemReach(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		manifest *catalog.Filesystem
+		listed   *catalog.Filesystem
+		ok       bool
+	}{
+		{"both silent", nil, nil, true},
+		{"same declaration", &catalog.Filesystem{Read: []string{"~/a"}}, &catalog.Filesystem{Read: []string{"~/a"}}, true},
+		{"catalog silent, plugin confined", &catalog.Filesystem{}, nil, true},
+		{"catalog confines, plugin does not", nil, &catalog.Filesystem{}, false},
+		{"catalog lists less", &catalog.Filesystem{Read: []string{"~/a", "~/b"}}, &catalog.Filesystem{Read: []string{"~/a"}}, false},
+		{"same sockets", &catalog.Filesystem{Sockets: []string{"session-bus"}}, &catalog.Filesystem{Sockets: []string{"session-bus"}}, true},
+		{"catalog lists fewer sockets", &catalog.Filesystem{Sockets: []string{"session-bus", "system-bus"}}, &catalog.Filesystem{Sockets: []string{"session-bus"}}, false},
+		{"catalog hides signals", &catalog.Filesystem{Signals: "any"}, &catalog.Filesystem{}, false},
+		{"own is the default", &catalog.Filesystem{}, &catalog.Filesystem{Signals: "own"}, true},
+	} {
+		var m plugin.Manifest
+		if tc.manifest != nil {
+			m.Filesystem = &plugin.Filesystem{Read: tc.manifest.Read, ReadWrite: tc.manifest.ReadWrite,
+				Sockets: tc.manifest.Sockets, SignalAny: tc.manifest.Signals == "any"}
+		}
+		err := matchFilesystem(m, tc.listed)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.ok)
 		}
 	}
 }

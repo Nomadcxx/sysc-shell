@@ -1,16 +1,20 @@
 package shell
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 const panelControlCenterAction = "panel:control-center"
 const caffeineMenuAction = "cc:caffeine-preset"
+const ccPrivacyOpenAction = "cc:privacy-open"
 
 const (
 	controlCentrePageKey     = "control-centre-page"
@@ -334,6 +338,29 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		target = PanelMonitor
 	case "cc:close":
 		r.closePanelLocked(h.id)
+		return true
+	case ccPrivacyOpenAction:
+		plugins := r.plugins
+		generation := h.output
+		output := ""
+		if bar, ok := r.bars[generation]; ok {
+			output = bar.connector()
+		}
+		r.scheduleControl(h, func() error {
+			if plugins == nil {
+				return errors.New("Privacybit plugin is unavailable. Enable it in Settings → Plugins.")
+			}
+			if output == "" {
+				return errors.New("Privacybit panel has no current output")
+			}
+			_, err := plugins.openPanel(ccPrivacyPluginID, v1.PanelParams{
+				Entry: "panel", Output: output, Generation: generation, Instance: "control-center",
+			})
+			if err != nil {
+				return fmt.Errorf("could not open the Privacybit audit: %w", err)
+			}
+			return nil
+		})
 		return true
 	case "cc:caffeine":
 		r.setCaffeine(h, !r.inhibitWanted)

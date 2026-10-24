@@ -18,7 +18,7 @@ var (
 	markdownHTML  = regexp.MustCompile(`(?s)<!--.*?-->|</?[A-Za-z][^>]*>`)
 )
 
-func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
+func markdownNodes(src string, width int, m theme.Metrics, measure ui.MeasureText) []*ui.Node {
 	truncated := int64(len(src)) > catalog.MaxReadmeBytes
 	if truncated {
 		src = src[:int(catalog.MaxReadmeBytes)]
@@ -28,7 +28,15 @@ func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
 	lines := strings.Split(src, "\n")
 	width = max(width, 0)
 	blockGap := max(m.CardGap/2, 0)
-	maxChars := markdownLineRunes(width)
+	measureWidth := func(role theme.TextRole) func(string) int {
+		attrs := ui.TextAttrs{Role: role}
+		return func(text string) int {
+			w, _ := measure(text, attrs)
+			return w
+		}
+	}
+	bodyMeasure := measureWidth(theme.RoleBody)
+	monoMeasure := measureWidth(theme.RoleMono)
 
 	nodes := make([]*ui.Node, 0, min(len(lines), 64))
 	nodeCount := 0
@@ -67,7 +75,7 @@ func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
 		}
 		if fence, ok := markdownFence(line); ok {
 			budget := maxMarkdownNodes - 1 - nodeCount
-			node, next, clipped := markdownCodeBlock(lines, i+1, fence, width, m, budget)
+			node, next, clipped := markdownCodeBlock(lines, i+1, fence, width, m, budget, monoMeasure)
 			if node != nil && !add(node) {
 				truncated = true
 				break
@@ -81,7 +89,7 @@ func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
 		}
 		if item, ok := markdownListItem(line); ok {
 			budget := maxMarkdownNodes - 1 - nodeCount
-			node, clipped := markdownListNode(item, width, blockGap, budget)
+			node, clipped := markdownListNode(item, width, blockGap, budget, bodyMeasure)
 			if node != nil && !add(node) {
 				truncated = true
 				break
@@ -93,7 +101,7 @@ func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
 			}
 			continue
 		}
-		if markdownTableRow(line) {
+		if markdownTableStart(lines, i) {
 			next, clipped := markdownTable(lines, i, width, blockGap,
 				maxMarkdownNodes-1-nodeCount, add)
 			i = next
@@ -105,7 +113,8 @@ func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
 		}
 
 		start := i
-		for i < len(lines) && strings.TrimSpace(lines[i]) != "" && !markdownBlockStart(lines[i]) {
+		for i < len(lines) && strings.TrimSpace(lines[i]) != "" &&
+			!markdownBlockStart(lines[i]) && !markdownTableStart(lines, i) {
 			i++
 		}
 		if i == start { // malformed or unsupported syntax: make progress as plain text
@@ -116,7 +125,7 @@ func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
 			continue
 		}
 		budget := maxMarkdownNodes - 1 - nodeCount
-		node, clipped := markdownParagraph(paragraph, width, maxChars, budget)
+		node, clipped := markdownParagraph(paragraph, width, budget, bodyMeasure)
 		if node != nil && !add(node) {
 			truncated = true
 			break
@@ -132,11 +141,6 @@ func markdownNodes(src string, width int, m theme.Metrics) []*ui.Node {
 	}
 	return nodes
 }
-
-// ponytail: wrap at an average 8 logical pixels per rune because this pure
-// renderer receives no active text shaper; visual review can justify passing
-// the panel's shaper if proportional or wide glyphs clip at the chosen width.
-func markdownLineRunes(width int) int { return max(width/8, 1) }
 
 func markdownInline(src string) string {
 	src = markdownImage.ReplaceAllString(src, "")
@@ -211,14 +215,13 @@ func markdownFenceClose(line string, opening fence) bool {
 	return count >= opening.size && strings.TrimSpace(trimmed[count:]) == ""
 }
 
-func markdownCodeBlock(lines []string, start int, opening fence, width int, m theme.Metrics, budget int) (*ui.Node, int, bool) {
+func markdownCodeBlock(lines []string, start int, opening fence, width int, m theme.Metrics, budget int, measure func(string) int) (*ui.Node, int, bool) {
 	pad := max(m.CardPadding, 0)
 	if budget < 2 {
 		return nil, len(lines), true
 	}
 	lineBudget := budget - 2 // capsule and column
 	contentWidth := max(width-2*pad, 0)
-	maxChars := markdownLineRunes(contentWidth)
 	children := make([]*ui.Node, 0, min(lineBudget, 32))
 	truncated := false
 	i := start
@@ -227,7 +230,7 @@ func markdownCodeBlock(lines []string, start int, opening fence, width int, m th
 			i++
 			break
 		}
-		chunks, clipped := markdownCodeLine(lines[i], maxChars, lineBudget-len(children))
+		chunks, clipped := markdownCodeLine(lines[i], contentWidth, lineBudget-len(children), measure)
 		for _, chunk := range chunks {
 			children = append(children, &ui.Node{Kind: ui.KindText, Text: chunk, TextRole: theme.RoleMono, Tone: ui.ToneSubtle})
 		}
@@ -240,7 +243,7 @@ func markdownCodeBlock(lines []string, start int, opening fence, width int, m th
 	return &ui.Node{Kind: ui.KindCapsule, Width: width, Fill: ui.FillContainerHigh, Padding: pad, Children: []*ui.Node{column}}, i, truncated
 }
 
-func markdownCodeLine(line string, maxRunes, maxLines int) ([]string, bool) {
+func markdownCodeLine(line string, width, maxLines int, measure func(string) int) ([]string, bool) {
 	if maxLines <= 0 {
 		return nil, line != ""
 	}
@@ -248,13 +251,21 @@ func markdownCodeLine(line string, maxRunes, maxLines int) ([]string, bool) {
 	if len(runes) == 0 {
 		return []string{""}, false
 	}
-	lines := make([]string, 0, min((len(runes)+maxRunes-1)/maxRunes, maxLines))
-	for start := 0; start < len(runes); start += maxRunes {
+	width = max(width, 1)
+	if measure(line) <= width {
+		return []string{line}, false
+	}
+	lines := make([]string, 0, min(len(runes), maxLines))
+	for start := 0; start < len(runes); {
 		if len(lines) == maxLines {
 			return lines, true
 		}
-		end := min(start+maxRunes, len(runes))
+		end := min(start+max(width/8, 1), len(runes))
+		for end > start+1 && measure(string(runes[start:end])) > width {
+			end--
+		}
 		lines = append(lines, string(runes[start:end]))
+		start = end
 	}
 	return lines, false
 }
@@ -274,7 +285,7 @@ func markdownListItem(line string) (string, bool) {
 	return "", false
 }
 
-func markdownListNode(text string, width, gap, budget int) (*ui.Node, bool) {
+func markdownListNode(text string, width, gap, budget int, measure func(string) int) (*ui.Node, bool) {
 	if budget < 4 {
 		return nil, true
 	}
@@ -283,7 +294,7 @@ func markdownListNode(text string, width, gap, budget int) (*ui.Node, bool) {
 		return nil, false
 	}
 	textWidth := max(width-20, 0)
-	lines, clipped := markdownWrap(text, markdownLineRunes(textWidth), budget-3)
+	lines, clipped := markdownWrap(text, textWidth, budget-3, measure)
 	if len(lines) == 0 {
 		return nil, true
 	}
@@ -298,6 +309,15 @@ func markdownListNode(text string, width, gap, budget int) (*ui.Node, bool) {
 }
 
 func markdownTableRow(line string) bool { return strings.Contains(line, "|") }
+
+func markdownTableStart(lines []string, start int) bool {
+	if start < 0 || start+1 >= len(lines) || !markdownTableRow(lines[start]) || !markdownTableRow(lines[start+1]) {
+		return false
+	}
+	header := markdownTableCells(lines[start])
+	delimiter := markdownTableCells(lines[start+1])
+	return len(header) > 0 && len(delimiter) == len(header) && markdownTableRule(delimiter)
+}
 
 func markdownTable(lines []string, start, width, gap, budget int, add func(*ui.Node) bool) (int, bool) {
 	first := markdownTableCells(lines[start])
@@ -370,19 +390,20 @@ func markdownTableRule(cells []string) bool {
 	}
 	for _, cell := range cells {
 		cell = strings.TrimSpace(cell)
-		cell = strings.Trim(cell, ":-")
-		if cell != "" {
+		cell = strings.TrimPrefix(cell, ":")
+		cell = strings.TrimSuffix(cell, ":")
+		if cell == "" || strings.Trim(cell, "-") != "" {
 			return false
 		}
 	}
 	return true
 }
 
-func markdownParagraph(text string, width, maxRunes, budget int) (*ui.Node, bool) {
+func markdownParagraph(text string, width, budget int, measure func(string) int) (*ui.Node, bool) {
 	if budget < 2 {
 		return nil, true
 	}
-	lines, clipped := markdownWrap(text, maxRunes, budget-1)
+	lines, clipped := markdownWrap(text, width, budget-1, measure)
 	if len(lines) == 0 {
 		return nil, clipped
 	}
@@ -393,67 +414,19 @@ func markdownParagraph(text string, width, maxRunes, budget int) (*ui.Node, bool
 	return &ui.Node{Kind: ui.KindColumn, Width: width, Children: children}, clipped
 }
 
-func markdownWrap(text string, maxRunes, maxLines int) ([]string, bool) {
+func markdownWrap(text string, width, maxLines int, measure func(string) int) ([]string, bool) {
 	if maxLines <= 0 {
 		return nil, text != ""
 	}
-	maxRunes = max(maxRunes, 1)
-	words := strings.Fields(text)
-	lines := make([]string, 0, min(len(words), maxLines))
-	var line strings.Builder
-	lineRunes := 0
-	flush := func() bool {
-		if line.Len() == 0 {
-			return true
-		}
-		if len(lines) == maxLines {
-			return false
-		}
-		lines = append(lines, line.String())
-		line.Reset()
-		lineRunes = 0
-		return true
-	}
-	for _, word := range words {
-		runes := []rune(word)
-		if len(runes) > maxRunes {
-			if !flush() {
-				return lines, true
-			}
-			for start := 0; start < len(runes); start += maxRunes {
-				if len(lines) == maxLines {
-					return lines, true
-				}
-				end := min(start+maxRunes, len(runes))
-				lines = append(lines, string(runes[start:end]))
-			}
-			continue
-		}
-		if lineRunes == 0 {
-			line.WriteString(word)
-			lineRunes = len(runes)
-			continue
-		}
-		if lineRunes+1+len(runes) <= maxRunes {
-			line.WriteByte(' ')
-			line.WriteString(word)
-			lineRunes += 1 + len(runes)
-			continue
-		}
-		if !flush() {
-			return lines, true
-		}
-		line.WriteString(word)
-		lineRunes = len(runes)
-	}
-	if !flush() {
-		return lines, true
+	lines := wrapLines(text, max(width, 1), measure, maxLines+1)
+	if len(lines) > maxLines {
+		return lines[:maxLines], true
 	}
 	return lines, false
 }
 
 func markdownBlockStart(line string) bool {
-	if _, _, ok := markdownHeading(line); ok || markdownRule(line) || markdownTableRow(line) {
+	if _, _, ok := markdownHeading(line); ok || markdownRule(line) {
 		return true
 	}
 	if _, ok := markdownFence(line); ok {

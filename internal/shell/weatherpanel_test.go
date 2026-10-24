@@ -7,6 +7,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -169,8 +170,18 @@ func TestWeatherPanelUsesADominantHeroAndFourDayStrip(t *testing.T) {
 			t.Fatalf("forecast slot %d = %+v, want a card", i, slot)
 		}
 	}
-	if hasValue(treeActions(tree), "weather-view:daily") || hasValue(treeActions(tree), "weather-view:hourly") {
-		t.Fatal("weather surface still exposes the retired Daily/Hourly tabs")
+	view := findNode(tree, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented && n.Key == "weather-view" })
+	if view == nil || len(view.Children) != 2 {
+		t.Fatalf("weather view = %+v, want a Daily/Hourly segmented control", view)
+	}
+	if view.Role != "tablist" || view.Name == "" {
+		t.Fatalf("weather view accessibility = %q/%q, want a named tablist", view.Name, view.Role)
+	}
+	if !hasValue(treeActions(view), "weather-view:daily") || !hasValue(treeActions(view), "weather-view:hourly") {
+		t.Fatalf("weather view actions = %q, want both forecast choices", treeActions(view))
+	}
+	if !view.Children[0].State.Has(ui.StateSelected) || view.Children[1].State.Has(ui.StateSelected) {
+		t.Fatalf("default forecast selection = %+v, want Daily selected", view.Children)
 	}
 	for _, forbidden := range []string{"Temperature max", "Temperature min", "UV index", "Timezone", "Sunrise", "Sunset", "Precip chance"} {
 		if hasLine(collectTooltipLines(tree), forbidden) {
@@ -183,6 +194,13 @@ func TestWeatherPanelUsesADominantHeroAndFourDayStrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("weather tree does not lay out at its target size: %v", err)
 	}
+	header := tree.Children[0]
+	tabs := findNode(header, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented && n.Key == "weather-view" })
+	close := findNode(header, func(n *ui.Node) bool { return n.Action == "weather-close" })
+	if tabs == nil || close == nil || tabs.Bounds.X+tabs.Bounds.W > close.Bounds.X ||
+		tabs.Bounds.X < header.Bounds.X || tabs.Bounds.X+tabs.Bounds.W > header.Bounds.X+header.Bounds.W {
+		t.Fatalf("header tab bounds = %+v, close = %+v, header = %+v; want visible non-overlapping controls", tabs, close, header.Bounds)
+	}
 	stack := hero.Children[0]
 	if stack.Kind != ui.KindStack || len(stack.Children) < 1 || stack.Children[0].Kind != ui.KindEffect {
 		t.Fatalf("hero content = %+v, want effect-first stack", stack)
@@ -192,6 +210,181 @@ func TestWeatherPanelUsesADominantHeroAndFourDayStrip(t *testing.T) {
 	}
 	if stack.Children[0].Bounds != stack.Bounds {
 		t.Fatalf("effect bounds = %+v, stack = %+v, want full hero effect target", stack.Children[0].Bounds, stack.Bounds)
+	}
+}
+
+func TestWeatherPanelHourlyViewRendersTheCachedForecastInASevenRowViewport(t *testing.T) {
+	t.Parallel()
+	var hourly []services.Hour
+	for i := 0; i < 8; i++ {
+		day := i != 1
+		hour := services.Hour{
+			Time:        time.Date(2026, time.October, 21, 8+i, 0, 0, 0, time.UTC).Format("2006-01-02T15:04"),
+			Code:        0,
+			Temperature: 68 + float64(i),
+			IsDay:       &day,
+		}
+		if i == 0 {
+			rain, humidity, wind := 40.0, 62.0, 12.0
+			hour.PrecipProbability, hour.Humidity, hour.WindSpeed = &rain, &humidity, &wind
+		}
+		hourly = append(hourly, hour)
+	}
+	r := &Registry{cfg: config.Default(), reading: services.Reading{
+		Observed: true, Unit: services.UnitFahrenheit, Temperature: 68, Hourly: hourly,
+	}}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme(), weatherView: "hourly"}
+
+	tree := weatherTree(r, h)
+	list := findNode(tree, func(n *ui.Node) bool { return n.Kind == ui.KindScroll && n.Key == "weather-hourly" })
+	if list == nil {
+		t.Fatal("hourly view has no scrollable list")
+	}
+	if len(list.Children) != len(hourly) {
+		t.Fatalf("hour rows = %d, want all %d cached hours", len(list.Children), len(hourly))
+	}
+	first := list.Children[0]
+	if first.Kind != ui.KindRow || !hasLine(collectTooltipLines(first), "08:00") ||
+		!hasLine(collectTooltipLines(first), "68°F") || !hasLine(collectTooltipLines(first), "Clear · Rain 40%") {
+		t.Fatalf("first hourly row = %+v, want local time, configured temperature, condition and rain chance", first)
+	}
+	if !strings.Contains(first.Tooltip, "Condition: Clear") || !strings.Contains(first.Tooltip, "Rain: 40%") ||
+		!strings.Contains(first.Tooltip, "Humidity: 62%") || !strings.Contains(first.Tooltip, "Wind: 12.0 km/h") {
+		t.Fatalf("hourly tooltip = %q, want condition, rain, humidity and wind", first.Tooltip)
+	}
+	dayGlyph := findNode(first, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
+	nightGlyph := findNode(list.Children[1], func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
+	if dayGlyph == nil || dayGlyph.Tone != ui.ToneAccent {
+		t.Fatalf("day glyph = %+v, want accent tone", dayGlyph)
+	}
+	if nightGlyph == nil || nightGlyph.Tone != ui.ToneNormal {
+		t.Fatalf("night glyph = %+v, want normal tone", nightGlyph)
+	}
+
+	m := h.metrics()
+	wantHeight := 7*(m.IconSmall+2*theme.MarginXXS) + 6*theme.MarginXXS
+	if list.Height != wantHeight {
+		t.Fatalf("hourly viewport height = %d, want seven rows at icon height plus padding and gaps", list.Height)
+	}
+	if err := ui.LayoutColumn(tree, panelTargetSize(PanelWeather), func(s string, _ ui.TextAttrs) (int, int) {
+		return len(s) * 8, 16
+	}); err != nil {
+		t.Fatalf("hourly tree does not lay out at its target size: %v", err)
+	}
+	if list.ContentH <= list.Bounds.H {
+		t.Fatalf("hourly list content = %d, viewport = %d, want later hours to scroll", list.ContentH, list.Bounds.H)
+	}
+}
+
+func TestWeatherPanelHourlyViewFitsEveryThemeDensity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		density theme.Density
+	}{
+		{name: "mini", density: theme.DensityMini},
+		{name: "compact", density: theme.DensityCompact},
+		{name: "default", density: theme.DensityDefault},
+		{name: "comfortable", density: theme.DensityComfortable},
+		{name: "spacious", density: theme.DensitySpacious},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m, ok := theme.MetricsFor(tc.density)
+			if !ok {
+				t.Fatalf("metrics missing for %q", tc.name)
+			}
+			th := DefaultTheme()
+			th.Metrics = m
+			r := &Registry{cfg: config.Default(), reading: observedWeather()}
+			r.reading.Hourly = make([]services.Hour, 8)
+			h := &PanelHost{id: PanelWeather, theme: th, weatherView: "hourly"}
+			tree := weatherTree(r, h)
+			if err := ui.LayoutColumn(tree, panelTargetSize(PanelWeather), h.measureText()); err != nil {
+				t.Fatalf("hourly weather panel does not fit 460x560 at %s density: %v", tc.name, err)
+			}
+			body := tree.Children[1]
+			hero := body.Children[0]
+			if hero.Height*3 < body.Height {
+				t.Fatalf("hourly hero height = %d at %s density, body = %d; want the hero to occupy at least a third", hero.Height, tc.name, body.Height)
+			}
+		})
+	}
+}
+
+func TestWeatherPanelViewActionRetainsTheSelectedModeForThePanelLifetime(t *testing.T) {
+	r := &Registry{cfg: config.Default(), reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rebuildPanel(h)
+
+	activate := func(action string) {
+		t.Helper()
+		for i, n := range h.focus {
+			if n.Action == action {
+				h.roving.Set(i)
+				if !h.activate(r) {
+					t.Fatalf("activation of %q was not handled", action)
+				}
+				return
+			}
+		}
+		t.Fatalf("panel has no focusable action %q", action)
+	}
+	selected := func(action string) bool {
+		n := findNode(h.root, func(n *ui.Node) bool { return n.Action == action })
+		return n != nil && n.State.Has(ui.StateSelected)
+	}
+
+	activate("weather-view:hourly")
+	if h.weatherView != "hourly" || !selected("weather-view:hourly") {
+		t.Fatalf("after selecting hourly, mode = %q and selected = %v", h.weatherView, selected("weather-view:hourly"))
+	}
+	if findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindScroll && n.Key == "weather-hourly" }) == nil {
+		t.Fatal("hourly selection did not rebuild the panel with its hourly list")
+	}
+
+	activate("weather-view:daily")
+	if h.weatherView != "daily" || !selected("weather-view:daily") {
+		t.Fatalf("after selecting daily, mode = %q and selected = %v", h.weatherView, selected("weather-view:daily"))
+	}
+	if findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindScroll && n.Key == "weather-hourly" }) != nil {
+		t.Fatal("daily selection kept the hourly list in the panel")
+	}
+}
+
+func TestWeatherPanelHourlyViewKeepsEmptyStaleAndErrorStates(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	stale := observedWeather()
+	stale.FetchedAt = now.Add(-2 * time.Hour)
+	stale.FailedSince = now.Add(-time.Hour)
+	stale.Hourly = []services.Hour{{Time: "2026-10-21T11:00", Code: 3, Temperature: 18}}
+
+	for _, tc := range []struct {
+		name    string
+		reading services.Reading
+		want    []string
+	}{
+		{name: "empty", reading: services.Reading{}, want: []string{"No hourly forecast yet"}},
+		{name: "failed", reading: services.Reading{FailedSince: now}, want: []string{"No hourly forecast yet", "weather unavailable"}},
+		{name: "stale", reading: stale, want: []string{"11:00", "Stale · Age"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := &Registry{cfg: config.Default(), reading: tc.reading}
+			h := &PanelHost{id: PanelWeather, theme: DefaultTheme(), weatherView: "hourly"}
+			tree := weatherTree(r, h)
+			for _, want := range tc.want {
+				if !hasLine(collectTooltipLines(tree), want) {
+					t.Errorf("hourly weather text %q is missing %q", collectTooltipLines(tree), want)
+				}
+			}
+			if findNode(tree, func(n *ui.Node) bool { return n.Kind == ui.KindScroll && n.Key == "weather-hourly" }) == nil {
+				t.Fatal("hourly mode lost its forecast viewport")
+			}
+		})
 	}
 }
 
