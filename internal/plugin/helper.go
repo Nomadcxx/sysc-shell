@@ -228,13 +228,12 @@ func HelperServe(args []string) int {
 		fmt.Fprintln(os.Stderr, "stderr final marker")
 		return 0
 	case "stderr-inherited-child":
-		msg, err := in.Decode()
-		if err != nil {
-			return 1
-		}
-		if _, ok := msg.(*v1.HostShutdown); !ok {
-			return 1
-		}
+		// The descendant is started, and its pid reported, before the
+		// shutdown request is read. The host's grace bounds the shutdown, so
+		// anything this helper has to do before it answers has to happen
+		// before the grace starts; otherwise a loaded machine misses the
+		// window and the forced stop ends the group before the snapshot is
+		// ever written.
 		child := exec.Command(os.Args[0], HelperFlag, "hold-stderr")
 		child.Stderr = os.Stderr
 		if err := child.Start(); err != nil {
@@ -242,6 +241,13 @@ func HelperServe(args []string) int {
 		}
 		_ = out.Encode(&v1.ViewSnapshot{ViewID: "stderr-child", Revision: 1,
 			Root: &v1.Node{Kind: v1.KindText, Text: strconv.Itoa(child.Process.Pid)}})
+		msg, err := in.Decode()
+		if err != nil {
+			return 1
+		}
+		if _, ok := msg.(*v1.HostShutdown); !ok {
+			return 1
+		}
 		// Stay alive holding the pipe. A plugin that exits here would leave
 		// the test racing the grace against the pipe copy; going deaf on
 		// purpose guarantees the host has to bound the wait and stop the
