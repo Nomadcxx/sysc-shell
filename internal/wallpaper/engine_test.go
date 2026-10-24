@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 type fakeProcess struct {
@@ -70,7 +71,7 @@ func TestEngineRefreshTerminalCatalogReadsCurrentList(t *testing.T) {
 		}
 	}
 	writeCatalog("effect fire 0\ntheme nord\n")
-	engine := NewEngine(shortTempDir(t), func(name string) bool { return name == "sysc-terminal" })
+	engine := NewEngine(sockpath.Dir(t, "wc"), func(name string) bool { return name == "sysc-terminal" })
 	t.Cleanup(engine.Close)
 
 	if got := engine.Capabilities(); !got.Terminal || len(got.Catalog.Effects) != 1 || got.Catalog.Effects[0] != "fire" {
@@ -175,7 +176,7 @@ func newEngineHarness(t *testing.T) *engineHarness {
 		replies:            map[string]string{},
 		spawnCreatesSocket: true,
 	}
-	dir := shortTempDir(t)
+	dir := sockpath.Dir(t, "wc")
 	h.mediaDir = t.TempDir()
 	h.eng = &gslapperEngine{
 		dir:       dir,
@@ -914,7 +915,7 @@ func TestEngineRestoreDoesNotAssumeMissingSocketMeansProcessStopped(t *testing.T
 }
 
 func TestRemoveSocketIfSameRefusesReplacedSocket(t *testing.T) {
-	dir := shortTempDir(t)
+	dir := sockpath.Dir(t, "wc")
 	path := filepath.Join(dir, "gslapper-DP-1.sock")
 	deadSocketFileFor(t, path)
 	info, err := os.Lstat(path)
@@ -942,7 +943,7 @@ func TestRemoveSocketIfSameRefusesReplacedSocket(t *testing.T) {
 }
 
 func TestRemoveSocketIfSameRefusesReplacementAfterProbe(t *testing.T) {
-	dir := shortTempDir(t)
+	dir := sockpath.Dir(t, "wc")
 	path := filepath.Join(dir, "gslapper-DP-1.sock")
 	deadSocketFileFor(t, path)
 	info, err := os.Lstat(path)
@@ -975,7 +976,7 @@ func TestRemoveSocketIfSameRefusesReplacementAfterProbe(t *testing.T) {
 }
 
 func TestRemoveSocketIfSameRefusesLiveSocket(t *testing.T) {
-	path := filepath.Join(shortTempDir(t), "gslapper-DP-1.sock")
+	path := filepath.Join(sockpath.Dir(t, "wc"), "gslapper-DP-1.sock")
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

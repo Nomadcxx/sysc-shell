@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 func serveTopics(t *testing.T, topics map[string]ipc.Provider) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := ipc.NewServer(sock, ipc.Handlers{Topics: topics})
 	if err := srv.Listen(); err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"net"
 	"path/filepath"
 	"strings"
@@ -59,7 +60,7 @@ func (f *fakeTopic) pub(v any) {
 
 func startServerWith(t *testing.T, h Handlers, tune func(*Server)) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	sock := filepath.Join(sockpath.Dir(t, "ipc"), "ipc.v1.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := NewServer(sock, h)
 	if tune != nil {
