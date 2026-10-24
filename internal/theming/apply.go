@@ -66,8 +66,21 @@ func applyWriteForce(path, rendered string) error {
 	// the sidecar, and a .bak of that would read as the user's file.
 	if current, err := os.ReadFile(path); err == nil && len(current) > 0 && stateHash(path) != hash(current) {
 		if _, err := os.Stat(path + ".bak"); errors.Is(err, os.ErrNotExist) {
-			if err := os.Rename(path, path+".bak"); err != nil {
+			resolved, err := resolveWriteTarget(path)
+			if err != nil {
 				return err
+			}
+			if resolved == path {
+				if err := os.Rename(path, path+".bak"); err != nil {
+					return err
+				}
+			} else {
+				// The link is the user's and stays; the file it points
+				// at holds their bytes, so those go to the backup
+				// instead of the link being renamed away.
+				if err := writeBackup(path, path+".bak", current); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -87,7 +100,17 @@ func writeAdopted(path string, data []byte) error {
 // swapWrite renders into a sibling temp file and renames it over the target.
 // Rename is atomic within a directory, so a reader never sees a half-written
 // config and a crash leaves the previous bytes in place.
+//
+// A symlinked target is written through the link. A rename would replace the
+// link itself, so the user's dotfile would keep its old bytes while the shell
+// reported a successful apply, and the link would be gone from the config
+// directory. The directive path already follows the link for the same reason.
 func swapWrite(path string, data []byte) error {
+	resolved, err := resolveWriteTarget(path)
+	if err != nil {
+		return err
+	}
+	path = resolved
 	// A rename would sail past a read-only target the open would not: check
 	// writability first, the way writeFileAtomic always did, so a protected
 	// file is reported rather than silently replaced.
@@ -205,7 +228,24 @@ func UnapplyWrite(path string) error {
 	if stateHash(path) != hash(b) {
 		return nil
 	}
-	return os.Remove(path)
+	resolved, err := resolveWriteTarget(path)
+	if err != nil {
+		return err
+	}
+	if resolved == path {
+		return os.Remove(path)
+	}
+	// The link belongs to the user, so it stays. The shell's bytes leave
+	// the file it points at: a backup holds the user's own bytes and they
+	// go back in, and a file the shell adopted is emptied.
+	if user, err := os.ReadFile(path + ".bak"); err == nil {
+		mode := os.FileMode(0o644)
+		if info, err := os.Stat(resolved); err == nil {
+			mode = info.Mode().Perm()
+		}
+		return writeFileAtomic(resolved, user, mode)
+	}
+	return os.Truncate(resolved, 0)
 }
 
 func ApplyNiri(configPath, genPath, rendered string) error {
@@ -314,6 +354,41 @@ func resolveSymlinkTarget(path string) (string, error) {
 		return "", lstatErr
 	}
 	return path, nil
+}
+
+// resolveWriteTarget names the file a write must land in when the path is a
+// symbolic link.
+//
+// A rename replaces the link itself, so a write through a link the user keeps
+// in a dotfiles repo would swap the link for a regular file and leave the
+// dotfile with its old bytes. Following the link keeps the link and puts the
+// new bytes where the link points.
+//
+// A link whose target does not exist yet still names the file the user wants
+// written, so the link is read by hand and the write lands there.
+func resolveWriteTarget(path string) (string, error) {
+	current := path
+	for range 32 {
+		info, err := os.Lstat(current)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return current, nil
+			}
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return current, nil
+		}
+		target, err := os.Readlink(current)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(current), target)
+		}
+		current = filepath.Clean(target)
+	}
+	return "", fmt.Errorf("theming: %s: too many levels of symbolic links", path)
 }
 
 // ApplySidecar writes a generated file we own, refusing any existing
