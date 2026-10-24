@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	gnm "github.com/Wifx/gonetworkmanager/v2"
 	"github.com/godbus/dbus/v5"
 )
@@ -338,7 +339,7 @@ func TestNMBackendUnavailableWhenNothingAnswers(t *testing.T) {
 	if err != nil {
 		t.Skip("dbus-daemon is not installed")
 	}
-	addr := "unix:path=" + filepath.Join(t.TempDir(), "bus")
+	addr := "unix:path=" + filepath.Join(sockpath.Dir(t, "dbus"), "bus")
 	cmd := exec.Command(daemon, "--session", "--nofork", "--print-address", "--address="+addr)
 	out, err := cmd.StdoutPipe()
 	if err != nil {

@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 	"net"
 	"os"
 	"os/exec"
@@ -326,7 +327,7 @@ func TestAConfinedPluginReachesOnlyTheSocketsItDeclared(t *testing.T) {
 	if LandlockABI() < resolveUnixABI {
 		t.Skipf("this kernel offers Landlock ABI %d; socket confinement needs %d. Recorded unrun.", LandlockABI(), resolveUnixABI)
 	}
-	dir := t.TempDir()
+	dir := sockpath.Dir(t, "sock")
 	declared, other := filepath.Join(dir, "declared.sock"), filepath.Join(dir, "other.sock")
 	listenUnix(t, declared)
 	listenUnix(t, other)

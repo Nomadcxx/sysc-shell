@@ -10,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 func TestTraceLabelsDamageTypeAndBufferSize(t *testing.T) {
@@ -65,7 +67,7 @@ func TestTraceLabelsLayerSurfaceWithNamespace(t *testing.T) {
 }
 
 func TestWriteUnixMessageForwardsFileDescriptor(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wayland.sock")
+	path := filepath.Join(sockpath.Dir(t, "wlspy"), "wayland.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)

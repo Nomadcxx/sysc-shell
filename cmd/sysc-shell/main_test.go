@@ -12,6 +12,7 @@ import (
 	clipboardclient "github.com/Nomadcxx/sysc-clipboard/client"
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 // The --output flag is gone: every connected output receives a bar, so there
@@ -33,9 +34,13 @@ func TestRunRequiresNiriSocket(t *testing.T) {
 // A duplicate shell must stop at the instance socket instead of reaching the
 // Niri stream or starting services owned by the live shell.
 func TestRunRefusesADuplicate(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	// The instance socket lives under XDG_RUNTIME_DIR, so that directory has
+	// to be short enough for the socket path: a t.TempDir() path overruns
+	// the limit under a long TMPDIR and the bind fails with "invalid
+	// argument" instead of the test's own failure.
+	t.Setenv("XDG_RUNTIME_DIR", sockpath.Dir(t, "run"))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	niriSock := filepath.Join(t.TempDir(), "niri.sock")
+	niriSock := filepath.Join(sockpath.Dir(t, "niri"), "niri.sock")
 	t.Setenv("NIRI_SOCKET", niriSock)
 	quiet, err := net.Listen("unix", niriSock)
 	if err != nil {

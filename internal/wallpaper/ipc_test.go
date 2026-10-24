@@ -11,13 +11,15 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
 )
 
 // fakeGSlapper answers one line and then holds the connection open, the way
 // gSlapper does. A client that waited for EOF would block until its deadline.
 func fakeGSlapper(t *testing.T, reply string) (socket string, received func() string) {
 	t.Helper()
-	socket = filepath.Join(shortTempDir(t), "g.sock")
+	socket = filepath.Join(sockpath.Dir(t, "wc"), "g.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
