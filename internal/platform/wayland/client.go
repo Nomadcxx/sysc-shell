@@ -194,6 +194,10 @@ func (c HostCallbacks) validate(connector string) error {
 // Run owns the Wayland connection and every proxy created from it until the
 // context is cancelled or the compositor closes the surface. No other goroutine
 // may call a Wayland proxy.
+//
+// A compositor that leaves ends the session: Run reports no failure when the
+// shell was stopping, so a session exit leaves the unit inactive rather than
+// failed.
 func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error) {
 	if err := callbacks.validate(); err != nil {
 		return err
@@ -228,14 +232,22 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 		cfg:   &cfg,
 		stall: stallWatch{dump: writeStallDump},
 	}
-	defer func() { err = errors.Join(err, o.shutdown()) }()
+	defer func() { err = sessionEnd(ctx.Err() != nil, errors.Join(err, o.shutdown())) }()
 
 	// Bars are created by the readiness transition, not here: an output is
 	// only ready once it has reported both a done and a connector name.
 	if err := o.connect(); err != nil {
 		return err
 	}
-	return o.loop(runCtx, wake, pastes)
+	loopErr := o.loop(runCtx, wake, pastes)
+	if connectionGone(loopErr) {
+		// The compositor is gone. The stop signal may still be on its way, so
+		// wait for it: a session that is ending must not fail the unit, and a
+		// compositor that died on its own must still leave the shell
+		// restartable.
+		loopErr = awaitStop(ctx, connectionGoneGrace, loopErr)
+	}
+	return loopErr
 }
 
 type owner struct {
