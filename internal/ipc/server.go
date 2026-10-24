@@ -110,6 +110,10 @@ type Server struct {
 	hubs map[string]*hub
 	// writeTimeout bounds one write; tests shorten it.
 	writeTimeout time.Duration
+	// peerUID reports the uid of the peer on an accepted connection. It is a
+	// field so a test can present a peer from another user, which a
+	// same-uid process cannot do on its own.
+	peerUID func(net.Conn) (uint32, bool)
 
 	mu        sync.Mutex
 	conns     map[net.Conn]struct{}
@@ -118,7 +122,7 @@ type Server struct {
 }
 
 func NewServer(path string, h Handlers) *Server {
-	s := &Server{path: path, writeTimeout: writeTimeout}
+	s := &Server{path: path, writeTimeout: writeTimeout, peerUID: peerCredentials}
 	s.SetHandlers(h)
 	return s
 }
@@ -211,7 +215,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return err
 		}
-		if !sameUser(conn) {
+		if !s.sameUser(conn) {
 			_ = conn.Close()
 			continue
 		}
@@ -250,26 +254,46 @@ func (s *Server) drain() {
 // sameUser checks SO_PEERCRED on an accepted connection. The socket's 0600
 // mode already restricts who can connect; this catches the window before the
 // chmod lands and any socket inherited from an odd setup (GH #8).
-func sameUser(conn net.Conn) bool {
-	uc, ok := conn.(*net.UnixConn)
+func (s *Server) sameUser(conn net.Conn) bool {
+	lookup := s.peerUID
+	if lookup == nil {
+		lookup = peerCredentials
+	}
+	uid, ok := lookup(conn)
 	if !ok {
 		return false
 	}
+	return sameUID(uid, uint32(os.Getuid()))
+}
+
+// sameUID reports whether the peer runs as the same user as the shell. A peer
+// whose uid cannot be read is not the same user: the gate denies it.
+func sameUID(peer, self uint32) bool {
+	return peer == self
+}
+
+// peerCredentials reads the uid of the peer on an accepted connection with
+// SO_PEERCRED. It reports false when the peer credentials are unavailable.
+func peerCredentials(conn net.Conn) (uint32, bool) {
+	uc, ok := conn.(*net.UnixConn)
+	if !ok {
+		return 0, false
+	}
 	raw, err := uc.SyscallConn()
 	if err != nil {
-		return false
+		return 0, false
 	}
 	var credential *unix.Ucred
 	var controlErr error
 	if err := raw.Control(func(fd uintptr) {
 		credential, controlErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
 	}); err != nil {
-		return false
+		return 0, false
 	}
-	if controlErr != nil {
-		return false
+	if controlErr != nil || credential == nil {
+		return 0, false
 	}
-	return credential != nil && credential.Uid == uint32(os.Getuid())
+	return credential.Uid, true
 }
 
 func (s *Server) Close() error {
