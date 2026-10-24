@@ -304,6 +304,20 @@ func (r *Runtime) Allows(c Capability) bool {
 // Manifest is the validated declaration this runtime serves.
 func (r *Runtime) Manifest() Manifest { return r.candidate.Manifest }
 
+// Protocol reports the version the live session negotiated.
+//
+// It is the version the plugin's own decoder was built for, so it decides
+// which host messages that plugin can read: a host answer the plugin does not
+// know would fail its read instead of reaching it.
+func (r *Runtime) Protocol() v1.Version {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.session == nil {
+		return v1.Version{}
+	}
+	return r.session.Protocol
+}
+
 // Status reports the current lifecycle state.
 func (r *Runtime) Status() Status {
 	r.mu.Lock()
