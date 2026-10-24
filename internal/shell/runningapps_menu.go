@@ -633,6 +633,8 @@ func (h *runningAppMenuHost) actionForRow(row runningAppMenuRow) string {
 		return "running-app-workspace:" + strconv.FormatUint(row.MoveWindowID, 10) + ":" + strconv.FormatUint(row.MoveWorkspaceID, 10)
 	case runningAppMenuForceQuit:
 		return "running-app-force-quit"
+	case runningAppMenuCloseAll:
+		return "running-app-close-all"
 	case runningAppMenuForceQuitConfirm:
 		return "running-app-force-quit-confirm"
 	case runningAppMenuForceQuitCancel:
@@ -688,7 +690,7 @@ func (h *runningAppMenuHost) rebuild() {
 			if !visible[index] {
 				continue
 			}
-			if row.Kind == runningAppMenuForceQuit && len(visible) > 1 {
+			if len(visible) > 1 && h.startsAppLevelCloseGroup(index) {
 				col.Children = append(col.Children, &ui.Node{Kind: ui.KindSeparator})
 			}
 			action := h.actionForRow(row)
@@ -721,6 +723,25 @@ func (h *runningAppMenuHost) rebuild() {
 	h.root = col
 	if h.logicalW > 0 {
 		_ = h.relayout()
+	}
+}
+
+// startsAppLevelCloseGroup reports whether the row at index opens the group
+// of app-level close actions.
+//
+// The group holds the graceful close and the destructive one, and the
+// separator belongs in front of the group, not between its rows.
+func (h *runningAppMenuHost) startsAppLevelCloseGroup(index int) bool {
+	if index < 0 || index >= len(h.rows) {
+		return false
+	}
+	switch h.rows[index].Kind {
+	case runningAppMenuCloseAll:
+		return true
+	case runningAppMenuForceQuit:
+		return index == 0 || h.rows[index-1].Kind != runningAppMenuCloseAll
+	default:
+		return false
 	}
 }
 
@@ -810,6 +831,12 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 			}
 		}
 		h.r.spawnDesktopExecLocked(execLine)
+	case runningAppMenuCloseAll:
+		for _, window := range closableRunningAppWindows(slot) {
+			if currentRunningWindow(h.r.running, slot.Key, window.ID) {
+				h.r.sendNiriLocked(niri.CloseWindow{ID: window.ID})
+			}
+		}
 	}
 }
 
