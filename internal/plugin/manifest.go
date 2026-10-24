@@ -35,6 +35,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
@@ -101,6 +102,34 @@ const (
 	CapFiles Capability = "files"
 )
 
+// The narrowed classes say whether a plugin may read or change something, the
+// decision a user is actually making. They arrived in protocol minor 19; the
+// broad names above keep working and grant exactly the union of their parts.
+const (
+	CapStateRead         Capability = "state-read"
+	CapStateWrite        Capability = "state-write"
+	CapWallpaperRead     Capability = "wallpaper-read"
+	CapWallpaperWrite    Capability = "wallpaper-write"
+	CapScreenshotCapture Capability = "screenshot-capture"
+	CapScreenshotRead    Capability = "screenshot-read"
+	// CapOutputsRead gates output.context, which no class gated before
+	// minor 19. A manifest declaring an older minor keeps it ungated.
+	CapOutputsRead Capability = "outputs-read"
+	// CapFilesBrowser is files scoped to the host-owned browser root, today
+	// the only root, so it grants what files grants. The scope exists so a
+	// second root cannot silently widen an earlier approval.
+	CapFilesBrowser Capability = "files:browser"
+)
+
+// NarrowCapabilityMinor is the protocol minor that introduced the narrowed
+// classes and scoped names.
+const NarrowCapabilityMinor = 19
+
+var narrowCapabilities = map[Capability]bool{
+	CapStateRead: true, CapStateWrite: true, CapWallpaperRead: true, CapWallpaperWrite: true,
+	CapScreenshotCapture: true, CapScreenshotRead: true, CapOutputsRead: true, CapFilesBrowser: true,
+}
+
 var knownCapabilities = map[Capability]bool{
 	CapNotifications: true, CapPanels: true, CapSettings: true, CapState: true,
 	CapFloatingSurfaces: true,
@@ -109,6 +138,44 @@ var knownCapabilities = map[Capability]bool{
 	CapOpenURL:          true, CapClipboardWrite: true,
 	CapScreenshot: true,
 	CapFiles:      true,
+	CapStateRead:  true, CapStateWrite: true, CapWallpaperRead: true, CapWallpaperWrite: true,
+	CapScreenshotCapture: true, CapScreenshotRead: true, CapOutputsRead: true, CapFilesBrowser: true,
+}
+
+// capabilityScopes lists the scopes each class accepts after a colon.
+var capabilityScopes = map[Capability][]string{CapFiles: {"browser"}}
+
+// grantsOf is what one declared name lets a plugin call, as the classes the
+// gate checks. A broad name grants exactly the union of its parts; panels and
+// floating surfaces already read output context through the host, so they
+// keep that read.
+func grantsOf(c Capability) []Capability {
+	switch c {
+	case CapState:
+		return []Capability{CapStateRead, CapStateWrite}
+	case CapWallpaper:
+		return []Capability{CapWallpaperRead, CapWallpaperWrite}
+	case CapScreenshot:
+		return []Capability{CapScreenshotCapture, CapScreenshotRead}
+	case CapPanels, CapFloatingSurfaces:
+		return []Capability{c, CapOutputsRead}
+	case CapFilesBrowser:
+		return []Capability{CapFiles}
+	}
+	return []Capability{c}
+}
+
+// broadNameOf is the pre-minor-17 name that grants a narrowed class.
+func broadNameOf(c Capability) Capability {
+	switch c {
+	case CapStateRead, CapStateWrite:
+		return CapState
+	case CapWallpaperRead, CapWallpaperWrite:
+		return CapWallpaper
+	case CapScreenshotCapture, CapScreenshotRead:
+		return CapScreenshot
+	}
+	return c
 }
 
 // Placement says how a declared panel is positioned. An attached panel drops
@@ -168,7 +235,45 @@ type Manifest struct {
 	Widgets      []Widget
 	Panels       []Panel
 	Settings     []Setting
+	// Filesystem is what the plugin may touch beyond its own directory and
+	// its state directory. Nil means it declared nothing and is not
+	// confined; a declaration, even an empty one, confines it where the
+	// kernel can.
+	Filesystem *Filesystem
 }
+
+// Filesystem is a plugin's declared reach into the user's files, as written
+// in the manifest: paths beginning "~/" (the user's home) or "/".
+type Filesystem struct {
+	// Read names files and directories the plugin may read.
+	Read []string
+	// ReadWrite names directories the plugin may read and change.
+	ReadWrite []string
+	// Sockets names the Unix sockets the plugin may connect to: a named
+	// endpoint the shell resolves at each start, or an absolute path. A
+	// confined plugin reaches no other socket where the kernel can refuse it.
+	Sockets []string
+	// SignalAny lets the plugin signal processes it did not start, written
+	// "signals": "any". By default a confined plugin signals only its own.
+	SignalAny bool
+}
+
+// Socket endpoints a manifest may name instead of a path. Each resolves at
+// start from the session the shell runs in.
+const (
+	SocketSessionBus = "session-bus"
+	SocketSystemBus  = "system-bus"
+	SocketCompositor = "compositor"
+	SocketWayland    = "wayland"
+)
+
+var socketEndpoints = []string{SocketSessionBus, SocketSystemBus, SocketCompositor, SocketWayland}
+
+// FilesystemMinor is the protocol minor that introduced the declaration.
+const FilesystemMinor = 20
+
+// maxFilesystemPaths bounds a declaration so a consent can be read whole.
+const maxFilesystemPaths = 32
 
 // Service is one background behaviour the plugin owns. It is metadata for the
 // manager: the process supplies the behaviour itself.
@@ -291,12 +396,20 @@ type wireManifest struct {
 	Protocol    wireProtocol `json:"protocol"`
 	Exec        string       `json:"exec"`
 
-	Capabilities []string      `json:"capabilities,omitempty"`
-	Requires     *wireRequires `json:"requires,omitempty"`
-	Services     []wireEntry   `json:"services,omitempty"`
-	Widgets      []wireWidget  `json:"widgets,omitempty"`
-	Panels       []wirePanel   `json:"panels,omitempty"`
-	Settings     []wireSetting `json:"settings,omitempty"`
+	Capabilities []string        `json:"capabilities,omitempty"`
+	Requires     *wireRequires   `json:"requires,omitempty"`
+	Services     []wireEntry     `json:"services,omitempty"`
+	Widgets      []wireWidget    `json:"widgets,omitempty"`
+	Panels       []wirePanel     `json:"panels,omitempty"`
+	Settings     []wireSetting   `json:"settings,omitempty"`
+	Filesystem   *wireFilesystem `json:"filesystem,omitempty"`
+}
+
+type wireFilesystem struct {
+	Read      []string `json:"read,omitempty"`
+	ReadWrite []string `json:"read_write,omitempty"`
+	Sockets   []string `json:"sockets,omitempty"`
+	Signals   string   `json:"signals,omitempty"`
 }
 
 type wireProtocol struct {
@@ -461,6 +574,13 @@ func validateManifest(w wireManifest) (Manifest, error) {
 	if m.Capabilities, err = capabilities(w.Capabilities); err != nil {
 		return Manifest{}, err
 	}
+	if m.Protocol.Minor < NarrowCapabilityMinor {
+		for i, c := range m.Capabilities {
+			if narrowCapabilities[c] {
+				return Manifest{}, fmt.Errorf("capabilities[%d]: %q requires protocol minor %d", i, c, NarrowCapabilityMinor)
+			}
+		}
+	}
 	if m.Requires, err = requires(w.Requires); err != nil {
 		return Manifest{}, err
 	}
@@ -490,7 +610,79 @@ func validateManifest(w wireManifest) (Manifest, error) {
 	if m.Settings, err = settings(w.Settings, "settings"); err != nil {
 		return Manifest{}, err
 	}
+	if w.Filesystem != nil {
+		if m.Protocol.Minor < FilesystemMinor {
+			return Manifest{}, fmt.Errorf("filesystem requires protocol minor %d", FilesystemMinor)
+		}
+		if m.Filesystem, err = filesystem(*w.Filesystem); err != nil {
+			return Manifest{}, err
+		}
+	}
 	return m, nil
+}
+
+func filesystem(w wireFilesystem) (*Filesystem, error) {
+	if n := len(w.Read) + len(w.ReadWrite) + len(w.Sockets); n > maxFilesystemPaths {
+		return nil, fmt.Errorf("filesystem declares %d paths, more than the %d allowed", n, maxFilesystemPaths)
+	}
+	for _, list := range []struct {
+		field string
+		paths []string
+	}{{"read", w.Read}, {"read_write", w.ReadWrite}} {
+		for i, path := range list.paths {
+			if err := declaredPath(path); err != nil {
+				return nil, fmt.Errorf("filesystem.%s[%d]: %w", list.field, i, err)
+			}
+		}
+	}
+	for i, socket := range w.Sockets {
+		if err := declaredSocket(socket); err != nil {
+			return nil, fmt.Errorf("filesystem.sockets[%d]: %w", i, err)
+		}
+	}
+	switch w.Signals {
+	case "", "own", "any":
+	default:
+		return nil, fmt.Errorf(`filesystem.signals: %q is not "own" or "any"`, w.Signals)
+	}
+	return &Filesystem{Read: slices.Clone(w.Read), ReadWrite: slices.Clone(w.ReadWrite),
+		Sockets: slices.Clone(w.Sockets), SignalAny: w.Signals == "any"}, nil
+}
+
+// declaredSocket accepts a named endpoint or a clean absolute path. The "~/"
+// form paths take is refused: a socket is a session endpoint, and one written
+// against the home directory would hide an agent socket behind a short name
+// on the consent card. An absolute path is shown as written.
+func declaredSocket(socket string) error {
+	if slices.Contains(socketEndpoints, socket) {
+		return nil
+	}
+	if !filepath.IsAbs(socket) {
+		return fmt.Errorf("%q is neither an endpoint (%s) nor an absolute path", socket, strings.Join(socketEndpoints, ", "))
+	}
+	return declaredPath(socket)
+}
+
+// declaredPath accepts "~/..." or an absolute path, written in its clean form
+// so the consent shows exactly what is granted, and never the whole root.
+func declaredPath(path string) error {
+	if len(path) > maxLabelBytes {
+		return fmt.Errorf("%q is longer than %d bytes", path, maxLabelBytes)
+	}
+	rest, home := strings.CutPrefix(path, "~/")
+	if !home && !filepath.IsAbs(path) {
+		return fmt.Errorf("%q must begin with ~/ or /", path)
+	}
+	if !home {
+		rest = path
+	}
+	if rest == "/" || rest == "" {
+		return fmt.Errorf("%q grants everything", path)
+	}
+	if filepath.Clean(rest) != rest || rest == ".." || strings.HasPrefix(rest, "../") || strings.Contains(rest, "/../") {
+		return fmt.Errorf("%q is not a clean path inside its root", path)
+	}
+	return nil
 }
 
 // text checks a free-form label or paragraph.
@@ -509,6 +701,13 @@ func capabilities(names []string) ([]Capability, error) {
 	seen := make(map[Capability]bool, len(names))
 	for _, name := range names {
 		c := Capability(name)
+		if base, scope, scoped := strings.Cut(name, ":"); scoped && knownCapabilities[Capability(base)] && !knownCapabilities[c] {
+			if len(capabilityScopes[Capability(base)]) == 0 {
+				return nil, fmt.Errorf("capability %q: %q takes no scope", name, base)
+			}
+			return nil, fmt.Errorf("capability %q: scope %q is not one this shell offers for %q (it offers %v)",
+				name, scope, base, capabilityScopes[Capability(base)])
+		}
 		if !knownCapabilities[c] {
 			return nil, fmt.Errorf("capability %q is not one this shell offers", name)
 		}
@@ -944,4 +1143,32 @@ func resolveExec(dir, rel string) (string, error) {
 		return "", fmt.Errorf("exec %q is not executable", rel)
 	}
 	return full, nil
+}
+
+// SameGrants reports whether two lists of declared names allow the same
+// calls, so a release that respells files as files:browser, or state as its
+// two halves, is not a change a user is asked about.
+func SameGrants(a, b []string) bool {
+	expand := func(names []string) []Capability {
+		var out []Capability
+		for _, name := range names {
+			out = append(out, grantsOf(Capability(name))...)
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	return slices.Equal(expand(a), expand(b))
+}
+
+// DescribeCapability is a declared name as a consent reads it. A broad name
+// says what it covers, so an approval given before the classes were narrowed
+// reads with the same meaning now.
+func DescribeCapability(name string) string {
+	switch Capability(name) {
+	case CapState, CapWallpaper:
+		return name + " (read and write)"
+	case CapScreenshot:
+		return name + " (capture and read)"
+	}
+	return name
 }

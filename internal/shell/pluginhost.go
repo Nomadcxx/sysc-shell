@@ -26,6 +26,9 @@ type PluginHostOptions struct {
 	Roots    []plugin.Root
 	StateDir string
 	Notify   func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	// Launcher is the shell binary, which applies each plugin's boundary
+	// before executing it (plugin.LaunchFlag). Empty starts plugins directly.
+	Launcher string
 	// recordInputs keeps the test-only sent-input history. Production leaves it off.
 	recordInputs bool
 }
@@ -140,6 +143,8 @@ var hostPluginCaps = []plugin.Capability{
 	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
 	plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapScreenshot,
 	plugin.CapFiles,
+	plugin.CapStateRead, plugin.CapStateWrite, plugin.CapWallpaperRead, plugin.CapWallpaperWrite,
+	plugin.CapScreenshotCapture, plugin.CapScreenshotRead, plugin.CapOutputsRead, plugin.CapFilesBrowser,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -428,15 +433,14 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	}
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
 		Supported:      hostPluginCaps,
+		Consent:        h.consentLookup(),
+		Launcher:       h.opts.Launcher,
+		StateDir:       h.stateDir(),
 		Limits:         v1.DefaultLimits,
 		SessionEnded:   func() { h.clearWallpaperMasks(id) },
 		SessionStarted: func() { h.reopenViews(id) },
 	})
-	stateDir := h.opts.StateDir
-	if stateDir == "" {
-		stateDir = plugin.StateRoot()
-	}
-	store, err := plugin.OpenStore(stateDir, id)
+	store, err := plugin.OpenStore(h.stateDir(), id)
 	if err != nil {
 		return err
 	}
@@ -477,6 +481,36 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		h.pushSettings(id, rt)
 	}
 	return nil
+}
+
+func (h *pluginHost) stateDir() string {
+	if h.opts.StateDir != "" {
+		return h.opts.StateDir
+	}
+	return plugin.StateRoot()
+}
+
+// consentLookup reads the approval ledger the store keeps in the managed root.
+// It is read at every start, so an approval the store's worker records takes
+// effect on the next start without the host caching it. With no managed root
+// there is no ledger, and nothing is checked.
+func (h *pluginHost) consentLookup() plugin.ConsentLookup {
+	var path string
+	for _, root := range h.opts.Roots {
+		if root.Source == plugin.SourceManaged {
+			path = plugin.ConsentPath(root.Path)
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	return func(source plugin.Source, id string) (plugin.ConsentRecord, bool) {
+		l, err := plugin.LoadConsent(path)
+		if err != nil {
+			slog.Warn("plugin approvals unreadable; treating every copy as unrecorded", "err", err)
+		}
+		return l.Lookup(source, id)
+	}
 }
 
 func grantedCaps(rt *plugin.Runtime) []plugin.Capability {
@@ -1085,9 +1119,16 @@ const pluginCallTimeout = 10 * time.Second
 // panel or post a toast after the plugin was told it failed.
 func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateStore) plugin.CallEnv {
 	m := rt.Manifest()
+	var withheld plugin.Withheld
+	if !rt.Status().Consent.Grants() {
+		withheld = plugin.WithheldChanged
+	}
 	return plugin.CallEnv{
 		PluginID:       id,
 		Granted:        grantedCaps(rt),
+		Declared:       m.Capabilities,
+		Withheld:       withheld,
+		Protocol:       m.Protocol,
 		DeclaredPanels: m.Panels,
 		Store:          store,
 		CallTimeout:    pluginCallTimeout,

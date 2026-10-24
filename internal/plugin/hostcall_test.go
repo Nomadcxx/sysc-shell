@@ -71,7 +71,7 @@ func TestHostCallWallpaperDeniedWithoutCapability(t *testing.T) {
 
 	for _, call := range []v1.CallKind{v1.CallWallpaperSnapshot, v1.CallWallpaperMaskSet} {
 		reply := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "wallpaper", Call: call})
-		if reply.OK || !strings.Contains(reply.Error, "capability wallpaper is not granted") {
+		if reply.OK || !strings.Contains(reply.Error, `needs capability "wallpaper"`) {
 			t.Errorf("%s reply = %+v, want wallpaper capability denial", call, reply)
 		}
 	}
@@ -843,5 +843,35 @@ func TestHostCallFilesBrowseDoesNotUseCallTimeout(t *testing.T) {
 	reply := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: root, Mode: "pick-file"})})
 	if !reply.OK {
 		t.Fatalf("pick timed out: %+v", reply)
+	}
+}
+
+// TestAWithheldGrantSaysWhy: a capability the manifest declares but the host
+// did not grant is refused with the reason, not with advice to declare what
+// is already declared (sysc-1252).
+func TestAWithheldGrantSaysWhy(t *testing.T) {
+	t.Parallel()
+	narrowMinor := v1.Version{Major: 1, Minor: NarrowCapabilityMinor}
+	call := func(env CallEnv) string {
+		return NewDispatcher(env).Handle(context.Background(), &v1.HostCall{
+			ID: "1", Call: v1.CallStateGet, Params: jsonOf(t, v1.StateGetParams{Key: "k"}),
+		}).Error
+	}
+	changed := call(CallEnv{Protocol: narrowMinor, Declared: []Capability{CapStateRead}, Withheld: WithheldChanged})
+	if strings.Contains(changed, "declare it") || !strings.Contains(changed, "changed since the user approved it") {
+		t.Errorf("a changed plugin was told: %q", changed)
+	}
+	// Declared through the broad name, which grants the narrow one.
+	broad := call(CallEnv{Protocol: v1.Version{Major: 1, Minor: 3}, Declared: []Capability{CapState}, Withheld: WithheldChanged})
+	if strings.Contains(broad, "declare it") {
+		t.Errorf("a broad declaration was told to declare: %q", broad)
+	}
+	unoffered := call(CallEnv{Protocol: narrowMinor, Declared: []Capability{CapStateRead}})
+	if strings.Contains(unoffered, "declare it") || !strings.Contains(unoffered, "this shell did not grant it") {
+		t.Errorf("a declared but ungranted capability was told: %q", unoffered)
+	}
+	undeclared := call(CallEnv{Protocol: narrowMinor})
+	if !strings.Contains(undeclared, `declare it in manifest.json as {"capabilities":["state-read"]}`) {
+		t.Errorf("an undeclared capability lost its advice: %q", undeclared)
 	}
 }

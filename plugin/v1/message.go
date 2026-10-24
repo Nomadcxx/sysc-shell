@@ -15,7 +15,16 @@ const (
 	// Minor 16 adds files.browse, the host-owned file browser.
 	// Minor 17 adds stepped sliders and compact images inside bar buttons.
 	// Minor 18 adds a warning tone for noncritical status text.
-	ProtocolMinor = 18
+	// Minor 19 narrows the capability vocabulary: state-read and state-write,
+	// wallpaper-read and wallpaper-write, screenshot-capture and
+	// screenshot-read, outputs-read for output.context, and the scoped
+	// files:browser. A manifest may declare those names only at minor 19 or
+	// later, so a shell older than this one refuses it at load; the broad
+	// names keep their meaning at every minor.
+	// Minor 20 adds the manifest's filesystem declaration: the paths a
+	// plugin reads and changes beyond its own directories. A plugin that
+	// declares it is confined to them where the kernel offers Landlock.
+	ProtocolMinor = 20
 )
 
 // The version-one message names. Every line on the wire carries one of these

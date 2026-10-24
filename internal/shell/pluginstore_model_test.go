@@ -199,3 +199,83 @@ func containsString(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+func TestUpdateConsentSaysWhatTheAsksGainedAndLost(t *testing.T) {
+	l := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.5.0")
+	l.Entry.Release.Capabilities = []string{"panels", "notifications"}
+	l.Entry.Release.Requires.Commands = []string{"curl"}
+	l.Resolution.Release = &l.Entry.Release
+	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"panels", "state"}, Requires: []string{"notify-send"}}
+	l.Status = store.StatusUpdateAvailable
+	l.UpdateAvailable = true
+	detail := detailFor(l, false, nil, "", "en")
+	for _, want := range []string{
+		"Version: 1.4.0 → 1.5.0",
+		"Capabilities added: notifications",
+		"Capabilities removed: state",
+		"Required commands added: curl",
+		"Required commands removed: notify-send",
+	} {
+		if !containsString(detail.ConsentLines, want) {
+			t.Errorf("consent lines %v lack %q", detail.ConsentLines, want)
+		}
+	}
+
+	// An install has nothing to compare with, and says nothing about change.
+	l.Installed, l.UpdateAvailable, l.Status = nil, false, store.StatusAvailable
+	for _, line := range detailFor(l, false, nil, "", "en").ConsentLines {
+		if strings.Contains(line, "added:") || strings.Contains(line, "removed:") || strings.Contains(line, "→") {
+			t.Errorf("install consent line %q describes a change", line)
+		}
+	}
+}
+
+func TestConsentCardReadsAnOldGrantWithItsMeaning(t *testing.T) {
+	l := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.5.0")
+	l.Entry.Release.Capabilities = []string{"state", "files:browser"}
+	l.Resolution.Release = &l.Entry.Release
+	if !containsString(detailFor(l, false, nil, "", "en").ConsentLines, "Capabilities: state (read and write), files:browser") {
+		t.Fatalf("install card = %v", detailFor(l, false, nil, "", "en").ConsentLines)
+	}
+	// Respelling a grant is not a change to ask about.
+	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"state-read", "state-write", "files"}, Requires: []string{"notify-send"}}
+	l.Status, l.UpdateAvailable = store.StatusUpdateAvailable, true
+	detail := detailFor(l, false, nil, "", "en")
+	if detail.NeedsConsent {
+		t.Fatalf("a respelt grant asked for consent: %v", detail.ConsentLines)
+	}
+	for _, line := range detail.ConsentLines {
+		if strings.HasPrefix(line, "Capabilities added") || strings.HasPrefix(line, "Capabilities removed") {
+			t.Fatalf("a respelt grant reads as a change: %q", line)
+		}
+	}
+}
+
+func TestTheConsentCardStatesTheBoundaryInForce(t *testing.T) {
+	declared := &catalog.Filesystem{Read: []string{"~/.local/share/opencode"}, ReadWrite: []string{"~/.cache/Proton"}}
+	sockets := &catalog.Filesystem{Sockets: []string{"session-bus", "/run/docker.sock"}}
+	const files = "It can read ~/.local/share/opencode and change ~/.cache/Proton, and no other files of yours."
+	const session = " This kernel cannot hold it to its declared sockets, so it can still reach your session and start programs through it."
+	const signals = " It can also signal your other programs."
+	const network = " Network access is not restricted."
+	for _, tc := range []struct {
+		name string
+		fs   *catalog.Filesystem
+		abi  int
+		want string
+	}{
+		{"undeclared", nil, 10, "It runs as your user with full file and network access."},
+		{"declared, every right", declared, 10, files + network},
+		{"declared, nothing extra", &catalog.Filesystem{}, 10, "It can reach only its own files." + network},
+		{"sockets listed", sockets, 10, "It can reach only its own files. It can connect to session-bus, /run/docker.sock." + network},
+		{"signals declared", &catalog.Filesystem{Signals: "any"}, 10, "It can reach only its own files." + signals + network},
+		{"no socket right", declared, 8, files + session + network},
+		{"no scopes either", declared, 5, files + session + signals + network},
+		{"declared, no landlock", declared, 0,
+			"This kernel provides no filesystem confinement. It runs as your user with full file and network access."},
+	} {
+		if got := boundaryLine(tc.fs, tc.abi); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+}
