@@ -2044,6 +2044,15 @@ func TestSettingsDebouncesFieldWrites(t *testing.T) {
 	}
 }
 
+// TestSettingsDebouncedWriteDoesNotOverwriteReloadedConfig pins what a stale
+// draft depends on: a successful external reload retires the pending debounced
+// write, so the draft never reaches the file over the reloaded config.
+//
+// The test takes the snapshot the debounced write carries, retires it with the
+// reload, and then runs that write against the retired snapshot. The decision
+// is observed where it is made: waiting for the invalidation the write
+// publishes cannot tell that write apart from the panel frame that publishes
+// the same surface, and the frame loop runs on its own clock (sysc-1653).
 func TestSettingsDebouncedWriteDoesNotOverwriteReloadedConfig(t *testing.T) {
 	base := config.Default()
 	base.Accessibility.ReducedMotion = true
@@ -2056,70 +2065,61 @@ func TestSettingsDebouncedWriteDoesNotOverwriteReloadedConfig(t *testing.T) {
 	}
 	reloads := make(chan struct{}, 8)
 	reg.BindPersist(path, reloads)
-	reg.writeDelay = 5 * time.Millisecond
+	reg.writeDelay = time.Hour
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	_ = drainAux(t, reg, 2)
 	h := reg.panelHosts[PanelSettings]
 
-	// Hold the file writer after the debounce snapshots the draft. A successful
-	// external reload must invalidate that snapshot before it can write.
-	reg.configWriteMu.Lock()
+	// Arm the draft and take the snapshot the debounced write carries.
 	reg.mu.Lock()
 	h.errLabel = "previous write failure"
 	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "stale locker"})
+	armed := h.writeTimer != nil
+	reg.settingsWriteMu.Lock()
+	revision := h.settingsWriteRevision
+	changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
+	reg.settingsWriteMu.Unlock()
 	reg.mu.Unlock()
-
-	snapshotDeadline := time.NewTimer(time.Second)
-	defer snapshotDeadline.Stop()
-	for {
-		reg.mu.Lock()
-		snapshotPending := h.writeTimer != nil
-		reg.mu.Unlock()
-		if !snapshotPending {
-			break
-		}
-		select {
-		case <-snapshotDeadline.C:
-			reg.configWriteMu.Unlock()
-			t.Fatal("debounced write did not snapshot the draft")
-		case <-time.After(time.Millisecond):
-		}
+	if !armed {
+		t.Fatal("the draft did not arm a write")
 	}
 
+	// A successful external reload retires that snapshot.
 	external := base.Clone()
 	external.Bar.Edge = "right"
 	if err := config.Write(path, external); err != nil {
-		reg.configWriteMu.Unlock()
 		t.Fatal(err)
 	}
 	prepared, err := reg.PrepareConfig(external, nil)
 	if err != nil {
-		reg.configWriteMu.Unlock()
 		t.Fatal(err)
 	}
 	prepared.Commit()
-	for len(reg.invalidations) > 0 {
-		<-reg.invalidations
-	}
-	reg.configWriteMu.Unlock()
 
-	deadline := time.NewTimer(time.Second)
-	defer deadline.Stop()
-	wantSurface := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelSettings)}
-	for {
-		select {
-		case got := <-reg.invalidations:
-			if got == wantSurface {
-				goto written
-			}
-		case <-deadline.C:
-			t.Fatal("debounced write did not finish")
-		}
+	reg.mu.Lock()
+	timerPending := h.writeTimer != nil
+	reg.mu.Unlock()
+	reg.settingsWriteMu.Lock()
+	pending := len(h.settingsWriteChanges)
+	current := h.settingsWriteRevision
+	reg.settingsWriteMu.Unlock()
+	if timerPending || pending != 0 || current == revision {
+		t.Fatalf("the reload did not retire the pending draft: timer=%t changes=%d revision=%d want %d",
+			timerPending, pending, current, revision)
 	}
 
-written:
+	// The write the debounce would have started now runs against the retired
+	// snapshot: it must discard it rather than write over the reload.
+	applied, err := reg.writeDebouncedSettingsChanges(h, changes, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("the retired draft was written over the reloaded config")
+	}
+
 	got, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
