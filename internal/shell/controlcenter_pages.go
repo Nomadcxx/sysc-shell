@@ -273,9 +273,14 @@ func ccSegment(icon, label, action string, selected bool) *ui.Node {
 	return n
 }
 
-func ccQuickTile(width int, icon, label, value, action string, selected bool) *ui.Node {
+// ccQuickTile is one filled card in the control centre. Its inset is the
+// density row's card rung, not the panel rung: a tile is a card, and a card
+// that pads like the panel it sits in reads as a panel. The metrics row is
+// passed in rather than read from a package constant so the tile follows the
+// ladder when the ladder moves.
+func ccQuickTile(m theme.Metrics, width int, icon, label, value, action string, selected bool) *ui.Node {
 	n := &ui.Node{
-		Kind: ui.KindCapsule, Width: width, Height: ccCardH, Padding: theme.MarginL,
+		Kind: ui.KindCapsule, Width: width, Height: ccCardH, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Action: action, Name: label, Role: "button", Focusable: true,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
@@ -371,7 +376,7 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 	if r != nil && r.audio != nil {
 		state, ok = r.audio.CachedState()
 	}
-	mute := ccQuickTile(ccTileW, "volume_off", cardT(tr, "cc.mute", "Mute"), ccOnOff(state.Muted, tr), "cc:mute", state.Muted)
+	mute := ccQuickTile(m, ccTileW, "volume_off", cardT(tr, "cc.mute", "Mute"), ccOnOff(state.Muted, tr), "cc:mute", state.Muted)
 	if !ok {
 		ccDisable(mute)
 	}
