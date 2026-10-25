@@ -157,8 +157,8 @@ func TestClipboardProviderSearchesMetadata(t *testing.T) {
 			break
 		}
 	}
-	if provider == nil || !provider.Inline {
-		t.Fatalf("clipboard provider = %+v, want inline /clip provider", provider)
+	if provider == nil || provider.Inline || provider.Prefix != "/clipboard" || !strings.Contains(provider.Description, "/clipboard") {
+		t.Fatalf("clipboard provider = %+v, want non-inline /clipboard provider", provider)
 	}
 	rows := provider.Query("launch")
 	if len(rows) != 2 || rows[0].Entry.ID != launcherClipboardResultPrefix+"text-two" ||
@@ -167,6 +167,51 @@ func TestClipboardProviderSearchesMetadata(t *testing.T) {
 	}
 	if rows := provider.Query("absent"); len(rows) != 0 {
 		t.Fatalf("non-matching clipboard search rows = %+v", rows)
+	}
+}
+
+func TestClipboardProviderRequiresExplicitPrefix(t *testing.T) {
+	r := newPanelRegistry(t)
+	clipID := launcherClipboardResultPrefix + "pav-entry"
+	r.mu.Lock()
+	r.clipboard = clipboardProjection{Connected: true, Snapshot: clipboardprotocol.Snapshot{
+		Entries: []clipboardprotocol.Entry{{
+			ID: "pav-entry", Kind: clipboardprotocol.KindText, MIME: "text/plain", Preview: "pav control",
+		}}, Wayland: clipboardprotocol.WaylandReady,
+	}}
+	r.mu.Unlock()
+
+	cfg := r.launcherServiceConfig()
+	cfg.Scan = func() []launcher.Entry {
+		return []launcher.Entry{{ID: "pavucontrol.desktop", Name: "Pavucontrol"}}
+	}
+	svc := launcher.NewService(cfg)
+	defer svc.Close()
+	<-svc.Results()
+	query := func(text string) []launcher.Result {
+		svc.Query(text)
+		return <-svc.Results()
+	}
+	contains := func(rows []launcher.Result, id string) bool {
+		for _, row := range rows {
+			if row.Entry.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	bare := query("pav")
+	if !contains(bare, "pavucontrol.desktop") {
+		t.Errorf("bare pav search = %+v, want Pavucontrol", bare)
+	}
+	if contains(bare, clipID) {
+		t.Errorf("bare pav search includes clipboard entry: %+v", bare)
+	}
+
+	explicit := query("/clipboard pav")
+	if !contains(explicit, clipID) {
+		t.Errorf("explicit clipboard search = %+v, want clipboard entry %q", explicit, clipID)
 	}
 }
 
@@ -294,7 +339,7 @@ func TestClipboardLauncherActivationRestoresThenClosesAndPastes(t *testing.T) {
 		return nil
 	}
 	h := reg.panelHosts[PanelLauncher]
-	reg.launcherSendQuery(h, "launch")
+	reg.launcherSendQuery(h, "/clipboard launch")
 	reg.rebuildPanel(h)
 	reg.mu.Unlock()
 	waitForLauncherResults(t, reg, 1)
