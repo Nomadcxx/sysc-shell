@@ -64,3 +64,19 @@ jobs:
         run: go test -race -count=1 ./...
       - name: build
         run: go build ./...
+
+  # The runner kernel's Landlock ABI decides which plugin confinement tests
+  # can run. This job records the ABI in the log and the step summary and
+  # fails only when the kernel offers no Landlock at all. An ABI below the
+  # socket levels is a finding to file, not a job that is always red;
+  # SYSC_REQUIRE_LANDLOCK=<n> raises the floor to what the runner is known
+  # to clear.
+  landlock-abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: record landlock ABI
+        run: go test ./internal/plugin/ -run '^TestLandlockABIRecorded$' -v -count=1
