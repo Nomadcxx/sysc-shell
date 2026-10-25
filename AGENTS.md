@@ -22,7 +22,7 @@
 - Add UI primitives only for an approved shell component. Do not build a general application toolkit.
 - Keep one repository until a component has a second real consumer and a stable API.
 - Pin unstable dependencies by version or commit. Record the reason in the design or implementation plan.
-- Run `govulncheck` over the module in CI (`.github/workflows/vuln.yml`). A reachable dependency flaw fails the build; the scanner version is pinned in that workflow.
+- Run `govulncheck` over the module in CI (`.github/workflows/vuln.yml`). A reachable dependency flaw fails the build; the scanner version is pinned in that workflow. The scan runs on the toolchain the go directive in `go.mod` declares, so a reachable standard library flaw fails it too.
 
 ## Tracking
 
