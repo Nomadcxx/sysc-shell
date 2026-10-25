@@ -1,9 +1,11 @@
 package shell
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -12,7 +14,7 @@ import (
 
 // benchInvalidationsDrained is keepInvalidationsDrained for a benchmark: same
 // stand-in for the owner's bridge, with testing.TB in place of *testing.T.
-func benchInvalidationsDrained(b *testing.B, r *Registry) {
+func benchInvalidationsDrained(b testing.TB, r *Registry) {
 	b.Helper()
 	stop := make(chan struct{})
 	go func() {
@@ -30,7 +32,7 @@ func benchInvalidationsDrained(b *testing.B, r *Registry) {
 }
 
 // benchDrainAux consumes the open request pair the placement publishes.
-func benchDrainAux(b *testing.B, reg *Registry) []wayland.AuxRequest {
+func benchDrainAux(b testing.TB, reg *Registry) []wayland.AuxRequest {
 	b.Helper()
 	out := make([]wayland.AuxRequest, 0, 2)
 	deadline := time.After(asyncTestWait)
@@ -47,7 +49,7 @@ func benchDrainAux(b *testing.B, reg *Registry) []wayland.AuxRequest {
 
 // benchSettleReveal pins every animator value to its endpoint so a frame paints
 // the settled surface rather than a mid-reveal one.
-func benchSettleReveal(b *testing.B, reg *Registry, h *PanelHost) {
+func benchSettleReveal(b testing.TB, reg *Registry, h *PanelHost) {
 	b.Helper()
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -63,7 +65,15 @@ func benchSettleReveal(b *testing.B, reg *Registry, h *PanelHost) {
 // benchPanel opens a panel through the real open path, selects a section, and
 // returns the placement's surface callbacks plus a configured frame buffer, so
 // each iteration drives the same code a compositor frame callback drives.
-func benchPanel(b *testing.B, id PanelID, section string, scale120 int) (*Registry, *wayland.AuxSpec) {
+func benchPanel(b testing.TB, id PanelID, section string, scale120 int) (*Registry, *wayland.AuxSpec) {
+	return benchPanelCatalog(b, id, section, scale120, nil)
+}
+
+// benchPanelCatalog is benchPanel with a synthetic installed-application
+// catalog injected before the panel opens. The snapshot's fresh timestamp
+// keeps the refresh goroutine from replacing it with a real scan, so the
+// Applications page builds its list from entries only.
+func benchPanelCatalog(b testing.TB, id PanelID, section string, scale120 int, entries []launcher.Entry) (*Registry, *wayland.AuxSpec) {
 	b.Helper()
 	cfg := config.Default()
 	cfg.Theme.BlurBehind = false
@@ -71,6 +81,12 @@ func benchPanel(b *testing.B, id PanelID, section string, scale120 int) (*Regist
 	reg := NewRegistry(cfg)
 	b.Cleanup(reg.Close)
 	benchInvalidationsDrained(b, reg)
+	if entries != nil {
+		reg.launcherSvc = launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry { return entries }})
+		reg.launcherApplications.Store(&launcherApplicationSnapshot{
+			entries: entries, attemptedAt: time.Now(), available: true,
+		})
+	}
 	if id == PanelControlCenter {
 		state := benchMediaState()
 		reg.mediaState = state
@@ -146,5 +162,32 @@ func BenchmarkSettingsFrame(b *testing.B) {
 // the page whose foreground column carries the group opacity.
 func BenchmarkControlCentreMediaFrame(b *testing.B) {
 	_, spec := benchPanel(b, PanelControlCenter, "media", 240)
+	benchFrames(b, spec, 240)
+}
+
+// syntheticApps builds a catalog of n distinct desktop entries for the
+// Applications settings page: a name, a comment line and an occasional
+// terminal flag, so every row carries the shape of a real installation.
+func syntheticApps(n int) []launcher.Entry {
+	entries := make([]launcher.Entry, n)
+	for i := range entries {
+		entries[i] = launcher.Entry{
+			ID:      fmt.Sprintf("synthetic-%04d.desktop", i),
+			Name:    fmt.Sprintf("Synthetic Application %04d", i),
+			Comment: fmt.Sprintf("Synthetic application number %04d used by the frame budget check", i),
+		}
+		if i%17 == 0 {
+			entries[i].TerminalApp = true
+		}
+	}
+	return entries
+}
+
+// BenchmarkSettingsApplicationsFrame is the frame GH #454 profiles: the
+// Settings window's Applications page over a synthetic 1,000-app catalog at
+// 2x. Before the visible-rect work one frame cost 541 ms of CPU and 47 MB of
+// allocations against 9-36 ms for every other settings page.
+func BenchmarkSettingsApplicationsFrame(b *testing.B) {
+	_, spec := benchPanelCatalog(b, PanelSettings, "Applications", 240, syntheticApps(1000))
 	benchFrames(b, spec, 240)
 }

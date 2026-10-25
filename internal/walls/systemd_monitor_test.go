@@ -121,7 +121,7 @@ func startSystemdSignalBus(t *testing.T) (*dbus.Conn, *testSystemdManager) {
 	t.Helper()
 	daemon, err := exec.LookPath("dbus-daemon")
 	if err != nil {
-		t.Skip("dbus-daemon is not installed")
+		t.Skip("dbus-daemon is not on PATH")
 	}
 	cmd := exec.Command(daemon, "--session", "--nofork", "--nopidfile", "--print-address=1")
 	stdout, err := cmd.StdoutPipe()

@@ -8,5 +8,5 @@ import "testing"
 // session panel from a focused window, press Escape, and confirm keyboard
 // focus returns to that window without a niri focus-window call.
 func TestGateFocusFallthrough(t *testing.T) {
-	t.Skip("live Niri: open session, Escape, confirm focus returns to the previous window")
+	t.Skip("manual gate: run it in a live Niri session by opening the session panel, pressing Escape and confirming focus returns to the previous window")
 }

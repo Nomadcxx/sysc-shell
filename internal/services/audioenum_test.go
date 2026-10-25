@@ -58,7 +58,7 @@ func TestMixerPollExposesReadFailure(t *testing.T) {
 func TestPwdumpParsesSinksSourcesAndStreams(t *testing.T) {
 	data, err := os.ReadFile("testdata/pw-dump.json")
 	if err != nil {
-		t.Skip("no live fixture captured yet")
+		t.Skip("testdata/pw-dump.json is absent; a captured pw-dump fixture would run this")
 	}
 	snap, err := parsePwdump(data)
 	if err != nil {

@@ -479,7 +479,7 @@ func TestEnsureDirectiveDetectsWhitespaceAroundEquals(t *testing.T) {
 
 func TestEnsureDirectiveClearsStaleOwnershipBeforeRetry(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("root bypasses read-only file permissions")
+		t.Skip("running as root, which bypasses the read-only file permission this asserts")
 	}
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)

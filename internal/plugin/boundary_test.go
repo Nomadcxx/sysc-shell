@@ -161,7 +161,7 @@ func installContainedHelper(t *testing.T, mode, manifest string) Manifest {
 
 func TestAConfinedPluginReachesOnlyWhatItDeclared(t *testing.T) {
 	if LandlockABI() < 1 {
-		t.Skip("this kernel provides no landlock; recorded unrun rather than asserted")
+		t.Skipf("this kernel offers Landlock ABI %d; ABI 1 is the floor. Recorded unrun.", LandlockABI())
 	}
 	// The secret, the declared directory and the plugin all live under the
 	// test's temporary root, so the system rules here leave /tmp out: what
@@ -254,7 +254,7 @@ func TestAnUndeclaredPluginIsBoundedButNotConfined(t *testing.T) {
 func confinedHelper(t *testing.T, mode string) (Manifest, RuntimeOptions) {
 	t.Helper()
 	if LandlockABI() < 1 {
-		t.Skip("this kernel provides no landlock; recorded unrun rather than asserted")
+		t.Skipf("this kernel offers Landlock ABI %d; ABI 1 is the floor. Recorded unrun.", LandlockABI())
 	}
 	m := installContainedHelper(t, mode, string(manifestWith(t, FilesystemMinor, map[string]any{})))
 	return m, launcherOptions(t)
@@ -347,7 +347,7 @@ func TestAConfinedPluginIsIsolatedFromAbstractSocketsAndOtherProcesses(t *testin
 	listenUnix(t, abstract)
 	sleep, err := exec.LookPath("sleep")
 	if err != nil {
-		t.Skip("no sleep to start")
+		t.Skip("no sleep binary on PATH to start the foreign process")
 	}
 	foreign := exec.Command(sleep, "30")
 	if err := foreign.Start(); err != nil {

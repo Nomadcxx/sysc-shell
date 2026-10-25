@@ -4,6 +4,8 @@ github.com/Nomadcxx/sysc-clipboard v0.1.4-0.20261019192617-18b64bffd9e7 h1:S3RRD
 github.com/Nomadcxx/sysc-clipboard v0.1.4-0.20261019192617-18b64bffd9e7/go.mod h1:7cmxzqX/qI30j30Yd0aVh1aOmIE9Z0lUjmBgkT1fe9w=
 github.com/Nomadcxx/sysc-launch v0.3.1 h1:NBo+6/pUwwRZgLmM5mSVvEO//LDikNOSRjpvfTwb9B4=
 github.com/Nomadcxx/sysc-launch v0.3.1/go.mod h1:5qLWSiYkjWvOMxbRpzoZF2R55uSy2vLjZM5Wr9dJMtg=
+github.com/Nomadcxx/sysc-launch v0.4.0 h1:WUvhQpQQohQYlRbzf1PkZBX6i+vxzTv3FfUDwSFJzqw=
+github.com/Nomadcxx/sysc-launch v0.4.0/go.mod h1:5qLWSiYkjWvOMxbRpzoZF2R55uSy2vLjZM5Wr9dJMtg=
 github.com/Nomadcxx/sysc-metrics v0.7.3 h1:34D6JptNqKUw/pOuL2Yoo2yAe7wDI5i1GKkvSkAqaVo=
 github.com/Nomadcxx/sysc-metrics v0.7.3/go.mod h1:qIgYyJuuD0Ql7wlh3cN0kiHsSG/LEMczrq+vXA7rIQs=
 github.com/Nomadcxx/sysc-notify v0.1.1 h1:t6m/J+VKqS0ZdZWxDoA//c7GHuxVwG4/Mg+oGtsS9mQ=

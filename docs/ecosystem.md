@@ -95,12 +95,14 @@ of the commit gate.
 
 | Module | Pin |
 |---|---|
-| sysc-clipboard | `v0.1.2-0.20261001114242-d1798d6838d7` |
-| sysc-wayland | `v0.3.1` |
-| sysc-launch | `v0.2.1-0.20260928124755-5ccc1d40f3cf` |
-| sysc-metrics | `v0.7.0` |
-| sysc-notify | `v0.1.0-rc.4.0.20260928141411-254ec5732728` |
-| sysc-tray | `v0.1.1` |
+| sysc-clipboard | `v0.1.4-0.20261019192617-18b64bffd9e7` |
+| sysc-wayland | `v0.3.2` |
+| sysc-launch | `v0.4.0` |
+| sysc-metrics | `v0.7.3` |
+| sysc-notify | `v0.1.1` |
+| sysc-terminal | `v0.2.0` |
+| sysc-tray | `v0.1.2` |
+| sysc-Go | `v1.0.7` (indirect) |
 
 ## Where to go next
 

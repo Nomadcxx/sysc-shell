@@ -388,7 +388,8 @@ flowchart LR
 
 ## License
 
-BSD-3-Clause. [NOTICE](NOTICE) covers the app-theming template catalog.
+BSD-3-Clause. [NOTICE](NOTICE) records the app-theming template catalog
+provenance and the sysc-launch licence boundary.
 
 ---
 

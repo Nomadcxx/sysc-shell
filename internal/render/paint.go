@@ -211,7 +211,6 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
 	square := style.squareCorners()
-	body := CornerMask(radius, box.W, box.H, square)
 	// The silhouette is drawn from the antialiased mask, and the rim is a real
 	// stroke over it. Filling the rim colour and laying a smaller fill on top
 	// left the border as the difference of two quantised silhouettes, which is
@@ -220,9 +219,9 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 	// exactly where the body does and the corners stay transparent. The
 	// translucent root fill then paints over it.
 	if style.Backdrop != nil {
-		blendMaskImage(c, body, box.X, box.Y, style.Backdrop)
+		blendMaskImage(c, CornerMask(radius, box.W, box.H, square), box.X, box.Y, style.Backdrop)
 	}
-	blendMask(c, body, box.X, box.Y, style.rootFill())
+	blendFill(c, box, radius, square, style.rootFill())
 	if style.Rim.A > 0 {
 		width := style.Scale120.Physical(1)
 		if style.RimWidth > 0 {
@@ -301,9 +300,13 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		return fmt.Errorf("nil node")
 	}
 	// Partial paints still walk the arranged tree to preserve paint order, but
-	// leaf content outside the damage cannot contribute pixels. Skip shaping,
-	// raster work, and value scans for those nodes.
-	if len(n.Children) == 0 && c.restrict.W > 0 && c.restrict.H > 0 {
+	// content outside the damage cannot contribute pixels: every blend clips
+	// to the damage. Skip shaping, raster work, and value scans for those
+	// nodes -- whole subtrees now, not just leaves. A subtree that can paint
+	// outside its own box is walked regardless: a menu's option list floats
+	// over later rows, and a scroll with a gap scrollbar paints its bar in
+	// the parent's padding (GH #454).
+	if c.restrict.W > 0 && c.restrict.H > 0 && !ui.MayDrawOutsideBox(n) {
 		x0, y0, x1, y1 := c.clip(style.Scale120.PhysicalRect(n.Bounds))
 		if x0 >= x1 || y0 >= y1 {
 			return nil
@@ -501,10 +504,10 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		fill, fg, layered := rowFill(style, n)
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		if n.Shape != ui.ShapeInherit {
-			mask := RoundedMask(chromeRadius(style, nodeRadius(style, n, 0), box), box.W, box.H)
-			blendMask(c, mask, box.X, box.Y, fill)
+			radius := chromeRadius(style, nodeRadius(style, n, 0), box)
+			blendFill(c, box, radius, 0, fill)
 			if layered {
-				blendMask(c, mask, box.X, box.Y, stateLayer(fg, n.State))
+				blendFill(c, box, radius, 0, stateLayer(fg, n.State))
 			}
 		} else {
 			fillRect(c, box, fill)
@@ -1554,7 +1557,7 @@ func interactionLayer(fg Color, n *ui.Node) Color {
 // made local to the mask so offset controls and fractional scales align.
 func paintInteraction(c *Canvas, n *ui.Node, box ui.Rect, radius int, fg Color, style Style) {
 	if layer := interactionLayer(fg, n); layer.A > 0 {
-		blendMask(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, layer)
+		blendFill(c, box, radius, 0, layer)
 	}
 	if n.Ripple.Phase <= 0 || n.Ripple.Phase >= 1 {
 		return
@@ -1566,7 +1569,11 @@ func paintInteraction(c *Canvas, n *ui.Node, box ui.Rect, radius int, fg Color, 
 	cx := style.Scale120.Physical(n.Ripple.X) - box.X
 	cy := style.Scale120.Physical(n.Ripple.Y) - box.Y
 	disc := logicalR * float64(style.Scale120) / 120
-	blendMask(c, RippleMask(box.W, box.H, radius, cx, cy, disc), box.X, box.Y, withAlpha(fg, alpha))
+	x0, y0, x1, y1 := c.clip(box)
+	if x0 >= x1 || y0 >= y1 {
+		return
+	}
+	blendMask(c, RippleMask(box.W, box.H, radius, cx, cy, disc, image.Rect(x0-box.X, y0-box.Y, x1-box.X, y1-box.Y)), x0, y0, withAlpha(fg, alpha))
 }
 
 // paintChrome draws one filled, optionally outlined, optionally state-layered
@@ -1585,22 +1592,36 @@ func sourceMarkerColor(value string) (Color, bool) {
 	return Color{R: uint8(parsed >> 16), G: uint8(parsed >> 8), B: uint8(parsed), A: 255}, true
 }
 
+// visibleRoundedMask builds a chrome fill's mask for only the part of the box
+// the frame can see, and reports where to place it. A mask for a whole tall
+// surface runs to tens of megabytes, which the geometry cache refuses, so the
+// frame rebuilt it every time (GH #454). A nil mask paints nothing.
+func visibleRoundedMask(c *Canvas, radius int, box ui.Rect) (*image.Alpha, int, int) {
+	x0, y0, x1, y1 := c.clip(box)
+	if x0 >= x1 || y0 >= y1 {
+		return nil, 0, 0
+	}
+	in := image.Rect(x0-box.X, y0-box.Y, x1-box.X, y1-box.Y)
+	return RoundedMaskIn(radius, box.W, box.H, in), x0, y0
+}
+
 func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, base Color, radiusLogical int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
 	radius = ui.MorphRadius(radius, n.PressProgress)
 	fill, fg := chromeFill(style, n, base)
-	mask := RoundedMask(radius, box.W, box.H)
 	if angle, ok := scrimFadeAngle(n.Fill); ok && fill.A > 0 && !n.State.Has(ui.StateSelected) {
 		clear := fill
 		clear.A = 0
-		blendMaskGradient(c, mask, box.X, box.Y,
+		mask, mx, my := visibleRoundedMask(c, radius, box)
+		blendMaskGradientIn(c, mask, mx, my, box,
 			[]gradientStop{{at: 0, c: fill}, {at: scrimFadeEnd, c: clear}}, angle, 0, false)
 	} else if stops := resolveGradient(n, style); fill.A > 0 && stops != nil {
-		blendMaskGradient(c, mask, box.X, box.Y, quietChromeGradient(stops, fill),
+		mask, mx, my := visibleRoundedMask(c, radius, box)
+		blendMaskGradientIn(c, mask, mx, my, box, quietChromeGradient(stops, fill),
 			n.Gradient.AngleDeg, n.GradientOffset, false)
 	} else {
-		blendMask(c, mask, box.X, box.Y, fill)
+		blendFill(c, box, radius, 0, fill)
 	}
 	// An explicit stroke marks a card that has to stand out from its
 	// neighbours -- a critical notification -- independently of the fill and of

@@ -42,18 +42,29 @@ jobs:
           repository: Nomadcxx/sysc-plugins
           ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
           path: testdeps/sysc-plugins
-      # Panel layout tests measure text with the configured family
-      # (config.Default() names Inter). Installing it keeps runner metrics
-      # close to the maintainer's machine instead of the fallback face.
-      # raster.FindFont in sysc-terminal probes the Arch font layout, so Noto
-      # is installed and the probed directory is pointed at the Ubuntu one.
-      - name: install test fonts
+      # The lock screen lives in its own repository; the presentation
+      # contract tests run its binary. Pinned to v0.1.1, the release whose
+      # catalogue matches this tree's sysc-terminal v0.2.0 and sysc-Go v1.0.7
+      # pins. Newer lockers expose shared model effects and follow in a
+      # grouped pin bump (sysc-1733).
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-lock
+          ref: df54457a1f6359c4379cd59aa35ad7ef12b737aa
+          path: testdeps/sysc-lock
+      # Building sysc-lock links EGL and GLES2 (internal/lockd) and PAM
+      # (internal/auth); xkb-go parses keymaps in pure Go. These headers are
+      # the recorded build dependency of the contract binary.
+      - name: build the lock screen contract binary
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-inter fonts-noto-core
-          sudo mkdir -p /usr/share/fonts/noto
-          sudo ln -sf /usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf \
-            /usr/share/fonts/noto/NotoSansMono-Regular.ttf
+          sudo apt-get install -y --no-install-recommends libegl-dev libgles-dev libpam0g-dev
+          cd testdeps/sysc-lock
+          go build -o "$GITHUB_WORKSPACE/testdeps/sysc-lock-bin" ./cmd/sysc-lock
+      # No font is installed for the suite. The render package measures text
+      # against the fixture fonts it commits, so the runner's own font set
+      # is not part of a result. The install this step removed made the
+      # result a property of the machine the runner happened to be.
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet
@@ -61,6 +72,23 @@ jobs:
       - name: test
         env:
           SYSC_PLUGINS_DIR: ${{ github.workspace }}/testdeps/sysc-plugins
+          SYSC_LOCK_CONTRACT_BINARY: ${{ github.workspace }}/testdeps/sysc-lock-bin
         run: go test -race -count=1 ./...
       - name: build
         run: go build ./...
+
+  # The runner kernel's Landlock ABI decides which plugin confinement tests
+  # can run. This job records the ABI in the log and the step summary and
+  # fails only when the kernel offers no Landlock at all. An ABI below the
+  # socket levels is a finding to file, not a job that is always red;
+  # SYSC_REQUIRE_LANDLOCK=<n> raises the floor to what the runner is known
+  # to clear.
+  landlock-abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: record landlock ABI
+        run: go test ./internal/plugin/ -run '^TestLandlockABIRecorded$' -v -count=1

@@ -665,7 +665,7 @@ func TestLockPreviewDeadline(t *testing.T) {
 func TestLockPreviewInstalledComposition(t *testing.T) {
 	binary := os.Getenv("SYSC_LOCK_CONTRACT_BINARY")
 	if binary == "" {
-		t.Skip("set SYSC_LOCK_CONTRACT_BINARY to check native PNG presentation")
+		t.Skip("set SYSC_LOCK_CONTRACT_BINARY to a built sysc-lock binary to check native PNG presentation")
 	}
 	dir := t.TempDir()
 	if err := os.Symlink(binary, filepath.Join(dir, "sysc-lock")); err != nil {
@@ -777,7 +777,7 @@ func TestLockHeaderCatalogueBoundary(t *testing.T) {
 func TestLockHeadersInstalledCatalogue(t *testing.T) {
 	binary := os.Getenv("SYSC_LOCK_CONTRACT_BINARY")
 	if binary == "" {
-		t.Skip("set SYSC_LOCK_CONTRACT_BINARY for native catalogue")
+		t.Skip("set SYSC_LOCK_CONTRACT_BINARY to a built sysc-lock binary for the native catalogue")
 	}
 	dir := t.TempDir()
 	if err := os.Symlink(binary, filepath.Join(dir, "sysc-lock")); err != nil {

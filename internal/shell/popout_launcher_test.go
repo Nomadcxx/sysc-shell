@@ -806,7 +806,7 @@ func TestLauncherConfiguredActionFailureRemainsVisible(t *testing.T) {
 func TestLauncherCommandProviderConfigReloadRefreshesOpenLauncher(t *testing.T) {
 	printf, err := exec.LookPath("printf")
 	if err != nil {
-		t.Skip("printf is unavailable")
+		t.Skip("printf is not on PATH")
 	}
 	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
 	reg.mu.Lock()
@@ -1006,7 +1006,7 @@ func TestLauncherActionConfigReplacementRejectsSameQueryRank(t *testing.T) {
 func TestClosedLauncherServiceWaitsForItsActivationCallback(t *testing.T) {
 	printf, err := exec.LookPath("printf")
 	if err != nil {
-		t.Skip("printf is unavailable")
+		t.Skip("printf is not on PATH")
 	}
 	reg := newPanelRegistry(t)
 	oldCallbackStarted := make(chan struct{})
@@ -1367,7 +1367,7 @@ func TestPanelSurfaceCarriesItsCornerRadius(t *testing.T) {
 			"opaque region can exclude the corners", got)
 	}
 	if !panel.Callbacks.OpaqueBackground {
-		t.Skip("opaque background is off, so no opaque region is set at all")
+		t.Skip("the theme's background and bar surface tokens are not fully opaque, so there is no opaque region")
 	}
 }
 
