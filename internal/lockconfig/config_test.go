@@ -278,7 +278,7 @@ func TestLockConfigNativeDescriptionContract(t *testing.T) {
 	if !reflect.DeepEqual(description.Effects, Effects()) {
 		t.Fatalf("effect mirror drift: %v != %v", description.Effects, Effects())
 	}
-	if !reflect.DeepEqual(description.TextEffects, append([]string{"none"}, renderer.TextEffects()...)) {
+	if !reflect.DeepEqual(description.TextEffects, TextEffects()) {
 		t.Fatal("text effect mirror drift")
 	}
 	if description.Defaults.Header != Default().Header || description.Defaults.TextEffect != Default().TextEffect {
