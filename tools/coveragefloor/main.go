@@ -128,7 +128,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "coveragefloor: %d package(s) did not meet the committed floor\n", len(findings))
 		return 1
 	}
+	measuredCount := 0
+	for _, c := range measured {
+		if c.total > 0 {
+			measuredCount++
+		}
+	}
 	fmt.Fprintf(stdout, "coveragefloor: %d package(s) measured, %d excluded, all at or above their floors\n",
-		len(measured), len(floors.Exclusions))
+		measuredCount, len(floors.Exclusions))
 	return 0
 }
