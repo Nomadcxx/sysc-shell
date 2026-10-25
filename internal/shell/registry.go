@@ -1917,13 +1917,15 @@ func (r *Registry) adoptBar(
 	if bar.mediaWidget {
 		r.mediaArtFor()
 	}
-	bar.apply(r.viewLocked(connector))
+	// Start the services the bar's widgets need before the first apply, so a
+	// lock-key state read at startup reaches the first frame.
 	if bar.lockKeysWidget {
 		r.ensureLockKeysLocked()
 	}
 	if bar.powerProfileWidget {
 		r.ensureProfilesLocked()
 	}
+	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
 	r.shutdown.bars.store(r.barListLocked())

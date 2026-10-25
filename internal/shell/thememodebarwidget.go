@@ -52,11 +52,3 @@ func refreshThemeModeWidget(row, icon, text *ui.Node, v barView) bool {
 	}
 	return changed
 }
-
-// themeModeCycle flips the stored mode; a value outside the pair goes dark.
-func themeModeCycle(mode string) string {
-	if mode == "light" {
-		return "dark"
-	}
-	return "light"
-}
