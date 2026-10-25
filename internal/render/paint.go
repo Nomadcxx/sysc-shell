@@ -211,7 +211,6 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
 	square := style.squareCorners()
-	body := CornerMask(radius, box.W, box.H, square)
 	// The silhouette is drawn from the antialiased mask, and the rim is a real
 	// stroke over it. Filling the rim colour and laying a smaller fill on top
 	// left the border as the difference of two quantised silhouettes, which is
@@ -220,9 +219,9 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 	// exactly where the body does and the corners stay transparent. The
 	// translucent root fill then paints over it.
 	if style.Backdrop != nil {
-		blendMaskImage(c, body, box.X, box.Y, style.Backdrop)
+		blendMaskImage(c, CornerMask(radius, box.W, box.H, square), box.X, box.Y, style.Backdrop)
 	}
-	blendMask(c, body, box.X, box.Y, style.rootFill())
+	blendFill(c, box, radius, square, style.rootFill())
 	if style.Rim.A > 0 {
 		width := style.Scale120.Physical(1)
 		if style.RimWidth > 0 {
@@ -501,10 +500,10 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		fill, fg, layered := rowFill(style, n)
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		if n.Shape != ui.ShapeInherit {
-			mask := RoundedMask(chromeRadius(style, nodeRadius(style, n, 0), box), box.W, box.H)
-			blendMask(c, mask, box.X, box.Y, fill)
+			radius := chromeRadius(style, nodeRadius(style, n, 0), box)
+			blendFill(c, box, radius, 0, fill)
 			if layered {
-				blendMask(c, mask, box.X, box.Y, stateLayer(fg, n.State))
+				blendFill(c, box, radius, 0, stateLayer(fg, n.State))
 			}
 		} else {
 			fillRect(c, box, fill)
@@ -1554,7 +1553,7 @@ func interactionLayer(fg Color, n *ui.Node) Color {
 // made local to the mask so offset controls and fractional scales align.
 func paintInteraction(c *Canvas, n *ui.Node, box ui.Rect, radius int, fg Color, style Style) {
 	if layer := interactionLayer(fg, n); layer.A > 0 {
-		blendMask(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, layer)
+		blendFill(c, box, radius, 0, layer)
 	}
 	if n.Ripple.Phase <= 0 || n.Ripple.Phase >= 1 {
 		return
@@ -1600,7 +1599,7 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		blendMaskGradient(c, mask, box.X, box.Y, quietChromeGradient(stops, fill),
 			n.Gradient.AngleDeg, n.GradientOffset, false)
 	} else {
-		blendMask(c, mask, box.X, box.Y, fill)
+		blendFill(c, box, radius, 0, fill)
 	}
 	// An explicit stroke marks a card that has to stand out from its
 	// neighbours -- a critical notification -- independently of the fill and of
