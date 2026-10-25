@@ -593,9 +593,83 @@ func blendMaskAt(c *Canvas, mask *image.Alpha, x, y int, sub ui.Rect, col Color)
 	}
 }
 
+// roundedFillBands splits a radius-rounded rectangle into the frame that has to
+// be blended through its coverage mask and the interior that is exactly opaque.
+// Every pixel of the box is in exactly one of the returned rectangles, and all
+// of them are in the box's own coordinates.
+//
+// The split exists because a rounded fill's coverage is only fractional near
+// the silhouette; the interior is a plain rectangle. Filling that rectangle
+// directly is byte-identical to blending the mask there and skips a coverage
+// read per pixel on the bulk of the box: a Settings body at 2x spends about
+// 32 ms a frame reading 3.7M pixels of coverage that is all 255 (GH #455).
+//
+// The interior is the box stripped of the bands that can carry fractional
+// coverage: the radius-wide side columns, where the corner arcs live, and - on
+// an odd-sided box - the top and bottom edge rows, whose pixel centres land on
+// the antialiased silhouette and read as half covered (roundedCoverage divides
+// the box extent by integer 2 but centres on float 2, so an odd side puts the
+// edge row's centre on the outline). Inside what is left every pixel sits at
+// least half a pixel in from the outline, so its coverage is exactly 255 and
+// filling it as a plain rectangle is byte-identical to blending the mask there.
+// That interior is the widest single opaque rectangle the shape allows - the
+// full-height middle strip for an even-sided box -
+// which TestRoundedCoverageIsOpaqueInsideTheInterior and
+// TestFillRoundedLeavesTheStraightInteriorUntouched pin.
+//
+// A box with no room for that interior - a circle or stadium whose caps meet in
+// the middle, a radius at or above half the width, or a shape one pixel wide -
+// has none at all, so the whole box is masked and blended.
+func roundedFillBands(w, h, radius int) (masked []ui.Rect, opaque ui.Rect) {
+	if w <= 0 || h <= 0 {
+		return nil, ui.Rect{}
+	}
+	radius = max(radius, 0)
+	insetX, insetY := radius+w%2, h%2
+	if 2*insetX >= w {
+		// No interior: the caps meet in the middle (or the radius exceeds half
+		// the width, so no column is fully covered). Everything goes through
+		// the mask, which handles whatever coverage the shape has.
+		return []ui.Rect{{W: w, H: h}}, ui.Rect{}
+	}
+	opaque = ui.Rect{X: insetX, Y: insetY, W: w - 2*insetX, H: h - 2*insetY}
+	masked = []ui.Rect{
+		{W: w, H: insetY},
+		{Y: h - insetY, W: w, H: insetY},
+		{Y: insetY, W: insetX, H: opaque.H},
+		{X: w - insetX, Y: insetY, W: insetX, H: opaque.H},
+	}
+	return masked, opaque
+}
+
 // FillRounded fills a rounded rectangle using the cached alpha mask.
 func (c *Canvas) FillRounded(r ui.Rect, radius int, col Color) {
-	blendMask(c, RoundedMask(radius, r.W, r.H), r.X, r.Y, col)
+	c.FillRoundedMask(RoundedMask(radius, r.W, r.H), radius, r.X, r.Y, col)
+}
+
+// FillRoundedMask fills mask's box placed at x, y, writing the opaque straight
+// interior directly and blending the frame bands - the side columns that hold
+// the corner arcs and, on an odd-sided box, the antialiased top and bottom edge
+// rows - through the mask. It
+// is FillRounded for a mask the caller already holds, which is what paintChrome
+// and the panel body do: they need the same mask for the backdrop or the
+// interaction wash, and a second lookup would only repeat the cache probe.
+//
+// radius is passed rather than derived from the mask because image.Alpha does
+// not record the radius it was built with, and a mask used with a radius it was
+// not built for would band against the wrong geometry.
+func (c *Canvas) FillRoundedMask(mask *image.Alpha, radius, x, y int, col Color) {
+	if col.A == 0 || mask == nil {
+		return
+	}
+	b := mask.Bounds()
+	masked, opaque := roundedFillBands(b.Dx(), b.Dy(), radius)
+	if opaque.W > 0 && opaque.H > 0 {
+		fillRect(c, ui.Rect{X: x + opaque.X, Y: y + opaque.Y, W: opaque.W, H: opaque.H}, col)
+	}
+	for _, band := range masked {
+		blendMaskBand(c, mask, band, x, y, col)
+	}
 }
 
 // StrokeRounded outlines a rounded rectangle inward from its bounds using the
