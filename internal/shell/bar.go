@@ -118,8 +118,10 @@ type Bar struct {
 	// channel above is the fallback for a stand-alone bar (proofs, tests);
 	// in production nothing reads it, so routing through the registry is
 	// what lets animation frames actually reach the owner.
-	onPublish   func()
-	mediaWidget bool
+	onPublish          func()
+	mediaWidget        bool
+	lockKeysWidget     bool
+	powerProfileWidget bool
 }
 
 // New builds a bar from the built-in defaults for one connector.
@@ -150,14 +152,16 @@ func newWithTextRenderer(theme Theme, policy config.Bar, connector string, text 
 
 func newBarWithText(theme Theme, policy config.Bar, connector string, text *render.TextRenderer) *Bar {
 	b := &Bar{
-		conn:          connector,
-		theme:         theme,
-		mediaWidget:   hasMediaItem(policy.Left) || hasMediaItem(policy.Center) || hasMediaItem(policy.Right),
-		text:          text,
-		invalidations: make(chan struct{}, 1),
-		style:         barStyle(theme),
-		anim:          newAnimator(nil, false, theme.Motion),
-		stopAnim:      make(chan struct{}),
+		conn:               connector,
+		theme:              theme,
+		mediaWidget:        hasMediaItem(policy.Left) || hasMediaItem(policy.Center) || hasMediaItem(policy.Right),
+		lockKeysWidget:     hasBarItem(policy, "lock_keys"),
+		powerProfileWidget: hasBarItem(policy, "power_profile"),
+		text:               text,
+		invalidations:      make(chan struct{}, 1),
+		style:              barStyle(theme),
+		anim:               newAnimator(nil, false, theme.Motion),
+		stopAnim:           make(chan struct{}),
 	}
 
 	side := b.barAxis() == ui.Vertical
