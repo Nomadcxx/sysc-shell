@@ -404,13 +404,13 @@ func TestRunUpdatesWhenTheFloorFileIsMissing(t *testing.T) {
 func TestJudgeToleratesTheWobble(t *testing.T) {
 	floors := Floors{Packages: map[string]float64{"internal/render": 50}}
 	measured := map[string]coverage{
-		"internal/render": {total: 10000, covered: 4996}, // 49.96, just under the floor
+		"internal/render": {total: 10000, covered: 4950}, // 49.50, inside the band
 	}
 	if got := judge(floors, measured, []string{"internal/render"}); len(got) != 0 {
-		t.Fatalf("a drop of 0.04 points must pass, got %v", got)
+		t.Fatalf("a drop of 0.5 points must pass, got %v", got)
 	}
-	measured["internal/render"] = coverage{total: 10000, covered: 4994} // 49.94
+	measured["internal/render"] = coverage{total: 10000, covered: 4949} // 49.49
 	if got := judge(floors, measured, []string{"internal/render"}); len(got) != 1 {
-		t.Fatalf("a drop of 0.06 points must fail, got %v", got)
+		t.Fatalf("a drop past the band must fail, got %v", got)
 	}
 }

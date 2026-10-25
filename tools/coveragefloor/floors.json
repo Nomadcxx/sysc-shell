@@ -1,5 +1,5 @@
 {
-  "note": "Per-package statement coverage floors, measured in the CI runner. Regenerate with `go run ./tools/coveragefloor -update` after a coverage run. A package without tests carries an exclusion and the reason it has none. A package fails when it falls more than 0.05 points below its floor.",
+  "note": "Per-package statement coverage floors, measured in the CI runner. Regenerate with `go run ./tools/coveragefloor -update` after a coverage run. A package without tests carries an exclusion and the reason it has none. A package fails when it falls more than 0.5 points below its floor.",
   "packages": {
     "cmd/sysc-panel-preview": 90.24,
     "cmd/sysc-shell": 43.26,

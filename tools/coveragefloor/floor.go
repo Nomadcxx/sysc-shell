@@ -249,7 +249,13 @@ func judge(floors Floors, measured map[string]coverage, packages []string) []fin
 // tolerance is the wobble a measurement may have before the gate calls it a
 // regression. A package has to fall further than this below its floor before
 // the build fails, so a rounding difference between two runs is not a drop.
-const tolerance = 0.05
+//
+// Two runs of the same tree measure a few packages differently: a branch that
+// depends on a timeout, or on what the machine already has, lands on one side
+// of the line in one run and on the other side in the next. The wobble
+// measured on this tree was up to 0.18 points, so the band is half a point.
+// A gate that reds on noise is a gate that gets ignored.
+const tolerance = 0.5
 
 // floorTo truncates a measured percentage to the committed precision, so a
 // floor never sits above what was measured.

@@ -31,7 +31,7 @@ const defaultFloorsPath = "tools/coveragefloor/floors.json"
 const defaultNote = "Per-package statement coverage floors, measured in the CI runner. " +
 	"Regenerate with `go run ./tools/coveragefloor -update` after a coverage run. " +
 	"A package without tests carries an exclusion and the reason it has none. " +
-	"A package fails when it falls more than 0.05 points below its floor."
+	"A package fails when it falls more than 0.5 points below its floor."
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
