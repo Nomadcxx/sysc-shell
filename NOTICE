@@ -2,3 +2,9 @@ The app-theming template catalog follows the structure of Noctalia's catalog
 (which templates exist, which apply hook each uses). The template bodies in
 internal/theming/templates/ are original to sysc-shell and are not copies of
 Noctalia files.
+
+sysc-launch is a sibling module by the same copyright holder, pinned in
+go.mod. Releases through v0.3.1 were GPL-3.0-only and one of their files was
+derived from another project's GPL-3 source. That file was reimplemented in
+v0.4.0, and sysc-launch is BSD-3-Clause from that release onward. No
+GPL-licensed code is linked into sysc-shell.
