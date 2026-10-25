@@ -42,6 +42,25 @@ jobs:
           repository: Nomadcxx/sysc-plugins
           ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
           path: testdeps/sysc-plugins
+      # The lock screen lives in its own repository; the presentation
+      # contract tests run its binary. Pinned to v0.1.1, the release whose
+      # catalogue matches this tree's sysc-terminal v0.2.0 and sysc-Go v1.0.7
+      # pins. Newer lockers expose shared model effects and follow in a
+      # grouped pin bump (sysc-1733).
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-lock
+          ref: df54457a1f6359c4379cd59aa35ad7ef12b737aa
+          path: testdeps/sysc-lock
+      # Building sysc-lock links EGL and GLES2 (internal/lockd) and PAM
+      # (internal/auth); xkb-go parses keymaps in pure Go. These headers are
+      # the recorded build dependency of the contract binary.
+      - name: build the lock screen contract binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl-dev libgles-dev libpam0g-dev
+          cd testdeps/sysc-lock
+          go build -o "$GITHUB_WORKSPACE/testdeps/sysc-lock-bin" ./cmd/sysc-lock
       # Panel layout tests measure text with the configured family
       # (config.Default() names Inter). Installing it keeps runner metrics
       # close to the maintainer's machine instead of the fallback face.
@@ -61,6 +80,7 @@ jobs:
       - name: test
         env:
           SYSC_PLUGINS_DIR: ${{ github.workspace }}/testdeps/sysc-plugins
+          SYSC_LOCK_CONTRACT_BINARY: ${{ github.workspace }}/testdeps/sysc-lock-bin
         run: go test -race -count=1 ./...
       - name: build
         run: go build ./...
