@@ -584,9 +584,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	if !runningAsTest() {
 		r.setPrivacyService(services.NewPrivacy(0, ""))
-		r.lockKeys = services.NewLockKeys("", 0)
-		r.lockKeys.Start()
-		go r.relayLockKeysOSD(r.lockKeys)
+		r.startLockKeys(cfg)
 	}
 	// The media service opens a session-bus connection, which no unit test
 	// should need. Tests get the inert service and install their own over the

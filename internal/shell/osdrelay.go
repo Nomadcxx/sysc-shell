@@ -3,7 +3,9 @@ package shell
 import (
 	"slices"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 )
 
@@ -25,6 +27,10 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys) {
 	if l == nil {
 		return
 	}
+	// The lease starts the poll loop: while the OSD wants the lock state the
+	// LED class is read, and when the relay ends the poll loop ends with it.
+	release := l.Acquire()
+	defer release()
 	prev := l.Baseline()
 	for {
 		select {
@@ -40,6 +46,21 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys) {
 			prev = st
 		}
 	}
+}
+
+// newLockKeys builds the lock-key service. A test swaps the seam for one
+// rooted in a temporary directory.
+var newLockKeys = seam.New(func() *services.LockKeys { return services.NewLockKeys("", 0) })
+
+// startLockKeys wires the lock-key service when the OSD wants it. The OSD
+// that shows Caps and Num Lock is the only consumer, so with it off nothing
+// reads the keyboard LED class and the shell keeps no poller running.
+func (r *Registry) startLockKeys(cfg config.Config) {
+	if !cfg.Panels.OSDLockKeys {
+		return
+	}
+	r.lockKeys = newLockKeys.Get()()
+	go r.relayLockKeysOSD(r.lockKeys)
 }
 
 // layoutOSD announces a layout switch. The first snapshot after connecting

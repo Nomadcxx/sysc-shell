@@ -172,9 +172,10 @@ type wireIdle struct {
 }
 
 type wirePanels struct {
-	Gap     *int    `json:"gap,omitempty"`
-	Padding *int    `json:"padding,omitempty"`
-	OSD     *string `json:"osd,omitempty"`
+	Gap         *int    `json:"gap,omitempty"`
+	Padding     *int    `json:"padding,omitempty"`
+	OSD         *string `json:"osd,omitempty"`
+	OSDLockKeys *bool   `json:"osd_lock_keys,omitempty"`
 }
 
 type wireTrayPreferences struct {
@@ -2106,6 +2107,9 @@ func applyPanels(base Panels, w wirePanels, path string) (Panels, error) {
 			return Panels{}, pathErr(path+".osd", "%q is not a known position", *w.OSD)
 		}
 		out.OSD = *w.OSD
+	}
+	if w.OSDLockKeys != nil {
+		out.OSDLockKeys = *w.OSDLockKeys
 	}
 	if out.Gap < 0 {
 		return Panels{}, pathErr(path+".gap", "%d is negative", out.Gap)
