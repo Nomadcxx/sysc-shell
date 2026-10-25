@@ -660,6 +660,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-21-sysc-1532-shutdown-waitdelay-race.md](2026-10-21-sysc-1532-shutdown-waitdelay-race.md) | plan | `sysc-1532`: fix the command's I/O bound once before `Start` instead of assigning `Cmd.WaitDelay` at close time, which raced `os/exec`'s context watcher and let a dead plugin's descendant hold the close for a whole grace period. |
 
+## Dependency vulnerability gate (2026-10-25)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-25-sysc-1661-govulncheck-ci.md](2026-10-25-sysc-1661-govulncheck-ci.md) | plan | `sysc-1661`: run `govulncheck` over the module in CI, on every pull request, every push to `main` and weekly, with a pinned scanner, so a reachable dependency flaw cannot sit in the tree. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not
