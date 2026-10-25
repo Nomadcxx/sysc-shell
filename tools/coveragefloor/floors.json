@@ -1,0 +1,15 @@
+{
+  "note": "Per-package statement coverage floors, measured in the CI runner. Regenerate with `go run ./tools/coveragefloor -update` after a coverage run. A package without tests carries an exclusion and the reason it has none. A package fails when it falls more than 0.05 points below its floor.",
+  "packages": {},
+  "exclusions": {
+    "cmd/sysc-plugin-weather": "a plugin host wrapper. The code it starts lives in plugins/reference/weather, which has its own tests.",
+    "internal/platform/wayland/backgroundeffect": "a generated protocol binding. The file is written by go-wayland-scanner from protocols/ext-background-effect-v1.xml, so a floor here would measure generated code rather than this tree's own work.",
+    "internal/platform/wayland/fractionalscale": "a generated protocol binding. The file is written by go-wayland-scanner from protocols/fractional-scale-v1.xml, so a floor here would measure generated code rather than this tree's own work.",
+    "internal/platform/wayland/inhibit": "a generated protocol binding. The file is written by go-wayland-scanner from the zwp-keyboard-shortcuts-inhibit protocol, so a floor here would measure generated code rather than this tree's own work.",
+    "internal/platform/wayland/layershell": "a generated protocol binding. The file is written by go-wayland-scanner from the wlr-layer-shell protocol, so a floor here would measure generated code rather than this tree's own work.",
+    "internal/platform/wayland/screencopy": "a generated protocol binding. The file is written by go-wayland-scanner from the wlr-screencopy protocol, so a floor here would measure generated code rather than this tree's own work.",
+    "internal/platform/wayland/viewporter": "a generated protocol binding. The file is written by go-wayland-scanner from the viewporter protocol, so a floor here would measure generated code rather than this tree's own work.",
+    "internal/platform/wayland/xdgshell": "a generated protocol binding. The file is written by go-wayland-scanner from the xdg-shell protocol, so a floor here would measure generated code rather than this tree's own work.",
+    "tools/emojigen": "an authoring tool that regenerates internal/emoji/emoji.tsv from pinned Unicode and CLDR data. It is never run by go build, so there is nothing for the suite to cover."
+  }
+}

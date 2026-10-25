@@ -16,6 +16,10 @@ go.work.sum
 .cursor/
 .claude/
 
+# The coverage floor measurement writes these next to the tree
+packages.txt
+measured-floors.json
+
 # Plans, roadmaps, research and decision notes stay local
 docs/plans/
 docs/roadmap.md
