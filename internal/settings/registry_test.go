@@ -957,7 +957,7 @@ func TestEveryDeclaredEmptyValueSurvivesTheLoader(t *testing.T) {
 		})
 	}
 	if declared == 0 {
-		t.Skip("no entry declares an empty row")
+		t.Skip("no registry entry declares an empty row, so there is nothing to round-trip")
 	}
 }
 

@@ -306,14 +306,23 @@ func TestEveryBarWidgetIsWrappedInACapsule(t *testing.T) {
 	}
 }
 
+// newFixtureBar builds the bar around a fixture text renderer, so these tests
+// assert layout behaviour instead of skipping on a host without fonts.
+func newFixtureBar(t *testing.T) *Bar {
+	t.Helper()
+	cfg := config.Default()
+	b, err := newWithTextRenderer(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-1", &render.TextRenderer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // format writes to the inner node, so a clock that ticks must still mark the
 // bar changed after the wrap.
 func TestApplyWritesThroughToTheInnerNode(t *testing.T) {
 	t.Parallel()
-	b, err := New("DP-1")
-	if err != nil {
-		t.Skipf("no system fonts: %v", err)
-	}
+	b := newFixtureBar(t)
 	view := barView{Now: time.Date(2026, 8, 31, 11, 37, 0, 0, time.UTC)}
 	if !b.apply(view) {
 		t.Fatal("first apply must report a change")
@@ -421,10 +430,7 @@ func TestGroupedMetricsStillAcquireTheirLeases(t *testing.T) {
 // pill says nothing about what it measures.
 func TestAGroupedMetricKeepsItsOwnTooltip(t *testing.T) {
 	t.Parallel()
-	b, err := New("DP-1")
-	if err != nil {
-		t.Skipf("no system fonts: %v", err)
-	}
+	b := newFixtureBar(t)
 	if err := b.Layout(1536, BarHeight); err != nil {
 		t.Fatal(err)
 	}

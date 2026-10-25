@@ -112,7 +112,7 @@ func TestLibrarySkipsNonUTF8Names(t *testing.T) {
 
 func TestLibraryUnreadableRoot(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("root bypasses directory permissions")
+		t.Skip("running as root, which bypasses the directory permission this asserts")
 	}
 	root := t.TempDir()
 	if err := os.Chmod(root, 0o000); err != nil {

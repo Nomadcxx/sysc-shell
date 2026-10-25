@@ -372,7 +372,7 @@ func TestSavedArtworkMustBeReadableRegularFileInsideAllowedRootsForPreview(t *te
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.name == "unreadable file" && os.Geteuid() == 0 {
-				t.Skip("root can read mode-000 files")
+				t.Skip("running as root, which can read a mode-000 file")
 			}
 			home := t.TempDir()
 			allowed := filepath.Join(home, ".local", "share", "sysc-walls")

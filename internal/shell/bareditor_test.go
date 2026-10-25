@@ -1145,7 +1145,7 @@ func TestTheInspectorFollowsTheLaneThatOwnsTheSelection(t *testing.T) {
 		}
 	})
 	if inspectorY == 0 || rightLaneY == 0 {
-		t.Skip("layout did not produce both markers")
+		t.Skip("the editor layout produced neither the inspector row nor the Right lane row to compare")
 	}
 	if inspectorY > rightLaneY {
 		t.Errorf("inspector at y=%d sits below the Right lane at y=%d", inspectorY, rightLaneY)

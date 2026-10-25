@@ -11,11 +11,11 @@ import (
 func TestSunTimes(t *testing.T) {
 	london, err := time.LoadLocation("Europe/London")
 	if err != nil {
-		t.Skipf("no Europe/London tzdata: %v", err)
+		t.Fatalf("tzdata is embedded; LoadLocation failed: %v", err)
 	}
 	sydney, err := time.LoadLocation("Australia/Sydney")
 	if err != nil {
-		t.Skipf("no Australia/Sydney tzdata: %v", err)
+		t.Fatalf("tzdata is embedded; LoadLocation failed: %v", err)
 	}
 
 	cases := []struct {
@@ -49,7 +49,7 @@ func TestSunTimes(t *testing.T) {
 func TestSunTimesPolarDay(t *testing.T) {
 	tromso, err := time.LoadLocation("Europe/Oslo")
 	if err != nil {
-		t.Skipf("no Europe/Oslo tzdata: %v", err)
+		t.Fatalf("tzdata is embedded; LoadLocation failed: %v", err)
 	}
 	day := time.Date(2026, 6, 21, 12, 0, 0, 0, tromso)
 	_, _, polar := SunTimes(69.6496, 18.9560, day, tromso)

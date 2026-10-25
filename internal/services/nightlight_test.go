@@ -66,7 +66,7 @@ func london(t *testing.T) *time.Location {
 	t.Helper()
 	loc, err := time.LoadLocation("Europe/London")
 	if err != nil {
-		t.Skip("no tzdata:", err)
+		t.Fatal("tzdata is embedded; LoadLocation failed:", err)
 	}
 	return loc
 }
@@ -218,7 +218,7 @@ func TestKelvinAtCustomClampsATransitionLongerThanTheNight(t *testing.T) {
 func TestCustomTimesFollowWallClockAcrossDST(t *testing.T) {
 	loc, err := time.LoadLocation("Europe/London")
 	if err != nil {
-		t.Skip("no tzdata:", err)
+		t.Fatal("tzdata is embedded; LoadLocation failed:", err)
 	}
 	s := NightLightSchedule{Mode: NightLightCustom, NightK: 3000, DayK: 6000,
 		Start: 2*time.Hour + 30*time.Minute, End: 7 * time.Hour}
@@ -231,7 +231,7 @@ func TestCustomTimesFollowWallClockAcrossDST(t *testing.T) {
 func TestSunsetTransitionClampsToTheShortSolarGap(t *testing.T) {
 	loc, err := time.LoadLocation("Europe/Oslo")
 	if err != nil {
-		t.Skip("no tzdata:", err)
+		t.Fatal("tzdata is embedded; LoadLocation failed:", err)
 	}
 	s := NightLightSchedule{Mode: NightLightSunset, NightK: 4000, DayK: 6500,
 		Transition: 6 * time.Hour, Lat: 65.5, Lon: 18.9560, HasLocation: true}
@@ -404,7 +404,7 @@ func TestToggleTurnsOffDuringScheduleFade(t *testing.T) {
 func TestSunScheduleUsesTodaysPolarState(t *testing.T) {
 	loc, err := time.LoadLocation("Europe/Oslo")
 	if err != nil {
-		t.Skip("no tzdata:", err)
+		t.Fatal("tzdata is embedded; LoadLocation failed:", err)
 	}
 	s := NightLightSchedule{Mode: NightLightSunset, NightK: 3000, DayK: 6000,
 		Transition: 30 * time.Minute, Lat: 69.6496, Lon: 18.9560, HasLocation: true}
