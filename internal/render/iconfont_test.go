@@ -134,10 +134,7 @@ func TestGPUHasAMetricGlyph(t *testing.T) {
 	if got := glyphCoverage(t, r, 32); got == 0 {
 		t.Fatalf("GPU metric glyph %U has no ink", r)
 	}
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 	face := m.Face(r, FaceRequest{})
 	if face == nil || face == m.Primary() {
 		t.Fatalf("GPU metric rune %U did not resolve to the project icon face", r)
@@ -146,10 +143,7 @@ func TestGPUHasAMetricGlyph(t *testing.T) {
 
 func TestGaugeRunesResolveToTheProjectFace(t *testing.T) {
 	t.Parallel()
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 	face := m.Face(gaugeRuneFirst, FaceRequest{})
 	if face == nil || face == m.Primary() {
 		t.Fatal("a gauge rune did not resolve to the project icon face")
@@ -238,10 +232,7 @@ func TestIconNameFallsBackToCloudForAnUnknownCode(t *testing.T) {
 // happens to cover the private-use area.
 func TestIconRunesResolveToTheProjectFace(t *testing.T) {
 	t.Parallel()
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 
 	face := m.Face(iconClearDay, FaceRequest{})
 	if face == nil {
@@ -256,10 +247,7 @@ func TestIconRunesResolveToTheProjectFace(t *testing.T) {
 // the surrounding text keeps the primary one.
 func TestSplitRunsIsolatesAnIconRune(t *testing.T) {
 	t.Parallel()
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 
 	runs := m.SplitRuns(string(iconClearDay)+" 18", FaceRequest{})
 	if len(runs) < 2 {
@@ -336,10 +324,7 @@ func TestOutOfRangeChargeIsClamped(t *testing.T) {
 // Battery glyphs resolve to the project face, like the weather ones.
 func TestBatteryRunesResolveToTheProjectFace(t *testing.T) {
 	t.Parallel()
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 	face := m.Face(iconBatteryCritical, FaceRequest{})
 	if face == nil || face == m.Primary() {
 		t.Fatal("a battery rune did not resolve to the icon face")
@@ -401,10 +386,7 @@ func TestBatteryLevelGlyphsDifferFromEachOther(t *testing.T) {
 
 func TestRecorderCatalogueNamesResolve(t *testing.T) {
 	t.Parallel()
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 
 	for _, name := range []string{"camera", "camera-off", "record", "stop", "replay"} {
 		r, ok := IconByName(name)
@@ -423,10 +405,7 @@ func TestRecorderCatalogueNamesResolve(t *testing.T) {
 
 func TestNotifyCatalogueNamesResolve(t *testing.T) {
 	t.Parallel()
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 
 	for _, name := range []string{"notifications", "notifications-off", "close", "schedule", "ghost"} {
 		r, ok := IconByName(name)
@@ -680,10 +659,7 @@ func TestCatGlyphsAreDistinctFramesInTheirBand(t *testing.T) {
 
 func TestCatRunesResolveToTheProjectFace(t *testing.T) {
 	t.Parallel()
-	m, err := NewSystemFontMap("sans-serif", "")
-	if err != nil {
-		t.Skipf("no system font available: %v", err)
-	}
+	m := newFixtureFontMap(t)
 	for _, r := range []rune{catRuneFirst, catRuneLast} {
 		if face := m.Face(r, FaceRequest{}); face == nil || face == m.Primary() {
 			t.Fatalf("cat rune %U did not resolve to the project icon face", r)
