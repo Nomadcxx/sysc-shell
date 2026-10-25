@@ -14,6 +14,25 @@ import (
 
 const configWatchDebounce = 150 * time.Millisecond
 
+// configWatchDebounceWindow coalesces a save burst. Every matching event
+// pushes the expiry back, so one expiry covers the whole burst however the
+// events space out; expiry fires once until the window is cleared.
+type configWatchDebounceWindow struct {
+	deadline time.Time
+}
+
+func (d *configWatchDebounceWindow) push(now time.Time) {
+	d.deadline = now.Add(configWatchDebounce)
+}
+
+func (d *configWatchDebounceWindow) expired(now time.Time) bool {
+	return !d.deadline.IsZero() && !now.Before(d.deadline)
+}
+
+func (d *configWatchDebounceWindow) clear() {
+	d.deadline = time.Time{}
+}
+
 type configWatch struct {
 	fd       int
 	cancelFD int
@@ -107,12 +126,12 @@ func (w *configWatch) run(ctx context.Context, notify func()) error {
 		{Fd: int32(w.fd), Events: unix.POLLIN},
 		{Fd: int32(w.cancelFD), Events: unix.POLLIN},
 	}
-	var deadline time.Time
+	var window configWatchDebounceWindow
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		timeout := configPollTimeout(deadline)
+		timeout := configPollTimeout(window.deadline)
 		ready, err := unix.Poll(fds, timeout)
 		if errors.Is(err, unix.EINTR) {
 			continue
@@ -121,12 +140,12 @@ func (w *configWatch) run(ctx context.Context, notify func()) error {
 			return fmt.Errorf("config watch: poll: %w", err)
 		}
 		if ready == 0 {
-			if !deadline.IsZero() && !time.Now().Before(deadline) {
+			if window.expired(time.Now()) {
 				if ctx.Err() != nil {
 					return nil
 				}
 				notify()
-				deadline = time.Time{}
+				window.clear()
 			}
 			continue
 		}
@@ -161,7 +180,7 @@ func (w *configWatch) run(ctx context.Context, notify func()) error {
 				return errors.New("config watch: parent directory watch lost")
 			}
 			if events.notify {
-				deadline = time.Now().Add(configWatchDebounce)
+				window.push(time.Now())
 			}
 		}
 	}
