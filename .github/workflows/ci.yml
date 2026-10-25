@@ -61,18 +61,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends libegl-dev libgles-dev libpam0g-dev
           cd testdeps/sysc-lock
           go build -o "$GITHUB_WORKSPACE/testdeps/sysc-lock-bin" ./cmd/sysc-lock
-      # Panel layout tests measure text with the configured family
-      # (config.Default() names Inter). Installing it keeps runner metrics
-      # close to the maintainer's machine instead of the fallback face.
-      # raster.FindFont in sysc-terminal probes the Arch font layout, so Noto
-      # is installed and the probed directory is pointed at the Ubuntu one.
-      - name: install test fonts
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-inter fonts-noto-core
-          sudo mkdir -p /usr/share/fonts/noto
-          sudo ln -sf /usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf \
-            /usr/share/fonts/noto/NotoSansMono-Regular.ttf
+      # No font is installed for the suite. The render package measures text
+      # against the fixture fonts it commits, so the runner's own font set
+      # is not part of a result. The install this step removed made the
+      # result a property of the machine the runner happened to be.
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet
