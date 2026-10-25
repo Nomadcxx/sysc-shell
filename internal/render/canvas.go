@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/binary"
 	"fmt"
 	"image"
 	"math"
@@ -183,19 +184,79 @@ func (c *Canvas) clip(r ui.Rect) (x0, y0, x1, y1 int) {
 	return x0, y0, x1, y1
 }
 
-// fillRect blends a colour over a clipped rectangle.
+// fillRect blends a colour over a clipped rectangle. blendFill routes a masked
+// fill's full-coverage interior through it, so the loop works on raw channel
+// runs rather than forming a destination slice per pixel: the panel body is
+// 2240x1640 at scale 2, and the slice arithmetic and the blend's branch cost a
+// third of a Settings frame on their own (GH #455).
+//
+// A solid colour makes the over blend an affine map of each destination byte,
+// so the map is built once as four 256-entry tables -- one per channel -- and
+// a pixel becomes four lookups. Each entry is the exact expression the per-byte
+// loop used, byte(uint32(src[ch]) + uint32(dst)*inv/255), so the output is
+// unchanged. A run that is already clear takes the colour outright, which is
+// what the over blend computes for an empty destination, and a run of full
+// alpha always does. The tables are built on the first run that needs them.
 func fillRect(c *Canvas, r ui.Rect, col Color) {
 	if col.A == 0 {
 		return
 	}
 	x0, y0, x1, y1 := c.clip(r)
+	if x0 >= x1 || y0 >= y1 {
+		return
+	}
 	src := col.premultiply()
+	n := (x1 - x0) * 4
+	inv := uint32(255 - col.A)
+	var tile [64]byte
+	for i := range tile {
+		tile[i] = src[i&3]
+	}
+	var lut [4][256]byte
+	lutReady := false
 	for y := y0; y < y1; y++ {
 		row := c.row(y)[(x0-c.Ox)*4:]
-		for x := x0; x < x1; x++ {
-			blendPixel(row[(x-x0)*4:(x-x0)*4+4], src, uint32(col.A))
+		row = row[:n]
+		if col.A == 255 || clearRun(row) {
+			for i := 0; i < n; i += len(tile) {
+				copy(row[i:], tile[:])
+			}
+			continue
+		}
+		if !lutReady {
+			for ch := range lut {
+				s := uint32(src[ch])
+				for d := range lut[ch] {
+					lut[ch][d] = byte(s + uint32(d)*inv/255)
+				}
+			}
+			lutReady = true
+		}
+		for i := 0; i < n; i += 4 {
+			row[i] = lut[0][row[i]]
+			row[i+1] = lut[1][row[i+1]]
+			row[i+2] = lut[2][row[i+2]]
+			row[i+3] = lut[3][row[i+3]]
 		}
 	}
+}
+
+// clearRun reports whether every channel of a destination run is zero. It
+// reads the run 64 bits at a time: every row of every solid fill tests its
+// destination here, so the check has to cost well under the blend it skips.
+func clearRun(dst []byte) bool {
+	for len(dst) >= 8 {
+		if binary.LittleEndian.Uint64(dst) != 0 {
+			return false
+		}
+		dst = dst[8:]
+	}
+	for _, v := range dst {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // fillRoundedRect fills one clipped rounded rectangle. Each scanline computes
@@ -213,6 +274,47 @@ func fillRoundedRect(c *Canvas, r ui.Rect, radius int, col Color) {
 		inset := ui.RoundedInset(y, r.H, radius)
 		fillRect(c, ui.Rect{X: r.X + inset, Y: r.Y + y, W: r.W - 2*inset, H: 1}, col)
 	}
+}
+
+// blendFill blends a rounded-rectangle fill mask over its own box, visiting
+// only the frame a fill can antialias.
+//
+// A fill's coverage dips only near the silhouette, and a pixel whose centre
+// sits inside the corner arcs' inner rectangle is half a pixel or more past
+// every edge, where the coverage field saturates at 255. The frame fillBands
+// measures carries everything else -- the arcs, their seams with the straight
+// edges, and the half-pixel fringe the mask draws along odd edges. It blends
+// through the mask; the interior is blended at full coverage and never reads a
+// coverage byte. Before this the whole box went through blendMaskAt: the panel
+// body is 2240x1640 at scale 2, and the per-pixel coverage load, bounds check
+// and slice formation cost 32.5 ms of a 33.5 ms Settings frame (GH #455). The
+// four regions are disjoint, so no pixel blends twice, and the interior's
+// fillRect is the same arithmetic blendMaskAt performs for a coverage of 255,
+// so the output is unchanged.
+func blendFill(c *Canvas, r ui.Rect, radius int, square Corners, col Color) {
+	if r.W <= 0 || r.H <= 0 || col.A == 0 {
+		return
+	}
+	top := fillBands(radius, r.W, r.H)
+	if top <= 1 {
+		// A zero radius fills every pixel of its mask, so the mask buys
+		// nothing: a whole-surface wash can go straight to the rectangle.
+		fillRect(c, r, col)
+		return
+	}
+	mask := CornerMask(radius, r.W, r.H, square)
+	if 2*top >= r.H || 2*top >= r.W {
+		// The frame would meet in the middle: a capsule or a small control has
+		// no interior to fill.
+		blendMask(c, mask, r.X, r.Y, col)
+		return
+	}
+	midH := r.H - 2*top
+	blendMaskBand(c, mask, ui.Rect{W: r.W, H: top}, r.X, r.Y, col)
+	blendMaskBand(c, mask, ui.Rect{Y: r.H - top, W: r.W, H: top}, r.X, r.Y, col)
+	blendMaskBand(c, mask, ui.Rect{Y: top, W: top, H: midH}, r.X, r.Y, col)
+	blendMaskBand(c, mask, ui.Rect{X: r.W - top, Y: top, W: top, H: midH}, r.X, r.Y, col)
+	fillRect(c, ui.Rect{X: r.X + top, Y: r.Y + top, W: r.W - 2*top, H: midH}, col)
 }
 
 // blendRing blends a ring mask over a clipped rounded rectangle's own box,
@@ -506,6 +608,24 @@ func (c *Canvas) BlendText(m Mask, x, y int, col Color) {
 	blendMask(c, m.Alpha, x, y, col)
 }
 
+// fillBands returns the frame width a rounded fill's coverage can reach.
+//
+// A pixel whose centre sits inside the corner arcs' inner rectangle is half a
+// pixel or more past every edge of the silhouette, so its coverage saturates
+// at 255; every pixel less than full coverage therefore lies in the frame of
+// radius pixels around the box. That frame carries the corner arcs, their
+// seams with the straight edges, and the half-pixel fringe the mask draws
+// along an odd edge (roundedCoverage halves the true half-width but floors the
+// inset, so an odd dimension shifts its silhouette half a pixel inward). The
+// pad is one pixel beyond radius: the antialiased edge reaches half a pixel
+// past the geometric silhouette, and the outermost row that carries coverage
+// sits on the far side of it. TestFillBandsCoverTheMask pins the bands to the
+// mask over the shipped geometries and an exhaustive sweep of small shapes
+// (GH #455).
+func fillBands(radius, w, h int) int {
+	return max(min(radius, min(w, h)/2), 0) + 1
+}
+
 // strokeBands returns the row and column counts a ring's coverage can reach.
 // A ring of width w and corner radius r is empty everywhere except its top and
 // bottom rows, and, between those, its left and right columns, so the banded
@@ -593,9 +713,11 @@ func blendMaskAt(c *Canvas, mask *image.Alpha, x, y int, sub ui.Rect, col Color)
 	}
 }
 
-// FillRounded fills a rounded rectangle using the cached alpha mask.
+// FillRounded fills a rounded rectangle using the cached alpha mask. Like
+// StrokeRounded it visits only the bands the mask can differ in, so a large
+// fill does not scan its whole box for coverage it knows is full (GH #455).
 func (c *Canvas) FillRounded(r ui.Rect, radius int, col Color) {
-	blendMask(c, RoundedMask(radius, r.W, r.H), r.X, r.Y, col)
+	blendFill(c, r, radius, 0, col)
 }
 
 // StrokeRounded outlines a rounded rectangle inward from its bounds using the
