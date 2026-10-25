@@ -3,6 +3,7 @@ package services
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -113,6 +114,63 @@ func TestLockKeysReleasingTheLastLeaseStopsThePoller(t *testing.T) {
 	again()
 	if l.Polling() {
 		t.Fatal("the released lease left the poll loop running")
+	}
+}
+
+func TestLockKeysCloseKeepsTheLeaseCountSound(t *testing.T) {
+	root := t.TempDir()
+	writeLED(t, root, "input13::capslock", "0")
+	l := NewLockKeys(root, time.Millisecond)
+	release := l.Acquire()
+	if !l.Polling() {
+		t.Fatal("the lease did not start the poll loop")
+	}
+	// Close stops the loop even though the lease is still outstanding.
+	l.Close()
+	if l.Polling() {
+		t.Fatal("close left the poll loop running")
+	}
+	// The outstanding lease comes back afterwards and must not push the
+	// count below zero.
+	release()
+	l.mu.Lock()
+	leases := l.leases
+	l.mu.Unlock()
+	if leases != 0 {
+		t.Fatalf("lease count = %d after the last release, want 0", leases)
+	}
+	// A lease taken after the close still starts the loop.
+	again := l.Acquire()
+	if !l.Polling() {
+		t.Fatal("a lease taken after close did not start the poll loop")
+	}
+	again()
+}
+
+func TestLockKeysConcurrentLeavesLeaveNoLoopBehind(t *testing.T) {
+	root := t.TempDir()
+	writeLED(t, root, "input13::capslock", "0")
+	l := NewLockKeys(root, time.Millisecond)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				release := l.Acquire()
+				release()
+			}
+		}()
+	}
+	wg.Wait()
+	l.mu.Lock()
+	leases := l.leases
+	l.mu.Unlock()
+	if leases != 0 {
+		t.Fatalf("lease count = %d after every release, want 0", leases)
+	}
+	if l.Polling() {
+		t.Fatal("the poll loop is running without a lease")
 	}
 }
 

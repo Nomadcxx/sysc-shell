@@ -77,22 +77,30 @@ func (l *LockKeys) Polling() bool {
 func (l *LockKeys) Acquire() func() {
 	l.mu.Lock()
 	l.leases++
-	first := l.leases == 1
-	l.mu.Unlock()
-	if first {
-		l.startPoller()
+	if l.stop == nil {
+		l.startPollerLocked()
 	}
+	l.mu.Unlock()
 	var once sync.Once
 	return func() {
-		once.Do(func() {
-			l.mu.Lock()
-			l.leases--
-			last := l.leases == 0
-			l.mu.Unlock()
-			if last {
-				l.stopPoller()
-			}
-		})
+		once.Do(l.dropLease)
+	}
+}
+
+// dropLease gives one lease back. The poll loop stops with the last lease.
+//
+// The lease count and the loop move under one lock, so a release that races
+// an acquire cannot leave the loop running without a lease, and the count
+// never falls below zero.
+func (l *LockKeys) dropLease() {
+	l.mu.Lock()
+	if l.leases > 0 {
+		l.leases--
+	}
+	done := l.takePollerLocked()
+	l.mu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 
@@ -112,7 +120,8 @@ func (l *LockKeys) Start() {
 }
 
 // Close stops the poller. It is the shutdown path, so it stops the loop even
-// when a lease is still outstanding.
+// when a lease is still outstanding. The outstanding lease keeps its count,
+// so the release that comes after it cannot push the count below zero.
 func (l *LockKeys) Close() {
 	l.mu.Lock()
 	l.held = false
@@ -123,44 +132,49 @@ func (l *LockKeys) Close() {
 		release()
 	}
 	l.mu.Lock()
-	l.leases = 0
+	done := l.takePollerLocked()
 	l.mu.Unlock()
-	l.stopPoller()
+	if done != nil {
+		<-done
+	}
 }
 
-// startPoller reads the baseline and starts the poll loop. A machine with no
-// lock-key LEDs never starts a polling goroutine.
-func (l *LockKeys) startPoller() {
-	l.mu.Lock()
+// startPollerLocked reads the baseline and starts the poll loop. A machine
+// with no lock-key LEDs never starts a polling goroutine.
+//
+// The caller holds the lock, so the baseline and the loop start together: a
+// consumer that reads the baseline right after its lease sees the state the
+// loop starts from.
+func (l *LockKeys) startPollerLocked() {
 	if l.stop != nil {
-		l.mu.Unlock()
 		return
 	}
 	st, ok := readLockState(l.root)
 	if !ok {
 		l.ok = false
-		l.mu.Unlock()
 		return
 	}
 	l.ok = true
 	l.base, l.last = st, st
 	l.stop, l.done = make(chan struct{}), make(chan struct{})
 	stop, done := l.stop, l.done
-	l.mu.Unlock()
 	go l.run(stop, done)
 }
 
-// stopPoller ends the poll loop and waits for it to finish.
-func (l *LockKeys) stopPoller() {
-	l.mu.Lock()
-	stop, done := l.stop, l.done
+// takePollerLocked ends the poll loop and returns the channel that closes
+// when the loop is done.
+//
+// The caller waits for that channel outside the lock, because the loop takes
+// the same lock when it polls.
+func (l *LockKeys) takePollerLocked() chan struct{} {
+	if l.stop == nil {
+		return nil
+	}
+	close(l.stop)
+	done := l.done
 	l.stop, l.done = nil, nil
 	l.ok = false
-	l.mu.Unlock()
-	if stop != nil {
-		close(stop)
-		<-done
-	}
+	return done
 }
 
 func (l *LockKeys) run(stop, done chan struct{}) {
