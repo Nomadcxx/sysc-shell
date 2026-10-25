@@ -552,6 +552,22 @@ func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 	blendMaskAt(c, mask, x, y, ui.Rect{W: b.Dx(), H: b.Dy()}, col)
 }
 
+// roundedMaskVisible returns a rounded-rectangle mask covering only the slice of a
+// box placed at box that is visible on the canvas (the canvas clip narrowed by any
+// damage restrict), together with the canvas coordinate to place it at so the slice
+// lines up with the full geometry. Off-clip coverage is never generated, so a tall
+// scrolled capsule costs only its visible slice; because blendMaskAt already reads
+// only the visible slice, blending the slice is byte-identical to blending the full
+// mask. A box entirely off-canvas returns a nil mask.
+func (c *Canvas) roundedMaskVisible(box ui.Rect, radius int, square Corners) (mask *image.Alpha, px, py int) {
+	x0, y0, x1, y1 := c.clip(ui.Rect{X: box.X, Y: box.Y, W: box.W, H: box.H})
+	if x1 <= x0 || y1 <= y0 {
+		return nil, 0, 0
+	}
+	clip := image.Rect(x0-box.X, y0-box.Y, x1-box.X, y1-box.Y)
+	return cornerMaskRegion(radius, box.W, box.H, square, clip), x0, y0
+}
+
 // blendMaskAt blends col through mask at x, y, visiting only sub, a region in
 // the mask's own coordinates. The mask carries its coverage in Pix from its
 // origin, so coverage for canvas pixel px is indexed by px-x however the

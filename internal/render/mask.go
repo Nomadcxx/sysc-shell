@@ -11,6 +11,7 @@ import (
 type maskKey struct {
 	radius, w, h int
 	square       Corners
+	clip         image.Rectangle
 }
 
 // Corners marks corners of a rounded rectangle that stay square.
@@ -123,23 +124,38 @@ func RoundedMask(radius, w, h int) *image.Alpha { return CornerMask(radius, w, h
 // rounded fill afterwards blends twice where the two overlap, which on a
 // translucent fill paints a denser band.
 func CornerMask(radius, w, h int, square Corners) *image.Alpha {
-	key := maskKey{radius, w, h, square}
+	return cornerMaskRegion(radius, w, h, square, image.Rect(0, 0, max(w, 0), max(h, 0)))
+}
+
+// cornerMaskRegion builds a rounded-rectangle mask over only the clip sub-rect of
+// the w×h geometry, in the mask's own coordinates. Coverage is computed against the
+// full w×h so the rounded caps land where the complete mask would place them; the
+// caller blends the result at (placeX+clip.Min.X, placeY+clip.Min.Y). Off-clip
+// pixels are never generated, so a scrolled 50 MB capsule costs only its visible
+// slice, and that slice caches under its own geometry. It is byte-identical to the
+// corresponding slice of the full mask because the blend reads only the visible
+// slice anyway.
+func cornerMaskRegion(radius, w, h int, square Corners, clip image.Rectangle) *image.Alpha {
+	clip = clip.Intersect(image.Rect(0, 0, max(w, 0), max(h, 0)))
+	key := maskKey{radius, w, h, square, clip}
 	maskMu.Lock()
 	defer maskMu.Unlock()
 	cacheKey := geometryCacheKey{kind: geometryRounded, mask: key}
 	if mask := geometryCache.get(cacheKey); mask != nil {
 		return mask
 	}
-	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
-	if w > 0 && h > 0 {
+	mask := image.NewAlpha(image.Rect(0, 0, clip.Dx(), clip.Dy()))
+	if clip.Dx() > 0 && clip.Dy() > 0 {
 		radius = min(radius, min(w, h)/2)
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for cy := 0; cy < clip.Dy(); cy++ {
+			y := clip.Min.Y + cy
+			for cx := 0; cx < clip.Dx(); cx++ {
+				x := clip.Min.X + cx
 				a := roundedCoverage(radius, w, h, x, y)
 				if square&quadrant(x, y, w, h) != 0 {
 					a = 255
 				}
-				mask.SetAlpha(x, y, color.Alpha{A: a})
+				mask.SetAlpha(cx, cy, color.Alpha{A: a})
 			}
 		}
 	}

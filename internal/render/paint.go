@@ -1590,17 +1590,16 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
 	radius = ui.MorphRadius(radius, n.PressProgress)
 	fill, fg := chromeFill(style, n, base)
-	mask := RoundedMask(radius, box.W, box.H)
 	if angle, ok := scrimFadeAngle(n.Fill); ok && fill.A > 0 && !n.State.Has(ui.StateSelected) {
 		clear := fill
 		clear.A = 0
-		blendMaskGradient(c, mask, box.X, box.Y,
+		blendMaskGradient(c, RoundedMask(radius, box.W, box.H), box.X, box.Y,
 			[]gradientStop{{at: 0, c: fill}, {at: scrimFadeEnd, c: clear}}, angle, 0, false)
 	} else if stops := resolveGradient(n, style); fill.A > 0 && stops != nil {
-		blendMaskGradient(c, mask, box.X, box.Y, quietChromeGradient(stops, fill),
+		blendMaskGradient(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, quietChromeGradient(stops, fill),
 			n.Gradient.AngleDeg, n.GradientOffset, false)
-	} else {
-		blendMask(c, mask, box.X, box.Y, fill)
+	} else if mask, px, py := c.roundedMaskVisible(box, radius, 0); mask != nil {
+		blendMask(c, mask, px, py, fill)
 	}
 	// An explicit stroke marks a card that has to stand out from its
 	// neighbours -- a critical notification -- independently of the fill and of
