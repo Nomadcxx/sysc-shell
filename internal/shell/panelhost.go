@@ -2713,7 +2713,12 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, pageOffset)
 	}
-	root := copyNode(h.root)
+	// The copy carries only what the view can see: 939 application rows cost
+	// tens of megabytes to clone per frame and the painter cannot draw most of
+	// them (GH #454). Dropped children keep their slots as bare nodes, so
+	// every consumer that addresses children by position -- applyEditorView's
+	// live-to-copy mirror above all -- still sees the tree it expects.
+	root := copyNodeVisible(h.root, ui.Rect{}, false)
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, -pageOffset)
 	}
