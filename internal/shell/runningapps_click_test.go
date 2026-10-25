@@ -66,7 +66,7 @@ func TestRunningAppsClick(t *testing.T) {
 	}
 	got := labels(host.rows)
 	want := []string{
-		"steam (2 windows)", "Close all and force quit", "Steam library", "Move Steam library to floating",
+		"steam (2 windows)", "Close all 2 windows", "Close all and force quit", "Steam library", "Move Steam library to floating",
 		"Steam store", "Move Steam store to floating", "Store", "Library", "Friends",
 	}
 	if len(got) != len(want) {

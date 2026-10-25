@@ -633,6 +633,8 @@ func (h *runningAppMenuHost) actionForRow(row runningAppMenuRow) string {
 		return "running-app-workspace:" + strconv.FormatUint(row.MoveWindowID, 10) + ":" + strconv.FormatUint(row.MoveWorkspaceID, 10)
 	case runningAppMenuForceQuit:
 		return "running-app-force-quit"
+	case runningAppMenuCloseAll:
+		return "running-app-close-all"
 	case runningAppMenuForceQuitConfirm:
 		return "running-app-force-quit-confirm"
 	case runningAppMenuForceQuitCancel:
@@ -688,7 +690,7 @@ func (h *runningAppMenuHost) rebuild() {
 			if !visible[index] {
 				continue
 			}
-			if row.Kind == runningAppMenuForceQuit && len(visible) > 1 {
+			if len(visible) > 1 && h.startsAppLevelCloseGroup(index, visible) {
 				col.Children = append(col.Children, &ui.Node{Kind: ui.KindSeparator})
 			}
 			action := h.actionForRow(row)
@@ -722,6 +724,41 @@ func (h *runningAppMenuHost) rebuild() {
 	if h.logicalW > 0 {
 		_ = h.relayout()
 	}
+}
+
+// startsAppLevelCloseGroup reports whether the row at index opens the group
+// of app-level close actions.
+//
+// The group holds the graceful close and the destructive one, and the
+// separator belongs in front of the group, not between its rows.
+func (h *runningAppMenuHost) startsAppLevelCloseGroup(index int, visible map[int]bool) bool {
+	if index < 0 || index >= len(h.rows) {
+		return false
+	}
+	switch h.rows[index].Kind {
+	case runningAppMenuCloseAll:
+		return true
+	case runningAppMenuForceQuit:
+		// The group opens here when the graceful close row is not on screen.
+		// Scrolling that row out of the viewport must not take the separator
+		// with it: the group still separates the app-level close from the
+		// windows below it.
+		closeAll := h.closeAllRowIndex()
+		return closeAll < 0 || !visible[closeAll]
+	default:
+		return false
+	}
+}
+
+// closeAllRowIndex returns the index of the graceful close row, or -1 when
+// the menu has none.
+func (h *runningAppMenuHost) closeAllRowIndex() int {
+	for i, row := range h.rows {
+		if row.Kind == runningAppMenuCloseAll {
+			return i
+		}
+	}
+	return -1
 }
 
 func (h *runningAppMenuHost) sectionVisible(section int, visible map[int]bool) bool {
@@ -810,6 +847,12 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 			}
 		}
 		h.r.spawnDesktopExecLocked(execLine)
+	case runningAppMenuCloseAll:
+		for _, window := range closableRunningAppWindows(slot) {
+			if currentRunningWindow(h.r.running, slot.Key, window.ID) {
+				h.r.sendNiriLocked(niri.CloseWindow{ID: window.ID})
+			}
+		}
 	}
 }
 

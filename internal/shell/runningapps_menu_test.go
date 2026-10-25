@@ -406,8 +406,8 @@ func TestRunningAppsMenuStartsOnMRUWindow(t *testing.T) {
 	if len(host.menu.options) < 2 || host.menu.options[host.menu.cursor] != "Newest" {
 		t.Fatalf("initial menu options/cursor = %v/%d, want MRU row first", host.menu.options, host.menu.cursor)
 	}
-	if host.menu.cursor != 1 {
-		t.Fatalf("initial cursor = %d, want the MRU window after the app action", host.menu.cursor)
+	if host.menu.cursor != 2 {
+		t.Fatalf("initial cursor = %d, want the MRU window after the app close rows", host.menu.cursor)
 	}
 }
 
@@ -436,6 +436,119 @@ func TestRunningAppsMenuCloseControlClosesOnlyItsWindow(t *testing.T) {
 	}
 	if got, ok := sent[0].(niri.CloseWindow); !ok || got.ID != 81 {
 		t.Fatalf("close action = %#v, want CloseWindow 81", sent[0])
+	}
+}
+
+func TestRunningAppsMenuCloseAllClosesEveryWindowThroughNiri(t *testing.T) {
+	t.Parallel()
+	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Store", FocusTimestamp: 10},
+		{ID: 81, AppID: "steam", Title: "Library", Focused: true, FocusTimestamp: 20},
+	})
+	var sent []any
+	reg.niriSend = func(action any) error { sent = append(sent, action); return nil }
+	index := -1
+	for i, row := range host.rows {
+		if row.Kind == runningAppMenuCloseAll {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("the menu has no graceful close-all row")
+	}
+	if got := host.rows[index].Label; got != "Close all 2 windows" {
+		t.Fatalf("close-all label = %q, want %q", got, "Close all 2 windows")
+	}
+	host.choose(index)
+	if len(sent) != 2 {
+		t.Fatalf("Niri actions = %v, want one CloseWindow per window", sent)
+	}
+	closed := map[uint64]bool{}
+	for _, action := range sent {
+		close, ok := action.(niri.CloseWindow)
+		if !ok {
+			t.Fatalf("action = %#v, want CloseWindow", action)
+		}
+		closed[close.ID] = true
+	}
+	if !closed[80] || !closed[81] {
+		t.Fatalf("closed windows = %v, want 80 and 81", closed)
+	}
+}
+
+func TestRunningAppsMenuCloseAllLeavesTheFoldedGameAlone(t *testing.T) {
+	t.Parallel()
+	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
+		{ID: 80, AppID: "steam", Title: "Store", FocusTimestamp: 10},
+		{ID: 82, AppID: "steam_app_123", Title: "Game", FocusTimestamp: 20},
+	})
+	var sent []any
+	reg.niriSend = func(action any) error { sent = append(sent, action); return nil }
+	index := -1
+	for i, row := range host.rows {
+		if row.Kind == runningAppMenuCloseAll {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("the menu has no graceful close-all row")
+	}
+	if got := host.rows[index].Label; got != "Close window" {
+		t.Fatalf("close-all label = %q, want %q", got, "Close window")
+	}
+	host.choose(index)
+	if len(sent) != 1 {
+		t.Fatalf("Niri actions = %v, want one CloseWindow", sent)
+	}
+	close, ok := sent[0].(niri.CloseWindow)
+	if !ok || close.ID != 80 {
+		t.Fatalf("close action = %#v, want CloseWindow 80", sent[0])
+	}
+}
+
+// separatorInFrontOf reports whether the row with the action is preceded by a
+// separator among the menu column's children.
+func separatorInFrontOf(root *ui.Node, action string) bool {
+	for i, child := range root.Children {
+		if child.Action != action {
+			continue
+		}
+		return i > 0 && root.Children[i-1].Kind == ui.KindSeparator
+	}
+	return false
+}
+
+func TestRunningAppsMenuKeepsTheCloseGroupSeparatorWhenTheCloseRowIsScrolledOut(t *testing.T) {
+	t.Parallel()
+	reg, _, host := openRunningAppsWindowMenu(t, manySteamWindows(10))
+
+	// The close-all row and the force-quit row are one group, so the
+	// separator belongs in front of the group and not between its rows.
+	if !separatorInFrontOf(host.root, "running-app-close-all") {
+		t.Fatal("the close group has no separator in front of it")
+	}
+	if separatorInFrontOf(host.root, "running-app-force-quit") {
+		t.Fatal("the separator sits between the two rows of the close group")
+	}
+
+	// Scrolling the close-all row out of the viewport must not take the
+	// separator with it: the group still separates the app-level close from
+	// the windows below it.
+	for i := 0; i < 12 && findAction(host.root, "running-app-close-all") != nil; i++ {
+		if !handleRunningAppMenuEvent(reg, host, wayland.Event{Kind: wayland.EventKeyPress, Key: keyDown}) {
+			t.Fatal("Down ignored")
+		}
+	}
+	if findAction(host.root, "running-app-close-all") != nil {
+		t.Fatal("the close-all row is still on screen")
+	}
+	if findAction(host.root, "running-app-force-quit") == nil {
+		t.Fatal("the force-quit row is not on screen")
+	}
+	if !separatorInFrontOf(host.root, "running-app-force-quit") {
+		t.Fatal("the scrolled close group lost its separator")
 	}
 }
 
