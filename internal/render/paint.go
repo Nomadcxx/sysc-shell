@@ -479,7 +479,15 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 
 	case ui.KindScroll, ui.KindVirtualList:
 		prev := c.restrict
-		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+		phys := style.Scale120.PhysicalRect(n.Bounds)
+		clip := intersectClip(prev, phys)
+		if phys.W <= 0 || phys.H <= 0 || clip.W <= 0 || clip.H <= 0 {
+			return nil
+		}
+		// Intersect rather than replace: a list nested in another scroll
+		// spans its whole content height, and replacing the clip would let
+		// its rows paint past the outer viewport's edge.
+		c.restrict = clip
 		defer func() { c.restrict = prev }()
 		for i, child := range n.Children {
 			if child == nil {

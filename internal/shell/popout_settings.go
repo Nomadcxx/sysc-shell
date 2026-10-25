@@ -479,6 +479,13 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func applicationsSettingsTree(r *Registry, h *PanelHost) *ui.Node {
+	return applicationsSettingsPage(r, h, true)
+}
+
+// applicationsSettingsPage builds Settings → Applications. virtualise puts the
+// installed rows behind a mixed-height KindVirtualList; the full form remains
+// for the equality check that proves both produce the same pixels.
+func applicationsSettingsPage(r *Registry, h *PanelHost, virtualise bool) *ui.Node {
 	if r == nil {
 		return settingsBody(h, theme.MarginL, &ui.Node{
 			Kind: ui.KindText, Text: h.tr("applications.unavailable", "Installed applications are unavailable."),
@@ -572,13 +579,20 @@ func applicationsSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 
 	query := strings.ToLower(strings.TrimSpace(h.query))
 	favourites, hidden := stringSet(h.draft.Applications.Favourites), stringSet(h.draft.Applications.Hidden)
+	title := h.tr("applications.installed", "Installed applications")
 	var rows []*ui.Node
-	for _, entry := range entries {
-		if query != "" && !applicationMatchesQuery(entry, query) {
-			continue
+	if virtualise {
+		if list := applicationsVirtualList(h, entries, favourites, hidden, query); list != nil {
+			rows = append(rows, list)
 		}
-		rows = append(rows, applicationPreferenceRow(h, entry, favourites[entry.ID], hidden[entry.ID],
-			h.draft.Applications.DefaultTerminal == entry.ID))
+	} else {
+		for _, entry := range entries {
+			if query != "" && !applicationMatchesQuery(entry, query) {
+				continue
+			}
+			rows = append(rows, applicationPreferenceRow(h, entry, favourites[entry.ID], hidden[entry.ID],
+				h.draft.Applications.DefaultTerminal == entry.ID))
+		}
 	}
 	if len(rows) == 0 {
 		message := h.tr("applications.no_apps", "No installed applications match.")
@@ -587,8 +601,79 @@ func applicationsSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: message, Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
-	children = append(children, settingsGroupCard(h, h.tr("applications.installed", "Installed applications"), rows))
+	children = append(children, settingsGroupCard(h, title, rows))
 	return settingsBody(h, theme.MarginL, children...)
+}
+
+// applicationsVirtualList is the installed-app card's rows as a mixed-height
+// virtual list. Without it every configure pass spends a row tree for the
+// whole catalogue and every painted frame copies all of it; a thousand apps
+// made that the largest remaining cost on the page. Items are memoised so the
+// focus list taken at build time holds the very nodes layout materialises,
+// and so scrolling does not rebuild a row it is about to show again.
+func applicationsVirtualList(h *PanelHost, entries []launcher.Entry, favourites, hidden map[string]bool, query string) *ui.Node {
+	apps := make([]launcher.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if query != "" && !applicationMatchesQuery(entry, query) {
+			continue
+		}
+		apps = append(apps, entry)
+	}
+	if len(apps) == 0 {
+		return nil
+	}
+	width := settingsCardInner(h)
+	nodes := make([]*ui.Node, len(apps))
+	item := func(i int) *ui.Node {
+		if i < 0 || i >= len(apps) {
+			return nil
+		}
+		if nodes[i] == nil {
+			entry := apps[i]
+			nodes[i] = applicationPreferenceRow(h, entry, favourites[entry.ID], hidden[entry.ID],
+				h.draft.Applications.DefaultTerminal == entry.ID)
+		}
+		return nodes[i]
+	}
+	var offsets []int
+	cachedWidth := -1
+	list := &ui.Node{
+		Kind: ui.KindVirtualList, Key: "applications-installed",
+		Width: width, ItemCount: len(apps), Item: item,
+	}
+	list.ItemOffset = func(i int) int {
+		if i <= 0 {
+			return 0
+		}
+		if i > len(apps) {
+			i = len(apps)
+		}
+		if offsets == nil || cachedWidth != width {
+			offsets = make([]int, len(apps)+1)
+			measure := settingsMeasure(h)
+			for j := range apps {
+				height, err := ui.ContentHeight(item(j), width, measure)
+				if err != nil {
+					height = 0
+				}
+				offsets[j+1] = offsets[j] + height
+				if j < len(apps)-1 {
+					offsets[j+1] += theme.MarginM
+				}
+			}
+			cachedWidth = width
+		}
+		return offsets[i]
+	}
+	// The built tree carries every row so callers that inspect it before a
+	// configure pass -- focus collection, accessibility walkers, the section
+	// gating that dims rows by action -- still see the page. Layout replaces
+	// this list with the visible window, so a painted frame copies only that.
+	list.Children = make([]*ui.Node, 0, len(apps))
+	for i := range apps {
+		list.Children = append(list.Children, item(i))
+	}
+	return list
 }
 
 func applicationMatchesQuery(entry launcher.Entry, query string) bool {
@@ -1110,10 +1195,9 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 }
 
 // settingsSectionColumn lays the whole section out rather than virtualising
-// it. KindVirtualList is strictly uniform stride — column.go boxes every item
-// at ItemHeight and advances by exactly that — so a caption beneath a label
-// and a heading above a run of rows cannot exist under it. Sections bound the
-// row count, which is what keeps laying the whole thing out cheap.
+// it. Sections bound their row count, so laying every entry out stays cheap;
+// the mixed-height virtual list the Applications catalogue needs is for rows
+// whose count the user controls.
 func settingsSectionColumn(r *Registry, h *PanelHost, section string, entries []settings.Entry) *ui.Node {
 	if len(entries) == 0 {
 		return settingsBody(h, theme.MarginXL, settingsEmptyNote(section))

@@ -300,8 +300,14 @@ type Node struct {
 	ScrollbarEnds int
 	ItemCount     int
 	ItemHeight    int
-	ContentH      int
-	Item          func(int) *Node
+	// ItemOffset, when set on a KindVirtualList, gives the content-space start
+	// of item i: item i occupies [ItemOffset(i), ItemOffset(i+1)), and
+	// ItemOffset(ItemCount) is the full content height, gaps included. It lets
+	// a list mix item heights, which ItemHeight's fixed stride cannot. The
+	// offsets must not decrease. Nil keeps the ItemHeight stride.
+	ItemOffset func(int) int
+	ContentH   int
+	Item       func(int) *Node
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.
 	Values []float64

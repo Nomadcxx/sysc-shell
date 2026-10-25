@@ -1,5 +1,7 @@
 package ui
 
+import "sort"
+
 func ScrollBy(n *Node, delta int) {
 	if n == nil {
 		return
@@ -96,26 +98,51 @@ func VisibleRange(n *Node) (lo, hi int) {
 	if n == nil || n.ItemHeight <= 0 {
 		return 0, 0
 	}
-	view := n.Bounds.H
-	if view <= 0 {
-		view = 0
+	return visibleRangeUniform(n.ItemHeight, n.ItemCount, n.ScrollOffset, max(n.Bounds.H, 0))
+}
+
+// visibleRangeUniform returns [lo, hi) for a fixed ItemHeight list. top is the
+// viewport's first visible pixel in content space; view is its height.
+func visibleRangeUniform(itemHeight, count, top, view int) (lo, hi int) {
+	if itemHeight <= 0 || count <= 0 {
+		return 0, 0
 	}
-	first := 0
-	if n.ItemHeight > 0 {
-		first = n.ScrollOffset / n.ItemHeight
-	}
+	first := top / itemHeight
 	vis := 0
-	if n.ItemHeight > 0 {
-		vis = (view + n.ItemHeight - 1) / n.ItemHeight
+	if view > 0 {
+		vis = (view + itemHeight - 1) / itemHeight
 	}
-	lo = first - 2
-	if lo < 0 {
-		lo = 0
+	if first < 0 {
+		// The viewport begins above the list: part of the first screen is
+		// empty, so fewer rows are in view.
+		vis += first
+		first = 0
+		if vis < 1 {
+			vis = 1
+		}
 	}
-	hi = first + vis + 2
-	if hi > n.ItemCount {
-		hi = n.ItemCount
+	lo = max(first-2, 0)
+	hi = min(first+vis+2, count)
+	if lo > hi {
+		lo = hi
 	}
+	return lo, hi
+}
+
+// visibleRangeOffsets returns [lo, hi) for a mixed-height list whose item i
+// starts at offset(i). top and bottom are in content space. Two items of
+// overscan each side cover rows that scroll in without another layout pass.
+func visibleRangeOffsets(offset func(int) int, count, top, bottom int) (lo, hi int) {
+	if offset == nil || count <= 0 || bottom <= top {
+		return 0, 0
+	}
+	// The first item whose end lies below the viewport. A zero-height item
+	// ends where it starts, so it is skipped along with the empty space it
+	// occupies.
+	lo = sort.Search(count, func(i int) bool { return offset(i+1) > top })
+	hi = sort.Search(count, func(i int) bool { return offset(i) >= bottom })
+	lo = max(lo-2, 0)
+	hi = min(hi+2, count)
 	if lo > hi {
 		lo = hi
 	}

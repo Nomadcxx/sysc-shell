@@ -61,6 +61,10 @@ func clipsTextHeight(n *Node) bool {
 // result into each node's Bounds. Children are placed in source order from the
 // left content edge and centred vertically in the padded content box.
 func Layout(root *Node, bounds Rect, measure MeasureText) error {
+	return layoutRow(root, bounds, measure, layoutClip{})
+}
+
+func layoutRow(root *Node, bounds Rect, measure MeasureText, clip layoutClip) error {
 	if root == nil {
 		return fmt.Errorf("ui: nil root")
 	}
@@ -135,7 +139,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				w = remain
 			}
 			box := Rect{X: x, Y: content.Y, W: min(w, remain), H: content.H}
-			if err := LayoutColumn(child, box, measure); err != nil {
+			if err := layoutColumn(child, box, measure, clip); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		case KindStack:
@@ -144,7 +148,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 			box := Rect{X: x, Y: content.Y, W: min(w, remain), H: content.H}
 			child.Bounds = box
-			if err := layoutStackChildren(child, measure); err != nil {
+			if err := layoutStackChildrenIn(child, measure, clip); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		case KindScroll, KindVirtualList:
@@ -152,7 +156,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				w = content.X + content.W - x
 			}
 			box := Rect{X: x, Y: content.Y, W: w, H: content.H}
-			if err := layoutScroll(child, box, measure); err != nil {
+			if err := layoutScroll(child, box, measure, clip); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		case KindCapsule:
@@ -160,7 +164,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fitError(root, i, child, content)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
-			if err := layoutCapsuleChild(child, measure); err != nil {
+			if err := layoutCapsuleChildIn(child, measure, clip); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		case KindButton, KindDragSource:
@@ -168,7 +172,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fitError(root, i, child, content)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
-			if err := layoutButtonContent(child, measure, child.Height > 0); err != nil {
+			if err := layoutButtonContentIn(child, measure, child.Height > 0, clip); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		case KindSegmented:
@@ -176,7 +180,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fitError(root, i, child, content)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
-			if err := layoutSegmented(child, measure); err != nil {
+			if err := layoutSegmentedIn(child, measure, clip); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		case KindMenu:
@@ -184,7 +188,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fitError(root, i, child, content)
 			}
 			box := Rect{X: x, Y: content.Y, W: w, H: h}
-			if err := placeColumnChild(child, box, measure); err != nil {
+			if err := placeColumnChildIn(child, box, measure, clip); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		default:
@@ -216,7 +220,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
 			if child.Kind == KindRow {
-				if err := placeColumnChild(child, child.Bounds, measure); err != nil {
+				if err := placeColumnChildIn(child, child.Bounds, measure, clip); err != nil {
 					return fmt.Errorf("ui: child %d: %w", i, err)
 				}
 			}
@@ -278,6 +282,10 @@ func measureButton(n *Node, measure MeasureText) (int, int, error) {
 }
 
 func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
+	return layoutButtonContentIn(n, measure, fixedHeight, layoutClip{})
+}
+
+func layoutButtonContentIn(n *Node, measure MeasureText, fixedHeight bool, clip layoutClip) error {
 	if len(n.Children) == 0 {
 		return nil
 	}
@@ -294,13 +302,13 @@ func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
 		}
 		switch child.Kind {
 		case KindRow:
-			if err := Layout(child, inner, measure); err != nil {
+			if err := layoutRow(child, inner, measure, clip); err != nil {
 				return err
 			}
 			pinRowEnd(child, inner)
 			return nil
 		case KindColumn:
-			return LayoutColumn(child, inner, measure)
+			return layoutColumn(child, inner, measure, clip)
 		}
 	}
 	w, h, err := inlineContentSize(n, measure)
@@ -391,6 +399,10 @@ func measureSegmented(n *Node, measure MeasureText) (int, int, error) {
 }
 
 func layoutSegmented(n *Node, measure MeasureText) error {
+	return layoutSegmentedIn(n, measure, layoutClip{})
+}
+
+func layoutSegmentedIn(n *Node, measure MeasureText, clip layoutClip) error {
 	if err := validateSegments(n); err != nil {
 		return err
 	}
@@ -411,7 +423,7 @@ func layoutSegmented(n *Node, measure MeasureText) error {
 			w++
 		}
 		child.Bounds = Rect{X: x, Y: inner.Y, W: w, H: inner.H}
-		if err := layoutButtonContent(child, measure, true); err != nil {
+		if err := layoutButtonContentIn(child, measure, true, clip); err != nil {
 			return fmt.Errorf("segment %d: %w", i, err)
 		}
 		x += w + n.Gap
@@ -423,6 +435,10 @@ func layoutSegmented(n *Node, measure MeasureText) error {
 // box. A nested row or column is arranged in that box so a capsule can hold the
 // workspace dot row.
 func layoutCapsuleChild(n *Node, measure MeasureText) error {
+	return layoutCapsuleChildIn(n, measure, layoutClip{})
+}
+
+func layoutCapsuleChildIn(n *Node, measure MeasureText, clip layoutClip) error {
 	if len(n.Children) == 0 {
 		return nil
 	}
@@ -458,12 +474,12 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 			box.Y -= (h - box.H) / 2
 			box.H = h
 		}
-		return Layout(child, box, measure)
+		return layoutRow(child, box, measure, clip)
 	case KindColumn:
-		return LayoutColumn(child, inner, measure)
+		return layoutColumn(child, inner, measure, clip)
 	case KindStack:
 		child.Bounds = inner
-		return layoutStackChildren(child, measure)
+		return layoutStackChildrenIn(child, measure, clip)
 	}
 	w, h, err := measureNode(child, inner.H, measure)
 	if err != nil {
@@ -729,6 +745,10 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 // overlap by design; paint order decides what is visible and Hit's reverse
 // walk decides what is clicked.
 func layoutStackChildren(n *Node, measure MeasureText) error {
+	return layoutStackChildrenIn(n, measure, layoutClip{})
+}
+
+func layoutStackChildrenIn(n *Node, measure MeasureText, clip layoutClip) error {
 	if len(n.Children) == 0 {
 		return nil
 	}
@@ -744,11 +764,11 @@ func layoutStackChildren(n *Node, measure MeasureText) error {
 		}
 		switch child.Kind {
 		case KindColumn:
-			if err := LayoutColumn(child, inner, measure); err != nil {
+			if err := layoutColumn(child, inner, measure, clip); err != nil {
 				return err
 			}
 		case KindRow:
-			if err := Layout(child, inner, measure); err != nil {
+			if err := layoutRow(child, inner, measure, clip); err != nil {
 				return err
 			}
 		case KindEffect:

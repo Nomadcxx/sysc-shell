@@ -10,9 +10,10 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// benchInvalidationsDrained is keepInvalidationsDrained for a benchmark: same
-// stand-in for the owner's bridge, with testing.TB in place of *testing.T.
-func benchInvalidationsDrained(b *testing.B, r *Registry) {
+// benchInvalidationsDrained is keepInvalidationsDrained for a benchmark or a
+// budget check: same stand-in for the owner's bridge, with testing.TB in place
+// of *testing.T.
+func benchInvalidationsDrained(b testing.TB, r *Registry) {
 	b.Helper()
 	stop := make(chan struct{})
 	go func() {
@@ -30,7 +31,7 @@ func benchInvalidationsDrained(b *testing.B, r *Registry) {
 }
 
 // benchDrainAux consumes the open request pair the placement publishes.
-func benchDrainAux(b *testing.B, reg *Registry) []wayland.AuxRequest {
+func benchDrainAux(b testing.TB, reg *Registry) []wayland.AuxRequest {
 	b.Helper()
 	out := make([]wayland.AuxRequest, 0, 2)
 	deadline := time.After(asyncTestWait)
@@ -47,7 +48,7 @@ func benchDrainAux(b *testing.B, reg *Registry) []wayland.AuxRequest {
 
 // benchSettleReveal pins every animator value to its endpoint so a frame paints
 // the settled surface rather than a mid-reveal one.
-func benchSettleReveal(b *testing.B, reg *Registry, h *PanelHost) {
+func benchSettleReveal(b testing.TB, reg *Registry, h *PanelHost) {
 	b.Helper()
 	reg.mu.Lock()
 	defer reg.mu.Unlock()

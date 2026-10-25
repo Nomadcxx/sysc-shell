@@ -100,3 +100,119 @@ func TestScrollBarPlacement(t *testing.T) {
 		t.Fatalf("gutter track = %+v, want it to share the bar's right edge and span", got)
 	}
 }
+
+func TestVisibleRangeOffsets(t *testing.T) {
+	t.Parallel()
+	// Heights 20, 40, 30 with an 8px gap: starts 0, 28, 76, extent 106.
+	offsets := []int{0, 20, 28, 68, 76, 106}
+	offset := func(i int) int { return offsets[i] }
+	cases := []struct {
+		name        string
+		top, bottom int
+		wantLo      int
+		wantHi      int
+	}{
+		{name: "whole extent overscans both ends", top: 0, bottom: 106, wantLo: 0, wantHi: 3},
+		{name: "first item in view", top: 0, bottom: 20, wantLo: 0, wantHi: 3},
+		{name: "gap between items selects neither", top: 22, bottom: 26, wantLo: 0, wantHi: 3},
+		{name: "middle item", top: 30, bottom: 50, wantLo: 0, wantHi: 3},
+		{name: "last item", top: 80, bottom: 106, wantLo: 1, wantHi: 3},
+		{name: "past the extent", top: 106, bottom: 120, wantLo: 1, wantHi: 3},
+		{name: "empty viewport", top: 40, bottom: 40, wantLo: 0, wantHi: 0},
+		{name: "inverted viewport", top: 40, bottom: 10, wantLo: 0, wantHi: 0},
+	}
+	for _, tc := range cases {
+		lo, hi := visibleRangeOffsets(offset, 3, tc.top, tc.bottom)
+		if lo != tc.wantLo || hi != tc.wantHi {
+			t.Errorf("%s: range %d..%d, want %d..%d", tc.name, lo, hi, tc.wantLo, tc.wantHi)
+		}
+	}
+	if lo, hi := visibleRangeOffsets(nil, 3, 0, 10); lo != 0 || hi != 0 {
+		t.Fatalf("nil offset range %d..%d, want 0..0", lo, hi)
+	}
+	if lo, hi := visibleRangeOffsets(offset, 0, 0, 10); lo != 0 || hi != 0 {
+		t.Fatalf("empty list range %d..%d, want 0..0", lo, hi)
+	}
+}
+
+func TestVirtualListItemOffsetLaysOutMixedHeights(t *testing.T) {
+	t.Parallel()
+	items := []*Node{
+		{Kind: KindColumn, Height: 20},
+		{Kind: KindColumn, Height: 40},
+		{Kind: KindColumn, Height: 30},
+	}
+	list := &Node{
+		Kind: KindVirtualList, ItemCount: len(items),
+		// 8px between items, as a KindColumn with Gap 8 would report.
+		ItemOffset: func(i int) int {
+			starts := []int{0, 28, 76, 106}
+			return starts[i]
+		},
+		Item: func(i int) *Node { return items[i] },
+	}
+	measure := func(string, TextAttrs) (int, int) { return 8, 16 }
+	if err := LayoutColumn(list, Rect{W: 200, H: 60}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if list.ContentH != 106 {
+		t.Fatalf("content height = %d, want 106", list.ContentH)
+	}
+	if len(list.Children) != 3 {
+		t.Fatalf("laid out %d items, want all three overscanned", len(list.Children))
+	}
+	want := []Rect{
+		{X: 0, Y: 0, W: 200, H: 20},
+		{X: 0, Y: 28, W: 200, H: 40},
+		{X: 0, Y: 76, W: 200, H: 30},
+	}
+	for i, item := range items {
+		if item.Bounds != want[i] {
+			t.Fatalf("item %d bounds = %+v, want %+v", i, item.Bounds, want[i])
+		}
+	}
+	ScrollBy(list, 30)
+	if err := LayoutColumn(list, Rect{W: 200, H: 60}, measure); err != nil {
+		t.Fatal(err)
+	}
+	starts := []int{0, 28, 76, 106}
+	for i, item := range items {
+		wantY := starts[i] - 30
+		if item.Bounds.Y != wantY {
+			t.Fatalf("item %d after scroll y = %d, want %d", i, item.Bounds.Y, wantY)
+		}
+	}
+}
+
+func TestVirtualListInsideScrollUsesTheOuterClip(t *testing.T) {
+	t.Parallel()
+	items := []*Node{
+		{Kind: KindColumn, Height: 20},
+		{Kind: KindColumn, Height: 20},
+	}
+	list := &Node{
+		Kind: KindVirtualList, ItemCount: len(items),
+		ItemOffset: func(i int) int { return i * 20 },
+		Item:       func(i int) *Node { return items[i] },
+	}
+	above := &Node{Kind: KindColumn, Height: 100}
+	outer := &Node{Kind: KindScroll, Children: []*Node{above, list}}
+	measure := func(string, TextAttrs) (int, int) { return 8, 16 }
+	if err := LayoutColumn(outer, Rect{W: 200, H: 40}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if list.ContentH != 40 {
+		t.Fatalf("nested list content height = %d, want 40", list.ContentH)
+	}
+	if len(list.Children) != 0 {
+		t.Fatalf("a list below the viewport materialised %d items", len(list.Children))
+	}
+	// Scrolling the outer column brings the list into view.
+	ScrollBy(outer, 90)
+	if err := LayoutColumn(outer, Rect{W: 200, H: 40}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Children) == 0 {
+		t.Fatal("the list stayed unpopulated after the outer view reached it")
+	}
+}

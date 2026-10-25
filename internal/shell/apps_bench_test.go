@@ -33,40 +33,46 @@ func syntheticAppCatalog(n int) []launcher.Entry {
 	return entries
 }
 
-// benchSyntheticApps opens Settings > Applications over a synthetic catalog of
-// n apps and returns the placement's render spec, so the frame a compositor
-// callback drives is the same one the regression budget measures. The snapshot
-// is stamped now so refreshLauncherApplicationsLocked leaves it alone rather
-// than racing a background rescan.
-func benchSyntheticApps(b *testing.B, n int) *wayland.AuxSpec {
-	b.Helper()
-	apps := syntheticAppCatalog(n)
+// openSyntheticApps opens Settings > Applications over apps and returns the
+// placement's render spec, so the frame a compositor callback drives is the
+// same one the regression budget measures. The snapshot is stamped now so
+// refreshLauncherApplicationsLocked leaves it alone rather than racing a
+// background rescan.
+func openSyntheticApps(tb testing.TB, apps []launcher.Entry) (*Registry, *wayland.AuxSpec) {
+	tb.Helper()
 	cfg := config.Default()
 	cfg.Theme.BlurBehind = false
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
-	b.Cleanup(reg.Close)
-	benchInvalidationsDrained(b, reg)
+	tb.Cleanup(reg.Close)
+	benchInvalidationsDrained(tb, reg)
 	reg.launcherSvc = launcher.NewService(launcher.ServiceConfig{Scan: func() []launcher.Entry { return apps }})
 	reg.launcherApplications.Store(&launcherApplicationSnapshot{
 		entries: apps, attemptedAt: time.Now(), available: true,
 	})
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 3440, OutH: 1440}); err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
-	reqs := benchDrainAux(b, reg)
+	reqs := benchDrainAux(tb, reg)
 	reg.mu.Lock()
 	err := reg.selectPanelSectionLocked(PanelSettings, "Applications")
 	reg.mu.Unlock()
 	if err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	h := reg.panelHosts[PanelSettings]
-	benchSettleReveal(b, reg, h)
+	benchSettleReveal(tb, reg, h)
 	spec := reqs[1].Open
 	if err := spec.Callbacks.Configure(int(spec.Width), int(spec.Height), 240); err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
+	return reg, spec
+}
+
+// benchSyntheticApps runs openSyntheticApps over n generated apps.
+func benchSyntheticApps(b *testing.B, n int) *wayland.AuxSpec {
+	b.Helper()
+	_, spec := openSyntheticApps(b, syntheticAppCatalog(n))
 	return spec
 }
 

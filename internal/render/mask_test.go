@@ -145,3 +145,25 @@ func TestRippleMaskClipsTheDiscToTheBox(t *testing.T) {
 		}
 	}
 }
+
+func TestRoundedMaskVisibleGeneratesOnlyTheClippedSlice(t *testing.T) {
+	const w, h = 200, 100
+	c, err := NewCanvas(make([]byte, w*h*4), w, h, w*4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.restrict = ui.Rect{X: 10, Y: 20, W: 30, H: 40}
+	m, px, py := c.roundedMaskVisible(ui.Rect{X: 0, Y: 0, W: 1000, H: 50000}, 12, 0)
+	if m == nil {
+		t.Fatal("a box crossing the clip produced no mask")
+	}
+	if b := m.Bounds(); b.Dx() > 30 || b.Dy() > 40 {
+		t.Fatalf("mask is %dx%d, larger than the 30x40 clip", b.Dx(), b.Dy())
+	}
+	if px != 10 || py != 20 {
+		t.Fatalf("mask placed at %d,%d, want the clip origin 10,20", px, py)
+	}
+	if m, _, _ := c.roundedMaskVisible(ui.Rect{X: 300, Y: 0, W: 10, H: 10}, 12, 0); m != nil {
+		t.Fatal("a box outside the clip generated a mask")
+	}
+}

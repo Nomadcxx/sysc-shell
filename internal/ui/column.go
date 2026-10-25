@@ -5,6 +5,36 @@ import "fmt"
 // LayoutColumn arranges a column root: padding inset, children fill the
 // content width, stacked top to bottom with Gap between them.
 func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
+	return layoutColumn(root, bounds, measure, layoutClip{})
+}
+
+// layoutClip is the visible region of the nearest enclosing scroll viewport.
+// The zero value means no ancestor clips this subtree. A set clip with an
+// empty box means the subtree lies entirely outside every viewport, so a
+// nested virtual list materialises nothing.
+type layoutClip struct {
+	box Rect
+	set bool
+}
+
+// within narrows an enclosing clip to box. With no enclosing clip the result
+// is box itself.
+func (c layoutClip) within(box Rect) layoutClip {
+	if !c.set {
+		return layoutClip{box: box, set: true}
+	}
+	return layoutClip{box: clipRect(c.box, box), set: true}
+}
+
+func clipRect(a, b Rect) Rect {
+	x := max(a.X, b.X)
+	y := max(a.Y, b.Y)
+	right := min(a.X+a.W, b.X+b.W)
+	bottom := min(a.Y+a.H, b.Y+b.H)
+	return Rect{X: x, Y: y, W: max(right-x, 0), H: max(bottom-y, 0)}
+}
+
+func layoutColumn(root *Node, bounds Rect, measure MeasureText, clip layoutClip) error {
 	if root == nil {
 		return fmt.Errorf("ui: nil root")
 	}
@@ -16,7 +46,7 @@ func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
 	}
 	root.Bounds = bounds
 	if root.Kind == KindScroll || root.Kind == KindVirtualList {
-		return layoutScroll(root, bounds, measure)
+		return layoutScroll(root, bounds, measure, clip)
 	}
 	content := Rect{
 		X: bounds.X + root.Padding,
@@ -55,7 +85,7 @@ func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
 			}
 			box = narrowed
 		}
-		if err := placeColumnChild(child, box, measure); err != nil {
+		if err := placeColumnChildIn(child, box, measure, clip); err != nil {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
 		y += h
@@ -210,6 +240,12 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if n.Height > 0 {
 			return n.Height, nil
 		}
+		// A mixed-height list reports its whole content so the column that
+		// holds it reserves the scroll extent. The list only materialises the
+		// rows a viewport shows.
+		if n.ItemOffset != nil {
+			return n.ItemOffset(n.ItemCount), nil
+		}
 		if n.Bounds.H > 0 {
 			return n.Bounds.H, nil
 		}
@@ -320,9 +356,13 @@ func shiftX(n *Node, dx int) {
 }
 
 func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
+	return placeColumnChildIn(n, box, measure, layoutClip{})
+}
+
+func placeColumnChildIn(n *Node, box Rect, measure MeasureText, clip layoutClip) error {
 	switch n.Kind {
 	case KindRow:
-		if err := Layout(n, box, measure); err != nil {
+		if err := layoutRow(n, box, measure, clip); err != nil {
 			return err
 		}
 		pinRowEnd(n, box)
@@ -340,22 +380,22 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 			X: box.X + padX, Y: box.Y + n.Padding,
 			W: max(box.W-2*padX, 0), H: max(box.H-2*n.Padding, 0),
 		}
-		return placeColumnChild(n.Children[0], inner, measure)
+		return placeColumnChildIn(n.Children[0], inner, measure, clip)
 	case KindButton, KindDragSource:
 		n.Bounds = box
-		return layoutButtonContent(n, measure, n.Height > 0)
+		return layoutButtonContentIn(n, measure, n.Height > 0, clip)
 	case KindSegmented:
 		n.Bounds = box
-		return layoutSegmented(n, measure)
+		return layoutSegmentedIn(n, measure, clip)
 	case KindScheduleGrid:
 		return layoutScheduleGrid(n, box, measure)
 	case KindColumn, KindDropZone:
-		return LayoutColumn(n, box, measure)
+		return layoutColumn(n, box, measure, clip)
 	case KindStack:
 		n.Bounds = box
-		return layoutStackChildren(n, measure)
+		return layoutStackChildrenIn(n, measure, clip)
 	case KindScroll, KindVirtualList:
-		return layoutScroll(n, box, measure)
+		return layoutScroll(n, box, measure, clip)
 	case KindMenu:
 		n.Bounds = box
 		_, labelHeight := measure(n.Text, TextAttrsOf(n))
@@ -379,7 +419,7 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 	}
 }
 
-func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
+func layoutScroll(root *Node, bounds Rect, measure MeasureText, outer layoutClip) error {
 	root.Bounds = bounds
 	content := Rect{
 		X: bounds.X + root.Padding,
@@ -387,13 +427,56 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		W: bounds.W - 2*root.Padding,
 		H: bounds.H - 2*root.Padding,
 	}
+	// A scroll nested in another one sees only the intersection of its own
+	// content box and the ancestor's viewport. Its content height still spans
+	// the whole list, but a virtual child only materialises rows that window
+	// shows -- which is what keeps a 939-row card from building every row.
+	view := outer.within(content).box
+	visible := view.W > 0 && view.H > 0
+	inner := layoutClip{box: view, set: true}
+	top := view.Y - content.Y + root.ScrollOffset
+	bottom := top + view.H
+	if root.Kind == KindVirtualList && root.ItemOffset != nil {
+		root.ContentH = root.ItemOffset(root.ItemCount)
+		clampScroll(root)
+		if root.Item == nil {
+			return nil
+		}
+		lo, hi := 0, 0
+		if visible {
+			lo, hi = visibleRangeOffsets(root.ItemOffset, root.ItemCount, top, bottom)
+		}
+		for _, child := range root.Children {
+			clearLayoutBounds(child)
+		}
+		root.Children = root.Children[:0]
+		for i := lo; i < hi; i++ {
+			child := root.Item(i)
+			if child == nil {
+				continue
+			}
+			root.Children = append(root.Children, child)
+			h, err := columnChildHeight(child, content.W, measure)
+			if err != nil {
+				return err
+			}
+			box := Rect{X: content.X, Y: content.Y - root.ScrollOffset + root.ItemOffset(i), W: content.W, H: h}
+			if err := placeColumnChildIn(child, box, measure, inner); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if root.Kind == KindVirtualList {
 		if root.ItemHeight <= 0 {
 			root.ItemHeight = 1
 		}
 		root.ContentH = root.ItemCount * root.ItemHeight
 		clampScroll(root)
-		lo, hi := VisibleRange(root)
+		lo, hi := 0, 0
+		if visible {
+			lo, hi = visibleRangeUniform(root.ItemHeight, root.ItemCount, top, view.H)
+		}
 		if root.Item != nil {
 			for _, child := range root.Children {
 				clearLayoutBounds(child)
@@ -417,7 +500,7 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 				box.Y += (box.H - child.Height) / 2
 				box.H = child.Height
 			}
-			if err := placeColumnChild(child, box, measure); err != nil {
+			if err := placeColumnChildIn(child, box, measure, inner); err != nil {
 				return err
 			}
 			y += root.ItemHeight
@@ -449,7 +532,7 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		if i > 0 {
 			y += root.Gap
 		}
-		if err := placeColumnChild(child, Rect{X: content.X, Y: y, W: content.W, H: ch}, measure); err != nil {
+		if err := placeColumnChildIn(child, Rect{X: content.X, Y: y, W: content.W, H: ch}, measure, inner); err != nil {
 			return err
 		}
 		y += ch
