@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"log"
 	"strconv"
 	"strings"
 
@@ -273,4 +274,33 @@ func (r *notifyResolver) hoverAt(root *ui.Node, x, y int, on bool) bool {
 	}
 	r.pointer.apply(root, nil)
 	return true
+}
+
+// openNotificationLink hands a notification body's link to the desktop
+// opener. The href is bounded again here: the card validated it when the body
+// was parsed, but the action string carries the raw target and every path
+// into the opener goes through this one gate.
+//
+// The opener starts only after the registry lock is released. A link is
+// activated while the shell holds that lock, and the desktop handler would
+// otherwise wait behind it.
+func (r *Registry) openNotificationLink(href string) {
+	if r == nil {
+		return
+	}
+	opener := openNotificationURL.Get()
+	if opener == nil {
+		return
+	}
+	target, ok := notificationURL(href)
+	if !ok {
+		return
+	}
+	go func() {
+		r.mu.Lock()
+		r.mu.Unlock()
+		if err := opener(target); err != nil {
+			log.Printf("shell: notification link opener: %v", err)
+		}
+	}()
 }
