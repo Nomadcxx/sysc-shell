@@ -91,11 +91,15 @@ func (l *LockKeys) Acquire() func() {
 //
 // The lease count and the loop move under one lock, so a release that races
 // an acquire cannot leave the loop running without a lease, and the count
-// never falls below zero.
+// never falls below zero. A lease that is still out keeps the loop running.
 func (l *LockKeys) dropLease() {
 	l.mu.Lock()
 	if l.leases > 0 {
 		l.leases--
+	}
+	if l.leases > 0 {
+		l.mu.Unlock()
+		return
 	}
 	done := l.takePollerLocked()
 	l.mu.Unlock()

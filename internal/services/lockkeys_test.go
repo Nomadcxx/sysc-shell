@@ -117,6 +117,35 @@ func TestLockKeysReleasingTheLastLeaseStopsThePoller(t *testing.T) {
 	}
 }
 
+func TestLockKeysKeepsPollingWhileAnotherLeaseIsOut(t *testing.T) {
+	root := t.TempDir()
+	writeLED(t, root, "input13::capslock", "0")
+	l := NewLockKeys(root, time.Millisecond)
+	defer l.Close()
+	first := l.Acquire()
+	second := l.Acquire()
+	if !l.Polling() {
+		t.Fatal("the leases did not start the poll loop")
+	}
+	first()
+	if !l.Polling() {
+		t.Fatal("a release stopped the poll loop while another lease was out")
+	}
+	writeLED(t, root, "input13::capslock", "1")
+	select {
+	case st := <-l.Changes():
+		if !st.Caps {
+			t.Fatalf("change reported %+v", st)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no change published while a lease was still out")
+	}
+	second()
+	if l.Polling() {
+		t.Fatal("the last release left the poll loop running")
+	}
+}
+
 func TestLockKeysCloseKeepsTheLeaseCountSound(t *testing.T) {
 	root := t.TempDir()
 	writeLED(t, root, "input13::capslock", "0")
