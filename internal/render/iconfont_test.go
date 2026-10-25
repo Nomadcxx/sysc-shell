@@ -700,7 +700,7 @@ func TestSizedPluginIconKeepsTheProjectGlyph(t *testing.T) {
 		}
 	}
 	if len(shared) == 0 {
-		t.Skip("no name is in both catalogues")
+		t.Skip("no icon name is in both the project and the material catalogue")
 	}
 	for _, name := range shared {
 		project, err := tr.RasterProjectIconIn(name, 24)

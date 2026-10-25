@@ -254,7 +254,7 @@ func TestLockConfigNoneMatchesLockerDefault(t *testing.T) {
 func TestLockConfigNativeDescriptionContract(t *testing.T) {
 	binary := os.Getenv("SYSC_LOCK_CONTRACT_BINARY")
 	if binary == "" {
-		t.Skip("set SYSC_LOCK_CONTRACT_BINARY to verify the locker presentation contract")
+		t.Skip("set SYSC_LOCK_CONTRACT_BINARY to a built sysc-lock binary to verify the locker presentation contract")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
