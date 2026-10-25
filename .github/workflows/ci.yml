@@ -77,6 +77,59 @@ jobs:
       - name: build
         run: go build ./...
 
+  # The coverage floor gate. A package that loses its tests must not merge
+  # behind a green build, so the suite runs a second time here with a coverage
+  # profile and every package is measured against the floor committed for it.
+  # This run leaves out the race detector: the detector multiplies the run
+  # time and the floor gate has nothing to say about races. The floors come
+  # from this runner, not from the machine that pushed the change.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-plugins
+          ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
+          path: testdeps/sysc-plugins
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-lock
+          ref: df54457a1f6359c4379cd59aa35ad7ef12b737aa
+          path: testdeps/sysc-lock
+      - name: build the lock screen contract binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl-dev libgles-dev libpam0g-dev
+          cd testdeps/sysc-lock
+          go build -o "$GITHUB_WORKSPACE/testdeps/sysc-lock-bin" ./cmd/sysc-lock
+      - name: measure the coverage
+        env:
+          SYSC_PLUGINS_DIR: ${{ github.workspace }}/testdeps/sysc-plugins
+          SYSC_LOCK_CONTRACT_BINARY: ${{ github.workspace }}/testdeps/sysc-lock-bin
+        run: go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - name: list the packages
+        run: go list ./... > packages.txt
+      # The measurement writes to its own file. The committed floor file is
+      # never overwritten by a run.
+      - name: measure the per-package floors
+        run: go run ./tools/coveragefloor -profile coverage.out -packages packages.txt -floors tools/coveragefloor/floors.json -update -out measured-floors.json
+      # The measurement is uploaded before the check, so a red check still
+      # leaves the numbers behind.
+      - name: upload the measurement
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-floors
+          path: |
+            coverage.out
+            packages.txt
+            measured-floors.json
+      - name: check the per-package floors
+        run: go run ./tools/coveragefloor -profile coverage.out -packages packages.txt -floors tools/coveragefloor/floors.json
+
   # The runner kernel's Landlock ABI decides which plugin confinement tests
   # can run. This job records the ABI in the log and the step summary and
   # fails only when the kernel offers no Landlock at all. An ABI below the
