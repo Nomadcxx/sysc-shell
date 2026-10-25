@@ -246,14 +246,14 @@ func (r *Registry) emojiProvider() launcher.Provider {
 }
 
 const (
-	launcherClipboardPrefix       = "/clip"
+	launcherClipboardPrefix       = "/clipboard"
 	launcherClipboardResultPrefix = "sysc-clipboard-history:"
 )
 
 func (r *Registry) clipboardProvider() launcher.Provider {
 	return launcher.Provider{
 		Name: "Clipboard History", Prefix: launcherClipboardPrefix, Glyph: "glyph:content_paste",
-		Inline: true, Description: "Search clipboard history · Enter pastes",
+		Description: "Search with /clipboard · Enter pastes",
 		Query: func(query string) []launcher.Result {
 			query = strings.TrimSpace(query)
 			r.mu.Lock()
