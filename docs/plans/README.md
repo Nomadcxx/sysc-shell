@@ -666,6 +666,12 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-25-sysc-1661-govulncheck-ci.md](2026-10-25-sysc-1661-govulncheck-ci.md) | plan | `sysc-1661`: run `govulncheck` over the module in CI, on every pull request, every push to `main` and weekly, with a pinned scanner, so a reachable dependency flaw cannot sit in the tree. |
 
+## Bar presence for the six capability widgets (2026-10-25)
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-25-sysc-1696-bar-presence.md](2026-10-25-sysc-1696-bar-presence.md) | plan | `sysc-1696`: register the nightlight, idle_inhibitor, brightness, power_profile, lock_keys and theme_mode kinds as bar widgets with icons, tooltips, absent-capability handling and click actions, lifting the vocabulary from 27 to 33 kinds. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not

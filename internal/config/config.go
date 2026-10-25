@@ -81,6 +81,9 @@ func (i Item) EffectiveScrollAction() BarScrollAction {
 	if i.ID == "volume" {
 		return ScrollActionVolume
 	}
+	if i.ID == "brightness" {
+		return ScrollActionBrightness
+	}
 	return ScrollActionNone
 }
 
@@ -695,6 +698,24 @@ var knownItems = map[string]struct{}{
 	// player is on the session bus, and the design carries no player picker
 	// here — the control centre's Media page is the one picker.
 	"media": {},
+	// The six capability widgets below have working behaviour behind a
+	// settings pane or an internal state machine and deliberately stay out of
+	// the default layout, like "wallpaper": a user who wants the surface adds
+	// it, and an existing bar does not change.
+	//
+	// "nightlight" reports and toggles the warm-colour shift.
+	"nightlight": {},
+	// "idle_inhibitor" reports and toggles the caffeine hold.
+	"idle_inhibitor": {},
+	// "brightness" reports the backlight level and answers the existing
+	// brightness scroll action.
+	"brightness": {},
+	// "power_profile" reports and cycles the power-profiles-daemon profile.
+	"power_profile": {},
+	// "lock_keys" reports the caps and num LED state the OSD already shows.
+	"lock_keys": {},
+	// "theme_mode" reports and toggles light and dark appearance.
+	"theme_mode": {},
 	// Clipboard is a daemon-backed metadata projection. Its bar glyph is
 	// useful even when the per-user daemon is unavailable, so it ships in the
 	// default layout and reports that state through its tooltip.

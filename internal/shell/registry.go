@@ -96,10 +96,23 @@ type Registry struct {
 	// for sunset scheduling and no widget or panel already needs it.
 	nightLightWeatherLease    *services.Lease
 	nightLightWeatherInterval time.Duration
-	sample                    services.Snapshot
-	reading                   services.Reading
-	mediaState                services.MediaState
-	mediaPlayers              []services.Player
+	nightLightState           services.NightLightState
+	// profiles cache the power-profiles service's list so the bar widget and
+	// the control centre share one answer instead of one answer per surface.
+	profiles      []string
+	profileActive string
+	profilesOK    bool
+	// profilesLoaded marks that the one bar-driven fetch is in flight or
+	// done; profilesPending gates a set while its re-read is outstanding.
+	profilesLoaded  bool
+	profilesPending bool
+	// lockKeysState is the newest keyboard lock report, kept by the lease
+	// relay so viewLocked never touches the service's channel.
+	lockKeysState services.LockState
+	sample        services.Snapshot
+	reading       services.Reading
+	mediaState    services.MediaState
+	mediaPlayers  []services.Player
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
 	controlIdentity ccIdentity
@@ -553,6 +566,9 @@ func NewRegistry(cfg config.Config) *Registry {
 		ReducedMotion:   cfg.Accessibility.ReducedMotion,
 	})
 	r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
+	// The bar's night light widget needs a state feed, and the service's
+	// update channel had no consumer before it.
+	go r.relayNightLightUpdates()
 	if !runningAsTest() {
 		r.syncNightLightWeatherLeaseLocked(cfg)
 	}
@@ -1682,10 +1698,12 @@ func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
 			r.OSD().Show(OSDView{Kind: osdBrightness, Level: st.Level})
 			r.mu.Lock()
 			out, open := r.rebuildControlCentreLocked()
+			changed := r.repaintBarsLocked()
 			r.mu.Unlock()
 			if open {
 				r.publishSurface(out, panelSurfaceID(PanelControlCenter))
 			}
+			r.publish(changed)
 		}
 	}
 }
@@ -1900,6 +1918,12 @@ func (r *Registry) adoptBar(
 		r.mediaArtFor()
 	}
 	bar.apply(r.viewLocked(connector))
+	if bar.lockKeysWidget {
+		r.ensureLockKeysLocked()
+	}
+	if bar.powerProfileWidget {
+		r.ensureProfilesLocked()
+	}
 	r.bars[global] = bar
 	r.leases[global] = leases
 	r.shutdown.bars.store(r.barListLocked())
@@ -2059,6 +2083,54 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 				go func() { _ = m.PlayPause() }()
 			}
 			return true
+		case action == panelNightLightAction && (button == 0 || button == buttonLeft):
+			// A service without gamma control cannot honour the ask.
+			r.mu.Lock()
+			nl := r.nightLight
+			supported := nl != nil && nl.State().Supported
+			if supported {
+				nl.Toggle()
+			}
+			r.mu.Unlock()
+			return supported
+		case action == panelNightLightAction && (button == buttonRight || button == buttonMiddle):
+			r.mu.Lock()
+			ok := r.openSettingsAtLocked(global, "Night Light")
+			r.mu.Unlock()
+			return ok
+		case action == panelIdleInhibitorAction && (button == 0 || button == buttonLeft):
+			r.toggleCaffeineBar()
+			return true
+		case action == panelIdleInhibitorAction && (button == buttonRight || button == buttonMiddle):
+			r.mu.Lock()
+			ok := r.openSettingsAtLocked(global, "Screensaver")
+			r.mu.Unlock()
+			return ok
+		case action == panelBrightnessAction:
+			r.mu.Lock()
+			ok := r.openSettingsAtLocked(global, "Displays")
+			r.mu.Unlock()
+			return ok
+		case action == panelPowerProfileAction && (button == 0 || button == buttonLeft):
+			r.cyclePowerProfileBar()
+			return true
+		case action == panelPowerProfileAction && (button == buttonRight || button == buttonMiddle):
+			return r.TogglePanel(PanelSession, out, trig) == nil
+		case action == panelLockKeysAction:
+			// No settings section edits osd_lock_keys yet; the Panels page is
+			// where the bar's item list lives.
+			r.mu.Lock()
+			ok := r.openSettingsAtLocked(global, "Panels")
+			r.mu.Unlock()
+			return ok
+		case action == panelThemeModeAction && (button == 0 || button == buttonLeft):
+			r.toggleThemeModeBar()
+			return true
+		case action == panelThemeModeAction && (button == buttonRight || button == buttonMiddle):
+			r.mu.Lock()
+			ok := r.openSettingsAtLocked(global, "Appearance")
+			r.mu.Unlock()
+			return ok
 		}
 		return false
 	})
@@ -2975,6 +3047,14 @@ func (r *Registry) viewLocked(connector string) barView {
 	}
 	view.Bluetooth = r.bluetoothState
 	view.Privacy = r.privacy
+	view.NightLight = r.nightLightStateLocked()
+	view.CaffeineWanted, view.CaffeineUntil = r.caffeineStateLocked()
+	if r.brightness != nil {
+		view.Brightness, view.BrightOK = r.brightness.CachedState()
+	}
+	view.Profiles, view.ProfileActive, view.ProfilesOK = r.profiles, r.profileActive, r.profilesOK
+	view.LockKeys, view.LockKeysOK = r.lockKeysState, r.lockKeys != nil && r.lockKeys.Available()
+	view.ThemeMode = r.cfg.ThemeGen.Mode
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}

@@ -44,6 +44,13 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys) {
 				r.OSD().Show(view)
 			}
 			prev = st
+			// The change channel is single-consumer, so the OSD relay feeds
+			// the lock_keys bar widget when it owns the service.
+			r.mu.Lock()
+			r.lockKeysState = st
+			changed := r.repaintBarsLocked()
+			r.mu.Unlock()
+			r.publish(changed)
 		}
 	}
 }
