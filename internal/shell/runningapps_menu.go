@@ -690,7 +690,7 @@ func (h *runningAppMenuHost) rebuild() {
 			if !visible[index] {
 				continue
 			}
-			if len(visible) > 1 && h.startsAppLevelCloseGroup(index) {
+			if len(visible) > 1 && h.startsAppLevelCloseGroup(index, visible) {
 				col.Children = append(col.Children, &ui.Node{Kind: ui.KindSeparator})
 			}
 			action := h.actionForRow(row)
@@ -731,7 +731,7 @@ func (h *runningAppMenuHost) rebuild() {
 //
 // The group holds the graceful close and the destructive one, and the
 // separator belongs in front of the group, not between its rows.
-func (h *runningAppMenuHost) startsAppLevelCloseGroup(index int) bool {
+func (h *runningAppMenuHost) startsAppLevelCloseGroup(index int, visible map[int]bool) bool {
 	if index < 0 || index >= len(h.rows) {
 		return false
 	}
@@ -739,10 +739,26 @@ func (h *runningAppMenuHost) startsAppLevelCloseGroup(index int) bool {
 	case runningAppMenuCloseAll:
 		return true
 	case runningAppMenuForceQuit:
-		return index == 0 || h.rows[index-1].Kind != runningAppMenuCloseAll
+		// The group opens here when the graceful close row is not on screen.
+		// Scrolling that row out of the viewport must not take the separator
+		// with it: the group still separates the app-level close from the
+		// windows below it.
+		closeAll := h.closeAllRowIndex()
+		return closeAll < 0 || !visible[closeAll]
 	default:
 		return false
 	}
+}
+
+// closeAllRowIndex returns the index of the graceful close row, or -1 when
+// the menu has none.
+func (h *runningAppMenuHost) closeAllRowIndex() int {
+	for i, row := range h.rows {
+		if row.Kind == runningAppMenuCloseAll {
+			return i
+		}
+	}
+	return -1
 }
 
 func (h *runningAppMenuHost) sectionVisible(section int, visible map[int]bool) bool {

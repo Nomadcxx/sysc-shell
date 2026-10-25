@@ -508,6 +508,50 @@ func TestRunningAppsMenuCloseAllLeavesTheFoldedGameAlone(t *testing.T) {
 	}
 }
 
+// separatorInFrontOf reports whether the row with the action is preceded by a
+// separator among the menu column's children.
+func separatorInFrontOf(root *ui.Node, action string) bool {
+	for i, child := range root.Children {
+		if child.Action != action {
+			continue
+		}
+		return i > 0 && root.Children[i-1].Kind == ui.KindSeparator
+	}
+	return false
+}
+
+func TestRunningAppsMenuKeepsTheCloseGroupSeparatorWhenTheCloseRowIsScrolledOut(t *testing.T) {
+	t.Parallel()
+	reg, _, host := openRunningAppsWindowMenu(t, manySteamWindows(10))
+
+	// The close-all row and the force-quit row are one group, so the
+	// separator belongs in front of the group and not between its rows.
+	if !separatorInFrontOf(host.root, "running-app-close-all") {
+		t.Fatal("the close group has no separator in front of it")
+	}
+	if separatorInFrontOf(host.root, "running-app-force-quit") {
+		t.Fatal("the separator sits between the two rows of the close group")
+	}
+
+	// Scrolling the close-all row out of the viewport must not take the
+	// separator with it: the group still separates the app-level close from
+	// the windows below it.
+	for i := 0; i < 12 && findAction(host.root, "running-app-close-all") != nil; i++ {
+		if !handleRunningAppMenuEvent(reg, host, wayland.Event{Kind: wayland.EventKeyPress, Key: keyDown}) {
+			t.Fatal("Down ignored")
+		}
+	}
+	if findAction(host.root, "running-app-close-all") != nil {
+		t.Fatal("the close-all row is still on screen")
+	}
+	if findAction(host.root, "running-app-force-quit") == nil {
+		t.Fatal("the force-quit row is not on screen")
+	}
+	if !separatorInFrontOf(host.root, "running-app-force-quit") {
+		t.Fatal("the scrolled close group lost its separator")
+	}
+}
+
 func TestRunningAppsMenuForceQuitRequiresConfirmationAndCancelDoesNothing(t *testing.T) {
 	t.Parallel()
 	reg, _, host := openRunningAppsWindowMenu(t, []niri.Window{
