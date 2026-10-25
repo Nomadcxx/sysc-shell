@@ -31,6 +31,9 @@ var fillBandGeometries = []struct {
 	{"full circle", 50, 50, 25, 0},
 	{"tall and narrow", 20, 400, 6, 0},
 	{"wide and short", 400, 20, 6, 0},
+	{"one pixel", 1, 1, 8, 0},
+	{"hairline wide", 400, 3, 24, 0},
+	{"radius one", 90, 40, 1, 0},
 	{"squared top edge", 2240, 1640, 24, SquareTL | SquareTR},
 	{"squared corner", 880, 1600, 24, SquareTL | SquareBR},
 }
