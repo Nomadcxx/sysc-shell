@@ -337,7 +337,7 @@ func TestNMConnectManualDoesNotAddWhenSavedProfilesCannotBeInspected(t *testing.
 func TestNMBackendUnavailableWhenNothingAnswers(t *testing.T) {
 	daemon, err := exec.LookPath("dbus-daemon")
 	if err != nil {
-		t.Skip("dbus-daemon is not installed")
+		t.Skip("dbus-daemon is not on PATH")
 	}
 	addr := "unix:path=" + filepath.Join(sockpath.Dir(t, "dbus"), "bus")
 	cmd := exec.Command(daemon, "--session", "--nofork", "--print-address", "--address="+addr)

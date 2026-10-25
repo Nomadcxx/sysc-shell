@@ -71,7 +71,7 @@ func waitForEnumerations(t *testing.T, b *fakeBus, want int) {
 // dbus-run-session.
 func TestSessionMediaUnleasedTrafficDoesNotGrowGoroutines(t *testing.T) {
 	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
-		t.Skip("needs a session bus; run under dbus-run-session")
+		t.Skip("no session bus address; run under dbus-run-session or set DBUS_SESSION_BUS_ADDRESS")
 	}
 	m := NewSessionMedia()
 	defer m.Close()
