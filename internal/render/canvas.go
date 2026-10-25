@@ -302,19 +302,39 @@ func blendFill(c *Canvas, r ui.Rect, radius int, square Corners, col Color) {
 		fillRect(c, r, col)
 		return
 	}
-	mask := CornerMask(radius, r.W, r.H, square)
 	if 2*top >= r.H || 2*top >= r.W {
 		// The frame would meet in the middle: a capsule or a small control has
-		// no interior to fill.
-		blendMask(c, mask, r.X, r.Y, col)
+		// no interior to fill. The mask covers only what the clip can see: a
+		// frame repaints part of a large surface, and a mask for the whole
+		// surface can be too big for the geometry cache to hold (GH #454).
+		x0, y0, x1, y1 := c.clip(r)
+		if x0 >= x1 || y0 >= y1 {
+			return
+		}
+		mask := CornerMaskIn(radius, r.W, r.H, square, image.Rect(x0-r.X, y0-r.Y, x1-r.X, y1-r.Y))
+		blendMask(c, mask, x0, y0, col)
 		return
 	}
 	midH := r.H - 2*top
-	blendMaskBand(c, mask, ui.Rect{W: r.W, H: top}, r.X, r.Y, col)
-	blendMaskBand(c, mask, ui.Rect{Y: r.H - top, W: r.W, H: top}, r.X, r.Y, col)
-	blendMaskBand(c, mask, ui.Rect{Y: top, W: top, H: midH}, r.X, r.Y, col)
-	blendMaskBand(c, mask, ui.Rect{X: r.W - top, Y: top, W: top, H: midH}, r.X, r.Y, col)
+	blendFillBand(c, r, radius, square, col, ui.Rect{W: r.W, H: top})
+	blendFillBand(c, r, radius, square, col, ui.Rect{Y: r.H - top, W: r.W, H: top})
+	blendFillBand(c, r, radius, square, col, ui.Rect{Y: top, W: top, H: midH})
+	blendFillBand(c, r, radius, square, col, ui.Rect{X: r.W - top, Y: top, W: top, H: midH})
 	fillRect(c, ui.Rect{X: r.X + top, Y: r.Y + top, W: r.W - 2*top, H: midH}, col)
+}
+
+// blendFillBand blends one frame band of a rounded fill through a mask built
+// for that band alone. The band is a fixed region of the box, so its mask is
+// one geometry-cache entry however far the surface scrolls, while a tall
+// card's whole mask runs to tens of megabytes that the cache refuses and the
+// frame rebuilds (GH #454). The regions blendFill visits stay disjoint, so no
+// pixel blends twice.
+func blendFillBand(c *Canvas, r ui.Rect, radius int, square Corners, col Color, band ui.Rect) {
+	if x0, y0, x1, y1 := c.clip(ui.Rect{X: r.X + band.X, Y: r.Y + band.Y, W: band.W, H: band.H}); x0 >= x1 || y0 >= y1 {
+		return
+	}
+	mask := CornerMaskIn(radius, r.W, r.H, square, image.Rect(band.X, band.Y, band.X+band.W, band.Y+band.H))
+	blendMask(c, mask, r.X+band.X, r.Y+band.Y, col)
 }
 
 // blendRing blends a ring mask over a clipped rounded rectangle's own box,
@@ -331,19 +351,34 @@ func blendRing(c *Canvas, r ui.Rect, radius, width int, col Color) {
 	if r.W <= 0 || r.H <= 0 || width <= 0 || col.A == 0 {
 		return
 	}
-	mask := RingMask(radius, r.W, r.H, width)
 	top, side := strokeBands(radius, r.W, r.H, width)
 	if 2*top >= r.H || 2*side >= r.W {
 		// The bands would meet in the middle: a thin or short rectangle has no
-		// empty interior to skip.
-		blendMask(c, mask, r.X, r.Y, col)
+		// empty interior to skip. The mask covers only what the clip can see,
+		// for the same reason as the fill (GH #454).
+		x0, y0, x1, y1 := c.clip(r)
+		if x0 >= x1 || y0 >= y1 {
+			return
+		}
+		mask := RingMaskIn(radius, r.W, r.H, width, image.Rect(x0-r.X, y0-r.Y, x1-r.X, y1-r.Y))
+		blendMask(c, mask, x0, y0, col)
 		return
 	}
 	midH := r.H - 2*top
-	blendMaskBand(c, mask, ui.Rect{W: r.W, H: top}, r.X, r.Y, col)
-	blendMaskBand(c, mask, ui.Rect{Y: r.H - top, W: r.W, H: top}, r.X, r.Y, col)
-	blendMaskBand(c, mask, ui.Rect{Y: top, W: side, H: midH}, r.X, r.Y, col)
-	blendMaskBand(c, mask, ui.Rect{X: r.W - side, Y: top, W: side, H: midH}, r.X, r.Y, col)
+	blendRingBand(c, r, radius, width, col, ui.Rect{W: r.W, H: top})
+	blendRingBand(c, r, radius, width, col, ui.Rect{Y: r.H - top, W: r.W, H: top})
+	blendRingBand(c, r, radius, width, col, ui.Rect{Y: top, W: side, H: midH})
+	blendRingBand(c, r, radius, width, col, ui.Rect{X: r.W - side, Y: top, W: side, H: midH})
+}
+
+// blendRingBand blends one band of a ring through a mask built for that band
+// alone, with the same geometry-cache argument as blendFillBand.
+func blendRingBand(c *Canvas, r ui.Rect, radius, width int, col Color, band ui.Rect) {
+	if x0, y0, x1, y1 := c.clip(ui.Rect{X: r.X + band.X, Y: r.Y + band.Y, W: band.W, H: band.H}); x0 >= x1 || y0 >= y1 {
+		return
+	}
+	mask := RingMaskIn(radius, r.W, r.H, width, image.Rect(band.X, band.Y, band.X+band.W, band.Y+band.H))
+	blendMask(c, mask, r.X+band.X, r.Y+band.Y, col)
 }
 
 // strokeRoundedRect outlines one clipped rounded rectangle inward from its

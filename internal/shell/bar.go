@@ -822,6 +822,80 @@ func copyNode(n *ui.Node) *ui.Node {
 	return &c
 }
 
+// copyNodeVisible deep-copies a node like copyNode and drops children the view
+// cannot see. The view is a scroll viewport in tree coordinates; a KindScroll
+// or KindVirtualList narrows it to its own bounds. A child is dropped only
+// when its box misses the view and its subtree cannot paint outside that box:
+// a menu's option list floats over later rows and a gap scrollbar paints in
+// the parent's padding, so those subtrees stay whole. Children are dropped
+// only under flow containers, where a child's position carries no meaning --
+// a menu's options, a stack's layers and a segmented control's segments are
+// addressed by index. An unbounded view keeps everything (GH #454).
+func copyNodeVisible(n *ui.Node, view ui.Rect, bounded bool) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
+		// A zero-sized view restricts nothing: clip ignores a restrict
+		// without area, so such a scroll's children paint wherever its
+		// parent allows. Narrowing to its empty bounds would drop them.
+		if n.Bounds.W > 0 && n.Bounds.H > 0 {
+			if bounded {
+				view = intersectRects(view, n.Bounds)
+			} else {
+				view = n.Bounds
+			}
+			bounded = true
+		}
+	}
+	c := *n
+	if len(n.Values) > 0 {
+		c.Values = append([]float64(nil), n.Values...)
+	}
+	if len(n.Frames) > 0 {
+		c.Frames = append([]string(nil), n.Frames...)
+	}
+	if len(n.Children) > 0 {
+		prune := bounded && flowChildren(n.Kind)
+		c.Children = make([]*ui.Node, 0, len(n.Children))
+		for _, child := range n.Children {
+			if prune && child != nil && !rectOverlap(child.Bounds, view) && !ui.MayDrawOutsideBox(child) {
+				// A dropped child is replaced by a bare node in its slot.
+				// Positions carry meaning elsewhere -- applyEditorView maps
+				// live nodes to copies by index and a menu's options are
+				// addressed by row index -- so the copy keeps every slot; an
+				// empty KindText in a dropped slot paints nothing and copies
+				// for nothing.
+				c.Children = append(c.Children, &ui.Node{Kind: ui.KindText, Bounds: child.Bounds})
+				continue
+			}
+			c.Children = append(c.Children, copyNodeVisible(child, view, bounded))
+		}
+	}
+	return &c
+}
+
+// flowChildren reports whether a kind lays its children out as free-flowing
+// content, where dropping one cannot renumber anything that addresses
+// children by position.
+func flowChildren(k ui.Kind) bool {
+	switch k {
+	case ui.KindRow, ui.KindColumn, ui.KindCapsule, ui.KindScroll, ui.KindDropZone:
+		return true
+	}
+	return false
+}
+
+func rectOverlap(a, b ui.Rect) bool {
+	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
+}
+
+func intersectRects(a, b ui.Rect) ui.Rect {
+	x0, y0 := max(a.X, b.X), max(a.Y, b.Y)
+	x1, y1 := min(a.X+a.W, b.X+b.W), min(a.Y+a.H, b.Y+b.H)
+	return ui.Rect{X: x0, Y: y0, W: max(x1-x0, 0), H: max(y1-y0, 0)}
+}
+
 // hitLocked searches every section in reverse paint order.
 func (b *Bar) actionBounds(action string) ui.Rect {
 	b.mu.Lock()

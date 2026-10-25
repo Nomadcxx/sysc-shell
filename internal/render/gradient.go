@@ -101,6 +101,18 @@ func fillRectGradient(c *Canvas, r ui.Rect, stops []gradientStop, angle, offset 
 }
 
 func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientStop, angle, offset float64, periodic bool) {
+	if mask == nil {
+		return
+	}
+	b := mask.Bounds()
+	blendMaskGradientIn(c, mask, x, y, ui.Rect{X: x, Y: y, W: b.Dx(), H: b.Dy()}, stops, angle, offset, periodic)
+}
+
+// blendMaskGradientIn is blendMaskGradient over a mask that covers only part
+// of the surface it colours. The gradient is parameterised on the whole
+// surface -- ext -- so a scoped mask changes what a frame builds, never what
+// it paints: ux and uy are taken against ext, not against the mask (GH #454).
+func blendMaskGradientIn(c *Canvas, mask *image.Alpha, x, y int, ext ui.Rect, stops []gradientStop, angle, offset float64, periodic bool) {
 	if len(stops) == 0 || mask == nil {
 		return
 	}
@@ -114,7 +126,7 @@ func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientS
 	for py := y0; py < y1; py++ {
 		row := c.row(py)
 		coverage := coverageRow(mask, py, y)
-		uy := (float64(py-box.Y) + 0.5) / float64(box.H)
+		uy := (float64(py-ext.Y) + 0.5) / float64(ext.H)
 		for px := x0; px < x1; px++ {
 			cov := uint32(coverage[px-x])
 			if cov == 0 {
@@ -122,9 +134,9 @@ func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientS
 			}
 			var col Color
 			if periodic {
-				col = sampleGradientPeriodic(stops, axis, offset, (float64(px-box.X)+0.5)/float64(box.W), uy)
+				col = sampleGradientPeriodic(stops, axis, offset, (float64(px-ext.X)+0.5)/float64(ext.W), uy)
 			} else {
-				col = sampleGradient(stops, axis, offset, (float64(px-box.X)+0.5)/float64(box.W), uy)
+				col = sampleGradient(stops, axis, offset, (float64(px-ext.X)+0.5)/float64(ext.W), uy)
 			}
 			src := col.premultiply()
 			alpha := uint32(col.A) * cov / 255
