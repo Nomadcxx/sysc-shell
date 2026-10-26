@@ -46,13 +46,13 @@ func Default() Config {
 
 // Effects includes the locker's static presentation alongside renderer effects.
 // Effects is the background catalogue the locker plays. It follows the
-// locker's own catalogue, which drops ak-47-rama and beams because its
-// animation path does not support them; offering one would write a config the
-// locker rejects.
+// locker's own catalogue, which drops beams because its animation path does
+// not support it; offering one would write a config the locker rejects.
+// ak-47-rama needed the same filter until the renderer generation dropped it.
 func Effects() []string {
 	out := []string{EffectNone}
 	for _, id := range renderer.Effects() {
-		if id != "ak-47-rama" && id != "beams" {
+		if id != "beams" {
 			out = append(out, id)
 		}
 	}
