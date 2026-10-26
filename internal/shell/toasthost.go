@@ -683,9 +683,19 @@ func (h *toastHost) focusReply(connector string) {
 // parkReply keeps the typed text and hands the keyboard back. The caller
 // republishes presentation.
 func (h *toastHost) parkReply() {
+	h.parkReplyLocked()
+	h.repaint(h.editing.connector)
+}
+
+// parkReplyLocked keeps the typed text and hands the keyboard back without
+// repainting, for callers that relayout the surface themselves. A reply that
+// already parked keeps its text and stays as it is.
+func (h *toastHost) parkReplyLocked() {
+	if !h.editing.focused {
+		return
+	}
 	h.editing.focused = false
 	h.setKeyboard(h.editing.connector, keyboardNone)
-	h.repaint(h.editing.connector)
 }
 
 // endReply closes the reply without sending it and hands the keyboard back.
@@ -1229,10 +1239,16 @@ func (h *toastHost) recompute() {
 		visible, queued := placeIDs(ids, heights, geom)
 		h.visible[connector] = visible
 		h.queued[connector] = queued
-		// A reply ends with its card: the record closed, or the stack was
-		// suppressed or pushed it into the queue.
+		// A reply ends with its card when the card is gone: the record
+		// closed, or the stack was suppressed. A card the layout pushed
+		// into the queue is still alive, so its reply is parked with the
+		// text and resumes when the card comes back to the visible stack.
 		if h.editing != nil && h.editing.connector == connector && !slices.Contains(visible, h.resolver.replyID) {
-			h.endReply()
+			if slices.Contains(queued, h.resolver.replyID) {
+				h.parkReplyLocked()
+			} else {
+				h.endReply()
+			}
 		}
 		h.rebuildWithLayouts(connector, visible, layouts, measure)
 		h.updateHover(connector)

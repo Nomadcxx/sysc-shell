@@ -54,6 +54,29 @@ type barView struct {
 	// absent: a bar with nothing playing reserves no gap.
 	Media    services.MediaState
 	MediaArt *ui.Image
+	// NightLight is the newest night-light state. Its zero value names no
+	// gamma control, which the widget paints as absent.
+	NightLight services.NightLightState
+	// CaffeineWanted is the idle inhibitor's on state; CaffeineUntil bounds
+	// the hold when it is timed rather than indefinite.
+	CaffeineWanted bool
+	CaffeineUntil  time.Time
+	// Brightness is the newest display level. BrightOK is false when no
+	// brightness service is available, which hides the widget.
+	Brightness services.BrightnessState
+	BrightOK   bool
+	// Profiles is the power-profiles list and the active name. ProfilesOK is
+	// false when powerprofilesctl is missing or answered nothing, which
+	// hides the widget.
+	Profiles      []string
+	ProfileActive string
+	ProfilesOK    bool
+	// LockKeys is the newest keyboard lock state. LockKeysOK is false when
+	// no lock-key service exists, which hides the widget.
+	LockKeys   services.LockState
+	LockKeysOK bool
+	// ThemeMode is the appearance mode, "light" or "dark".
+	ThemeMode string
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -285,6 +308,18 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 			out = append(out, buildWifiWidget(m))
 		case "bluetooth":
 			out = append(out, buildBluetoothWidget())
+		case "nightlight":
+			out = append(out, buildNightLightWidget())
+		case "idle_inhibitor":
+			out = append(out, buildIdleInhibitorWidget())
+		case "brightness":
+			out = append(out, buildBrightnessWidget())
+		case "power_profile":
+			out = append(out, buildPowerProfileWidget())
+		case "lock_keys":
+			out = append(out, buildLockKeysWidget())
+		case "theme_mode":
+			out = append(out, buildThemeModeWidget())
 		case "running-apps":
 			kind := ui.KindRow
 			if side {

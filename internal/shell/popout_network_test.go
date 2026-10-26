@@ -544,12 +544,22 @@ func TestNetworkPasswordSubmitRejectsInvalidPassphrase(t *testing.T) {
 	if h.errLabel == "" {
 		t.Fatal("invalid passphrase did not show a validation message")
 	}
-	h.password.Text = "hunter22"
+}
+
+// A passphrase typed for a prompt that already closed must not be sent to
+// whatever prompt took its place, and the card has to go rather than keep
+// asking for a secret nobody waits for.
+func TestNetworkPasswordSubmitOnAClosedPromptClearsTheCard(t *testing.T) {
+	h := &PanelHost{id: PanelNetwork, pendingSSID: "Orac 15A", pendingSecretGen: 7, password: ui.NewField("hunter22")}
+	r := &Registry{network: services.NewNetwork(&shellNetworkBackend{})}
 	if !h.applyNetworkControl(r, &ui.Node{Action: "network-password-submit"}) {
-		t.Fatal("corrected password submit action was not handled")
+		t.Fatal("password submit action was not handled")
 	}
-	if h.errLabel != "" {
-		t.Fatalf("corrected passphrase retained old error label %q", h.errLabel)
+	if h.password.Text != "" || h.pendingSSID != "" || h.pendingSecretGen != 0 {
+		t.Fatalf("the closed prompt kept the card: password=%q ssid=%q gen=%d", h.password.Text, h.pendingSSID, h.pendingSecretGen)
+	}
+	if h.errLabel != "This request expired. Try again." {
+		t.Fatalf("errLabel = %q, want the expired notice", h.errLabel)
 	}
 }
 
@@ -797,10 +807,10 @@ func TestExpiringSecretPromptClearsThePasswordCard(t *testing.T) {
 	r.panelHosts[PanelNetwork] = h
 	r.mu.Unlock()
 
-	r.presentNetworkSecret(network, services.SecretRequest{SSID: "Orac 15A"})
-	r.expireNetworkSecret(network)
+	r.presentNetworkSecret(network, services.SecretRequest{SSID: "Orac 15A", Generation: 7})
+	r.expireNetworkSecret(network, 7)
 	// A second expiry with no card open must be a no-op, not a panic.
-	r.expireNetworkSecret(network)
+	r.expireNetworkSecret(network, 7)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

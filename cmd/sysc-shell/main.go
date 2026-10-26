@@ -488,6 +488,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "config" {
 		os.Exit(runConfigCheck(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		os.Exit(runDoctor(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "ipc" {
 		if err := runIPC(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

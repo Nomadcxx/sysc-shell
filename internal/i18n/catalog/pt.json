@@ -223,6 +223,7 @@
  "net.none": "Nenhuma rede encontrada",
  "net.not_connected": "Não conectado",
  "net.password": "Senha",
+ "net.password.expired": "Este pedido expirou. Tente novamente.",
  "net.password.invalid": "Use de 8 a 63 caracteres ou 64 dígitos hexadecimais.",
  "net.radio_off": "Rádio desligado",
  "net.scanning": "Procurando redes…",

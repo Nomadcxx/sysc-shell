@@ -535,7 +535,7 @@ func TestLauncherActionActivationUsesExactArgvAndRequiresDangerousOptIn(t *testi
 func TestLauncherCommandProviderRunsConfiguredArgvAndActivatesSelection(t *testing.T) {
 	printf, err := exec.LookPath("printf")
 	if err != nil {
-		t.Skip("printf is unavailable")
+		t.Skip("printf is not on PATH")
 	}
 	r := newPanelRegistry(t)
 	query := "milk; printf should stay data"

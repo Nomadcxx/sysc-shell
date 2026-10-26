@@ -78,6 +78,26 @@ func TestTheLockKeyPollerRunsWhileTheOSDRelayHoldsItsLease(t *testing.T) {
 	}
 }
 
+// TestTheBarSeesALockHeldWhenTheShellStarts pins the startup seed: a keyboard
+// whose Caps Lock is already on must reach the widget on the first frame, not
+// at the first change.
+func TestTheBarSeesALockHeldWhenTheShellStarts(t *testing.T) {
+	root := t.TempDir()
+	lockKeyLED(t, root, "input13::capslock", "1")
+	restore := swapLockKeys(func() *services.LockKeys {
+		return services.NewLockKeys(root, 10*time.Millisecond)
+	})
+	t.Cleanup(restore)
+
+	cfg := config.Default()
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.startLockKeys(cfg)
+	if !r.lockKeysState.Caps {
+		t.Fatal("the bar feed did not carry the Caps Lock held at startup")
+	}
+}
+
 // reloadLockKeys drives one real config reload: the same prepare and commit
 // path a saved config file change takes.
 func reloadLockKeys(t *testing.T, r *Registry, cfg config.Config) {

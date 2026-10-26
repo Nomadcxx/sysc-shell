@@ -1,5 +1,7 @@
 github.com/Nomadcxx/sysc-Go v1.0.7 h1:fj0MgMD2g+0IntWxQnvkAVxjhxuF6qMbcilS/hM0U7s=
 github.com/Nomadcxx/sysc-Go v1.0.7/go.mod h1:aVjiviCJEgKIQy0AZ2uQbf+V36JG8ZQLDO4ZtZ9wcQk=
+github.com/Nomadcxx/sysc-Go v1.0.9 h1:BEGfdySZ29hsyGXPPhO6J+1ttkDcYW5Dc/D67bdhTy8=
+github.com/Nomadcxx/sysc-Go v1.0.9/go.mod h1:aVjiviCJEgKIQy0AZ2uQbf+V36JG8ZQLDO4ZtZ9wcQk=
 github.com/Nomadcxx/sysc-clipboard v0.1.4-0.20261019192617-18b64bffd9e7 h1:S3RRDaeP59WV9qn3Z8MEA2OuPqh24uRNF6/ZLNHp6pE=
 github.com/Nomadcxx/sysc-clipboard v0.1.4-0.20261019192617-18b64bffd9e7/go.mod h1:7cmxzqX/qI30j30Yd0aVh1aOmIE9Z0lUjmBgkT1fe9w=
 github.com/Nomadcxx/sysc-launch v0.3.1 h1:NBo+6/pUwwRZgLmM5mSVvEO//LDikNOSRjpvfTwb9B4=
@@ -12,10 +14,14 @@ github.com/Nomadcxx/sysc-notify v0.1.1 h1:t6m/J+VKqS0ZdZWxDoA//c7GHuxVwG4/Mg+oGt
 github.com/Nomadcxx/sysc-notify v0.1.1/go.mod h1:ZZlN0ZktmQ15uWf1VaVZ8vXFLe708R1u85dIaag7gtM=
 github.com/Nomadcxx/sysc-terminal v0.2.0 h1:0GZ6mV4gbB8px/hhqYm3da4DF6jYzZm9clZh4OQYcIQ=
 github.com/Nomadcxx/sysc-terminal v0.2.0/go.mod h1:eJSkOSQvKGtpWNHSVbT2R/cwVbn8FtYi1Z5DfkYQndE=
+github.com/Nomadcxx/sysc-terminal v0.2.2-0.20261022013002-57dd64b663ae h1:8M9vGMwcmExFec0um4ad1mxDeipkTT6XWCiykudjTVs=
+github.com/Nomadcxx/sysc-terminal v0.2.2-0.20261022013002-57dd64b663ae/go.mod h1:cXtcffkkkvDvWPhOyeYWMgkiNVKdsTm6wE306RltSHg=
 github.com/Nomadcxx/sysc-tray v0.1.2 h1:c76EodiLjsdb/9+MRD2N6iVTav7KZLPniRz0HUpOBGY=
 github.com/Nomadcxx/sysc-tray v0.1.2/go.mod h1:GXyFn9M+SFByciLAABggDWNy9pCLGxoetapRjgQNL5A=
 github.com/Nomadcxx/sysc-wayland v0.3.2 h1:3QV9+Duzbe5nVbGRvyX8Gtxol0vMpPsXu2q6/Mwyrhc=
 github.com/Nomadcxx/sysc-wayland v0.3.2/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
+github.com/Nomadcxx/sysc-wayland v0.3.3-0.20261024233357-3be5931a1dfc h1:cdWMpZ2bI59ERTtaAEtappvaV3+VlF/zcguyg1RH8Pc=
+github.com/Nomadcxx/sysc-wayland v0.3.3-0.20261024233357-3be5931a1dfc/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
 github.com/Wifx/gonetworkmanager/v2 v2.2.0 h1:kPstgsQtY8CmDOOFZd81ytM9Gi3f6ImzPCKF7nNhQ2U=
 github.com/Wifx/gonetworkmanager/v2 v2.2.0/go.mod h1:fMDb//SHsKWxyDUAwXvCqurV3npbIyyaQWenGpZ/uXg=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=

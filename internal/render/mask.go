@@ -11,6 +11,7 @@ import (
 type maskKey struct {
 	radius, w, h int
 	square       Corners
+	in           image.Rectangle
 }
 
 // Corners marks corners of a rounded rectangle that stay square.
@@ -23,7 +24,10 @@ const (
 	SquareBR
 )
 
-type ringKey struct{ radius, w, h, width int }
+type ringKey struct {
+	radius, w, h, width int
+	in                  image.Rectangle
+}
 
 type geometryCacheKind uint8
 
@@ -118,28 +122,54 @@ var (
 // RoundedMask returns a cached antialiased rounded-rectangle alpha mask.
 func RoundedMask(radius, w, h int) *image.Alpha { return CornerMask(radius, w, h, 0) }
 
+// RoundedMaskIn is RoundedMask built for only part of the box.
+func RoundedMaskIn(radius, w, h int, in image.Rectangle) *image.Alpha {
+	return CornerMaskIn(radius, w, h, 0, in)
+}
+
+// normalizeMaskRect maps the whole-box sentinel onto the full extent and
+// clips any other rect to it. An empty intersection stays empty: it must
+// produce an empty mask, never the whole box.
+func normalizeMaskRect(w, h int, in image.Rectangle) image.Rectangle {
+	full := image.Rect(0, 0, max(w, 0), max(h, 0))
+	if in == (image.Rectangle{}) {
+		return full
+	}
+	return in.Intersect(full)
+}
+
 // CornerMask is RoundedMask with the marked corners left square. A surface
 // joined to something along an edge fills through it in one pass: squaring a
 // rounded fill afterwards blends twice where the two overlap, which on a
 // translucent fill paints a denser band.
 func CornerMask(radius, w, h int, square Corners) *image.Alpha {
-	key := maskKey{radius, w, h, square}
+	return CornerMaskIn(radius, w, h, square, image.Rectangle{})
+}
+
+// CornerMaskIn is CornerMask built for only the in rect of the box, given in
+// box coordinates. Coverage is evaluated at the same pixel centres as
+// CornerMask, so every pixel equals the corresponding pixel of the full
+// mask; the mask is indexed from in.Min and placed at the box origin plus
+// in.Min. The zero rect means the whole box.
+func CornerMaskIn(radius, w, h int, square Corners, in image.Rectangle) *image.Alpha {
+	in = normalizeMaskRect(w, h, in)
+	key := maskKey{radius, w, h, square, in}
 	maskMu.Lock()
 	defer maskMu.Unlock()
 	cacheKey := geometryCacheKey{kind: geometryRounded, mask: key}
 	if mask := geometryCache.get(cacheKey); mask != nil {
 		return mask
 	}
-	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
-	if w > 0 && h > 0 {
+	mask := image.NewAlpha(image.Rect(0, 0, in.Dx(), in.Dy()))
+	if w > 0 && h > 0 && !in.Empty() {
 		radius = min(radius, min(w, h)/2)
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := in.Min.Y; y < in.Max.Y; y++ {
+			for x := in.Min.X; x < in.Max.X; x++ {
 				a := roundedCoverage(radius, w, h, x, y)
 				if square&quadrant(x, y, w, h) != 0 {
 					a = 255
 				}
-				mask.SetAlpha(x, y, color.Alpha{A: a})
+				mask.Pix[(y-in.Min.Y)*mask.Stride+(x-in.Min.X)] = a
 			}
 		}
 	}
@@ -155,22 +185,23 @@ func CornerMask(radius, w, h int, square Corners) *image.Alpha {
 // of two independently rounded silhouettes, which thins and breaks up around
 // the corners; sampling both distances per pixel keeps the band a constant
 // width the whole way round.
-func RingMask(radius, w, h, width int) *image.Alpha {
-	key := ringKey{radius, w, h, width}
+func RingMaskIn(radius, w, h, width int, in image.Rectangle) *image.Alpha {
+	in = normalizeMaskRect(w, h, in)
+	key := ringKey{radius, w, h, width, in}
 	maskMu.Lock()
 	defer maskMu.Unlock()
 	cacheKey := geometryCacheKey{kind: geometryRing, ring: key}
 	if mask := geometryCache.get(cacheKey); mask != nil {
 		return mask
 	}
-	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
-	if w > 0 && h > 0 && width > 0 {
+	mask := image.NewAlpha(image.Rect(0, 0, in.Dx(), in.Dy()))
+	if w > 0 && h > 0 && width > 0 && !in.Empty() {
 		radius = min(radius, min(w, h)/2)
 		width = min(width, min(w, h)/2)
 		iw, ih := w-2*width, h-2*width
 		ir := max(radius-width, 0)
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := in.Min.Y; y < in.Max.Y; y++ {
+			for x := in.Min.X; x < in.Max.X; x++ {
 				outer := uint32(roundedCoverage(radius, w, h, x, y))
 				if outer == 0 {
 					continue
@@ -186,7 +217,7 @@ func RingMask(radius, w, h, width int) *image.Alpha {
 				if inner >= outer {
 					continue
 				}
-				mask.SetAlpha(x, y, color.Alpha{A: uint8(outer - inner)})
+				mask.Pix[(y-in.Min.Y)*mask.Stride+(x-in.Min.X)] = uint8(outer - inner)
 			}
 		}
 	}
@@ -194,18 +225,27 @@ func RingMask(radius, w, h, width int) *image.Alpha {
 	return mask
 }
 
-// RippleMask returns the coverage of a disc clipped to a rounded rectangle.
-// It is built per frame because the press origin changes per ripple; caching
-// each origin would grow without bound. The cost is one pass over this node's
-// box for each in-flight ripple.
-func RippleMask(w, h, radius, cx, cy int, disc float64) *image.Alpha {
-	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
+// RingMask returns a cached antialiased band of the given width, drawn inward
+// from a rounded rectangle's bounds so the stroke never grows the box. It is
+// RingMaskIn for the whole box.
+func RingMask(radius, w, h, width int) *image.Alpha {
+	return RingMaskIn(radius, w, h, width, image.Rectangle{})
+}
+
+// RippleMask returns the coverage of a disc clipped to a rounded rectangle,
+// built for only the in rect of the box in box coordinates. It is built per
+// frame because the press origin changes per ripple; caching each origin
+// would grow without bound. The cost is one pass over the visible part of
+// this node's box for each in-flight ripple.
+func RippleMask(w, h, radius, cx, cy int, disc float64, in image.Rectangle) *image.Alpha {
+	in = normalizeMaskRect(w, h, in)
+	mask := image.NewAlpha(image.Rect(0, 0, in.Dx(), in.Dy()))
 	if w <= 0 || h <= 0 || disc <= 0 {
 		return mask
 	}
 	radius = min(radius, min(w, h)/2)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := in.Min.Y; y < in.Max.Y; y++ {
+		for x := in.Min.X; x < in.Max.X; x++ {
 			box := roundedCoverage(radius, w, h, x, y)
 			if box == 0 {
 				continue
@@ -214,7 +254,7 @@ func RippleMask(w, h, radius, cx, cy int, disc float64) *image.Alpha {
 			dy := float64(y) + 0.5 - float64(cy)
 			discCoverage := min(max(0.5-math.Hypot(dx, dy)+disc, 0), 1)
 			if a := uint8(min(float64(box), discCoverage*255)); a > 0 {
-				mask.SetAlpha(x, y, color.Alpha{A: a})
+				mask.Pix[(y-in.Min.Y)*mask.Stride+(x-in.Min.X)] = a
 			}
 		}
 	}

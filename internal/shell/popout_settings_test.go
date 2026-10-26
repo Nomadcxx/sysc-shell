@@ -3330,7 +3330,7 @@ func TestAnOpenFontPickerFitsThePane(t *testing.T) {
 		t.Fatal("no retained menu for the font family entry")
 	}
 	if !m.Filtering() {
-		t.Skip("this machine has fewer fonts than the picker threshold")
+		t.Skip("this machine offers 12 or fewer font families; the picker filters past 12")
 	}
 	m.Open()
 	h.root = settingsTree(nil, h)
@@ -3356,7 +3356,7 @@ func TestTheFilterWellTakesTheLadderHeight(t *testing.T) {
 	}
 	options, values := settingsFontOptions(*e)
 	if len(options) <= settingsMenuLimit {
-		t.Skip("this machine has too few fonts for the picker")
+		t.Skip("this machine offers 12 or fewer font families; the picker filter needs more than 12")
 	}
 	settingsPickerControl(h, *e, options, values, "", 200)
 	m := h.menus["bar.font-family"]
@@ -3388,7 +3388,7 @@ func TestThePanelOpensAndFiltersTheFontPicker(t *testing.T) {
 		t.Fatal("the Appearance section built no font family menu, so the entry is not a picker")
 	}
 	if !m.Filtering() {
-		t.Skip("this machine has fewer fonts than the picker threshold")
+		t.Skip("this machine offers 12 or fewer font families; the picker filters past 12")
 	}
 	target := "appearance.font-family"
 

@@ -214,7 +214,7 @@ func requireGit(t *testing.T) string {
 	t.Helper()
 	path, err := exec.LookPath("git")
 	if err != nil {
-		t.Skip("git not on PATH")
+		t.Skip("git is not on PATH")
 	}
 	return path
 }

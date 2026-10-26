@@ -33,6 +33,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The issue database is local state. bd rewrites .beads/issues.jsonl with
+      # only the rows a command touched, so a tracked copy loses every other
+      # row on the first mutation, and the ignore rule cannot reach a path that
+      # is already in the index. This keeps the index empty. It runs before the
+      # build so a re-tracked file fails the job in seconds.
+      - name: keep the issue database untracked
+        run: test -z "$(git ls-files .beads/)" || { git ls-files .beads/; exit 1; }
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -42,18 +49,29 @@ jobs:
           repository: Nomadcxx/sysc-plugins
           ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
           path: testdeps/sysc-plugins
-      # Panel layout tests measure text with the configured family
-      # (config.Default() names Inter). Installing it keeps runner metrics
-      # close to the maintainer's machine instead of the fallback face.
-      # raster.FindFont in sysc-terminal probes the Arch font layout, so Noto
-      # is installed and the probed directory is pointed at the Ubuntu one.
-      - name: install test fonts
+      # The lock screen lives in its own repository; the presentation
+      # contract tests run its binary. Pinned to v0.1.3, the release whose
+      # catalogue matches this tree's sysc-terminal and sysc-Go pins: the
+      # locker resolves the same sysc-Go commit this tree pins, so both
+      # catalogues carry the shared model effects and ansi-love.
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-lock
+          ref: d048b2dc43038f8a2d639c1574d601e94c2ce521
+          path: testdeps/sysc-lock
+      # Building sysc-lock links EGL and GLES2 (internal/lockd) and PAM
+      # (internal/auth); xkb-go parses keymaps in pure Go. These headers are
+      # the recorded build dependency of the contract binary.
+      - name: build the lock screen contract binary
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-inter fonts-noto-core
-          sudo mkdir -p /usr/share/fonts/noto
-          sudo ln -sf /usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf \
-            /usr/share/fonts/noto/NotoSansMono-Regular.ttf
+          sudo apt-get install -y --no-install-recommends libegl-dev libgles-dev libpam0g-dev
+          cd testdeps/sysc-lock
+          go build -o "$GITHUB_WORKSPACE/testdeps/sysc-lock-bin" ./cmd/sysc-lock
+      # No font is installed for the suite. The render package measures text
+      # against the fixture fonts it commits, so the runner's own font set
+      # is not part of a result. The install this step removed made the
+      # result a property of the machine the runner happened to be.
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet
@@ -61,6 +79,76 @@ jobs:
       - name: test
         env:
           SYSC_PLUGINS_DIR: ${{ github.workspace }}/testdeps/sysc-plugins
+          SYSC_LOCK_CONTRACT_BINARY: ${{ github.workspace }}/testdeps/sysc-lock-bin
         run: go test -race -count=1 ./...
       - name: build
         run: go build ./...
+
+  # The coverage floor gate. A package that loses its tests must not merge
+  # behind a green build, so the suite runs a second time here with a coverage
+  # profile and every package is measured against the floor committed for it.
+  # This run leaves out the race detector: the detector multiplies the run
+  # time and the floor gate has nothing to say about races. The floors come
+  # from this runner, not from the machine that pushed the change.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-plugins
+          ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
+          path: testdeps/sysc-plugins
+      - uses: actions/checkout@v4
+        with:
+          repository: Nomadcxx/sysc-lock
+          ref: d048b2dc43038f8a2d639c1574d601e94c2ce521
+          path: testdeps/sysc-lock
+      - name: build the lock screen contract binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl-dev libgles-dev libpam0g-dev
+          cd testdeps/sysc-lock
+          go build -o "$GITHUB_WORKSPACE/testdeps/sysc-lock-bin" ./cmd/sysc-lock
+      - name: measure the coverage
+        env:
+          SYSC_PLUGINS_DIR: ${{ github.workspace }}/testdeps/sysc-plugins
+          SYSC_LOCK_CONTRACT_BINARY: ${{ github.workspace }}/testdeps/sysc-lock-bin
+        run: go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - name: list the packages
+        run: go list ./... > packages.txt
+      # The measurement writes to its own file. The committed floor file is
+      # never overwritten by a run.
+      - name: measure the per-package floors
+        run: go run ./tools/coveragefloor -profile coverage.out -packages packages.txt -floors tools/coveragefloor/floors.json -update -out measured-floors.json
+      # The measurement is uploaded before the check, so a red check still
+      # leaves the numbers behind.
+      - name: upload the measurement
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-floors
+          path: |
+            coverage.out
+            packages.txt
+            measured-floors.json
+      - name: check the per-package floors
+        run: go run ./tools/coveragefloor -profile coverage.out -packages packages.txt -floors tools/coveragefloor/floors.json
+
+  # The runner kernel's Landlock ABI decides which plugin confinement tests
+  # can run. This job records the ABI in the log and the step summary and
+  # fails only when the kernel offers no Landlock at all. An ABI below the
+  # socket levels is a finding to file, not a job that is always red;
+  # SYSC_REQUIRE_LANDLOCK=<n> raises the floor to what the runner is known
+  # to clear.
+  landlock-abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: record landlock ABI
+        run: go test ./internal/plugin/ -run '^TestLandlockABIRecorded$' -v -count=1

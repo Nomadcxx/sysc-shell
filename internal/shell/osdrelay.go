@@ -49,6 +49,13 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys, cancel <-chan struct{}
 				r.OSD().Show(view)
 			}
 			prev = st
+			// The change channel is single-consumer, so the OSD relay feeds
+			// the lock_keys bar widget when it owns the service.
+			r.mu.Lock()
+			r.lockKeysState = st
+			changed := r.repaintBarsLocked()
+			r.mu.Unlock()
+			r.publish(changed)
 		}
 	}
 }
@@ -69,6 +76,13 @@ func (r *Registry) startLockKeys(cfg config.Config) {
 	cancel := make(chan struct{})
 	r.lockKeys = newLockKeys.Get()()
 	r.lockKeysRelayCancel = cancel
+	// Seed the bar feed before the relay starts: a keyboard that already has
+	// Caps Lock on must show it on the first frame, not at the first change.
+	// The baseline is only read when a lease starts the poll loop, so take one
+	// for the read. The relay takes its own lease next and sees the same state.
+	release := r.lockKeys.Acquire()
+	r.lockKeysState = r.lockKeys.Baseline()
+	release()
 	go r.relayLockKeysOSD(r.lockKeys, cancel)
 }
 

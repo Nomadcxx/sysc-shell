@@ -280,6 +280,11 @@ func (a *iwdAgent) RequestUserPassword(dbus.ObjectPath, string) (string, *dbus.E
 }
 
 // Cancel is iwd withdrawing its question, which must free the slot.
+//
+// iwd's Cancel carries only a reason, so it names no request to cancel. The
+// slot holds one prompt at a time and only iwd feeds it, so cancelling the
+// open one is what the interface allows; a cancel that arrives after the
+// prompt was answered finds nothing open and does nothing.
 func (a *iwdAgent) Cancel(string) *dbus.Error {
 	a.export.slot.cancel()
 	return nil

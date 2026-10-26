@@ -45,15 +45,41 @@ func Default() Config {
 }
 
 // Effects includes the locker's static presentation alongside renderer effects.
-func Effects() []string { return append([]string{EffectNone}, renderer.Effects()...) }
+// Effects is the background catalogue the locker plays. It follows the
+// locker's own catalogue, which drops beams because its animation path does
+// not support it; offering one would write a config the locker rejects.
+// ak-47-rama needed the same filter until the renderer generation dropped it.
+func Effects() []string {
+	out := []string{EffectNone}
+	for _, id := range renderer.Effects() {
+		if id != "beams" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
 
-func TextEffects() []string { return append([]string{EffectNone}, renderer.TextEffects()...) }
+// TextEffects is the header catalogue the locker accepts. Upstream text scenes
+// join this list only when the locker's plain-text animation path supports
+// them; offering one would write a config the locker rejects.
+func TextEffects() []string {
+	out := []string{EffectNone}
+	for _, id := range renderer.TextEffects() {
+		switch id {
+		case "matrix-art", "rain-art", "beam-text", "blackhole", "pour", "print":
+			out = append(out, id)
+		}
+	}
+	return out
+}
 
 func (c Config) Validate() error {
 	if err := Validate(c.Effect, c.Palette); err != nil {
 		return err
 	}
-	if c.TextEffect != "" && !slices.Contains(TextEffects(), c.TextEffect) {
+	// Acceptance is the wide renderer set, not TextEffects: a hand-written or
+	// older config must round-trip. TextEffects is only what the UI offers.
+	if c.TextEffect != "" && !slices.Contains(append([]string{EffectNone}, renderer.TextEffects()...), c.TextEffect) {
 		return fmt.Errorf("unknown text effect %q", c.TextEffect)
 	}
 	return nil

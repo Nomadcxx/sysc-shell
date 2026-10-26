@@ -1,0 +1,44 @@
+name: Dependency drift
+
+# The drift report. It walks the repositories of the organisation, reads the
+# module requirements each one declares and the external checkouts its
+# workflows pin, and reports for every pin the version it holds, the newest
+# version that exists, and the reason recorded beside it when there is one.
+#
+# The run is weekly because a release moves without a commit: the pin in the
+# tree is correct on the day it is written and wrong the week after. The
+# minute is not the one the vulnerability scan uses, so the two reports do
+# not arrive together.
+
+on:
+  schedule:
+    - cron: '47 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The report reads the repositories of the organisation through the API.
+      # The token raises the rate limit; the repositories are public, so the
+      # report works without one.
+      - name: report the drift
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run ./tools/depdrift | tee dependency-drift.md
+      - name: upload the report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-drift
+          path: dependency-drift.md

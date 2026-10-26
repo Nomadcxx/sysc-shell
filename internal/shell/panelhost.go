@@ -289,6 +289,7 @@ type PanelHost struct {
 	manualSecurity     services.ManualSecurity
 	weatherView        string
 	pendingSSID        string
+	pendingSecretGen   uint64
 	password           *ui.Field
 	bluetoothInput     *ui.Field
 	bluetoothPromptID  services.PromptID
@@ -2713,7 +2714,12 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, pageOffset)
 	}
-	root := copyNode(h.root)
+	// The copy carries only what the view can see: 939 application rows cost
+	// tens of megabytes to clone per frame and the painter cannot draw most of
+	// them (GH #454). Dropped children keep their slots as bare nodes, so
+	// every consumer that addresses children by position -- applyEditorView's
+	// live-to-copy mirror above all -- still sees the tree it expects.
+	root := copyNodeVisible(h.root, ui.Rect{}, false)
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, -pageOffset)
 	}
@@ -5065,10 +5071,18 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if id == PanelNotifications {
 		r.setCenterOpen(false)
 	}
-	if id == PanelNetwork && r.network != nil {
-		r.network.CancelSecret()
-	}
 	h := r.panelHosts[id]
+	if id == PanelNetwork && r.network != nil {
+		// The teardown cancels the prompt the card was showing, by
+		// generation, so a prompt that arrived after this card does not
+		// lose its answer. With no card there is nobody to answer any
+		// prompt, so the open one goes.
+		if h != nil && h.pendingSecretGen != 0 {
+			r.network.CancelSecret(h.pendingSecretGen)
+		} else {
+			r.network.CancelOpenSecret()
+		}
+	}
 	if h == nil {
 		return
 	}
