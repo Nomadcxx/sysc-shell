@@ -5,13 +5,10 @@
 Report it privately, through GitHub's private advisory form for this repository:
 
 <https://github.com/Nomadcxx/sysc-shell/security/advisories/new>
-
 Use the private form rather than a public issue. A public issue tells every reader of the repository
-
 that the flaw is there before it is fixed.
 
 Write what an attacker can do, how to do it, and the version or the commit the flaw is in. A proof
-
 of concept is worth more than a description of the flaw.
 
 ## Which versions are supported
@@ -23,7 +20,6 @@ of concept is worth more than a description of the flaw.
 | Anything older | No |
 
 `sysc-shell` is released as tags on `main`. A flaw is fixed on `main` and the fix reaches a user in
-
 the next release.
 
 ## What a report gets
@@ -37,15 +33,11 @@ the next release.
 ## The standing scan
 
 This repository runs `govulncheck` in CI on every pull request, on every push to the default branch,
-
 and once a week. The workflow is `.github/workflows/vuln.yml` and the scanner version is pinned in
-
 it, so the scan does not change without a commit. It reports the published flaws whose symbols this
-
 module actually calls.
 
 A green scan is not a warranty that the tree has no flaw in it. The scan reads the advisories the Go
-
 project publishes; a flaw in this repository's own code is not in that feed.
 
 ## What is out of scope
