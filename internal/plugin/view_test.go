@@ -751,7 +751,7 @@ func TestConvertResolvesAMaterialOnlyIcon(t *testing.T) {
 	t.Parallel()
 
 	if _, ok := render.IconByName("play_arrow"); ok {
-		t.Skip("play_arrow is in the project font now; pick another subset-only name")
+		t.Skip("play_arrow is in the project font; a material-subset-only name would run this")
 	}
 	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "play_arrow"}}}
 	got, err := Convert(root, v1.ViewPanel)

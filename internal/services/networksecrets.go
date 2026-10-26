@@ -39,7 +39,20 @@ const (
 type SecretRequest struct {
 	SSID        string
 	SettingName string
+	// Generation names the prompt this request belongs to. The panel
+	// carries it with the card it shows, so an answer reaches the prompt
+	// it was typed for and not a later one.
+	Generation uint64
+	// Connection is the NetworkManager connection the question is about.
+	// It is empty for iwd, which does not name a connection.
+	Connection string
 }
+
+// ErrSecretPromptClosed reports that the prompt an answer was meant for is no
+// longer open: it timed out, was withdrawn, or was answered already. The
+// panel tells this apart from a rejected passphrase, because the card has to
+// go rather than keep asking for a secret nobody waits for.
+var ErrSecretPromptClosed = errors.New("services: the secret prompt is closed")
 
 // secretReply is the single answer a request receives.
 type secretReply struct {
@@ -73,18 +86,22 @@ func newSecretSlot() *secretSlot { return &secretSlot{} }
 // begin claims the slot and names the prompt. It reports false when one is
 // already open, having first answered that caller so no request is left
 // dangling.
-func (s *secretSlot) begin(req SecretRequest, ch chan<- secretReply) (uint64, bool) {
+//
+// The returned request carries the generation, so the caller that shows it
+// can name the prompt it belongs to.
+func (s *secretSlot) begin(req SecretRequest, ch chan<- secretReply) (SecretRequest, uint64, bool) {
 	s.mu.Lock()
 	if s.open {
 		s.mu.Unlock()
 		sendReply(ch, secretReply{noSecrets: true})
-		return 0, false
+		return SecretRequest{}, 0, false
 	}
 	s.gen++
-	s.open, s.req, s.ch = true, req, ch
 	gen := s.gen
+	req.Generation = gen
+	s.open, s.req, s.ch = true, req, ch
 	s.mu.Unlock()
-	return gen, true
+	return req, gen, true
 }
 
 // arm gives prompt gen its deadline. A prompt already answered stops the
@@ -101,6 +118,10 @@ func (s *secretSlot) arm(gen uint64, t *time.Timer) {
 
 // answer replies exactly once and frees the slot. A second answer is dropped:
 // NetworkManager has stopped reading by then.
+//
+// It answers whichever prompt is open, so it is only for teardown, where the
+// prompt identity is gone. Every path that knows which prompt it means uses
+// answerGen instead.
 func (s *secretSlot) answer(r secretReply) {
 	s.mu.Lock()
 	gen := s.gen
@@ -125,11 +146,38 @@ func (s *secretSlot) answerGen(gen uint64, r secretReply) bool {
 	return true
 }
 
-func (s *secretSlot) submit(psk string) { s.answer(secretReply{psk: psk}) }
+// submitGen answers prompt gen with a passphrase and reports whether it did.
+// A passphrase typed for a prompt that already closed must not reach the
+// prompt that took its place.
+func (s *secretSlot) submitGen(gen uint64, psk string) bool {
+	return s.answerGen(gen, secretReply{psk: psk})
+}
+
+// cancelGen answers prompt gen with UserCanceled and reports whether it did.
+func (s *secretSlot) cancelGen(gen uint64) bool {
+	return s.answerGen(gen, secretReply{cancelled: true})
+}
+
+// cancelConn answers the prompt that belongs to connection with UserCanceled.
+// A prompt that names no connection, or names another one, is left alone: the
+// withdraw is about a question this slot is no longer showing.
+func (s *secretSlot) cancelConn(connection string) bool {
+	s.mu.Lock()
+	if !s.open || s.req.Connection == "" || s.req.Connection != connection {
+		s.mu.Unlock()
+		return false
+	}
+	gen := s.gen
+	s.mu.Unlock()
+	return s.answerGen(gen, secretReply{cancelled: true})
+}
 
 // cancel answers UserCanceled. Every prompt must reply: a dangling reply hangs
 // NetworkManager's activation until its own timeout, which presents to the
 // user as a join that silently does nothing.
+//
+// It answers whichever prompt is open, so it is for teardown and for the
+// backends that name no request of their own.
 func (s *secretSlot) cancel() { s.answer(secretReply{cancelled: true}) }
 
 func (s *secretSlot) pending() bool {
@@ -159,19 +207,27 @@ func sendReply(ch chan<- secretReply, r secretReply) {
 func (n *Network) SecretRequests() <-chan SecretRequest { return n.secretReqs }
 
 // SecretExpiry signals that a shown prompt outlived its deadline and was
-// cancelled by the service; the relay clears the password card on it.
-func (n *Network) SecretExpiry() <-chan struct{} { return n.secretExpired }
+// cancelled by the service; the relay clears the password card on it. The
+// generation travels with the signal, so a card that already moved on to a
+// later prompt is left alone.
+func (n *Network) SecretExpiry() <-chan uint64 { return n.secretExpired }
 
-// SubmitSecret answers the open prompt with a passphrase.
+// SubmitSecret answers prompt gen with a passphrase.
 //
 // The passphrase goes to NetworkManager over the system bus and is stored by
 // NetworkManager. It is never written to errLabel, the node tree, a log line,
 // or a process argument.
-func (n *Network) SubmitSecret(psk string) error {
+//
+// gen names the prompt the passphrase was typed for. A prompt that already
+// closed reports ErrSecretPromptClosed rather than handing the passphrase to
+// the prompt that took its place.
+func (n *Network) SubmitSecret(gen uint64, psk string) error {
 	if err := validateWPAPassphrase(psk); err != nil {
 		return err
 	}
-	n.secrets.submit(psk)
+	if !n.secrets.submitGen(gen, psk) {
+		return ErrSecretPromptClosed
+	}
 	return nil
 }
 
@@ -193,8 +249,16 @@ func validateWPAPassphrase(psk string) error {
 	return errors.New("services: WPA passphrase must be 8 to 63 bytes or 64 hexadecimal digits")
 }
 
-// CancelSecret answers the open prompt with UserCanceled.
-func (n *Network) CancelSecret() { n.secrets.cancel() }
+// CancelSecret answers prompt gen with UserCanceled and reports whether it
+// did. A cancel meant for a prompt that already closed does not cancel the
+// prompt that took its place.
+func (n *Network) CancelSecret(gen uint64) bool { return n.secrets.cancelGen(gen) }
+
+// CancelOpenSecret answers whichever prompt is open with UserCanceled.
+//
+// It is for teardown, where the prompt identity is gone: the service is
+// closing, or the panel that showed the card is going away.
+func (n *Network) CancelOpenSecret() { n.secrets.cancel() }
 
 // PendingSecret reports whether a prompt is open, so the panel knows to show
 // the password card.
@@ -225,8 +289,9 @@ type secretExport struct {
 	requests chan SecretRequest
 	// timeout is the prompt deadline; zero selects secretPromptTimeout.
 	timeout time.Duration
-	// expired nudges the shell relay to clear its password card.
-	expired chan struct{}
+	// expired nudges the shell relay to clear its password card. It carries
+	// the generation of the prompt that timed out.
+	expired chan uint64
 }
 
 // GetSecrets blocks until the panel answers. godbus runs each incoming call on
@@ -247,7 +312,7 @@ func (e *secretExport) GetSecrets(
 		return nil, dbus.NewError(errNoSecrets, []any{"nothing stored"})
 	}
 
-	switch r := e.prompt(SecretRequest{SSID: ssidFromSettings(settings), SettingName: settingName}); {
+	switch r := e.prompt(SecretRequest{SSID: ssidFromSettings(settings), SettingName: settingName, Connection: string(connection)}); {
 	case r.cancelled:
 		return nil, dbus.NewError(errUserCanceled, []any{"cancelled"})
 	case r.noSecrets:
@@ -264,7 +329,7 @@ func (e *secretExport) GetSecrets(
 // cancelled. NetworkManager's holder and iwd's agent both ask through here.
 func (e *secretExport) prompt(req SecretRequest) secretReply {
 	ch := make(chan secretReply, 1)
-	gen, ok := e.slot.begin(req, ch)
+	req, gen, ok := e.slot.begin(req, ch)
 	if !ok {
 		return <-ch
 	}
@@ -274,7 +339,7 @@ func (e *secretExport) prompt(req SecretRequest) secretReply {
 	default:
 		// A stale notification must not strand this call. Answer once with
 		// a cancellation and let the asker stop.
-		e.slot.cancel()
+		e.slot.cancelGen(gen)
 	}
 	return <-ch
 }
@@ -293,7 +358,7 @@ func (e *secretExport) armDeadline(gen uint64) {
 		}
 		if e.expired != nil {
 			select {
-			case e.expired <- struct{}{}:
+			case e.expired <- gen:
 			default:
 			}
 		}
@@ -302,8 +367,12 @@ func (e *secretExport) armDeadline(gen uint64) {
 
 // CancelGetSecrets is NetworkManager withdrawing the question, which must
 // still free the slot or the next join can never prompt.
+//
+// The withdraw names the connection it is about, so it cancels only the prompt
+// for that connection: a withdraw for a question that has already been
+// answered must not cancel the prompt that took its place.
 func (e *secretExport) CancelGetSecrets(connection dbus.ObjectPath, settingName string) *dbus.Error {
-	e.slot.cancel()
+	e.slot.cancelConn(string(connection))
 	return nil
 }
 

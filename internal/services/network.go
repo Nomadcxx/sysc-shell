@@ -194,7 +194,7 @@ type Network struct {
 	// was ever opened.
 	secrets       *secretSlot
 	secretReqs    chan SecretRequest
-	secretExpired chan struct{}
+	secretExpired chan uint64
 	// closeSecrets unregisters and unexports the process-wide credential
 	// holder. Close clears it before calling it so repeated shutdown is safe.
 	closeSecrets func()
@@ -208,7 +208,7 @@ func NewNetwork(b backend) *Network {
 		wake:          make(chan struct{}, 1),
 		secrets:       newSecretSlot(),
 		secretReqs:    make(chan SecretRequest, 1),
-		secretExpired: make(chan struct{}, 1),
+		secretExpired: make(chan uint64, 1),
 	}
 }
 
@@ -427,7 +427,7 @@ func (n *Network) stopIfUnusedLocked() {
 
 // Close drops every lease and ends the subscription.
 func (n *Network) Close() {
-	n.CancelSecret()
+	n.CancelOpenSecret()
 	n.mu.Lock()
 	for _, l := range n.leases.clear() {
 		l.forget()

@@ -223,6 +223,7 @@
  "net.none": "ネットワークが見つかりません",
  "net.not_connected": "未接続",
  "net.password": "パスワード",
+ "net.password.expired": "このリクエストは期限切れです。もう一度お試しください。",
  "net.password.invalid": "8～63 文字、または 64 桁の 16 進数を入力してください。",
  "net.radio_off": "ラジオオフ",
  "net.scanning": "ネットワークを検索中…",

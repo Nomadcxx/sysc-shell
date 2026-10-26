@@ -789,6 +789,27 @@ func MenuPopupBounds(n *Node) Rect {
 	return Rect{X: n.Bounds.X, Y: top, W: n.Bounds.W, H: bottom - top}
 }
 
+// MayDrawOutsideBox reports whether the subtree holds a node whose paint can
+// reach outside its own box: a menu's open option list is an overlay that
+// floats over later rows, and a scroll with a gap scrollbar paints its bar in
+// the parent's padding. A walker that skips subtrees by their box has to keep
+// these whole.
+func MayDrawOutsideBox(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Kind {
+	case KindMenu, KindScroll, KindVirtualList:
+		return true
+	}
+	for _, child := range n.Children {
+		if MayDrawOutsideBox(child) {
+			return true
+		}
+	}
+	return false
+}
+
 // Hit reports the action of the topmost arranged node containing the point.
 // Menu option lists are checked first because they paint above the rest of the
 // panel; ordinary children keep reverse paint order within the panel flow.

@@ -224,7 +224,7 @@ func TestWeatherDaylightFollowsSunriseAndSunset(t *testing.T) {
 	zone := "Australia/Melbourne"
 	loc, err := time.LoadLocation(zone)
 	if err != nil {
-		t.Skip("tzdata unavailable:", err)
+		t.Fatal("tzdata is embedded; LoadLocation failed:", err)
 	}
 	day := []services.Day{{Date: "2026-10-08", Sunrise: "2026-10-08T06:38", Sunset: "2026-10-08T19:40"}}
 	night := false
