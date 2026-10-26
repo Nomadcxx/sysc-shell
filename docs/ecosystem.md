@@ -104,6 +104,27 @@ of the commit gate.
 | sysc-tray | `v0.1.2` |
 | sysc-Go | `v1.0.9` (indirect) |
 
+## Continuous integration
+
+Every repository in the ecosystem runs the same four checks in CI: `gofmt`,
+`go vet`, `go test -race -count=1 ./...` and a build. The `-count=1` matters:
+without it a cached package result satisfies the test step without running the
+tests, so a broken change can pass on the second push.
+
+| Repository | Workflow | Test command |
+|---|---|---|
+| [sysc](https://github.com/Nomadcxx/sysc) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-launch](https://github.com/Nomadcxx/sysc-launch) | `.github/workflows/ci.yml` | `go test -race -count=1 -p 2 ./...` |
+| [sysc-lock](https://github.com/Nomadcxx/sysc-lock) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-metrics](https://github.com/Nomadcxx/sysc-metrics) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-notify](https://github.com/Nomadcxx/sysc-notify) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-shell](https://github.com/Nomadcxx/sysc-shell) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-terminal](https://github.com/Nomadcxx/sysc-terminal) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-tray](https://github.com/Nomadcxx/sysc-tray) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-wayland](https://github.com/Nomadcxx/sysc-wayland) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+
 ## Where to go next
 
 - [README](../README.md) for install and usage
