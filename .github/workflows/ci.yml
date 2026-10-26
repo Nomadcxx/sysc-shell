@@ -43,10 +43,10 @@ jobs:
           ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
           path: testdeps/sysc-plugins
       # The lock screen lives in its own repository; the presentation
-      # contract tests run its binary. Pinned to v0.1.1, the release whose
-      # catalogue matches this tree's sysc-terminal v0.2.0 and sysc-Go v1.0.7
-      # pins. Newer lockers expose shared model effects and follow in a
-      # grouped pin bump (sysc-1733).
+      # contract tests run its binary.
+      # hold: this checkout is the lock release whose catalogue matches the
+      # sibling pins of this tree. Newer lockers carry shared model effects
+      # and follow in the grouped pin bump (see sysc-1733).
       - uses: actions/checkout@v4
         with:
           repository: Nomadcxx/sysc-lock

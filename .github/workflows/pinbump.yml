@@ -1,0 +1,111 @@
+name: Pin bump
+
+# The grouped sibling pin bump.
+#
+# The sibling modules of the shell are pinned together: a cross-repository
+# pin is an integration decision, so the bumps go into one pull request and
+# a person merges it. This workflow never merges anything itself, and it
+# never approves anything.
+#
+# The bump runs the recorded procedure (sysc-1731). The go.mod and go.sum
+# come from the base ref, the require line of each module is edited by hand,
+# and `go mod download` fetches the module. The tool then checks that the
+# result changed the require block and nothing else, that the go directive
+# with its comment and the ignore directive are byte for byte what they
+# were, and that the build list moved only in the modules the bump names.
+# A bump that would move anything else is refused, and no pull request is
+# opened.
+#
+# The pull request is opened with the workflow's own token. A pull request
+# opened that way does not start a CI run of its own, so the person who
+# reviews it is the one who starts it.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: 'module=version pairs, separated by commas. Left empty, the tool works out the grouped bump itself.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: work out the grouped bump
+        id: plan
+        env:
+          MODULES: ${{ inputs.modules }}
+        run: |
+          set -euo pipefail
+          if [ -n "$MODULES" ]; then
+            printf '%s\n' "$MODULES" | tr ',' '\n' > bump.txt
+          else
+            go run ./tools/pinbump -plan > bump.txt
+          fi
+          echo "modules=$(wc -l < bump.txt)" >> "$GITHUB_OUTPUT"
+          cat bump.txt
+      - name: apply the bump
+        if: steps.plan.outputs.modules != '0'
+        run: go run ./tools/pinbump -bump-file bump.txt
+      - name: open the pull request
+        if: steps.plan.outputs.modules != '0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch="pinbump/$(date -u +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add go.mod go.sum
+          if git diff --cached --quiet; then
+            echo "the bump changed nothing; there is no pull request to open"
+            exit 0
+          fi
+          git commit -m "build: grouped sibling pin bump"
+          # A run for the same day reuses the branch it pushed last time, so
+          # the branch is overwritten rather than refused.
+          git push --force origin "$branch"
+          # Only an open pull request makes a new one redundant: a closed or
+          # merged pull request of the same name would hide the new one.
+          open="$(gh pr list --head "$branch" --base main --state open --json number --jq 'length')"
+          if [ "$open" -gt 0 ]; then
+            echo "the pin bump pull request for $branch is open; the push updated it"
+          else
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "build: grouped sibling pin bump" \
+              --body "Grouped sibling pin bump opened by the pin bump workflow.
+
+The modules of one pull request share a build, so they move together and a
+person decides. The bump ran the recorded procedure: the go.mod and go.sum
+of the base ref, the require line of each module edited by hand, and
+\`go mod download\`. The tool checked that nothing outside the require block
+moved and that the build list changed only in the modules named here.
+
+Modules:
+
+\`\`\`
+$(cat bump.txt)
+\`\`\`
+
+This pull request is not merged by the workflow. It waits for a person."
+          fi
