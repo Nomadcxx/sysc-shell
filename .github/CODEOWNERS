@@ -1,0 +1,37 @@
+# The review path per area.
+#
+# There is one owner, so every path below names the same reviewer. The value of this file is the map:
+# which paths belong to which repository, and which of them are cross-repository contracts. A change to
+# a contract needs the repositories that consume it, not only the one that holds it.
+
+# The default owner for everything in this repository.
+/* @Nomadcxx
+
+# The Wayland client and the protocol generator. The shell, the terminal and the lock
+# all draw through it, so a change here is a change to the three of them. The repository
+# that owns this surface is sysc-wayland.
+/internal/platform/wayland/ @Nomadcxx
+
+# The Niri socket protocol and the state projection. This is the shell's only
+# compositor-specific surface; another compositor needs a separate approved design.
+/internal/platform/niri/ @Nomadcxx
+
+# The public plugin wire protocol. A change here is a change to every plugin that
+# exists, in this repository and in sysc-plugins.
+/plugin/v1/ @Nomadcxx
+/plugin/catalog/ @Nomadcxx
+
+# The pins of the sibling modules. A change to go.mod is a change to the build of every
+# sibling that pins this module. The go directive in it is read by CI for the toolchain
+# to install.
+/go.mod @Nomadcxx
+/go.sum @Nomadcxx
+
+# The CI workflows. The vulnerability scan and the release workflow both read the go
+# directive, so a change to one and a change to the other belong together.
+/.github/workflows/ @Nomadcxx
+
+# The licence and the notice. The notice names the derived works, and the licence of
+# this repository is a release decision.
+/LICENSE @Nomadcxx
+/NOTICE @Nomadcxx

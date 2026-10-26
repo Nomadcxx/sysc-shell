@@ -75,7 +75,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // set because it states rules the code has to keep, and a rule that names a
 // version the repository has moved past is a rule the code no longer follows.
 func defaultPaths() []string {
-	paths := []string{"README.md", "AGENTS.md"}
+	paths := []string{"README.md", "AGENTS.md", "CONTRIBUTING.md"}
 	matches, err := filepath.Glob(filepath.Join("docs", "*.md"))
 	if err != nil {
 		return paths
