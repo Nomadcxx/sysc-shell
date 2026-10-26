@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -485,7 +486,19 @@ func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 			r.rebuildPanel(h)
 			return true
 		}
-		if r.network.SubmitSecret(psk) != nil {
+		err := r.network.SubmitSecret(h.pendingSecretGen, psk)
+		if errors.Is(err, services.ErrSecretPromptClosed) {
+			// The prompt this card was for is gone: it timed out, was
+			// withdrawn, or a later prompt already took the slot. The
+			// card has to go with it, because nothing waits for the
+			// secret anymore.
+			psk = ""
+			h.clearNetworkSecret()
+			h.errLabel = cardT(hostT(h), "net.password.expired", "This request expired. Try again.")
+			r.rebuildPanel(h)
+			return true
+		}
+		if err != nil {
 			h.errLabel = cardT(hostT(h), "net.password.invalid", "Use 8–63 characters or 64 hexadecimal digits.")
 			r.rebuildPanel(h)
 			return true
@@ -496,9 +509,10 @@ func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "network-password-cancel":
+		gen := h.pendingSecretGen
 		h.clearNetworkSecret()
 		if r.network != nil {
-			r.network.CancelSecret()
+			r.network.CancelSecret(gen)
 		}
 		r.rebuildPanel(h)
 		return true
@@ -613,6 +627,7 @@ func (h *PanelHost) clearNetworkSecret() {
 		h.password.Masked = true
 	}
 	h.pendingSSID = ""
+	h.pendingSecretGen = 0
 }
 
 func (h *PanelHost) clearManualEntry() {

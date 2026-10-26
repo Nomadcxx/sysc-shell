@@ -223,6 +223,7 @@
  "net.none": "네트워크 없음",
  "net.not_connected": "연결되지 않음",
  "net.password": "암호",
+ "net.password.expired": "이 요청이 만료되었습니다. 다시 시도하세요.",
  "net.password.invalid": "8~63자 또는 64자리 16진수를 입력하세요.",
  "net.radio_off": "무선 꺼짐",
  "net.scanning": "네트워크 검색 중…",
