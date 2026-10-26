@@ -23,7 +23,10 @@ func lockOSD(prev, next services.LockState) []OSDView {
 }
 
 // relayLockKeysOSD runs outside the Wayland owner so Show can take Registry.mu.
-func (r *Registry) relayLockKeysOSD(l *services.LockKeys) {
+// The relay holds the poller's lease while it runs: the registry closing or
+// panels.osd_lock_keys switching off cancels it, and its return gives the
+// lease back, which stops the poll loop with it.
+func (r *Registry) relayLockKeysOSD(l *services.LockKeys, cancel <-chan struct{}) {
 	if l == nil {
 		return
 	}
@@ -35,6 +38,8 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys) {
 	for {
 		select {
 		case <-r.closed:
+			return
+		case <-cancel:
 			return
 		case st, ok := <-l.Changes():
 			if !ok {
@@ -62,11 +67,15 @@ var newLockKeys = seam.New(func() *services.LockKeys { return services.NewLockKe
 // startLockKeys wires the lock-key service when the OSD wants it. The OSD
 // that shows Caps and Num Lock is the only consumer, so with it off nothing
 // reads the keyboard LED class and the shell keeps no poller running.
+// Wiring is idempotent, so a reload that leaves the knob alone is a no-op.
+// Once the registry is live the caller holds Registry.mu.
 func (r *Registry) startLockKeys(cfg config.Config) {
-	if !cfg.Panels.OSDLockKeys {
+	if !cfg.Panels.OSDLockKeys || r.lockKeys != nil {
 		return
 	}
+	cancel := make(chan struct{})
 	r.lockKeys = newLockKeys.Get()()
+	r.lockKeysRelayCancel = cancel
 	// Seed the bar feed before the relay starts: a keyboard that already has
 	// Caps Lock on must show it on the first frame, not at the first change.
 	// The baseline is only read when a lease starts the poll loop, so take one
@@ -74,7 +83,24 @@ func (r *Registry) startLockKeys(cfg config.Config) {
 	release := r.lockKeys.Acquire()
 	r.lockKeysState = r.lockKeys.Baseline()
 	release()
-	go r.relayLockKeysOSD(r.lockKeys)
+	go r.relayLockKeysOSD(r.lockKeys, cancel)
+}
+
+// stopLockKeys unwires the lock-key service, the other direction of a
+// reload flipping panels.osd_lock_keys. The relay is cancelled first so its
+// lease comes back, then the service closes: Close stops the poll loop even
+// with that lease still outstanding and waits for the loop to end, so no
+// poller outlives the knob that asked for it. Once the registry is live the
+// caller holds Registry.mu.
+func (r *Registry) stopLockKeys() {
+	if r.lockKeysRelayCancel != nil {
+		close(r.lockKeysRelayCancel)
+		r.lockKeysRelayCancel = nil
+	}
+	if r.lockKeys != nil {
+		r.lockKeys.Close()
+		r.lockKeys = nil
+	}
 }
 
 // layoutOSD announces a layout switch. The first snapshot after connecting

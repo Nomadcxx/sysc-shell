@@ -215,6 +215,7 @@ type Registry struct {
 	audio                *services.Audio
 	brightness           *services.Brightness
 	lockKeys             *services.LockKeys
+	lockKeysRelayCancel  chan struct{}
 	network              *services.Network
 	media                *services.Media
 	mediaRelayCancel     chan struct{}
@@ -2290,6 +2291,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 					!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
 				launcherConfigChanged := !sameLauncherCommandProviders(r.cfg.Launcher.Providers, cfg.Launcher.Providers) ||
 					!sameLauncherActions(r.cfg.Launcher.Actions, cfg.Launcher.Actions)
+				lockKeysOSDChanged := r.cfg.Panels.OSDLockKeys != cfg.Panels.OSDLockKeys
 				var media *services.Media
 				var depthEffects depthClockEffects
 				// Coordinates, unit and city are the request, not a lease
@@ -2325,6 +2327,16 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 				}
 				r.syncSoundLocked()
 				r.pushIdleInputsLocked()
+				// panels.osd_lock_keys applies on a reload like its
+				// neighbours do: on wires the relay up, off takes its
+				// lease back and stops the poller. No restart.
+				if lockKeysOSDChanged {
+					if cfg.Panels.OSDLockKeys {
+						r.startLockKeys(cfg)
+					} else {
+						r.stopLockKeys()
+					}
+				}
 				// An open settings panel holds its own draft. A genuine reload
 				// replaces it; a reload from its own delayed write rebases any
 				// newer edits over the written config.
@@ -2735,7 +2747,7 @@ func (r *Registry) Close() {
 		r.brightness.Close()
 	}
 	if r.lockKeys != nil {
-		r.lockKeys.Close()
+		r.stopLockKeys()
 	}
 	if r.network != nil {
 		r.network.Close()
