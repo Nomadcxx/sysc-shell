@@ -40,7 +40,7 @@ jobs:
       # build so a re-tracked file fails the job in seconds.
       - name: keep the issue database untracked
         run: test -z "$(git ls-files .beads/)" || { git ls-files .beads/; exit 1; }
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       # Recorder integration tests build the plugin from this pinned checkout.
@@ -94,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - uses: actions/checkout@v4
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: record landlock ABI
