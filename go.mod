@@ -8,7 +8,7 @@ go 1.26.10
 
 require (
 	github.com/Nomadcxx/sysc-clipboard v0.1.4-0.20261019192617-18b64bffd9e7
-	github.com/Nomadcxx/sysc-wayland v0.3.2
+	github.com/Nomadcxx/sysc-wayland v0.3.3-0.20261024233357-3be5931a1dfc
 	github.com/go-freedesktop/desktopentry v0.1.0
 	github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d
 	golang.org/x/image v0.45.0

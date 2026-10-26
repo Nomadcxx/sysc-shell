@@ -20,6 +20,8 @@ github.com/Nomadcxx/sysc-tray v0.1.2 h1:c76EodiLjsdb/9+MRD2N6iVTav7KZLPniRz0HUpO
 github.com/Nomadcxx/sysc-tray v0.1.2/go.mod h1:GXyFn9M+SFByciLAABggDWNy9pCLGxoetapRjgQNL5A=
 github.com/Nomadcxx/sysc-wayland v0.3.2 h1:3QV9+Duzbe5nVbGRvyX8Gtxol0vMpPsXu2q6/Mwyrhc=
 github.com/Nomadcxx/sysc-wayland v0.3.2/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
+github.com/Nomadcxx/sysc-wayland v0.3.3-0.20261024233357-3be5931a1dfc h1:cdWMpZ2bI59ERTtaAEtappvaV3+VlF/zcguyg1RH8Pc=
+github.com/Nomadcxx/sysc-wayland v0.3.3-0.20261024233357-3be5931a1dfc/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
 github.com/Wifx/gonetworkmanager/v2 v2.2.0 h1:kPstgsQtY8CmDOOFZd81ytM9Gi3f6ImzPCKF7nNhQ2U=
 github.com/Wifx/gonetworkmanager/v2 v2.2.0/go.mod h1:fMDb//SHsKWxyDUAwXvCqurV3npbIyyaQWenGpZ/uXg=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
