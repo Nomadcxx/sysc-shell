@@ -44,6 +44,7 @@
     "tools/depdrift": 45.4,
     "tools/docscheck": 87.77,
     "tools/internal/dep": 84.6,
+    "tools/internal/workflow": 91.3,
     "tools/pinbump": 40.2,
     "tools/wlspy": 28.24,
     "weather": 90.75

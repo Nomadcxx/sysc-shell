@@ -13,6 +13,7 @@ require (
 	github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d
 	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
