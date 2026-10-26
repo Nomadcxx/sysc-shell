@@ -53,6 +53,11 @@ type Entry struct {
 	Describe string
 	Section  string
 	Group    string
+	// GroupLiteral marks Group as an identifier rather than a prose name: a
+	// connector (eDP-1) or a tray token (id:proton.vpn.app.gtk). Group titles
+	// are set in lowercase to match the section rail, which mangles an
+	// identifier, so a literal group keeps its case on screen (sysc-872).
+	GroupLiteral bool
 	// Page is the tab within Section this entry sits on (design D1). Empty in
 	// a section with no pages.
 	Page string

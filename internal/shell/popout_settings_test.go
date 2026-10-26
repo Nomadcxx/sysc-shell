@@ -3765,3 +3765,79 @@ func TestSettingsPaintsAtLeastTheOpaqueFloor(t *testing.T) {
 		t.Fatalf("clock root alpha %#x changed", a)
 	}
 }
+
+// TestIdentifierGroupCardsKeepTheirCase is sysc-872 on the surface: the Bar >
+// Displays card for a connector and the Tray card for a token keep the case
+// they are written in, because lowercasing an identifier changes it. Prose
+// group names still render lowercase, and the accessible name stays the title
+// as written in both cases.
+func TestIdentifierGroupCardsKeepTheirCase(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		section string
+		page    string
+		group   string
+		entries func(*PanelHost)
+	}{
+		{
+			name: "connector", section: "Bar", page: "Displays", group: "eDP-1",
+			entries: func(h *PanelHost) {
+				h.draft.Outputs = []config.OutputOverride{{Connector: "eDP-1", Bar: h.draft.Bar}}
+				h.set = settings.DefaultFor(h.draft)
+			},
+		},
+		{
+			// The Tray pane renames a token card after the item (sysc-861),
+			// so the title it must not lowercase is the renamed one.
+			name: "tray token", section: "Tray", group: "proton.vpn.app.gtk (app ID)",
+			entries: func(h *PanelHost) {
+				h.draft.Tray.Hidden = []string{"id:proton.vpn.app.gtk"}
+				h.set = settings.DefaultFor(h.draft)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSettingsHost()
+			tc.entries(h)
+			h.section, h.settingsPage = tc.section, tc.page
+			h.root = settingsTree(nil, h)
+
+			var heading *ui.Node
+			for _, n := range walk(h.root) {
+				if n.Role == "heading" && n.TextRole == theme.RoleSection && n.Name == tc.group {
+					heading = n
+				}
+			}
+			if heading == nil {
+				t.Fatalf("no card is titled %q", tc.group)
+			}
+			if heading.Text != tc.group {
+				t.Errorf("card title text = %q, want %q unchanged", heading.Text, tc.group)
+			}
+			if heading.Name != tc.group {
+				t.Errorf("card title accessible name = %q, want %q", heading.Name, tc.group)
+			}
+		})
+	}
+}
+
+// TestProseGroupCardsKeepTheLowercaseDisplay guards the other half of
+// sysc-872: the fix must not turn the lowercase group titles into title case.
+func TestProseGroupCardsKeepTheLowercaseDisplay(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	var names []string
+	for _, n := range walk(h.root) {
+		if n.Role == "heading" && n.TextRole == theme.RoleSection {
+			names = append(names, n.Name)
+			if n.Text != strings.ToLower(n.Name) {
+				t.Errorf("prose card %q renders %q, want lowercase", n.Name, n.Text)
+			}
+		}
+	}
+	if len(names) == 0 {
+		t.Fatal("no group cards rendered")
+	}
+}

@@ -1500,7 +1500,8 @@ func (r *Registry) addTrayEntries(cfg config.Config) {
 		r.entries = append(r.entries,
 			Entry{
 				Path: "tray." + token + ".hidden", Label: "Hidden", Section: "Tray", Group: token,
-				Describe: "Keep this item out of the tray.", Kind: KindBool,
+				GroupLiteral: true,
+				Describe:     "Keep this item out of the tray.", Kind: KindBool,
 				Get: getBool(func(c config.Config) bool { return slices.Contains(c.Tray.Hidden, token) }),
 				Set: setBool("tray."+token+".hidden", func(c *config.Config, b bool) {
 					c.Tray.Hidden = toggleToken(c.Tray.Hidden, token, b)
@@ -1508,7 +1509,8 @@ func (r *Registry) addTrayEntries(cfg config.Config) {
 			},
 			Entry{
 				Path: "tray." + token + ".pinned", Label: "Pinned", Section: "Tray", Group: token,
-				Describe: "Hold this item in the bar rather than the drawer.", Kind: KindBool,
+				GroupLiteral: true,
+				Describe:     "Hold this item in the bar rather than the drawer.", Kind: KindBool,
 				Get: getBool(func(c config.Config) bool { return slices.Contains(c.Tray.Pinned, token) }),
 				Set: setBool("tray."+token+".pinned", func(c *config.Config, b bool) {
 					c.Tray.Pinned = toggleToken(c.Tray.Pinned, token, b)
@@ -1544,7 +1546,8 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 		r.entries = append(r.entries,
 			Entry{
 				Path: "outputs." + conn + ".enabled", Label: "Enabled", Section: "Bar", Page: "Displays", Group: conn,
-				Describe: "Draw the bar on this output.", Kind: KindBool,
+				GroupLiteral: true,
+				Describe:     "Draw the bar on this output.", Kind: KindBool,
 				Get: getBool(func(c config.Config) bool {
 					return read(c, func(b config.Bar) int {
 						if b.Enabled {
@@ -1561,7 +1564,8 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 			},
 			Entry{
 				Path: "outputs." + conn + ".height", Label: "Thickness", Section: "Bar", Page: "Displays", Group: conn,
-				Describe: "Bar thickness on this output: height on top/bottom, width on left/right.", Kind: KindInt, Min: 24, Max: 128,
+				GroupLiteral: true,
+				Describe:     "Bar thickness on this output: height on top/bottom, width on left/right.", Kind: KindInt, Min: 24, Max: 128,
 				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.Height }) }),
 				Set: setInt("outputs."+conn+".height", 24, 128, func(c *config.Config, n int) {
 					if b := override(c); b != nil {
@@ -1571,7 +1575,8 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 			},
 			Entry{
 				Path: "outputs." + conn + ".font-size", Label: "Font size", Section: "Bar", Page: "Displays", Group: conn,
-				Describe: "Bar text size on this output.", Kind: KindInt, Min: 8, Max: 32,
+				GroupLiteral: true,
+				Describe:     "Bar text size on this output.", Kind: KindInt, Min: 8, Max: 32,
 				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.FontSize }) }),
 				Set: setInt("outputs."+conn+".font-size", 8, 32, func(c *config.Config, n int) {
 					if b := override(c); b != nil {
