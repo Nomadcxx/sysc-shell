@@ -106,16 +106,20 @@ of the commit gate.
 
 ## Continuous integration
 
-Every repository in the ecosystem runs the same four checks in CI: `gofmt`,
-`go vet`, `go test -race -count=1 ./...` and a build. The `-count=1` matters:
-without it a cached package result satisfies the test step without running the
-tests, so a broken change can pass on the second push.
+Most of the Go repositories in the ecosystem run the same four checks in CI:
+`gofmt`, `go vet`, `go test -race -count=1 ./...` and a build. The `-count=1`
+matters: without it a cached package result satisfies the test step without
+running the tests, so a broken change can pass on the second push. The table
+lists every repository the project maintains and the test command it runs.
 
 | Repository | Workflow | Test command |
 |---|---|---|
 | [sysc](https://github.com/Nomadcxx/sysc) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
 | [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
-| [sysc-launch](https://github.com/Nomadcxx/sysc-launch) | `.github/workflows/ci.yml` | `go test -race -count=1 -p 2 ./...` |
+| [sysc-compositor](https://github.com/Nomadcxx/sysc-compositor) | `.github/workflows/ci.yml` | `go test -count=1 -p 2` over the packages that run without a compositor |
+| [sysc-Go](https://github.com/Nomadcxx/sysc-Go) | `.github/workflows/ci.yml` | `go test -race -short -count=1 ./...` |
+| [sysc-greet](https://github.com/Nomadcxx/sysc-greet) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-launch](https://github.com/Nomadcxx/sysc-launch) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
 | [sysc-lock](https://github.com/Nomadcxx/sysc-lock) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
 | [sysc-metrics](https://github.com/Nomadcxx/sysc-metrics) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
 | [sysc-notify](https://github.com/Nomadcxx/sysc-notify) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
@@ -123,7 +127,15 @@ tests, so a broken change can pass on the second push.
 | [sysc-shell](https://github.com/Nomadcxx/sysc-shell) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
 | [sysc-terminal](https://github.com/Nomadcxx/sysc-terminal) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
 | [sysc-tray](https://github.com/Nomadcxx/sysc-tray) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+| [sysc-walls](https://github.com/Nomadcxx/sysc-walls) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
 | [sysc-wayland](https://github.com/Nomadcxx/sysc-wayland) | `.github/workflows/ci.yml` | `go test -race -count=1 ./...` |
+
+Three repositories do not follow that shape. sysc-compositor runs
+`go vet -p 2 ./...` and tests the packages that need no compositor with
+`go test -count=1 -p 2`; the compositor packages get their own job under a
+software DRM device. sysc-Go runs `go test -race -short -count=1 ./...` and
+keeps performance budgets in a separate step. gSlapper is not a Go repository
+and has no Go CI.
 
 ## Where to go next
 
