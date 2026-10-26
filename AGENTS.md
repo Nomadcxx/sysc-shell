@@ -33,8 +33,9 @@
 - Claim work with `bd update <id> --status in_progress`, close it with `bd close <id> --reason "..."`.
   Record discovered work as `bd create "..." --deps discovered-from:<id>`.
 - `.beads/` is gitignored; the SQLite database lives only in the primary checkout
-  `/home/nomadx/sysc-shell`. `.beads/issues.jsonl` is already tracked and the pre-commit hook exports
-  it. Review and commit its normal changes; never force-add ignored files.
+  `/home/nomadx/sysc-shell`. `.beads/issues.jsonl` is a derived dump, not tracked state: bd rewrites it
+  with only the rows a command touched, so a tracked copy shrinks to those rows and loses the rest. Leave
+  it out of the index; the test job fails if a file under `.beads/` is tracked.
 - **Status lives in bd, not in documents.** A design or plan states its decisions; bd states whether the
   work is done, in flight, or blocked. Do not duplicate status into a document header, where it drifts.
 - Cross-repository gates are modelled as issues in this repository — `sysc-metrics` needing a release tag,
@@ -42,9 +43,10 @@
 - Run `bd` from `/home/nomadx/sysc-shell`, never from a worktree. The SQLite file is gitignored and
   lives only in the primary checkout. Committing from a worktree needs
   `BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db`.
-- **`bd export` overwrites the tracked JSONL with only what it thinks changed.** Recover with
+- **`bd export` overwrites the JSONL with only what it thinks changed.** The tracked copy is gone, so
+  this no longer damages the repository, but a local dump can still shrink. Rebuild it with
   `sqlite3 .beads/beads.db "DELETE FROM export_hashes;" && bd export -o .beads/issues.jsonl`, then
-  `wc -l` and `git diff` before committing.
+  `wc -l` to confirm the count matches `bd info`.
 - A closed issue is not evidence the code is on `main`. Check the tree.
 - **Do not patch old handovers to keep them current.** A progress or remaining-work handover: scan for
   anything still open, put it in bd, then delete the file and its register row. A completion handover
