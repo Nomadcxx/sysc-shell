@@ -32,7 +32,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The issue database is local state. bd rewrites .beads/issues.jsonl with
       # only the rows a command touched, so a tracked copy loses every other
       # row on the first mutation, and the ignore rule cannot reach a path that
@@ -44,7 +44,7 @@ jobs:
         with:
           go-version-file: go.mod
       # Recorder integration tests build the plugin from this pinned checkout.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Nomadcxx/sysc-plugins
           ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
@@ -54,7 +54,7 @@ jobs:
       # catalogue matches this tree's sysc-terminal and sysc-Go pins: the
       # locker resolves the same sysc-Go commit this tree pins, so both
       # catalogues carry the shared model effects and ansi-love.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Nomadcxx/sysc-lock
           ref: d048b2dc43038f8a2d639c1574d601e94c2ce521
@@ -93,16 +93,16 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Nomadcxx/sysc-plugins
           ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
           path: testdeps/sysc-plugins
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Nomadcxx/sysc-lock
           ref: d048b2dc43038f8a2d639c1574d601e94c2ce521
@@ -146,7 +146,7 @@ jobs:
   landlock-abi:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
