@@ -210,12 +210,19 @@ type Registry struct {
 	settingsWriteReloads    []settingsWriteReload
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
-	writeDelay           time.Duration
-	reloads              chan<- struct{}
-	audio                *services.Audio
-	brightness           *services.Brightness
-	lockKeys             *services.LockKeys
-	lockKeysRelayCancel  chan struct{}
+	writeDelay          time.Duration
+	reloads             chan<- struct{}
+	audio               *services.Audio
+	brightness          *services.Brightness
+	lockKeys            *services.LockKeys
+	lockKeysRelayCancel chan struct{}
+	// lockKeysOSD says the OSD announces the lock state. The change channel
+	// has one consumer, so the relay that reads it is shared and this flag
+	// decides whether the relay announces as well.
+	lockKeysOSD bool
+	// lockKeysBars counts the bars that place the lock_keys widget. The
+	// service stays while one of them wants the state.
+	lockKeysBars         int
 	network              *services.Network
 	media                *services.Media
 	mediaRelayCancel     chan struct{}
@@ -1928,6 +1935,12 @@ func (r *Registry) adoptBar(
 	}
 	// Start the services the bar's widgets need before the first apply, so a
 	// lock-key state read at startup reaches the first frame.
+	if previous := r.bars[global]; previous != nil && previous.lockKeysWidget && !bar.lockKeysWidget {
+		// The bar that replaces this one gives its claim on the lock state
+		// back, so the count follows the bars that want it. A replacement
+		// that keeps the widget keeps the claim, so the service stays.
+		r.releaseLockKeysBarLocked()
+	}
 	if bar.lockKeysWidget {
 		r.ensureLockKeysLocked()
 	}
@@ -2523,6 +2536,9 @@ func (r *Registry) DropHost(global uint32) {
 	}
 	delete(r.bars, global)
 	delete(r.leases, global)
+	if bar != nil && bar.lockKeysWidget {
+		r.releaseLockKeysBarLocked()
+	}
 	r.shutdown.bars.store(r.barListLocked())
 	r.trayOutputLostLocked(global)
 	r.mediaStrip.outputLostLocked(global)
@@ -2747,7 +2763,7 @@ func (r *Registry) Close() {
 		r.brightness.Close()
 	}
 	if r.lockKeys != nil {
-		r.stopLockKeys()
+		r.endLockKeysLocked()
 	}
 	if r.network != nil {
 		r.network.Close()
