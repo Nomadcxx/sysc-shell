@@ -80,48 +80,18 @@ func (r *Registry) relayNightLightUpdates() {
 	}
 }
 
-// ensureLockKeysLocked creates the lock-key service when a bar places the
-// lock_keys widget. The OSD starts the same service for its osd_lock_keys
-// preference, and a started service is left alone: its relay already feeds
-// the bars below. When the bar is the first consumer, this relay holds one
-// lease for the service's lifetime, so the LED class is read only while a
-// bar wants the state.
+// ensureLockKeysLocked claims the lock state for a bar that places the
+// lock_keys widget. The OSD announces the same state and the change channel
+// has a single consumer, so the relay is shared: the OSD announcement is a
+// flag on the relay that runs. When the bar is the first consumer, that
+// relay holds one lease for the service's lifetime, so the LED class is
+// read only while a consumer wants the state.
 func (r *Registry) ensureLockKeysLocked() {
+	r.lockKeysBars++
 	if r.lockKeys != nil {
 		return
 	}
-	l := newLockKeys.Get()()
-	r.lockKeys = l
-	r.lockKeysState = l.Baseline()
-	go r.relayLockKeysBar(l)
-}
-
-// relayLockKeysBar keeps the registry's lock-key copy current for the
-// service's lifetime. relayLockKeysOSD feeds the bars instead when the OSD
-// owns the service, because the change channel is single-consumer.
-func (r *Registry) relayLockKeysBar(l *services.LockKeys) {
-	release := l.Acquire()
-	defer release()
-	prev := l.Baseline()
-	ch := l.Changes()
-	for {
-		select {
-		case <-r.closed:
-			return
-		case st, ok := <-ch:
-			if !ok {
-				return
-			}
-			if st == prev {
-				continue
-			}
-			prev = st
-			r.mu.Lock()
-			r.lockKeysState = st
-			r.mu.Unlock()
-			r.repaintCapabilityBars()
-		}
-	}
+	r.beginLockKeysLocked()
 }
 
 // ensureProfilesLocked starts the one power-profiles fetch the bar needs to

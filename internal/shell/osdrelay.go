@@ -22,16 +22,19 @@ func lockOSD(prev, next services.LockState) []OSDView {
 	return out
 }
 
-// relayLockKeysOSD runs outside the Wayland owner so Show can take Registry.mu.
-// The relay holds the poller's lease while it runs: the registry closing or
-// panels.osd_lock_keys switching off cancels it, and its return gives the
-// lease back, which stops the poll loop with it.
-func (r *Registry) relayLockKeysOSD(l *services.LockKeys, cancel <-chan struct{}) {
+// relayLockKeys runs outside the Wayland owner so Show can take Registry.mu.
+// One relay consumes the change channel for the service's lifetime: the
+// channel has a single consumer, so the OSD announcement and the bar widget
+// share it. The relay holds the poller's lease while it runs: the registry
+// closing or the last consumer going away cancels it, and its return gives
+// the lease back, which stops the poll loop with it.
+func (r *Registry) relayLockKeys(l *services.LockKeys, cancel <-chan struct{}) {
 	if l == nil {
 		return
 	}
-	// The lease starts the poll loop: while the OSD wants the lock state the
-	// LED class is read, and when the relay ends the poll loop ends with it.
+	// The lease starts the poll loop: while a consumer wants the lock state
+	// the LED class is read, and when the relay ends the poll loop ends with
+	// it.
 	release := l.Acquire()
 	defer release()
 	prev := l.Baseline()
@@ -45,16 +48,17 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys, cancel <-chan struct{}
 			if !ok {
 				return
 			}
-			for _, view := range lockOSD(prev, st) {
-				r.OSD().Show(view)
-			}
-			prev = st
-			// The change channel is single-consumer, so the OSD relay feeds
-			// the lock_keys bar widget when it owns the service.
 			r.mu.Lock()
+			announce := r.lockKeysOSD
 			r.lockKeysState = st
 			changed := r.repaintBarsLocked()
 			r.mu.Unlock()
+			if announce {
+				for _, view := range lockOSD(prev, st) {
+					r.OSD().Show(view)
+				}
+			}
+			prev = st
 			r.publish(changed)
 		}
 	}
@@ -64,35 +68,69 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys, cancel <-chan struct{}
 // rooted in a temporary directory.
 var newLockKeys = seam.New(func() *services.LockKeys { return services.NewLockKeys("", 0) })
 
-// startLockKeys wires the lock-key service when the OSD wants it. The OSD
-// that shows Caps and Num Lock is the only consumer, so with it off nothing
-// reads the keyboard LED class and the shell keeps no poller running.
-// Wiring is idempotent, so a reload that leaves the knob alone is a no-op.
-// Once the registry is live the caller holds Registry.mu.
+// startLockKeys turns the lock-key announcement on. The service is shared
+// with the bars, so the knob only flips a flag when the service is already
+// running: the relay that reads the change channel starts announcing. A
+// service nobody else wants is built here. Once the registry is live the
+// caller holds Registry.mu.
 func (r *Registry) startLockKeys(cfg config.Config) {
-	if !cfg.Panels.OSDLockKeys || r.lockKeys != nil {
+	if !cfg.Panels.OSDLockKeys {
 		return
 	}
+	r.lockKeysOSD = true
+	if r.lockKeys != nil {
+		return
+	}
+	r.beginLockKeysLocked()
+}
+
+// beginLockKeysLocked builds the lock-key service and starts the relay that
+// reads it. Once the registry is live the caller holds Registry.mu.
+func (r *Registry) beginLockKeysLocked() {
 	cancel := make(chan struct{})
-	r.lockKeys = newLockKeys.Get()()
+	l := newLockKeys.Get()()
+	r.lockKeys = l
 	r.lockKeysRelayCancel = cancel
 	// Seed the bar feed before the relay starts: a keyboard that already has
 	// Caps Lock on must show it on the first frame, not at the first change.
 	// The baseline is only read when a lease starts the poll loop, so take one
 	// for the read. The relay takes its own lease next and sees the same state.
-	release := r.lockKeys.Acquire()
-	r.lockKeysState = r.lockKeys.Baseline()
+	release := l.Acquire()
+	r.lockKeysState = l.Baseline()
 	release()
-	go r.relayLockKeysOSD(r.lockKeys, cancel)
+	go r.relayLockKeys(l, cancel)
 }
 
-// stopLockKeys unwires the lock-key service, the other direction of a
-// reload flipping panels.osd_lock_keys. The relay is cancelled first so its
-// lease comes back, then the service closes: Close stops the poll loop even
-// with that lease still outstanding and waits for the loop to end, so no
-// poller outlives the knob that asked for it. Once the registry is live the
-// caller holds Registry.mu.
+// stopLockKeys turns the lock-key announcement off. The service stays while
+// a bar places the lock_keys widget: the bars read the same state, so
+// closing it would empty their widget. Once the registry is live the caller
+// holds Registry.mu.
 func (r *Registry) stopLockKeys() {
+	r.lockKeysOSD = false
+	if r.lockKeysBars > 0 {
+		return
+	}
+	r.endLockKeysLocked()
+}
+
+// releaseLockKeysBarLocked gives back one bar's claim on the lock state.
+// The service closes when the OSD does not want it either. Once the registry
+// is live the caller holds Registry.mu.
+func (r *Registry) releaseLockKeysBarLocked() {
+	if r.lockKeysBars > 0 {
+		r.lockKeysBars--
+	}
+	if r.lockKeysBars == 0 && !r.lockKeysOSD {
+		r.endLockKeysLocked()
+	}
+}
+
+// endLockKeysLocked cancels the relay and closes the service. The relay is
+// cancelled first so its lease comes back, then the service closes: Close
+// stops the poll loop even with that lease still outstanding and waits for
+// the loop to end, so no poller outlives the consumer that asked for it.
+// Once the registry is live the caller holds Registry.mu.
+func (r *Registry) endLockKeysLocked() {
 	if r.lockKeysRelayCancel != nil {
 		close(r.lockKeysRelayCancel)
 		r.lockKeysRelayCancel = nil
