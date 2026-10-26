@@ -197,15 +197,17 @@ func TestIWDAsksForAPassphraseThroughTheSharedSlot(t *testing.T) {
 		psk, err := f.agent.RequestPassphrase(homePath)
 		done <- answer{psk, err}
 	}()
+	gen := uint64(0)
 	select {
 	case req := <-n.SecretRequests():
 		if req.SSID != "Home" {
 			t.Fatalf("prompt for %q, want Home", req.SSID)
 		}
+		gen = req.Generation
 	case <-time.After(5 * time.Second):
 		t.Fatal("iwd's request never reached the panel")
 	}
-	if err := n.SubmitSecret("hunter22"); err != nil {
+	if err := n.SubmitSecret(gen, "hunter22"); err != nil {
 		t.Fatal(err)
 	}
 	if got := <-done; got.err != nil || got.psk != "hunter22" {
@@ -216,8 +218,8 @@ func TestIWDAsksForAPassphraseThroughTheSharedSlot(t *testing.T) {
 		psk, err := f.agent.RequestPassphrase(homePath)
 		done <- answer{psk, err}
 	}()
-	<-n.SecretRequests()
-	n.CancelSecret()
+	req := <-n.SecretRequests()
+	n.CancelSecret(req.Generation)
 	if got := <-done; got.err == nil || got.err.Name != iwdAgentCanceled {
 		t.Fatalf("a cancelled prompt answered %+v", got)
 	}

@@ -26,7 +26,11 @@ func TestSubmitSecretValidatesWPAInputWithoutEchoingIt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n := NewNetwork(&fakeBackend{})
-			err := n.SubmitSecret(tc.psk)
+			_, gen, ok := n.secrets.begin(SecretRequest{SSID: "Orac 15A"}, make(chan secretReply, 1))
+			if !ok {
+				t.Fatal("the slot must accept the first request")
+			}
+			err := n.SubmitSecret(gen, tc.psk)
 			if (err == nil) != tc.want {
 				t.Fatalf("SubmitSecret error = %v, want valid=%v", err, tc.want)
 			}
@@ -44,12 +48,12 @@ func TestSecondRequestIsRejectedWhileOneIsPending(t *testing.T) {
 	s := newSecretSlot()
 
 	first := make(chan secretReply, 1)
-	if _, ok := s.begin(SecretRequest{SSID: "Orac 15A"}, first); !ok {
+	if _, _, ok := s.begin(SecretRequest{SSID: "Orac 15A"}, first); !ok {
 		t.Fatal("the first request must be accepted")
 	}
 
 	second := make(chan secretReply, 1)
-	if _, ok := s.begin(SecretRequest{SSID: "LukeAP"}, second); ok {
+	if _, _, ok := s.begin(SecretRequest{SSID: "LukeAP"}, second); ok {
 		t.Fatal("a second request must be refused while one is pending")
 	}
 	select {
@@ -83,9 +87,12 @@ func TestCancelAlwaysReplies(t *testing.T) {
 func TestSubmitDeliversTheSecretAndFreesTheSlot(t *testing.T) {
 	s := newSecretSlot()
 	ch := make(chan secretReply, 1)
-	s.begin(SecretRequest{SSID: "Orac 15A"}, ch)
+	_, gen, ok := s.begin(SecretRequest{SSID: "Orac 15A"}, ch)
+	if !ok {
+		t.Fatal("the first request must be accepted")
+	}
 
-	s.submit("hunter2")
+	s.submitGen(gen, "hunter2")
 	select {
 	case got := <-ch:
 		if got.psk != "hunter2" {
@@ -100,7 +107,7 @@ func TestSubmitDeliversTheSecretAndFreesTheSlot(t *testing.T) {
 
 	// The slot frees, so the next join can prompt.
 	next := make(chan secretReply, 1)
-	if _, ok := s.begin(SecretRequest{SSID: "LukeAP"}, next); !ok {
+	if _, _, ok := s.begin(SecretRequest{SSID: "LukeAP"}, next); !ok {
 		t.Error("the slot must accept a new request once the last one is answered")
 	}
 }
@@ -110,13 +117,16 @@ func TestSubmitDeliversTheSecretAndFreesTheSlot(t *testing.T) {
 func TestSecondAnswerIsIgnored(t *testing.T) {
 	s := newSecretSlot()
 	ch := make(chan secretReply, 1)
-	s.begin(SecretRequest{SSID: "Orac 15A"}, ch)
+	_, gen, ok := s.begin(SecretRequest{SSID: "Orac 15A"}, ch)
+	if !ok {
+		t.Fatal("the first request must be accepted")
+	}
 
-	s.submit("hunter2")
+	s.submitGen(gen, "hunter2")
 	<-ch // the one legitimate answer
 
-	s.cancel()
-	s.submit("again")
+	s.cancelGen(gen)
+	s.submitGen(gen, "again")
 
 	if n := len(ch); n != 0 {
 		t.Errorf("%d extra replies queued; a request is answered once", n)
@@ -127,7 +137,7 @@ func TestSecondAnswerIsIgnored(t *testing.T) {
 func TestCancelOnAnEmptySlotIsANoOp(t *testing.T) {
 	s := newSecretSlot()
 	s.cancel()
-	s.submit("nothing pending")
+	s.submitGen(1, "nothing pending")
 	if s.pending() {
 		t.Error("an empty slot must not report a pending request")
 	}
@@ -230,7 +240,7 @@ func secretWireRequest() map[string]map[string]dbus.Variant {
 
 func TestUnansweredPromptExpiresAtTheDeadline(t *testing.T) {
 	requests := make(chan SecretRequest, 1)
-	expired := make(chan struct{}, 1)
+	expired := make(chan uint64, 1)
 	export := &secretExport{
 		slot: newSecretSlot(), requests: requests,
 		timeout: 25 * time.Millisecond, expired: expired,
@@ -260,14 +270,14 @@ func TestUnansweredPromptExpiresAtTheDeadline(t *testing.T) {
 		t.Fatal("the relay was not nudged to clear the password card")
 	}
 	next := make(chan secretReply, 1)
-	if _, ok := export.slot.begin(SecretRequest{SSID: "LukeAP"}, next); !ok {
+	if _, _, ok := export.slot.begin(SecretRequest{SSID: "LukeAP"}, next); !ok {
 		t.Fatal("the timeout must free the slot for the next join")
 	}
 }
 
 func TestAnsweredPromptIsNotRevivedByTheDeadline(t *testing.T) {
 	requests := make(chan SecretRequest, 1)
-	expired := make(chan struct{}, 1)
+	expired := make(chan uint64, 1)
 	export := &secretExport{
 		slot: newSecretSlot(), requests: requests,
 		timeout: 25 * time.Millisecond, expired: expired,
@@ -278,8 +288,8 @@ func TestAnsweredPromptIsNotRevivedByTheDeadline(t *testing.T) {
 		done <- err
 	}()
 
-	<-requests
-	export.slot.submit("hunter2")
+	req := <-requests
+	export.slot.submitGen(req.Generation, "hunter2")
 
 	select {
 	case err := <-done:
@@ -300,30 +310,30 @@ func TestAnsweredPromptIsNotRevivedByTheDeadline(t *testing.T) {
 func TestAnEarlierDeadlineDoesNotCancelALaterPrompt(t *testing.T) {
 	const timeout = time.Second
 	requests := make(chan SecretRequest, 1)
-	expired := make(chan struct{}, 1)
+	expired := make(chan uint64, 1)
 	export := &secretExport{
 		slot: newSecretSlot(), requests: requests,
 		timeout: timeout, expired: expired,
 	}
-	ask := func() <-chan *dbus.Error {
+	ask := func() (<-chan *dbus.Error, uint64) {
 		done := make(chan *dbus.Error, 1)
 		go func() {
 			_, err := export.GetSecrets(secretWireRequest(), "/connection", wirelessSecuritySetting, nil, flagAllowInteraction)
 			done <- err
 		}()
-		<-requests
-		return done
+		req := <-requests
+		return done, req.Generation
 	}
 
 	start := time.Now()
-	first := ask()
-	export.slot.submit("hunter2")
+	first, firstGen := ask()
+	export.slot.submitGen(firstGen, "hunter2")
 	if err := <-first; err != nil {
 		t.Fatalf("first prompt returned %v, want success", err)
 	}
 
 	time.Sleep(timeout / 2)
-	second := ask()
+	second, _ := ask()
 
 	// Past the first prompt's deadline, well before the second's.
 	time.Sleep(time.Until(start.Add(timeout * 5 / 4)))

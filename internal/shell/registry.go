@@ -1095,8 +1095,8 @@ func (r *Registry) relayNetwork(network *services.Network) {
 				return
 			}
 			r.presentNetworkSecret(network, req)
-		case <-network.SecretExpiry():
-			r.expireNetworkSecret(network)
+		case gen := <-network.SecretExpiry():
+			r.expireNetworkSecret(network, gen)
 		}
 	}
 }
@@ -1131,18 +1131,21 @@ func (r *Registry) presentNetworkSecret(network *services.Network, req services.
 	r.mu.Lock()
 	if r.network != network {
 		r.mu.Unlock()
-		network.CancelSecret()
+		network.CancelSecret(req.Generation)
 		return
 	}
 	h := r.panelHosts[PanelNetwork]
 	if h == nil {
 		r.mu.Unlock()
-		network.CancelSecret()
+		network.CancelSecret(req.Generation)
 		return
 	}
 	h.clearNetworkSecret()
 	h.networkTab = "wifi"
 	h.pendingSSID = req.SSID
+	// The card carries the generation of the prompt it belongs to, so an
+	// answer typed for this prompt cannot land on a later one.
+	h.pendingSecretGen = req.Generation
 	h.password = ui.NewField("")
 	h.password.Masked = true
 	h.errLabel = ""
@@ -1155,8 +1158,9 @@ func (r *Registry) presentNetworkSecret(network *services.Network, req services.
 
 // expireNetworkSecret drops the password card once a prompt outlived its
 // deadline. The service has already answered NetworkManager with a cancel;
-// this keeps the panel from offering to submit a secret nobody waits for.
-func (r *Registry) expireNetworkSecret(network *services.Network) {
+// this keeps the panel from offering to submit a secret nobody waits for. A
+// card that already moved on to a later prompt keeps its own state.
+func (r *Registry) expireNetworkSecret(network *services.Network, gen uint64) {
 	r.mu.Lock()
 	if r.network != network {
 		r.mu.Unlock()
@@ -1164,6 +1168,10 @@ func (r *Registry) expireNetworkSecret(network *services.Network) {
 	}
 	h := r.panelHosts[PanelNetwork]
 	if h == nil || h.pendingSSID == "" {
+		r.mu.Unlock()
+		return
+	}
+	if h.pendingSecretGen != gen {
 		r.mu.Unlock()
 		return
 	}

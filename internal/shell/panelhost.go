@@ -289,6 +289,7 @@ type PanelHost struct {
 	manualSecurity     services.ManualSecurity
 	weatherView        string
 	pendingSSID        string
+	pendingSecretGen   uint64
 	password           *ui.Field
 	bluetoothInput     *ui.Field
 	bluetoothPromptID  services.PromptID
@@ -5070,10 +5071,18 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if id == PanelNotifications {
 		r.setCenterOpen(false)
 	}
-	if id == PanelNetwork && r.network != nil {
-		r.network.CancelSecret()
-	}
 	h := r.panelHosts[id]
+	if id == PanelNetwork && r.network != nil {
+		// The teardown cancels the prompt the card was showing, by
+		// generation, so a prompt that arrived after this card does not
+		// lose its answer. With no card there is nobody to answer any
+		// prompt, so the open one goes.
+		if h != nil && h.pendingSecretGen != 0 {
+			r.network.CancelSecret(h.pendingSecretGen)
+		} else {
+			r.network.CancelOpenSecret()
+		}
+	}
 	if h == nil {
 		return
 	}
