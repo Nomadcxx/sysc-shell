@@ -33,6 +33,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The issue database is local state. bd rewrites .beads/issues.jsonl with
+      # only the rows a command touched, so a tracked copy loses every other
+      # row on the first mutation, and the ignore rule cannot reach a path that
+      # is already in the index. This keeps the index empty. It runs before the
+      # build so a re-tracked file fails the job in seconds.
+      - name: keep the issue database untracked
+        run: test -z "$(git ls-files .beads/)" || { git ls-files .beads/; exit 1; }
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
