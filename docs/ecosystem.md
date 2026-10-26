@@ -100,9 +100,9 @@ of the commit gate.
 | sysc-launch | `v0.4.0` |
 | sysc-metrics | `v0.7.3` |
 | sysc-notify | `v0.1.1` |
-| sysc-terminal | `v0.2.0` |
+| sysc-terminal | `v0.2.2-0.20261022013002-57dd64b663ae` |
 | sysc-tray | `v0.1.2` |
-| sysc-Go | `v1.0.7` (indirect) |
+| sysc-Go | `v1.0.9` (indirect) |
 
 ## Where to go next
 
