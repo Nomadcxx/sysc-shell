@@ -672,6 +672,15 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 |---|---|---|
 | [2026-10-25-sysc-1696-bar-presence.md](2026-10-25-sysc-1696-bar-presence.md) | plan | `sysc-1696`: register the nightlight, idle_inhibitor, brightness, power_profile, lock_keys and theme_mode kinds as bar widgets with icons, tooltips, absent-capability handling and click actions, lifting the vocabulary from 27 to 33 kinds. |
 
+## Governance artifacts and dependency automation, completion (2026-10-26)
+
+Snapshot of the tranche the 2026-10-25 execution handover commissioned. Replaces that handover,
+which is retired.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| [2026-10-26-governance-and-dependency-automation-completion-handover.md](2026-10-26-governance-and-dependency-automation-completion-handover.md) | completion-handover | Fourteen pull requests: `sysc-shell` #485 (drift report, guarded pin bump, `github-actions` dependabot) and #487 (`SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, docscheck path), plus one governance PR in each of the twelve siblings. Records why acceptance point 1 of `sysc-1680` cannot be met (`go get` is what both Go updaters run, and `sysc-1731` forbids it) and what replaced it: `tools/depdrift` reporting 82 findings on the first run, and `tools/pinbump` refusing a single `sysc-terminal` bump that dragged `sysc-Go` along. Carries the changelog decision (no `CHANGELOG.md`; notes from commit history, and the two `release.yml` files that hard-coded notes now use `--generate-notes`), the 13-repository coverage with its three exclusions, private vulnerability reporting enabled on all 13, and the merge that retired both `// hold:` pins when #486 landed. States plainly that nothing is merged, the drift itself is `sysc-1738`, and neither scheduled workflow has fired yet. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not
