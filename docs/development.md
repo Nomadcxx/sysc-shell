@@ -18,6 +18,33 @@ commit gate.
 | [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard) | Clipboard history daemon. Separate process; the shell uses its `client` package |
 | [oksvg](https://github.com/srwiley/oksvg) + [rasterx](https://github.com/srwiley/rasterx) | Pure-Go SVG rasterisation for theme icons. Upstream tags no releases, so the pins are pseudo-versions |
 
+## Bumping a pin
+
+Do not run `go get`, and do not run `go mod tidy`. In this module either command rewrites
+metadata beyond the `require` line: `go get` has downgraded the `go` directive from
+1.26.10 to 1.26.4, reopening GO-2026-6809 and GO-2026-6617, and deleted `ignore ./docs`.
+CI reads the `go` directive for the toolchain it installs, so that damage also defeats
+the vulnerability scan.
+
+Bump one module from a clean branch based on `origin/main`:
+
+```sh
+git checkout origin/main -- go.mod go.sum
+# Edit only the one require line for the module and version.
+GOFLAGS=-mod=mod go mod download github.com/Nomadcxx/sysc-module@vX.Y.Z
+```
+
+Review the diff. The only `go.mod` change must be that `require` line, and the only
+`go.sum` changes must be the selected module's entries. Two lines are protected and must
+stay byte-identical:
+
+- the `go 1.26.10` directive and the CVE comment above it;
+- `ignore ./docs`.
+
+After committing, `git diff --exit-code -- go.mod go.sum` must pass like the rest of the
+commit gate. A pseudo-version names a commit rather than a release, so there is no tag to
+move to; pick the commit deliberately.
+
 ## Technology direction
 
 - Go owns shell state, Niri IPC, layout, widgets, services, configuration, and plugin supervision.
