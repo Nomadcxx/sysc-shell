@@ -152,3 +152,11 @@ jobs:
           go-version-file: go.mod
       - name: record landlock ABI
         run: go test ./internal/plugin/ -run '^TestLandlockABIRecorded$' -v -count=1
+
+  verify:
+    uses: Nomadcxx/.github/.github/workflows/go-verify.yml@cd88b2e0b04be9dee5a2becf3a4586b108dd9c11
+    with:
+      go-version-file: go.mod
+      run-build: true
+      extra-setup: true
+      timeout: 60
