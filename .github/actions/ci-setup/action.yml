@@ -1,0 +1,33 @@
+name: CI setup
+
+description: Prepare the shell's pinned cross-repository test contracts for shared verification.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        repository: Nomadcxx/sysc-plugins
+        ref: 0cea6f74a0c917b0edacf3832304caad021f51c7
+        path: testdeps/sysc-plugins
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        repository: Nomadcxx/sysc-lock
+        ref: d048b2dc43038f8a2d639c1574d601e94c2ce521
+        path: testdeps/sysc-lock
+    - name: Install native test dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends libegl-dev libgles-dev libpam0g-dev
+    - name: Build the lock screen contract binary
+      shell: bash
+      working-directory: testdeps/sysc-lock
+      run: go build -o "$GITHUB_WORKSPACE/testdeps/sysc-lock-bin" ./cmd/sysc-lock
+    - name: Export test contract paths
+      shell: bash
+      run: |
+        {
+          echo "SYSC_PLUGINS_DIR=$GITHUB_WORKSPACE/testdeps/sysc-plugins"
+          echo "SYSC_LOCK_CONTRACT_BINARY=$GITHUB_WORKSPACE/testdeps/sysc-lock-bin"
+        } >> "$GITHUB_ENV"
