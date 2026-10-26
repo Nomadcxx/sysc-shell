@@ -96,7 +96,7 @@ of the commit gate.
 | Module | Pin |
 |---|---|
 | sysc-clipboard | `v0.1.4-0.20261019192617-18b64bffd9e7` |
-| sysc-wayland | `v0.3.2` |
+| sysc-wayland | `v0.3.3-0.20261024233357-3be5931a1dfc` |
 | sysc-launch | `v0.4.0` |
 | sysc-metrics | `v0.7.3` |
 | sysc-notify | `v0.1.1` |
