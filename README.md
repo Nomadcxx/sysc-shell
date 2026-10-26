@@ -299,6 +299,22 @@ ok with `(defaults, file not found)`: the shell starts with its built-in default
 answer. The exit codes are a contract: 0 accepted, 1 the loader rejected the content, 2 usage or a
 read failure. On a rejection the loader's message goes to stderr, naming the problem.
 
+### Checking the running environment
+
+```bash
+sysc-shell doctor
+sysc-shell doctor --json
+sysc-shell doctor --strict
+```
+
+`doctor` reports the compositor connection, the Wayland interfaces the shell needs, the plugin
+supervisor and its Landlock ABI, each daemon socket, font discovery, the locale, the time-zone
+database and the D-Bus interfaces it uses. Each row names the dependency, whether it is present, the
+version found and a fix when something is missing. Paths under `$HOME` and the runtime directory are
+shortened to `~` and `$XDG_RUNTIME_DIR`, so the report can be pasted into an issue. The exit codes
+are a contract: 0 no failures, 1 a check failed (or, with `--strict`, any warning), 2 usage or an
+output failure. A missing optional daemon warns; a missing shell IPC socket fails.
+
 ## Panels and integrations
 
 The shell draws through `wl_shm` and talks to Niri over its IPC socket.

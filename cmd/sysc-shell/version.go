@@ -11,7 +11,7 @@ import (
 // socket and starts nothing, so scripts can call it while the shell is stopped.
 func runVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
-		fmt.Fprintln(stderr, "usage: sysc-shell [--version] | config check [path] | ipc <method> [params-json]")
+		fmt.Fprintln(stderr, "usage: sysc-shell [--version] | config check [path] | doctor [--json] [--strict] | ipc <method> [params-json]")
 		return 2
 	}
 	fmt.Fprintln(stdout, buildinfo.Line())

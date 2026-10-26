@@ -19,9 +19,7 @@ require (
 	github.com/Nomadcxx/sysc-launch v0.4.0
 	github.com/Nomadcxx/sysc-metrics v0.7.3
 	github.com/Nomadcxx/sysc-notify v0.1.1
-	// hold: the bump waits for the shared model effects of the lock
-	// release, and moves with the sibling pins in one group (see sysc-1733).
-	github.com/Nomadcxx/sysc-terminal v0.2.0
+	github.com/Nomadcxx/sysc-terminal v0.2.2-0.20261022013002-57dd64b663ae
 	github.com/Nomadcxx/sysc-tray v0.1.2
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/jfreymuth/oggvorbis v1.0.5
@@ -34,9 +32,7 @@ require (
 )
 
 require (
-	// hold: the version is settled across the five consumers of the module
-	// (see sysc-1691).
-	github.com/Nomadcxx/sysc-Go v1.0.7 // indirect
+	github.com/Nomadcxx/sysc-Go v1.0.9 // indirect
 	github.com/charmbracelet/colorprofile v0.3.2 // indirect
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.3.0.20250917201909-41ff0bf215ea // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20250915111650-81d4262876ef // indirect
