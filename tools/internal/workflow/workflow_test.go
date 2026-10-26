@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,40 @@ func TestAWorkflowFileThatParsesIsAccepted(t *testing.T) {
 		"          echo two\n"
 	if err := Check("good.yml", []byte(good)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The check reads the workflow files of a directory and leaves the other
+// files of the directory alone.
+func TestTheCheckReadsTheWorkflowFilesOfADirectory(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("good.yml", "name: test\non: push\n")
+	write("broken.yml", "name: test\nfree text\n")
+	write("notes.txt", "not a workflow\n")
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := CheckDir(dir)
+	if err == nil {
+		t.Fatal("the directory with a broken workflow file was accepted")
+	}
+	if !strings.Contains(err.Error(), "broken.yml") {
+		t.Fatalf("the report does not name the broken file: %v", err)
+	}
+	if strings.Contains(err.Error(), "notes.txt") {
+		t.Fatalf("the report names a file that is not a workflow: %v", err)
+	}
+}
+
+// A directory that cannot be read is a problem the check reports.
+func TestTheCheckReportsADirectoryItCannotRead(t *testing.T) {
+	if err := CheckDir(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("the missing directory was accepted")
 	}
 }
