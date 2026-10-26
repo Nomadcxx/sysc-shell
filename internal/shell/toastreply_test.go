@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
@@ -227,5 +228,75 @@ func TestToastReplyEndsWhenTheRecordCloses(t *testing.T) {
 	}
 	if mode, _ := lastKeyboard(r, h); mode != keyboardNone {
 		t.Fatalf("keyboard = %d, want none", mode)
+	}
+}
+
+// A burst that pushes the replying card off the visible stack must not
+// discard the typed text: the reply parks with the card and comes back with
+// it, so the draft survives the move.
+func TestToastReplyKeepsItsTextWhenTheBurstQueuesItsCard(t *testing.T) {
+	r, h, sender := replyToast(t)
+	clickReplyField(t, r, h)
+	typeText(h, "keep me")
+
+	// A burst of newer notifications pushes the older replying card out of
+	// the visible stack.
+	for id := uint32(2); id <= 40; id++ {
+		r.applyNotify(delta(1, uint64(id), protocol.Delta{
+			Kind:         protocol.DeltaAdded,
+			Notification: ptr(note(id, "burst")),
+			Lifetime:     &protocol.Lifetime{ID: id, DurationMS: 5000, RemainingMS: 5000, Running: true},
+		}))
+	}
+	r.mu.Lock()
+	queued := slices.Contains(h.queued["eDP-1"], uint32(1))
+	visible := slices.Contains(h.visible["eDP-1"], uint32(1))
+	text := ""
+	if h.editing != nil {
+		text = h.editing.field.Text
+	}
+	r.mu.Unlock()
+	if visible {
+		t.Fatal("the burst did not queue the replying card")
+	}
+	if !queued {
+		t.Fatal("the replying card left the stack without queueing")
+	}
+	if !replying(r, h) {
+		t.Fatal("the reply ended when its card was queued")
+	}
+	if text != "keep me" {
+		t.Fatalf("reply text = %q, want the draft kept", text)
+	}
+	if mode, _ := lastKeyboard(r, h); mode != keyboardNone {
+		t.Fatalf("keyboard = %d while the card is queued, want none", mode)
+	}
+
+	// The stack drains and the card comes back with the draft in it.
+	for id := uint32(2); id <= 40; id++ {
+		r.applyNotify(delta(1, uint64(100+id), protocol.Delta{Kind: protocol.DeltaClosed, ID: id}))
+	}
+	r.mu.Lock()
+	back := slices.Contains(h.visible["eDP-1"], uint32(1))
+	var field *ui.Node
+	for _, card := range h.cards["eDP-1"] {
+		if f := findAction(card.root, "notify:1:reply"); f != nil {
+			field = f
+		}
+	}
+	r.mu.Unlock()
+	if !back {
+		t.Fatal("the replying card did not come back to the visible stack")
+	}
+	if field == nil || field.Text != "keep me" {
+		t.Fatalf("reply field = %+v, want the draft restored", field)
+	}
+
+	// The draft is still the reply: it sends when the card is used again.
+	clickReplyField(t, r, h)
+	pressSym(h, ui.SymReturn)
+	sent := sender.ofKind(protocol.CommandReply)
+	if len(sent) != 1 || sent[0].Text != "keep me" {
+		t.Fatalf("replies = %+v, want the parked draft sent", sent)
 	}
 }
