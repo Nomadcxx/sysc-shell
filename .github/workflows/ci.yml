@@ -127,7 +127,7 @@ jobs:
       # The measurement is uploaded before the check, so a red check still
       # leaves the numbers behind.
       - name: upload the measurement
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-floors
           path: |
