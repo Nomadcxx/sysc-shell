@@ -132,6 +132,23 @@ func TestMarkdownNodesKeepsPipeProseAsParagraph(t *testing.T) {
 	}
 }
 
+func TestMarkdownNodesEndsTableAtPipeProse(t *testing.T) {
+	src := "| name | version |\n| :--- | ---: |\n| Timer | 1.0 |\nUse left | right when describing a choice."
+	nodes := markdownNodes(src, 400, markdownTestMetrics(), markdownTestMeasure)
+	if len(nodes) != 3 {
+		t.Fatalf("table + pipe prose = %d blocks, want 2 table rows and 1 paragraph: %+v", len(nodes), nodes)
+	}
+	for i, row := range nodes[:2] {
+		if row.Kind != ui.KindRow || len(row.Children) != 2 || row.Children[0].Kind != ui.KindColumn ||
+			row.Children[1].Kind != ui.KindColumn || row.Children[0].Width != row.Children[1].Width {
+			t.Fatalf("table row %d lost its fixed-width cells: %+v", i, row)
+		}
+	}
+	if nodes[2].Kind != ui.KindColumn {
+		t.Fatalf("pipe prose after table = %+v, want a paragraph column", nodes[2])
+	}
+}
+
 func TestMarkdownNodesWrapsWideGlyphsWithinWidth(t *testing.T) {
 	measure := ui.MeasureText(markdownTestMeasure)
 	nodes := markdownNodes("漢漢漢", 32, markdownTestMetrics(), measure)
