@@ -157,13 +157,14 @@ func (s *Server) Listen() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	if alive, unknown := peerAlive(s.path); alive || unknown {
-		return ErrSingleInstance
-	}
+	// The claim comes first: it is what makes the state of the path worth
+	// reading. While it is held, no other shell can replace the socket, so
+	// the probe below and the bind that follows see the same path.
 	if err := s.claimPath(); err != nil {
 		return err
 	}
-	// The path may have changed while the claim was taken.
+	// A live peer keeps its socket, and a path whose state is unknown is
+	// not taken either.
 	if alive, unknown := peerAlive(s.path); alive || unknown {
 		s.releaseClaim()
 		return ErrSingleInstance
@@ -174,9 +175,14 @@ func (s *Server) Listen() error {
 			s.releaseClaim()
 			return err
 		}
-		// Nothing answers the path and the claim is ours, so the socket
-		// there is dead. Replacing it is safe: a live owner holds the
-		// claim.
+		// The path was taken again while we were binding. A peer that
+		// answers owns it and keeps it, even without a claim: an older
+		// shell serves the path without one. A peer that does not answer
+		// left a dead socket there, and the claim is ours.
+		if alive, unknown := peerAlive(s.path); alive || unknown {
+			s.releaseClaim()
+			return ErrSingleInstance
+		}
 		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.releaseClaim()
 			return err
@@ -214,6 +220,10 @@ func peerAlive(path string) (alive, unknown bool) {
 		// Both are the stale case.
 		return false, false
 	}
+	if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENAMETOOLONG) {
+		// The address itself is unusable, so no peer can be behind it.
+		return false, false
+	}
 	// The path answered with something else: a full backlog, a permission
 	// problem. The peer may well be there, so the state of the path is
 	// unknown and it is not taken.
@@ -238,6 +248,8 @@ func (s *Server) claimPath() error {
 		case err == nil:
 			s.setClaim(f)
 			return nil
+		case errors.Is(err, unix.EINTR):
+			// A signal cut the attempt short; try again.
 		case !errors.Is(err, unix.EWOULDBLOCK):
 			_ = f.Close()
 			return err
