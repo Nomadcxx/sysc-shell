@@ -223,8 +223,10 @@ type Manifest struct {
 	Author      string
 	Description string
 	Protocol    v1.Version
-	// Exec is the declared relative path; ExecPath is the resolved absolute
-	// one, proven to be a regular executable inside the plugin directory.
+	// Exec is the declared relative path; ExecPath is the verified absolute
+	// path of that entry point after symlink resolution, proven to be a
+	// regular executable inside the plugin directory. Start and the launcher
+	// use this path so a later symlink swap cannot redirect execution.
 	Exec     string
 	ExecPath string
 	Dir      string
@@ -1098,11 +1100,13 @@ func decodeValue(raw json.RawMessage, t SettingType) (any, error) {
 }
 
 // resolveExec proves the declared entry point is a regular executable inside
-// the plugin directory.
+// the plugin directory and returns that verified path.
 //
 // Containment is checked after symbolic links are resolved, not only on the
 // path text: a plugin directory is user-writable, so a relative name that
 // looks contained can still point at an executable the packager never shipped.
+// The returned path is the resolved target that passed the check, so later
+// Start/exec use the same inode the containment proof covered.
 func resolveExec(dir, rel string) (string, error) {
 	if rel == "" {
 		return "", errors.New("exec is empty")
@@ -1142,7 +1146,7 @@ func resolveExec(dir, rel string) (string, error) {
 	if info.Mode().Perm()&0o111 == 0 {
 		return "", fmt.Errorf("exec %q is not executable", rel)
 	}
-	return full, nil
+	return realExec, nil
 }
 
 // SameGrants reports whether two lists of declared names allow the same
