@@ -330,13 +330,19 @@ func (e *gslapperEngine) requestSocket(proc Process, socket, command string, tim
 	return e.request(socket, command, timeout)
 }
 
+// socketFileIfOwned reports the identity of the socket at path when the
+// process we started is the one serving it.
+//
+// It carries no wallpaper: prefix: the helper knows nothing about the caller,
+// and a prefix added here would be doubled by the engine layer that reports
+// the failure to the user.
 func socketFileIfOwned(path string, proc Process) (os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("wallpaper: socket path %s is a symlink", path)
+		return nil, fmt.Errorf("socket path %s is a symlink", path)
 	}
 	if pid := processPID(proc); pid > 0 {
 		peer, err := socketPeerPID(path)
@@ -344,7 +350,7 @@ func socketFileIfOwned(path string, proc Process) (os.FileInfo, error) {
 			return nil, err
 		}
 		if peer != pid {
-			return nil, fmt.Errorf("wallpaper: socket %s is served by pid %d, want %d", path, peer, pid)
+			return nil, fmt.Errorf("socket %s is served by pid %d, want %d", path, peer, pid)
 		}
 	}
 	return info, nil
@@ -382,6 +388,10 @@ func clearDeadSocketIfPresent(connector, path string) error {
 	return nil
 }
 
+// removeSocketIfSame removes path only when it is still the file we probed.
+//
+// Like socketFileIfOwned it reports the failure without a wallpaper: prefix;
+// the caller that knows the operation adds it once.
 func removeSocketIfSame(path string, expected os.FileInfo) error {
 	return removeSocketIfSameWithPeerProbe(path, expected, socketPeerPID)
 }
@@ -395,21 +405,21 @@ func removeSocketIfSameWithPeerProbe(path string, expected os.FileInfo, peerProb
 		return err
 	}
 	if expected == nil {
-		return fmt.Errorf("wallpaper: cannot verify ownership of socket %s", path)
+		return fmt.Errorf("cannot verify ownership of socket %s", path)
 	}
 	if !os.SameFile(expected, current) {
-		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped", path)
+		return fmt.Errorf("socket path %s changed while it was stopped", path)
 	}
 	if expected.Mode()&os.ModeSocket != 0 && current.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("wallpaper: socket path %s changed type while it was stopped", path)
+		return fmt.Errorf("socket path %s changed type while it was stopped", path)
 	}
 	if current.Mode()&os.ModeSocket != 0 {
 		if _, err := peerProbe(path); err == nil {
-			return fmt.Errorf("wallpaper: socket path %s changed while it was stopped: still live", path)
+			return fmt.Errorf("socket path %s changed while it was stopped: still live", path)
 		} else if errors.Is(err, os.ErrNotExist) {
 			return nil
 		} else if !errors.Is(err, syscall.ECONNREFUSED) {
-			return fmt.Errorf("wallpaper: cannot verify socket %s is stopped: %w", path, err)
+			return fmt.Errorf("cannot verify socket %s is stopped: %w", path, err)
 		}
 	}
 	current, err = os.Lstat(path)
@@ -420,10 +430,10 @@ func removeSocketIfSameWithPeerProbe(path string, expected os.FileInfo, peerProb
 		return err
 	}
 	if !os.SameFile(expected, current) {
-		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped", path)
+		return fmt.Errorf("socket path %s changed while it was stopped", path)
 	}
 	if expected.Mode()&os.ModeSocket != 0 && current.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("wallpaper: socket path %s changed type while it was stopped", path)
+		return fmt.Errorf("socket path %s changed type while it was stopped", path)
 	}
 	return os.Remove(path)
 }
@@ -442,7 +452,7 @@ func (e *gslapperEngine) rememberSocket(connector string, proc Process, path str
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.owned[connector] != proc {
-		return errors.New("wallpaper: process ownership changed while it became ready")
+		return errors.New("process ownership changed while it became ready")
 	}
 	if e.socketFiles == nil {
 		e.socketFiles = map[string]os.FileInfo{}
@@ -769,7 +779,10 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 			return nil
 		}
 		if info, dead := deadSocketFile(socket); dead {
-			return removeSocketIfSame(socket, info)
+			if err := removeSocketIfSame(socket, info); err != nil {
+				return fmt.Errorf("wallpaper: %w", err)
+			}
+			return nil
 		}
 		return fmt.Errorf("wallpaper: %s still holds %s and is not ours to stop", connector, socket)
 	}
@@ -793,7 +806,7 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 	}
 	if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
 		e.clearOwned(connector, proc)
-		return restoreAfterStopError{cause: err}
+		return restoreAfterStopError{cause: fmt.Errorf("wallpaper: %w", err)}
 	}
 	e.clearOwned(connector, proc)
 	return nil
