@@ -19,6 +19,22 @@ func withToolDirs(t *testing.T, dirs ...string) {
 	t.Cleanup(restore)
 }
 
+// TestDefaultToolDirsCoverThePerUserInstall pins the fallback list the shell
+// probes once PATH misses.
+//
+// The list is what makes a per-user install visible to a unit whose PATH is
+// the manager default, so a change to it is a change to what the shell can
+// run (sysc-925, sysc-1955). Every other test replaced the seam, so nothing
+// covered the list itself.
+func TestDefaultToolDirsCoverThePerUserInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	want := []string{filepath.Join(home, ".local", "bin"), "/usr/local/bin", "/usr/bin"}
+	if got := defaultToolDirs(); !slices.Equal(got, want) {
+		t.Fatalf("defaultToolDirs() = %v, want %v", got, want)
+	}
+}
+
 // TestResolveToolFallsBackToInstallDirs pins the install locations the shell
 // probes once PATH misses.
 //
