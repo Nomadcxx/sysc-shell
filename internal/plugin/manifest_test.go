@@ -217,7 +217,6 @@ func TestLoadManifestRejectsASymlinkOutOfTheDirectory(t *testing.T) {
 	}
 }
 
-
 func TestResolveExecKeepsVerifiedTargetAfterSymlinkSwap(t *testing.T) {
 	t.Parallel()
 
