@@ -2003,6 +2003,20 @@ func triggerAtAction(bar *Bar, trig Trigger, action string) Trigger {
 	return trig
 }
 
+// withLock runs fn under the registry lock and always releases it.
+//
+// A handler that panics between a manual Lock and its Unlock leaves the lock
+// held for the life of the process: sysc-wayland recovers a panic in an
+// event handler into an error rather than crashing, so the shell keeps
+// running with a locked registry and answers no later request. The deferred
+// release is the only form that survives a panic, so a handler reaches for
+// this instead of pairing the two calls by hand.
+func (r *Registry) withLock(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	fn()
+}
+
 // bindBarPanelActionsLocked gives one bar its panel-toggle seam. The handler
 // is called without the bar lock, matching the tray path, because TogglePanel
 // takes the registry lock and then the bar lock.
@@ -2043,12 +2057,12 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			if err := r.OpenPanel(PanelNotifications, out, trig); err != nil {
 				return true
 			}
-			r.mu.Lock()
-			if h := r.panelHosts[PanelNotifications]; h != nil {
-				h.notifyMenu = true
-				r.rebuildPanel(h)
-			}
-			r.mu.Unlock()
+			r.withLock(func() {
+				if h := r.panelHosts[PanelNotifications]; h != nil {
+					h.notifyMenu = true
+					r.rebuildPanel(h)
+				}
+			})
 			return true
 		case action == panelAudioAction && (button == 0 || button == buttonLeft):
 			trig = triggerAtAction(bar, trig, panelAudioAction)
@@ -2070,18 +2084,16 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
 			}
-			r.mu.Lock()
-			err := r.selectPanelSectionLocked(PanelControlCenter, "privacy")
-			r.mu.Unlock()
+			var err error
+			r.withLock(func() { err = r.selectPanelSectionLocked(PanelControlCenter, "privacy") })
 			return err == nil
 		case action == panelBluetoothAction && button == buttonRight:
 			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
 			}
-			r.mu.Lock()
-			err := r.selectPanelSectionLocked(PanelControlCenter, "bluetooth")
-			r.mu.Unlock()
+			var err error
+			r.withLock(func() { err = r.selectPanelSectionLocked(PanelControlCenter, "bluetooth") })
 			return err == nil
 		case action == panelAudioAction && button == buttonRight:
 			r.stepAudioAsync("mute")
@@ -2089,9 +2101,8 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelMediaAction && (button == 0 || button == buttonLeft):
 			// Left click pins the strip, or closes a pinned one (2026-10-08).
 			local := bar.actionBounds(panelMediaAction)
-			r.mu.Lock()
-			ok := r.mediaStrip.togglePinLocked(global, local)
-			r.mu.Unlock()
+			var ok bool
+			r.withLock(func() { ok = r.mediaStrip.togglePinLocked(global, local) })
 			return ok
 		case action == panelMediaAction && button == buttonRight:
 			// The Control Centre Media page stays the full picker.
@@ -2099,15 +2110,14 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
 			}
-			r.mu.Lock()
-			err := r.selectPanelSectionLocked(PanelControlCenter, "media")
-			r.mu.Unlock()
+			var err error
+			r.withLock(func() { err = r.selectPanelSectionLocked(PanelControlCenter, "media") })
 			return err == nil
 		case action == panelMediaAction && button == buttonMiddle,
 			action == mediaPlayPauseAction && (button == 0 || button == buttonLeft):
-			r.mu.Lock()
-			m, disabled := r.media, mediaPlayDisabled(r.mediaState)
-			r.mu.Unlock()
+			var m *services.Media
+			var disabled bool
+			r.withLock(func() { m, disabled = r.media, mediaPlayDisabled(r.mediaState) })
 			if m != nil && !disabled {
 				// Bus I/O, so off the handler path entirely.
 				go func() { _ = m.PlayPause() }()
@@ -2115,31 +2125,29 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return true
 		case action == panelNightLightAction && (button == 0 || button == buttonLeft):
 			// A service without gamma control cannot honour the ask.
-			r.mu.Lock()
-			nl := r.nightLight
-			supported := nl != nil && nl.State().Supported
-			if supported {
-				nl.Toggle()
-			}
-			r.mu.Unlock()
+			var supported bool
+			r.withLock(func() {
+				nl := r.nightLight
+				supported = nl != nil && nl.State().Supported
+				if supported {
+					nl.Toggle()
+				}
+			})
 			return supported
 		case action == panelNightLightAction && (button == buttonRight || button == buttonMiddle):
-			r.mu.Lock()
-			ok := r.openSettingsAtLocked(global, "Night Light")
-			r.mu.Unlock()
+			var ok bool
+			r.withLock(func() { ok = r.openSettingsAtLocked(global, "Night Light") })
 			return ok
 		case action == panelIdleInhibitorAction && (button == 0 || button == buttonLeft):
 			r.toggleCaffeineBar()
 			return true
 		case action == panelIdleInhibitorAction && (button == buttonRight || button == buttonMiddle):
-			r.mu.Lock()
-			ok := r.openSettingsAtLocked(global, "Screensaver")
-			r.mu.Unlock()
+			var ok bool
+			r.withLock(func() { ok = r.openSettingsAtLocked(global, "Screensaver") })
 			return ok
 		case action == panelBrightnessAction:
-			r.mu.Lock()
-			ok := r.openSettingsAtLocked(global, "Displays")
-			r.mu.Unlock()
+			var ok bool
+			r.withLock(func() { ok = r.openSettingsAtLocked(global, "Displays") })
 			return ok
 		case action == panelPowerProfileAction && (button == 0 || button == buttonLeft):
 			r.cyclePowerProfileBar()
@@ -2149,17 +2157,15 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelLockKeysAction:
 			// No settings section edits osd_lock_keys yet; the Panels page is
 			// where the bar's item list lives.
-			r.mu.Lock()
-			ok := r.openSettingsAtLocked(global, "Panels")
-			r.mu.Unlock()
+			var ok bool
+			r.withLock(func() { ok = r.openSettingsAtLocked(global, "Panels") })
 			return ok
 		case action == panelThemeModeAction && (button == 0 || button == buttonLeft):
 			r.toggleThemeModeBar()
 			return true
 		case action == panelThemeModeAction && (button == buttonRight || button == buttonMiddle):
-			r.mu.Lock()
-			ok := r.openSettingsAtLocked(global, "Appearance")
-			r.mu.Unlock()
+			var ok bool
+			r.withLock(func() { ok = r.openSettingsAtLocked(global, "Appearance") })
 			return ok
 		}
 		return false
