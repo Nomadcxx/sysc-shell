@@ -571,7 +571,9 @@ func (s *Session) shutdown() ExitReason {
 	// the I/O pipes, which is what makes cmd.Wait slow here; the command's
 	// post-exit I/O bound is set before Start and already covers that.
 	if s.Exited() {
-		return classify(s.cmd.Wait())
+		reason := classify(s.cmd.Wait())
+		s.reapGroup(reason)
+		return reason
 	}
 	sent := make(chan struct{})
 	go func() {
@@ -596,7 +598,9 @@ func (s *Session) shutdown() ExitReason {
 
 	select {
 	case err := <-done:
-		return classify(err)
+		reason := classify(err)
+		s.reapGroup(reason)
+		return reason
 	case <-timer.C:
 		// The plugin did not take host.shutdown. Ask the whole group once,
 		// briefly, then insist: the leader may exit before a descendant that
@@ -637,6 +641,27 @@ func killGroup(cmd *exec.Cmd, sig syscall.Signal) error {
 		return cmd.Process.Signal(sig)
 	}
 	return nil
+}
+
+// reapGroup ends the processes a plugin left behind when it did not stop
+// orderly.
+//
+// A plugin that answered host.shutdown and left of its own accord may have
+// started a process the user wants to keep: the recorder hands the screen to
+// another program on purpose, so the host leaves that decision with the
+// plugin. A plugin that crashed, was signalled, or had to be killed did not
+// get that choice. Whatever it left running is then a leftover of a session
+// the host has already ended, and a leftover keeps working with nobody left
+// to own it: a recorder's backend would keep recording the screen long after
+// the plugin that started it is gone.
+//
+// The group is signalled rather than the leader, because the leader is
+// already gone and its children are what survived it.
+func (s *Session) reapGroup(reason ExitReason) {
+	if reason.Kind == ExitOrderly {
+		return
+	}
+	_ = killGroup(s.cmd, syscall.SIGKILL)
 }
 
 // classify turns a Wait error into a reason a user can read.

@@ -979,6 +979,39 @@ func TestOrderlyExitLeavesADetachedChild(t *testing.T) {
 	}
 }
 
+// TestACrashLeavesNoDescendantBehind is the half of the promise a crash
+// does not get to keep: only a plugin that stopped orderly may leave a
+// process behind.
+//
+// A plugin that crashed did not get to choose what it started, so whatever
+// it left running is a leftover of a session the host has already ended. A
+// leftover keeps working with nobody left to own it: a recorder's backend
+// would keep recording the screen long after the plugin that started it is
+// gone.
+func TestACrashLeavesNoDescendantBehind(t *testing.T) {
+	t.Parallel()
+
+	children := filepath.Join(t.TempDir(), "children")
+	s := supervisor(installHelper(t, "crash-with-child:"+children))
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sess.Close()
+
+	// The close waits for the crash, and the helper records the descendant
+	// before it crashes, so the pid is there to read.
+	reason := sess.Close()
+	if reason.Kind != ExitCrashed || reason.Code != 4 {
+		t.Fatalf("exit = %+v, want a crash with code 4", reason)
+	}
+	child := readChildPID(t, children)
+	defer killIfAlive(child)
+	if !waitForExit(t, child, time.Second) {
+		t.Fatalf("descendant %d survived a plugin that did not stop orderly", child)
+	}
+}
+
 func TestPluginRunsInItsOwnProcessGroup(t *testing.T) {
 	t.Parallel()
 

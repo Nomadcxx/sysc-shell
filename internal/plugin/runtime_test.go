@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -576,5 +577,62 @@ func TestStoppingARuntimeEndsItsDescendants(t *testing.T) {
 	r.Stop()
 	if !waitForExit(t, child, time.Second) {
 		t.Fatalf("descendant %d survived the plugin being stopped", child)
+	}
+}
+
+// TestTheHostContextDoesNotTakeThePluginDown is the contract that lets a
+// plugin stop what it owns.
+//
+// The plugin's process runs under the session's context, so a host that is
+// shutting down asks the plugin to stop instead of killing it before it can.
+// A plugin killed by the host's context never gets to stop what it owns: the
+// recorder's backend would keep recording the screen with nobody left to
+// own it.
+func TestTheHostContextDoesNotTakeThePluginDown(t *testing.T) {
+	t.Parallel()
+
+	opts := helperOptions()
+	// The helper ignores host.shutdown, so the stop runs out the grace and
+	// takes the forced path. Short because the grace is what is waited out,
+	// not something being proven.
+	opts.ShutdownGrace = 100 * time.Millisecond
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "ignore-shutdown")}, opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := r.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	defer r.Stop()
+	pid := r.Status().PID
+	if pid <= 0 {
+		t.Fatal("no plugin process")
+	}
+
+	// The host's context ends first, the way a shell that received SIGTERM
+	// ends it. The plugin has to survive that: the request to stop comes
+	// from the runtime, not from the context.
+	cancel()
+	time.Sleep(200 * time.Millisecond)
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the host's context took the plugin down: %v", err)
+	}
+}
+
+// TestStopAsksThePluginToStopBeforeEndingItsContext proves the order the
+// stop depends on: the plugin is asked to stop and gets the time to answer.
+//
+// The helper answers host.shutdown by writing to its standard error, so the
+// marker is proof that the request arrived and that the plugin lived long
+// enough to act on it.
+func TestStopAsksThePluginToStopBeforeEndingItsContext(t *testing.T) {
+	t.Parallel()
+
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "stderr-tail-on-shutdown")}, helperOptions())
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	r.Stop()
+	if tail := string(r.Status().Stderr); !strings.Contains(tail, "stderr final marker") {
+		t.Fatalf("plugin did not answer host.shutdown: stderr = %q", tail)
 	}
 }
