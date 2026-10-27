@@ -23,7 +23,7 @@ func (in *Installer) recordConsent(source plugin.Source, id, dir string) error {
 	}
 	l, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
 	if err != nil {
-		slog.Warn("plugin store: approvals unreadable; starting a new ledger", "err", err)
+		return fail(KindDisk, err, "approvals unreadable; not rewriting the ledger")
 	}
 	l.Set(source, id, plugin.RecordFor(m, digest, time.Now().UTC()))
 	if err := l.Save(plugin.ConsentPath(in.Root)); err != nil {
@@ -35,7 +35,7 @@ func (in *Installer) recordConsent(source plugin.Source, id, dir string) error {
 func (in *Installer) forgetConsent(id string) error {
 	l, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
 	if err != nil {
-		slog.Warn("plugin store: approvals unreadable; starting a new ledger", "err", err)
+		return fail(KindDisk, err, "approvals unreadable; not rewriting the ledger")
 	}
 	l.Delete(plugin.SourceManaged, id)
 	if err := l.Save(plugin.ConsentPath(in.Root)); err != nil {
@@ -83,7 +83,7 @@ func (s *Store) adoptApprovals(installed Installed) {
 	root := s.opts.Installer.Root
 	l, err := plugin.LoadConsent(plugin.ConsentPath(root))
 	if err != nil {
-		return // recordConsent reports an unreadable ledger when it next writes
+		return // leave the unreadable ledger untouched; recordConsent will refuse to rewrite it
 	}
 	for id, rec := range installed {
 		if rec.Source == SourceUnknown {

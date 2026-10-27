@@ -108,3 +108,112 @@ func TestStoreAdoptsApprovalsItGaveBeforeTheyWereRecorded(t *testing.T) {
 		t.Fatalf("an unaccounted directory %s was adopted", stray)
 	}
 }
+
+func TestRecordConsentRefusesCorruptLedger(t *testing.T) {
+	t.Parallel()
+	in := &Installer{Root: filepath.Join(t.TempDir(), "plugins")}
+	timer := writePluginDir(t, in.Root, fixtureID, "1.4.0", defaultCaps, nil)
+	notes := writePluginDir(t, in.Root, "org.sysc.notes", "1.0.0", defaultCaps, nil)
+	if err := in.recordConsent(plugin.SourceManaged, fixtureID, timer); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.recordConsent(plugin.SourceManaged, "org.sysc.notes", notes); err != nil {
+		t.Fatal(err)
+	}
+	path := plugin.ConsentPath(in.Root)
+	corrupt := []byte("{truncated")
+	if err := os.WriteFile(path, corrupt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := in.recordConsent(plugin.SourceManaged, fixtureID, timer)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("recordConsent on corrupt ledger: %v (kind %q), want %s", err, KindOf(err), KindDisk)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(corrupt) {
+		t.Fatalf("corrupt ledger was rewritten: %q", got)
+	}
+}
+
+func TestForgetConsentRefusesCorruptLedger(t *testing.T) {
+	t.Parallel()
+	in := &Installer{Root: filepath.Join(t.TempDir(), "plugins")}
+	timer := writePluginDir(t, in.Root, fixtureID, "1.4.0", defaultCaps, nil)
+	notes := writePluginDir(t, in.Root, "org.sysc.notes", "1.0.0", defaultCaps, nil)
+	if err := in.recordConsent(plugin.SourceManaged, fixtureID, timer); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.recordConsent(plugin.SourceManaged, "org.sysc.notes", notes); err != nil {
+		t.Fatal(err)
+	}
+	path := plugin.ConsentPath(in.Root)
+	corrupt := []byte("{truncated")
+	if err := os.WriteFile(path, corrupt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := in.forgetConsent(fixtureID)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("forgetConsent on corrupt ledger: %v (kind %q), want %s", err, KindOf(err), KindDisk)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(corrupt) {
+		t.Fatalf("corrupt ledger was rewritten: %q", got)
+	}
+}
+
+func TestRecordConsentRefusesUnsupportedSchema(t *testing.T) {
+	t.Parallel()
+	in := &Installer{Root: filepath.Join(t.TempDir(), "plugins")}
+	timer := writePluginDir(t, in.Root, fixtureID, "1.4.0", defaultCaps, nil)
+	if err := os.MkdirAll(in.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := plugin.ConsentPath(in.Root)
+	// A future schema must not be clobbered into a one-entry schema-1 ledger.
+	unsupported := []byte(`{
+  "schema": 2,
+  "plugins": {
+    "managed/org.sysc.notes": {
+      "content_sha256": "abc"
+    }
+  }
+}`)
+	if err := os.WriteFile(path, unsupported, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := in.recordConsent(plugin.SourceManaged, fixtureID, timer)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("recordConsent on unsupported schema: %v (kind %q), want %s", err, KindOf(err), KindDisk)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(unsupported) {
+		t.Fatalf("unsupported-schema ledger was rewritten: %q", got)
+	}
+}
+
+func TestRecordConsentStartsEmptyWhenMissing(t *testing.T) {
+	t.Parallel()
+	in := &Installer{Root: filepath.Join(t.TempDir(), "plugins")}
+	timer := writePluginDir(t, in.Root, fixtureID, "1.4.0", defaultCaps, nil)
+	if _, err := os.Stat(plugin.ConsentPath(in.Root)); !os.IsNotExist(err) {
+		t.Fatalf("fixture: ledger should be absent, got %v", err)
+	}
+	if err := in.recordConsent(plugin.SourceManaged, fixtureID, timer); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got == "" {
+		t.Fatalf("missing ledger did not accept first approval: %q (%v)", got, ok)
+	}
+}
