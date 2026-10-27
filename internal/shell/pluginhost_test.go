@@ -904,6 +904,62 @@ func TestPluginHostFailurePlaceholderLeavesBuiltinsIntact(t *testing.T) {
 	}
 }
 
+// pluginWidgetName reads the plugin widget's accessible name under the bar
+// lock. The host goroutine rewrites these nodes as it reconciles, so a read
+// after the lock is dropped races with it.
+func pluginWidgetName(bar *Bar) string {
+	bar.mu.Lock()
+	defer bar.mu.Unlock()
+	var name string
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || name != "" {
+			return
+		}
+		if n.Name != "" {
+			name = n.Name
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	for _, sec := range bar.widgets() {
+		for _, w := range sec {
+			walk(w.inner)
+			if name != "" {
+				return name
+			}
+		}
+	}
+	return name
+}
+
+// The placeholder is not just a gap in the bar: its accessible name is the
+// reason the view was refused. Without it a plugin author sees a blank panel
+// and cannot tell a dead process from a tree the host would not render
+// (sysc-1936). The same string reaches the operator's journal.
+func TestPluginHostFailureSaysWhyItRejectedTheView(t *testing.T) {
+	reg := bindTestPlugin(t, "bad-view")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+
+	var name string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		name = pluginWidgetName(reg.bars[1])
+		if strings.Contains(name, "row root") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// The reason quotes the rule it applied and what it got instead.
+	for _, want := range []string{"bar view", "row root", "text"} {
+		if !strings.Contains(name, want) {
+			t.Errorf("the placeholder name %q does not name %q", name, want)
+		}
+	}
+}
+
 func TestPluginHostOpensPanelOnTheTriggeringOutput(t *testing.T) {
 	reg := bindTestPlugin(t, "call-panel")
 	newHosts(t, reg, map[uint32]string{7: "DP-1"})
