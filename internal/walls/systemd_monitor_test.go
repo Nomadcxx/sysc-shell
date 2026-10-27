@@ -74,6 +74,65 @@ func TestSystemdServiceChangesRefreshWalls(t *testing.T) {
 	waitSnapshot(t, service, func(snapshot Snapshot) bool { return snapshot.SystemdRevision >= initialRevision+2 })
 }
 
+func TestSystemdLoadChurnDoesNotRefreshWalls(t *testing.T) {
+	owner, manager := startSystemdSignalBus(t)
+
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(tmp, "systemctl.log")
+	script := "#!/bin/sh\nprintf 'call\\n' >> \"$WALLS_TEST_SYSTEMCTL_LOG\"\n" +
+		"printf 'LoadState=not-found\\nUnitFileState=not-found\\nActiveState=inactive\\nSubState=dead\\n'\n"
+	if err := os.WriteFile(filepath.Join(tmp, "systemctl"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmp)
+	t.Setenv("HOME", home)
+	t.Setenv("WALLS_TEST_SYSTEMCTL_LOG", callLog)
+
+	service := NewService()
+	t.Cleanup(func() { _ = service.Close() })
+	select {
+	case <-manager.subscribed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service did not subscribe to systemd unit changes")
+	}
+	waitSnapshot(t, service, func(snapshot Snapshot) bool { return snapshot.SystemdRevision >= 1 })
+	waitForSystemctlCalls(t, callLog, 1)
+	time.Sleep(50 * time.Millisecond)
+	settled := systemctlCallCount(t, callLog)
+
+	// Discovery runs 'systemctl --user show'. When systemd has already
+	// garbage-collected the unit that query loads it, emits UnitNew, then
+	// drops it again and emits UnitRemoved. Both arrive for sysc-walls itself,
+	// and reacting to either one makes discovery drive the next discovery.
+	for i := 0; i < 8; i++ {
+		if err := owner.Emit(testSystemdManagerPath, testSystemdManagerIface+".UnitNew",
+			unitName, systemdUnitPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := owner.Emit(testSystemdManagerPath, testSystemdManagerIface+".UnitRemoved",
+			unitName, systemdUnitPath); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// A real transition must still be picked up, so prove the monitor is awake
+	// on the same connection rather than merely quiet.
+	if err := owner.Emit(testSystemdManagerPath, testSystemdManagerIface+".UnitFilesChanged"); err != nil {
+		t.Fatal(err)
+	}
+	waitForSystemctlCalls(t, callLog, settled+1)
+
+	if got := systemctlCallCount(t, callLog); got > settled+1 {
+		t.Fatalf("unit load churn triggered %d extra discovery passes, want none", got-settled-1)
+	}
+}
+
 func TestSystemdSignalAffectsWalls(t *testing.T) {
 	tests := []struct {
 		name string
@@ -96,6 +155,21 @@ func TestSystemdSignalAffectsWalls(t *testing.T) {
 			name: "unrelated job removed",
 			sig: &dbus.Signal{Name: testSystemdManagerIface + ".JobRemoved", Path: testSystemdManagerPath, Body: []any{
 				uint32(1), dbus.ObjectPath("/org/freedesktop/systemd1/job/1"), "other.service", "done",
+			}},
+		},
+		{
+			// 'systemctl show' loads a garbage-collected unit and systemd drops
+			// it again afterwards, so these two signals fire on every discovery
+			// pass. Reacting to them closes a loop that never idles.
+			name: "walls unit loaded by our own query",
+			sig: &dbus.Signal{Name: testSystemdManagerIface + ".UnitNew", Path: testSystemdManagerPath, Body: []any{
+				unitName, systemdUnitPath,
+			}},
+		},
+		{
+			name: "walls unit dropped after our own query",
+			sig: &dbus.Signal{Name: testSystemdManagerIface + ".UnitRemoved", Path: testSystemdManagerPath, Body: []any{
+				unitName, systemdUnitPath,
 			}},
 		},
 		{

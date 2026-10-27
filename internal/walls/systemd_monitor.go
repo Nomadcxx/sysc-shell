@@ -95,18 +95,20 @@ func systemdSignalAffectsWalls(signal *dbus.Signal) bool {
 	switch signal.Name {
 	case systemdManagerIface + ".UnitFilesChanged":
 		return signal.Path == systemdManagerPath
-	case systemdManagerIface + ".UnitNew", systemdManagerIface + ".UnitRemoved":
-		if signal.Path != systemdManagerPath || len(signal.Body) == 0 {
-			return false
-		}
-		name, _ := signal.Body[0].(string)
-		return name == unitName
 	case systemdManagerIface + ".JobRemoved":
 		if signal.Path != systemdManagerPath || len(signal.Body) < 3 {
 			return false
 		}
 		name, _ := signal.Body[2].(string)
 		return name == unitName
+	case systemdManagerIface + ".UnitNew", systemdManagerIface + ".UnitRemoved":
+		// Ignored on purpose. Discovery runs 'systemctl --user show', which
+		// loads a garbage-collected unit and lets systemd drop it again when
+		// the query returns, so these signals describe our own probe and
+		// reacting to them makes every discovery schedule the next one. Real
+		// transitions still arrive as UnitFilesChanged, JobRemoved, or
+		// PropertiesChanged for the unit object.
+		return false
 	case "org.freedesktop.DBus.Properties.PropertiesChanged":
 		return signal.Path == systemdUnitPath
 	default:
