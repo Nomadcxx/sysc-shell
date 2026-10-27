@@ -44,7 +44,7 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 		forecast = weatherForecastStrip(reading, m, bodyW, forecastH)
 	}
 	heroH := max(bodyH-theme.MarginL-forecastH, 0)
-	hero := weatherHero(reading, location, m, heroH, tr)
+	hero := weatherHero(reading, location, m, heroH, tr, r.weatherNow())
 
 	children := []*ui.Node{
 		weatherHeader(m, tr, h.weatherView),
@@ -157,13 +157,14 @@ func weatherDayRange(reading services.Reading) string {
 
 // weatherHero is the standalone hero. The sized form is shared with the
 // Control Centre Today card so both surfaces keep the same information budget.
-func weatherHero(reading services.Reading, location string, m theme.Metrics, height int, tr translateFunc) *ui.Node {
+// now is the clock the scene's daylight is read at.
+func weatherHero(reading services.Reading, location string, m theme.Metrics, height int, tr translateFunc, now time.Time) *ui.Node {
 	panelW := panelTargetSize(PanelWeather).W
 	contentW := max(panelW-2*m.PanelPadding-2*m.CardPadding, 0)
-	return weatherHeroCard(reading, location, m, contentW, height, weatherHeroEffectKey, tr)
+	return weatherHeroCard(reading, location, m, contentW, height, weatherHeroEffectKey, tr, now)
 }
 
-func weatherHeroCard(reading services.Reading, location string, m theme.Metrics, contentW, height int, effectKey string, tr translateFunc) *ui.Node {
+func weatherHeroCard(reading services.Reading, location string, m theme.Metrics, contentW, height int, effectKey string, tr translateFunc, now time.Time) *ui.Node {
 	if !reading.Observed {
 		text, tone := "-", ui.ToneNormal
 		if !reading.FailedSince.IsZero() {
@@ -231,7 +232,7 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 		Fill:   ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{group, meta}}},
 	}
-	return weatherCardWithEffect(card, reading, effectKey, bias)
+	return weatherCardWithEffect(card, reading, effectKey, bias, now)
 }
 
 // weatherMetaRow is the hero's one quiet supporting line. The place sits at the

@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	clipboardclient "github.com/Nomadcxx/sysc-clipboard/client"
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/sockpath"
@@ -79,6 +82,49 @@ func TestRunRefusesADuplicate(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("duplicate launch kept starting instead of stopping at the instance socket")
+	}
+}
+
+// A configuration file the loader rejects must not take the shell down. The
+// unit restarts on failure, so a refusal that exits becomes a restart loop,
+// and the restart loop reaches the start limit and leaves the session with no
+// bar at all. The shell starts on the defaults and reports the refusal.
+func TestStartupConfigFallsBackToTheDefaults(t *testing.T) {
+	dir := t.TempDir()
+	broken := filepath.Join(dir, "broken.json")
+	if err := os.WriteFile(broken, []byte(`{"bar":{"height":4},"not-a-real-item":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := startupConfig(broken)
+	if err == nil {
+		t.Fatal("startupConfig accepted a file with an unknown item")
+	}
+	if !reflect.DeepEqual(cfg, config.Default()) {
+		t.Fatalf("startupConfig did not fall back to the built-in defaults: %+v", cfg.Bar)
+	}
+
+	// A file the loader accepts is used as it stands.
+	good := filepath.Join(dir, "good.json")
+	if err := os.WriteFile(good, []byte(`{"bar":{"height":40}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = startupConfig(good)
+	if err != nil {
+		t.Fatalf("startupConfig refused a valid file: %v", err)
+	}
+	if cfg.Bar.Height != 40 {
+		t.Fatalf("bar height = %d, want 40", cfg.Bar.Height)
+	}
+}
+
+// A missing file is not a refusal: the built-in defaults apply.
+func TestStartupConfigAcceptsAMissingFile(t *testing.T) {
+	cfg, err := startupConfig(filepath.Join(t.TempDir(), "absent.json"))
+	if err != nil {
+		t.Fatalf("startupConfig refused a missing file: %v", err)
+	}
+	if !reflect.DeepEqual(cfg, config.Default()) {
+		t.Fatal("startupConfig did not use the built-in defaults")
 	}
 }
 

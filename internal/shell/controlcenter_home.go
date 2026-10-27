@@ -79,7 +79,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	toggles := ccHomeToggles(r, h, body, caffeine, wallsStatus, tr)
 	split := &ui.Node{Kind: ui.KindRow, Height: ccHomeSplitH, Gap: ccHomeGap, Children: []*ui.Node{
 		{Kind: ui.KindColumn, Width: ccHomeLeftW, Height: ccHomeSplitH, Gap: ccHomeGap, Children: []*ui.Node{
-			ccHomeWeather(m, now, reading, tr),
+			ccHomeWeather(r, m, now, reading, tr),
 			ccHomeSystem(m, snap, tr),
 		}},
 		ccHomeTiles(m, h, snap, audio, audioOK, dnd, ccHomeRightW(body), tr),
@@ -264,7 +264,7 @@ func ccHomePill(width int, icon, label, action string, selected bool) *ui.Node {
 	return n
 }
 
-func ccHomeWeather(m theme.Metrics, now time.Time, reading services.Reading, tr translateFunc) *ui.Node {
+func ccHomeWeather(r *Registry, m theme.Metrics, now time.Time, reading services.Reading, tr translateFunc) *ui.Node {
 	summary, tone := ccWeatherSummary(reading, tr)
 	card := monitorCard(m, []*ui.Node{
 		monitorCardTitle(ccClock(now), 0),
@@ -274,7 +274,7 @@ func ccHomeWeather(m theme.Metrics, now time.Time, reading services.Reading, tr 
 	card.Height = ccHomeWeatherH
 	// The clock and date own the leading edge, so the scene sits against the
 	// trailing one and the scrim fades from the text side.
-	return weatherCardWithEffect(card, reading, weatherHomeEffectKey, 1)
+	return weatherCardWithEffect(card, reading, weatherHomeEffectKey, 1, r.weatherNow())
 }
 
 func ccHomeSystem(m theme.Metrics, snap services.Snapshot, tr translateFunc) *ui.Node {

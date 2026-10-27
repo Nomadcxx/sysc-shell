@@ -68,6 +68,20 @@ func pumpClipboard(ctx context.Context, updates <-chan clipboardclient.Update, a
 	}
 }
 
+// startupConfig decides what the shell runs on when the configuration file
+// cannot be used. A file the loader rejects is a refusal, not a reason to
+// exit: the unit restarts on failure, so a refusal that exits becomes a
+// restart loop, and the restart loop reaches the start limit and leaves the
+// session with no bar at all. The defaults are a working shell, and the
+// refusal is reported through the same seam a rejected reload uses.
+func startupConfig(path string) (config.Config, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return config.Default(), err
+	}
+	return cfg, nil
+}
+
 // run streams Niri workspace state into the bar registry and hands the registry
 // to the Wayland owner. The owner goroutine performs all Wayland work and
 // creates one bar per connected output.
@@ -80,11 +94,14 @@ func run(ctx context.Context) (err error) {
 	}
 
 	// A missing file is not an error: the built-in defaults apply. An invalid
-	// one fails startup, because there is no previous configuration to keep.
+	// one is not fatal either. The unit restarts on failure, so a refusal
+	// that exits becomes a restart loop, and the restart loop reaches the
+	// start limit and leaves the session with no bar at all. The shell starts
+	// on the defaults instead and reports the refusal.
 	cfgPath := config.DefaultPath()
-	cfg, cfgErr := config.Load(cfgPath)
+	cfg, cfgErr := startupConfig(cfgPath)
 	if cfgErr != nil {
-		return cfgErr
+		log.Printf("sysc-shell: %v; starting on the built-in defaults", cfgErr)
 	}
 
 	// Bind the IPC socket before any service starts: a duplicate launch must
@@ -210,6 +227,13 @@ func run(ctx context.Context) (err error) {
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
 	reloadRelay := newReloadRelay(ctx, registry.RecordConfigReload)
+	if cfgErr != nil {
+		// The refusal is published through the seam a rejected reload uses,
+		// so Settings, the OSD and IPC all report it. The file on disk is
+		// left alone: a Settings write reads it first and refuses to
+		// overwrite a file it cannot parse.
+		reloadRelay.submit(cfgErr)
+	}
 	watcherDone := make(chan struct{})
 	hupDone := make(chan struct{})
 	go func() {
