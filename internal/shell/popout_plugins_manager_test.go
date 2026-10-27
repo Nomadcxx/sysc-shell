@@ -281,3 +281,75 @@ func countPluginManagerAction(n *ui.Node, prefix string) int {
 	walk(n)
 	return count
 }
+
+// TestPluginStoreRelayRebuildKeepsFocusOnTheAddSourceField is sysc-843. The
+// Plugins pane rebuilds every time the store relay pushes a snapshot, and a
+// snapshot that gains a source inserts rows above the Add source card. Focus
+// is restored by the control's stable key, not by its old roving index, so a
+// row arriving while the field has focus leaves the caret where it was.
+func TestPluginStoreRelayRebuildKeepsFocusOnTheAddSourceField(t *testing.T) {
+	cfg := config.Default()
+	cfg.Plugins.Sources = []config.PluginSource{
+		{Name: "alpha", URL: "https://example.com/alpha", Enabled: true},
+		{Name: "bravo", URL: "https://example.com/bravo", Enabled: true},
+	}
+	state := store.State{Sources: []store.SourceState{
+		{Name: "sysc", URL: config.BuiltinPluginSource.URL},
+		{Name: "alpha", URL: "https://example.com/alpha"},
+		{Name: "bravo", URL: "https://example.com/bravo"},
+	}}
+	reg, host, panel := openPluginManagerTestPanel(t, cfg, state)
+
+	indexOfSourceName := func() int {
+		for i, n := range host.focus {
+			if n != nil && n.Action == "plugins-source-name" {
+				return i
+			}
+		}
+		return -1
+	}
+
+	reg.mu.Lock()
+	host.pluginManagerTab = "sources"
+	reg.rebuildPanel(host)
+	before := indexOfSourceName()
+	if before < 0 {
+		reg.mu.Unlock()
+		t.Fatal("the Sources page has no Add source name field")
+	}
+	// The field holds focus, which is what the user is typing into.
+	host.roving.Set(before)
+	reg.mu.Unlock()
+
+	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+
+	// A relay snapshot arrives carrying a third source, so the page grows rows
+	// above the field.
+	next := cfg
+	next.Plugins = next.Plugins.Clone()
+	next.Plugins.Sources = append(next.Plugins.Sources, config.PluginSource{
+		Name: "charlie", URL: "https://example.com/charlie", Enabled: true,
+	})
+	reg.mu.Lock()
+	reg.cfg = next
+	reg.pluginStoreSnapshot.Sources = append(reg.pluginStoreSnapshot.Sources, store.SourceState{
+		Name: "charlie", URL: "https://example.com/charlie",
+	})
+	reg.rebuildPanel(host)
+	after := indexOfSourceName()
+	focused := host.focused()
+	reg.mu.Unlock()
+
+	if after == before {
+		t.Fatalf("the new source row did not shift the field: index stayed %d", before)
+	}
+	if focused == nil || focused.Action != "plugins-source-name" {
+		got := "<none>"
+		if focused != nil {
+			got = focused.Action
+		}
+		t.Fatalf("focus moved off the Add source field to %q after the relay rebuild", got)
+	}
+}
