@@ -20,6 +20,19 @@ import (
 
 const socketName = "ipc.v1.sock"
 
+const (
+	// probeTimeout bounds the liveness probe of a socket that sits in the
+	// way. A probe that times out says nothing about the peer, and a path
+	// whose state is unknown must not be taken.
+	probeTimeout = 200 * time.Millisecond
+	// claimTimeout bounds the wait for the ownership claim. The claim is
+	// held by the owner for as long as it serves, so a wait that ends
+	// without it means the path belongs to a running shell.
+	claimTimeout = 2 * time.Second
+	// claimPoll is the pause between two attempts at the claim.
+	claimPoll = 10 * time.Millisecond
+)
+
 var (
 	ErrSingleInstance = errors.New("sysc-shell is already running")
 	knownPanels       = map[string]string{
@@ -108,6 +121,10 @@ type Server struct {
 	h    Handlers
 	ln   net.Listener
 	hubs map[string]*hub
+	// claim is the lock file that names the owner of the socket path. The
+	// owner holds it for as long as it serves, so a second shell cannot
+	// take the path while the first one owns it.
+	claim *os.File
 	// writeTimeout bounds one write; tests shorten it.
 	writeTimeout time.Duration
 	// peerUID reads the uid of an accepted peer. A nil reader means the real
@@ -131,32 +148,152 @@ func NewServer(path string, h Handlers) *Server {
 // has spawned a plugin or claimed a bus name. Connections that arrive before
 // Serve starts wait in the listen backlog. Serve calls Listen itself when it
 // has not run.
+//
+// The path may already hold a socket. A live one belongs to a running shell
+// and is never taken; a dead one is replaced. The replacement happens under
+// the ownership claim, so two shells that recover the same dead socket
+// cannot both end up with a listener.
 func (s *Server) Listen() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
+	// The claim comes first: it is what makes the state of the path worth
+	// reading. While it is held, no other shell can replace the socket, so
+	// the probe below and the bind that follows see the same path.
+	if err := s.claimPath(); err != nil {
+		return err
+	}
+	// A live peer keeps its socket, and a path whose state is unknown is
+	// not taken either.
+	if alive, unknown := peerAlive(s.path); alive || unknown {
+		s.releaseClaim()
+		return ErrSingleInstance
+	}
 	ln, err := net.Listen("unix", s.path)
 	if err != nil {
 		if !isAddrInUse(err) {
+			s.releaseClaim()
 			return err
 		}
-		probe, dialErr := net.DialTimeout("unix", s.path, 200*time.Millisecond)
-		if dialErr == nil {
-			_ = probe.Close()
+		// The path was taken again while we were binding. A peer that
+		// answers owns it and keeps it, even without a claim: an older
+		// shell serves the path without one. A peer that does not answer
+		// left a dead socket there, and the claim is ours.
+		if alive, unknown := peerAlive(s.path); alive || unknown {
+			s.releaseClaim()
 			return ErrSingleInstance
 		}
-		_ = os.Remove(s.path)
+		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.releaseClaim()
+			return err
+		}
 		ln, err = net.Listen("unix", s.path)
 		if err != nil {
+			s.releaseClaim()
 			return err
 		}
 	}
 	if err := os.Chmod(s.path, 0o600); err != nil {
 		_ = ln.Close()
+		s.releaseClaim()
 		return err
 	}
 	s.setListener(ln)
 	return nil
+}
+
+// peerAlive reports whether a live peer owns the socket path. The second
+// result is true when the answer is unknown: a probe that timed out says
+// nothing about the peer, and a path in that state must not be taken.
+func peerAlive(path string) (alive, unknown bool) {
+	conn, err := net.DialTimeout("unix", path, probeTimeout)
+	if err == nil {
+		_ = conn.Close()
+		return true, false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return false, true
+	}
+	if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ECONNREFUSED) {
+		// The path is free, or it holds a socket that nobody answers.
+		// Both are the stale case.
+		return false, false
+	}
+	if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENAMETOOLONG) {
+		// The address itself is unusable, so no peer can be behind it.
+		return false, false
+	}
+	// The path answered with something else: a full backlog, a permission
+	// problem. The peer may well be there, so the state of the path is
+	// unknown and it is not taken.
+	return false, true
+}
+
+// claimPath takes the ownership claim for the socket path. The claim is a
+// lock file beside the socket, held with an exclusive flock for as long as
+// this server serves. The kernel releases it when the process ends, so a
+// crashed shell leaves no claim behind, and a shell that finds the claim
+// taken reports the path as taken instead of removing the socket of a live
+// owner.
+func (s *Server) claimPath() error {
+	f, err := os.OpenFile(s.claimFile(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(claimTimeout)
+	for {
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		switch {
+		case err == nil:
+			s.setClaim(f)
+			return nil
+		case errors.Is(err, unix.EINTR):
+			// A signal cut the attempt short; try again.
+		case !errors.Is(err, unix.EWOULDBLOCK):
+			_ = f.Close()
+			return err
+		}
+		// Someone holds the claim. A peer that answers the path is a
+		// running shell, so the wait ends at once.
+		if alive, _ := peerAlive(s.path); alive {
+			_ = f.Close()
+			return ErrSingleInstance
+		}
+		if time.Now().After(deadline) {
+			_ = f.Close()
+			return ErrSingleInstance
+		}
+		time.Sleep(claimPoll)
+	}
+}
+
+// claimFile is the lock file that names the owner of the socket path. It
+// sits beside the socket in the same private directory.
+func (s *Server) claimFile() string { return s.path + ".claim" }
+
+// setClaim records the claim file. The mutex release publishes it together
+// with the lock the file carries, so a concurrent Close either sees the
+// claim and releases it or sees none.
+func (s *Server) setClaim(f *os.File) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claim = f
+}
+
+// releaseClaim gives the claim back. The lock file itself stays: another
+// shell may already be waiting on it, and unlinking it would break the
+// exclusion.
+func (s *Server) releaseClaim() {
+	s.mu.Lock()
+	f := s.claim
+	s.claim = nil
+	s.mu.Unlock()
+	if f == nil {
+		return
+	}
+	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	_ = f.Close()
 }
 
 // listener returns the bound listener, if Listen has run. Close can run while
@@ -303,10 +440,14 @@ func unixPeerUID(conn net.Conn) (uint32, bool) {
 func (s *Server) Close() error {
 	ln := s.listener()
 	if ln == nil {
+		s.releaseClaim()
 		return nil
 	}
 	err := ln.Close()
 	_ = os.Remove(s.path)
+	// The claim is given back last, so no other shell can take the path
+	// while this one still holds a listener.
+	s.releaseClaim()
 	return err
 }
 
