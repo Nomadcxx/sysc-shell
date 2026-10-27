@@ -1874,3 +1874,92 @@ func TestEngineSetFPSRefusesNonTerminalEngines(t *testing.T) {
 		t.Fatalf("gslapper received %d fps requests, want none", requests)
 	}
 }
+
+// The helpers under the engine know nothing about the caller, so they report
+// what they found without a domain prefix. The engine layer adds wallpaper:
+// exactly once, so a user never reads it twice.
+func TestSocketHelpersCarryNoDomainPrefix(t *testing.T) {
+	dir := sockpath.Dir(t, "wc")
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	symlink := filepath.Join(dir, "gslapper-DP-1.sock")
+	if err := os.Symlink(target, symlink); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if _, err := socketFileIfOwned(symlink, nil); err == nil {
+		t.Fatal("socketFileIfOwned over a symlink: got no error, want a refusal")
+	} else if strings.HasPrefix(err.Error(), "wallpaper:") {
+		t.Fatalf("socketFileIfOwned returned %q; the caller owns the domain prefix", err)
+	}
+
+	dead := filepath.Join(dir, "dead.sock")
+	deadSocketFileFor(t, dead)
+	info, err := os.Lstat(dead)
+	if err != nil {
+		t.Fatalf("lstat dead socket: %v", err)
+	}
+	replacement := filepath.Join(dir, "replacement.sock")
+	listener, err := net.Listen("unix", replacement)
+	if err != nil {
+		t.Fatalf("listen replacement: %v", err)
+	}
+	defer listener.Close()
+	if err := os.Rename(replacement, dead); err != nil {
+		t.Fatalf("rename replacement: %v", err)
+	}
+	if err := removeSocketIfSame(dead, info); err == nil {
+		t.Fatal("removeSocketIfSame over a replaced socket: got no error, want a refusal")
+	} else if strings.HasPrefix(err.Error(), "wallpaper:") {
+		t.Fatalf("removeSocketIfSame returned %q; the caller owns the domain prefix", err)
+	}
+}
+
+// Every failure the engine reports to the user carries the wallpaper: prefix
+// once. A second one is a doubled message, not a clearer one.
+func TestEngineErrorsCarryOneWallpaperPrefix(t *testing.T) {
+	t.Run("symlinked socket", func(t *testing.T) {
+		h := newEngineHarness(t)
+		// The spawned engine leaves a symlink where its socket belongs: the
+		// ownership check refuses it and the refusal reaches the user.
+		h.eng.spawn = func(argv []string) (Process, error) {
+			i := slices.Index(argv, "-I")
+			if i < 0 {
+				t.Fatalf("launch args %v carry no socket path", argv)
+			}
+			seed := filepath.Join(h.mediaDir, "socket-target")
+			if err := os.WriteFile(seed, []byte("x"), 0o600); err != nil {
+				t.Fatalf("seed target: %v", err)
+			}
+			if err := os.Symlink(seed, argv[i+1]); err != nil {
+				t.Fatalf("symlink socket: %v", err)
+			}
+			return newFakeProcess(), nil
+		}
+		job := Job{Connector: "DP-1", Gen: 1, Path: h.media("a.png"), Kind: KindImage}
+		_, err := h.eng.Apply(job, defaultSettings())
+		if err == nil {
+			t.Fatal("apply over a symlinked socket: got no error, want a refusal")
+		}
+		if got := strings.Count(err.Error(), "wallpaper:"); got != 1 {
+			t.Fatalf("apply over a symlinked socket: got %q with %d wallpaper prefixes, want exactly one", err, got)
+		}
+	})
+
+	t.Run("unverifiable owned socket", func(t *testing.T) {
+		h := newEngineHarness(t)
+		// The process is gone and its socket identity was never recorded, so
+		// the socket cannot be verified and is left alone.
+		deadSocketFileFor(t, h.socket("DP-1"))
+		h.eng.request = func(socket, command string, _ time.Duration) (string, error) { return "OK", nil }
+		h.eng.owned["DP-1"] = watchProcess(exitedProcess(nil))
+		err := h.eng.stopOwned("DP-1", h.socket("DP-1"))
+		if err == nil {
+			t.Fatal("stopOwned over an unverified socket: got no error, want a refusal")
+		}
+		if got := strings.Count(err.Error(), "wallpaper:"); got != 1 {
+			t.Fatalf("stopOwned over an unverified socket: got %q with %d wallpaper prefixes, want exactly one", err, got)
+		}
+	})
+}
