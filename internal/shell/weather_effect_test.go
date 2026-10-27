@@ -9,6 +9,37 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+// weatherFixedZone is the zone the fixed reading and the fixed instants
+// share. A fixed zone keeps the sun's curve the same on every run.
+const weatherFixedZone = "Australia/Sydney"
+
+// weatherFixedInstant is a moment on the fixed reading's day.
+func weatherFixedInstant(t *testing.T, hhmm string) time.Time {
+	t.Helper()
+	loc, err := time.LoadLocation(weatherFixedZone)
+	if err != nil {
+		t.Fatal("tzdata is embedded; LoadLocation failed:", err)
+	}
+	v, err := time.ParseInLocation("2006-01-02T15:04", "2026-07-15T"+hhmm, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// weatherFixedReading is an observed reading whose day matches the fixed
+// instants, so the effect reads the sun's curve instead of the day or night
+// fallback.
+func weatherFixedReading(t *testing.T) services.Reading {
+	t.Helper()
+	zone := weatherFixedZone
+	day := true
+	return services.Reading{
+		Observed: true, Code: 0, IsDay: &day, Timezone: &zone,
+		Daily: []services.Day{{Date: "2026-07-15", Sunrise: "2026-07-15T07:00", Sunset: "2026-07-15T17:00"}},
+	}
+}
+
 func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 	day := true
 	cases := []struct {
@@ -32,7 +63,7 @@ func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			reading := services.Reading{Observed: true, Code: tt.code, IsDay: tt.isDay}
-			spec, ok := weatherEffectSpec(reading)
+			spec, ok := weatherEffectSpec(reading, weatherFixedInstant(t, "12:00"))
 			if !ok {
 				t.Fatal("observed reading did not produce an effect")
 			}
@@ -53,13 +84,13 @@ func TestWeatherEffectStateKeepsStaleAndSkipsStaticReadings(t *testing.T) {
 	observed := observedWeather()
 	observed.FetchedAt = time.Now().Add(-90 * time.Minute)
 	observed.FailedSince = time.Now().Add(-30 * time.Minute)
-	if node := weatherEffectNode(observed, "weather:hero", 0); node == nil {
+	if node := weatherEffectNode(observed, "weather:hero", 0, weatherFixedInstant(t, "12:00")); node == nil {
 		t.Fatal("stale observed reading lost its animated effect")
 	}
-	if node := weatherEffectNode(services.Reading{}, "weather:hero", 0); node != nil {
+	if node := weatherEffectNode(services.Reading{}, "weather:hero", 0, weatherFixedInstant(t, "12:00")); node != nil {
 		t.Fatal("placeholder reading produced an effect")
 	}
-	if node := weatherEffectNode(services.Reading{FailedSince: time.Now()}, "weather:hero", 0); node != nil {
+	if node := weatherEffectNode(services.Reading{FailedSince: time.Now()}, "weather:hero", 0, weatherFixedInstant(t, "12:00")); node != nil {
 		t.Fatal("error reading produced an effect")
 	}
 }
@@ -74,7 +105,7 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 	}
 	reading := observedWeather()
 
-	got := weatherCardWithEffect(card, reading, "weather:hero", 0)
+	got := weatherCardWithEffect(card, reading, "weather:hero", 0, weatherFixedInstant(t, "12:00"))
 	if got != card {
 		t.Fatal("weather wrapper replaced the card node")
 	}
@@ -105,16 +136,21 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 }
 
 func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
-	reading := observedWeather()
-	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346, nil)
+	reading := weatherFixedReading(t)
+	now := weatherFixedInstant(t, "07:00")
+	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346, nil, now)
 	effect := firstWeatherEffect(hero)
 	if effect == nil || effect.Key != "weather:hero" {
 		t.Fatalf("hero effect = %+v, want the stable hero effect", effect)
 	}
-	want, ok := weatherEffectSpec(reading)
-	want.Daylight = effect.Effect.Daylight
+	want, ok := weatherEffectSpec(reading, now)
 	if !ok || effect.Effect != want {
 		t.Fatalf("hero effect spec = %+v, want %+v", effect.Effect, want)
+	}
+	// The sun is half way up at sunrise, so the daylight term is the curve
+	// itself and not the day or night fallback.
+	if want.Daylight < .49 || want.Daylight > .51 {
+		t.Fatalf("daylight at sunrise = %v, want the twilight midpoint", want.Daylight)
 	}
 }
 
@@ -168,17 +204,17 @@ func TestWeatherMetaLineKeepsTheStaleWarning(t *testing.T) {
 }
 
 func TestControlCentreWeatherUsesTheSameWeatherEffect(t *testing.T) {
-	reading := observedWeather()
-	r := &Registry{reading: reading}
+	reading := weatherFixedReading(t)
+	now := weatherFixedInstant(t, "07:00")
+	r := &Registry{reading: reading, now: now}
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
 	page := ccWeather(r, h)
 	effect := firstWeatherEffect(page.Children[0])
 	if effect == nil || effect.Key != "weather:today" {
 		t.Fatalf("Today effect = %+v, want the stable Today effect", effect)
 	}
-	want, ok := weatherEffectSpec(reading)
+	want, ok := weatherEffectSpec(reading, now)
 	want.SceneBias = -1 // the Control Centre card is wide enough to split
-	want.Daylight = effect.Effect.Daylight
 	if !ok || effect.Effect != want {
 		t.Fatalf("Today effect spec = %+v, want %+v", effect.Effect, want)
 	}
@@ -324,4 +360,32 @@ func TestWeatherEffectFillsItsCardEdgeToEdge(t *testing.T) {
 		}
 		check(t, root)
 	})
+}
+
+// The sun's height is the daylight term, so the spec belongs to an instant
+// rather than to the wall clock. Reading the clock inside the mapper made the
+// value untestable: two calls a microsecond apart disagreed in the ninth
+// decimal, and a test could only copy the value it was checking.
+func TestWeatherEffectDaylightFollowsTheSunAtTheGivenInstant(t *testing.T) {
+	reading := weatherFixedReading(t)
+	for _, tc := range []struct {
+		name   string
+		clock  string
+		lo, hi float64
+	}{
+		{"before dawn", "06:00", 0, 0},
+		{"sunrise is mid-twilight", "07:00", .49, .51},
+		{"twenty minutes after sunrise", "07:20", 1, 1},
+		{"midday", "12:00", 1, 1},
+		{"sunset is mid-twilight", "17:00", .49, .51},
+		{"night", "20:30", 0, 0},
+	} {
+		spec, ok := weatherEffectSpec(reading, weatherFixedInstant(t, tc.clock))
+		if !ok {
+			t.Fatalf("%s: the observed reading produced no effect", tc.name)
+		}
+		if spec.Daylight < tc.lo || spec.Daylight > tc.hi {
+			t.Errorf("%s: daylight %.3f, want [%v, %v]", tc.name, spec.Daylight, tc.lo, tc.hi)
+		}
+	}
 }

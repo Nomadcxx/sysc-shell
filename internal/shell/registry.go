@@ -1728,6 +1728,17 @@ func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
 // UpdateClock.
 func (r *Registry) Clock() *services.Clock { return r.clock }
 
+// weatherInstant is the instant a weather scene reads the sun at: the shell's
+// clock snapshot, so the sky agrees with the clock beside it, or the wall
+// clock when the shell holds no clock lease and has no snapshot. The caller
+// holds the registry lock, as the panel build does.
+func (r *Registry) weatherInstant() time.Time {
+	if r == nil {
+		return time.Now()
+	}
+	return weatherSceneInstant(r.now)
+}
+
 // Metrics is the shared sampling service. The process pumps its updates into
 // UpdateMetrics.
 func (r *Registry) Metrics() *services.Metrics { return r.metrics }

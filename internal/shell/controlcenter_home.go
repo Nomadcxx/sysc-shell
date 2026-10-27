@@ -274,7 +274,7 @@ func ccHomeWeather(m theme.Metrics, now time.Time, reading services.Reading, tr 
 	card.Height = ccHomeWeatherH
 	// The clock and date own the leading edge, so the scene sits against the
 	// trailing one and the scrim fades from the text side.
-	return weatherCardWithEffect(card, reading, weatherHomeEffectKey, 1)
+	return weatherCardWithEffect(card, reading, weatherHomeEffectKey, 1, weatherSceneInstant(now))
 }
 
 func ccHomeSystem(m theme.Metrics, snap services.Snapshot, tr translateFunc) *ui.Node {

@@ -17,10 +17,25 @@ const (
 	weatherEffectSeed uint64 = 0x534f4d455f574541
 )
 
+// weatherSceneInstant is the instant a weather scene reads the sun at. The
+// shell's clock snapshot is the shell's notion of now, so the sky agrees with
+// the clock beside it; a shell with no clock lease has no snapshot, and the
+// wall clock answers.
+func weatherSceneInstant(now time.Time) time.Time {
+	if now.IsZero() {
+		return time.Now()
+	}
+	return now
+}
+
 // weatherEffectSpec maps the existing weather icon vocabulary to the host's
 // effect catalogue. The icon name includes day/night state, so the mapper
 // cannot silently grow a second WMO table.
-func weatherEffectSpec(reading services.Reading) (ui.EffectSpec, bool) {
+//
+// The daylight term is the sun's height, so the instant is a parameter rather
+// than a hidden read of the clock: a caller that knows its instant gets the
+// spec for that instant, and a test can ask for the sky at an hour it names.
+func weatherEffectSpec(reading services.Reading, now time.Time) (ui.EffectSpec, bool) {
 	if !reading.Observed {
 		return ui.EffectSpec{}, false
 	}
@@ -54,7 +69,7 @@ func weatherEffectSpec(reading services.Reading) (ui.EffectSpec, bool) {
 	spec := ui.EffectSpec{
 		Program:   ui.EffectWeather,
 		Variant:   variant,
-		Daylight:  weatherDaylight(reading, time.Now()),
+		Daylight:  weatherDaylight(reading, now),
 		Seed:      weatherEffectSeed,
 		Intensity: intensity,
 		Speed:     speed,
@@ -112,8 +127,8 @@ func smoothAround(t, edge time.Time) float64 {
 	return x * x * (3 - 2*x)
 }
 
-func weatherEffectNode(reading services.Reading, key string, bias float64) *ui.Node {
-	spec, ok := weatherEffectSpec(reading)
+func weatherEffectNode(reading services.Reading, key string, bias float64, now time.Time) *ui.Node {
+	spec, ok := weatherEffectSpec(reading, now)
 	if !ok {
 		return nil
 	}
@@ -129,11 +144,11 @@ func weatherEffectNode(reading services.Reading, key string, bias float64) *ui.N
 // onto the foreground, so the scene fills the card edge to edge while the
 // text keeps its inset. The current card grammar has one foreground child;
 // malformed cards are left untouched rather than losing content.
-func weatherCardWithEffect(card *ui.Node, reading services.Reading, key string, bias float64) *ui.Node {
+func weatherCardWithEffect(card *ui.Node, reading services.Reading, key string, bias float64, now time.Time) *ui.Node {
 	if card == nil || len(card.Children) != 1 || card.Children[0] == nil {
 		return card
 	}
-	effect := weatherEffectNode(reading, key, bias)
+	effect := weatherEffectNode(reading, key, bias, now)
 	if effect == nil {
 		return card
 	}
