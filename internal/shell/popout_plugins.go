@@ -448,7 +448,7 @@ func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics
 	var lead []*ui.Node
 	if len(updates) > 0 {
 		lead = append(lead, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.CompactControl, Children: []*ui.Node{
-			settingsCardHeading(fmt.Sprintf("Updates (%d)", len(updates))),
+			settingsCardHeading(fmt.Sprintf("Updates (%d)", len(updates)), false),
 			pluginManagerButton("plugins-update-all", cardT(hostT(h), "plugins.update_all", "Update all"), metrics),
 		}})
 	}

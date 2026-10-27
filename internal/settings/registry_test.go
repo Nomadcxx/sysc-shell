@@ -1394,3 +1394,41 @@ func TestFrameCapSettingsContract(t *testing.T) {
 		t.Fatal("frame cap is not a preset axis")
 	}
 }
+
+// TestIdentifierGroupsAreMarkedLiteral is sysc-872 at the registry: a
+// connector name and a tray token are identifiers, so the pane must not
+// lowercase the card title it builds from them. Prose groups keep the
+// lowercase display the section rail sets.
+func TestIdentifierGroupsAreMarkedLiteral(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"id:proton.vpn.app.gtk"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "eDP-1", Bar: cfg.Bar}}
+	r := DefaultFor(cfg)
+
+	for _, path := range []string{
+		"outputs.eDP-1.enabled", "outputs.eDP-1.height", "outputs.eDP-1.font-size",
+		"tray.id:proton.vpn.app.gtk.hidden", "tray.id:proton.vpn.app.gtk.pinned",
+	} {
+		e, ok := r.Lookup(path)
+		if !ok {
+			t.Fatalf("missing %s", path)
+		}
+		if !e.GroupLiteral {
+			t.Errorf("%s group %q is not marked literal", path, e.Group)
+		}
+		if e.Group != "eDP-1" && e.Group != "id:proton.vpn.app.gtk" {
+			t.Errorf("%s group = %q, want the identifier as written", path, e.Group)
+		}
+	}
+
+	for _, path := range []string{"bar.enabled", "bar.frost-opacity", "tray.show-passive", "appearance.motion"} {
+		e, ok := r.Lookup(path)
+		if !ok {
+			t.Fatalf("missing %s", path)
+		}
+		if e.GroupLiteral {
+			t.Errorf("%s prose group %q is marked literal", path, e.Group)
+		}
+	}
+}

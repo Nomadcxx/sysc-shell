@@ -282,7 +282,7 @@ func barLaneHeader(h *PanelHost, name string, width int) *ui.Node {
 	m := h.metrics()
 	label := barLaneLabels[name]
 	header := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, PinEnd: true, Children: []*ui.Node{
-		settingsCardHeading(label),
+		settingsCardHeading(label, false),
 	}}
 	if h.barOutput == "" {
 		return header
@@ -354,7 +354,7 @@ func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
 	// are draggable or what the three lanes correspond to, and a pane whose
 	// central gesture is undiscoverable is a pane most people will not use.
 	strip := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Width: width, Children: []*ui.Node{
-		settingsCardHeading("Layout"),
+		settingsCardHeading("Layout", false),
 		{
 			Kind: ui.KindText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 			Text: "Drag a widget to reorder it or to move it between lanes. " +

@@ -1173,10 +1173,21 @@ func settingsAppearanceIntro(h *PanelHost) *ui.Node {
 // settingsGroupCard is one group as a titled card (settings redesign D3,
 // reversing the foundation design's plain columns).
 func settingsGroupCard(h *PanelHost, title string, rows []*ui.Node) *ui.Node {
+	return settingsGroupCardTitled(h, title, false, rows)
+}
+
+// settingsGroupCardLiteral is settingsGroupCard for a group whose title is an
+// identifier -- a connector or a tray token -- rather than prose. Those keep
+// the case they are written in (sysc-872).
+func settingsGroupCardLiteral(h *PanelHost, title string, rows []*ui.Node) *ui.Node {
+	return settingsGroupCardTitled(h, title, true, rows)
+}
+
+func settingsGroupCardTitled(h *PanelHost, title string, literal bool, rows []*ui.Node) *ui.Node {
 	m := h.metrics()
 	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
 	if title != "" {
-		col.Children = append(col.Children, settingsCardHeading(title))
+		col.Children = append(col.Children, settingsCardHeading(title, literal))
 	}
 	col.Children = append(col.Children, rows...)
 	return &ui.Node{
@@ -1185,11 +1196,16 @@ func settingsGroupCard(h *PanelHost, title string, rows []*ui.Node) *ui.Node {
 	}
 }
 
-// settingsCardHeading is a group's title: lowercase on screen, the title as
-// written for assistive technology.
-func settingsCardHeading(title string) *ui.Node {
+// settingsCardHeading is a group's title: lowercase on screen for a prose
+// name, as written for an identifier, and the title as written for assistive
+// technology either way.
+func settingsCardHeading(title string, literal bool) *ui.Node {
+	text := title
+	if !literal {
+		text = strings.ToLower(title)
+	}
 	return &ui.Node{
-		Kind: ui.KindText, Text: strings.ToLower(title), Name: title, Role: "heading",
+		Kind: ui.KindText, Text: text, Name: title, Role: "heading",
 		TextRole: theme.RoleSection, Tone: ui.ToneAccent,
 	}
 }
@@ -1218,7 +1234,14 @@ func settingsPageColumn(h *PanelHost, entries []settings.Entry, lead ...*ui.Node
 	}
 	locale := settingsLocale(h)
 	for _, g := range order {
-		children = append(children, settingsGroupCard(h, i18n.T(locale, "group."+g, g), settingsGroupRows(h, groups[g], rowW)))
+		rows := settingsGroupRows(h, groups[g], rowW)
+		// An identifier group has no catalogue key and must not be lowercased,
+		// so it skips the lookup the prose names use.
+		if groups[g][0].GroupLiteral {
+			children = append(children, settingsGroupCardLiteral(h, g, rows))
+			continue
+		}
+		children = append(children, settingsGroupCard(h, i18n.T(locale, "group."+g, g), rows))
 	}
 	gap := theme.MarginL
 	if section == "Appearance" {
