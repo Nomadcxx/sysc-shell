@@ -186,13 +186,16 @@ func NewEngine(dir string, lookup func(string) bool) *gslapperEngine {
 // probeCapabilities decides what is installed. gSlapper is probed by running
 // its help rather than by trusting the name on PATH, because a pre-1.5 build
 // has the binary but not the IPC contract this slice depends on (D12).
+//
+// A probe resolves through resolveTool, not LookPath alone, so a per-user
+// install that the service PATH omits is still found (sysc-925).
 func probeCapabilities(lookup func(string) bool) Capabilities {
 	if lookup == nil {
-		lookup = func(name string) bool { _, err := exec.LookPath(name); return err == nil }
+		lookup = func(name string) bool { _, err := resolveTool(name); return err == nil }
 	}
 	var caps Capabilities
 	if lookup("gslapper") {
-		if help, err := exec.Command("gslapper", "--help").CombinedOutput(); err == nil {
+		if help, err := exec.Command(probePath("gslapper"), "--help").CombinedOutput(); err == nil {
 			caps.GSlapper = helpSupports(help)
 		}
 	}
@@ -208,14 +211,14 @@ const terminalCatalogTimeout = 2 * time.Second
 // can preserve the last good catalog during a transient launch failure.
 func probeTerminalCatalog(lookup func(string) bool) (bool, Catalog, bool) {
 	if lookup == nil {
-		lookup = func(name string) bool { _, err := exec.LookPath(name); return err == nil }
+		lookup = func(name string) bool { _, err := resolveTool(name); return err == nil }
 	}
 	if !lookup("sysc-terminal") {
 		return false, Catalog{}, true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), terminalCatalogTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "sysc-terminal", "--list").CombinedOutput()
+	out, err := exec.CommandContext(ctx, probePath("sysc-terminal"), "--list").CombinedOutput()
 	if err != nil {
 		return false, Catalog{}, false
 	}
@@ -1233,6 +1236,7 @@ func spawnDetached(argv []string) (Process, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("wallpaper: empty argv")
 	}
+	argv = spawnName(argv)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
