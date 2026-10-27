@@ -108,13 +108,8 @@ func restrictPaths(rules []PathRule, signalAny bool) error {
 		return fmt.Errorf("landlock is not available")
 	}
 	handled := handledFor(abi)
-	attr := unix.LandlockRulesetAttr{Access_fs: handled, Scoped: scopesFor(abi, signalAny)}
-	// A kernel before the scopes rejects the longer attribute, so the size
-	// stops before the network field there; network rights are not handled.
-	size := unsafe.Sizeof(attr)
-	if attr.Scoped == 0 {
-		size = unsafe.Offsetof(attr.Access_net)
-	}
+	attr := unix.LandlockRulesetAttr{Handled_access_fs: handled, Scoped: scopesFor(abi, signalAny)}
+	size := rulesetAttrSize(attr)
 	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET,
 		uintptr(unsafe.Pointer(&attr)), size, 0)
 	if errno != 0 {
@@ -139,6 +134,22 @@ func restrictPaths(rules []PathRule, signalAny bool) error {
 		return fmt.Errorf("restrict: %w", errno)
 	}
 	return nil
+}
+
+// rulesetAttrSize is the number of bytes of the ruleset attribute the kernel
+// is asked to read.
+//
+// The x/sys v0.49.0 shape carries a quiet-rights tail after the fields the
+// scopes ABI uses. The kernel zeroes the fields it is not given, and it
+// refuses a size larger than its own struct, so the size stays at the three
+// fields that every kernel from the scopes ABI on reads. A kernel before the
+// scopes refuses anything longer than the filesystem field, so the size stops
+// before the network field there.
+func rulesetAttrSize(attr unix.LandlockRulesetAttr) uintptr {
+	if attr.Scoped == 0 {
+		return unsafe.Offsetof(attr.Handled_access_net)
+	}
+	return unsafe.Offsetof(attr.Quiet_access_fs)
 }
 
 func addRule(ruleset int, rule PathRule, handled uint64) error {

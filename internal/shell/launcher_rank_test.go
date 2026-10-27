@@ -279,7 +279,7 @@ func waitForRankServiceResults(t *testing.T, svc *launcher.Service) []launcher.R
 	for {
 		select {
 		case results := <-svc.Results():
-			last = results
+			last = results.Results
 		case <-time.After(150 * time.Millisecond):
 			if last == nil {
 				t.Fatal("launcher service produced no results")

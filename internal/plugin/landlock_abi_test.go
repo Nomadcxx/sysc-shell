@@ -5,7 +5,34 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
+
+// TestRulesetAttrSizeStaysInsideTheKernelStruct pins the size of the
+// ruleset attribute. The kernel refuses a size larger than its own struct
+// with E2BIG, and the x/sys struct carries a quiet-rights tail that a kernel
+// older than it never heard of. The size therefore stays at the three fields
+// the scopes ABI uses, and at the filesystem field alone on a kernel before
+// the scopes.
+func TestRulesetAttrSizeStaysInsideTheKernelStruct(t *testing.T) {
+	scoped := unix.LandlockRulesetAttr{Handled_access_fs: 1, Handled_access_net: 2, Scoped: 3}
+	if got, want := rulesetAttrSize(scoped), unsafe.Offsetof(scoped.Quiet_access_fs); got != want {
+		t.Fatalf("scoped ruleset attribute size = %d, want %d", got, want)
+	}
+	if got, want := rulesetAttrSize(scoped), uintptr(24); got != want {
+		t.Fatalf("scoped ruleset attribute size = %d, want %d bytes", got, want)
+	}
+
+	unscoped := unix.LandlockRulesetAttr{Handled_access_fs: 1}
+	if got, want := rulesetAttrSize(unscoped), unsafe.Offsetof(unscoped.Handled_access_net); got != want {
+		t.Fatalf("unscoped ruleset attribute size = %d, want %d", got, want)
+	}
+	if got, want := rulesetAttrSize(unscoped), uintptr(8); got != want {
+		t.Fatalf("unscoped ruleset attribute size = %d, want %d bytes", got, want)
+	}
+}
 
 // TestLandlockABIRecorded asserts and records the kernel's Landlock ABI so
 // CI reports it where the confinement tests would otherwise skip out of
