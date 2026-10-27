@@ -472,7 +472,11 @@ func writeJPEG(dst string, img image.Image) error {
 // seek, the crop, and the scale; the design treats the extractor as optional
 // either way, and a failure leaves the tile on its kind glyph.
 func extractVideoStill(ctx context.Context, src, dst string) error {
-	name, err := exec.LookPath("ffmpeg")
+	// resolveTool, not exec.LookPath: the shell runs from a unit whose PATH is
+	// the manager default, so an ffmpeg a user installed under ~/.local/bin is
+	// on disk and still reported as a missing extractor (sysc-1955). The engine
+	// resolves its own tools through this same list (sysc-925).
+	name, err := resolveTool("ffmpeg")
 	if err != nil {
 		return fmt.Errorf("%w: %w", errNoExtractor, err)
 	}

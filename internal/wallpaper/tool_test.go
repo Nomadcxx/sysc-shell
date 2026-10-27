@@ -1,6 +1,8 @@
 package wallpaper
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,6 +53,52 @@ func TestResolveToolFallsBackToInstallDirs(t *testing.T) {
 	// caller can keep distinguishing missing from broken.
 	if _, err := resolveTool("sysc-terminal-absent"); err == nil {
 		t.Fatal("resolveTool must report a name that is nowhere on disk")
+	}
+}
+
+// TestExtractVideoStillFindsAnInstallOutsidePath pins that the frame extractor
+// goes through the same resolver as the engine's own tools.
+//
+// exec.LookPath alone left an ffmpeg under ~/.local/bin invisible to the
+// shell's unit, and a video tile then reported no extractor for a binary that
+// was on disk (sysc-1955). PATH is empty here, so the only way the call can
+// succeed is the install-directory fallback.
+func TestExtractVideoStillFindsAnInstallOutsidePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", filepath.Join(home, "empty"))
+
+	install := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(install, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The extractor writes whatever its last argument names, which is the
+	// destination the thumbnailer asked for.
+	installed := filepath.Join(install, "ffmpeg")
+	if err := fakebin.Write(installed, "#!/bin/sh\nfor last do :; done\nprintf x > \"$last\"\n", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withToolDirs(t, install)
+
+	src := filepath.Join(home, "clip.mp4")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(home, "still.png")
+	if err := extractVideoStill(context.Background(), src, dst); err != nil {
+		t.Fatalf("extractVideoStill with an install outside PATH: %v", err)
+	}
+	if info, err := os.Stat(dst); err != nil || info.Size() == 0 {
+		t.Fatalf("the extractor did not write %s: %v", dst, err)
+	}
+
+	// An ffmpeg that is nowhere is still reported as absent, so a caller can
+	// tell a missing extractor from a broken one.
+	if err := os.Remove(installed); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractVideoStill(context.Background(), src, dst); !errors.Is(err, errNoExtractor) {
+		t.Fatalf("extractVideoStill without an ffmpeg = %v, want errNoExtractor", err)
 	}
 }
 
