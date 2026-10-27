@@ -2,6 +2,7 @@ package shell
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -139,35 +140,74 @@ func TestSpriteRestWithDecorativeGradient(t *testing.T) {
 
 // A resting loop publishes once per pose, not once per tick, and a new
 // target cuts the rest short.
+//
+// The loop is driven by a clock, so the test gives it one: a synctest bubble
+// has a clock of its own, and inside it the only way time passes is that
+// every goroutine is waiting. The deadlines below are therefore exact, and
+// the assertions cannot be moved by a loaded machine -- which is what made
+// this check fail on the laptop bench, where the wake needed 54ms of a 50ms
+// budget.
+//
+// The bubble only records what it saw: a failure inside it ends the bubble's
+// root goroutine, and the loop it started is still waiting, which the
+// runtime reports as a deadlock and turns one failed check into a crashed
+// binary. The assertions are made after the bubble has drained.
 func TestRestingLoopPublishesPerPoseAndWakesForOtherMotion(t *testing.T) {
-	t.Parallel()
-	stop := make(chan struct{})
-	wake := make(chan struct{}, 1)
-	published := make(chan time.Time, 64)
-	done := make(chan struct{})
-	go func() {
-		animateSurfaceResting(stop, wake, func() bool { return false },
-			func() { published <- time.Now() }, func() time.Duration { return 0 },
-			func() (time.Duration, bool) { return 150 * time.Millisecond, true })
-		close(done)
-	}()
-	time.Sleep(400 * time.Millisecond)
-	if n := len(published); n < 2 || n > 5 {
-		t.Fatalf("published %d times in 400ms resting 150ms per pose", n)
-	}
-	for len(published) > 0 {
-		<-published
-	}
-	sent := time.Now()
-	wake <- struct{}{}
-	select {
-	case at := <-published:
-		if at.Sub(sent) > 50*time.Millisecond {
-			t.Fatalf("wake took %v to publish", at.Sub(sent))
+	var (
+		poses     []time.Duration
+		published int
+		woke      bool
+		wakeDelay time.Duration
+	)
+	synctest.Test(t, func(t *testing.T) {
+		stop := make(chan struct{})
+		wake := make(chan struct{}, 1)
+		pubs := make(chan time.Time, 64)
+		done := make(chan struct{})
+		go func() {
+			animateSurfaceResting(stop, wake, func() bool { return false },
+				func() { pubs <- time.Now() }, func() time.Duration { return 0 },
+				func() (time.Duration, bool) { return 150 * time.Millisecond, true })
+			close(done)
+		}()
+		// The first tick publishes, and after that a publish lands on each
+		// pose boundary. 400ms holds the tick and two pose boundaries.
+		time.Sleep(400 * time.Millisecond)
+		at := make([]time.Time, 0, 8)
+		for len(pubs) > 0 {
+			at = append(at, <-pubs)
 		}
-	case <-time.After(140 * time.Millisecond):
+		published = len(at)
+		for i := 1; i < len(at); i++ {
+			poses = append(poses, at[i].Sub(at[i-1]))
+		}
+		sent := time.Now()
+		wake <- struct{}{}
+		select {
+		case p := <-pubs:
+			woke = true
+			wakeDelay = p.Sub(sent)
+		case <-time.After(140 * time.Millisecond):
+		}
+		close(stop)
+		<-done
+	})
+	// One publish per pose, not one per tick: a per-tick loop would have
+	// published about fifty times in 400ms.
+	if published != 3 {
+		t.Fatalf("published %d times in 400ms resting 150ms per pose, want 3", published)
+	}
+	for i, gap := range poses {
+		if gap < 150*time.Millisecond {
+			t.Fatalf("publish %d came %v after the previous one, want a pose apart", i+1, gap)
+		}
+	}
+	if !woke {
 		t.Fatal("wake did not cut the rest short")
 	}
-	close(stop)
-	<-done
+	// The wake cuts the rest short, so the publish lands in the same instant
+	// as the wake rather than at the next pose.
+	if wakeDelay != 0 {
+		t.Fatalf("wake took %v to publish", wakeDelay)
+	}
 }

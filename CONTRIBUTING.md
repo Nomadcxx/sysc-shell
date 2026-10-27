@@ -57,6 +57,24 @@ Release notes are generated from the commit history: the release workflow create
 Check the machine first: `uptime`, and look for processes an earlier run left behind. A goroutine dump
 is the second tool, not the first.
 
+## Settled-state checks
+
+A test asserts on a settled state, not on a guess about when the work will be done. Wait for the
+event that means the work finished: a channel the worker closes, a cached value the worker wrote,
+a request the shell has already handled. A sleep that is long enough on a quiet machine is a
+timeout waiting to happen on a busy one.
+
+Two rules follow from that.
+
+- When the work is done by another goroutine, wait for that goroutine. Close the stop channel and
+  wait for the done channel, or read the cached value under the lock that guards it.
+- When the test genuinely needs time to pass, use `testing/synctest`. The bubble owns the clock, so
+  the assertion is on the virtual timeline and the test finishes in real time. A bubble has one
+  restriction: a test inside it cannot call `t.Parallel()`.
+
+A deadline is a backstop, never the assertion. When a wait does expire, the failure message has to
+name the step that did not settle, so the next reader knows which one to fix.
+
 ## Check the tree you are changing
 
 Confirm a constraint against `git show origin/main:AGENTS.md` before acting on it when the
