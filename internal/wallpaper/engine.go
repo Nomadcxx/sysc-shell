@@ -195,7 +195,9 @@ func probeCapabilities(lookup func(string) bool) Capabilities {
 	}
 	var caps Capabilities
 	if lookup("gslapper") {
-		if help, err := exec.Command(probePath("gslapper"), "--help").CombinedOutput(); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), gslapperProbeTimeout)
+		defer cancel()
+		if help, err := exec.CommandContext(ctx, probePath("gslapper"), "--help").CombinedOutput(); err == nil {
 			caps.GSlapper = helpSupports(help)
 		}
 	}
@@ -204,7 +206,15 @@ func probeCapabilities(lookup func(string) bool) Capabilities {
 	return caps
 }
 
-const terminalCatalogTimeout = 2 * time.Second
+const (
+	// gslapperProbeTimeout bounds the gslapper capability probe. The probe
+	// runs while the shell holds the registry lock, and a build that does
+	// not answer --help would otherwise hold that lock for the life of the
+	// process (sysc-2007).
+	gslapperProbeTimeout = 2 * time.Second
+
+	terminalCatalogTimeout = 2 * time.Second
+)
 
 // probeTerminalCatalog reports whether an installed sysc-terminal provides a
 // usable catalog. A failed probe is distinct from an absent binary so refresh
