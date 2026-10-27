@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/seam"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -16,6 +17,13 @@ const (
 	// A fixed seed keeps the particle field stable when a reading is refreshed.
 	weatherEffectSeed uint64 = 0x534f4d455f574541
 )
+
+// weatherNow is the clock the daylight blend reads. The blend is a smoothstep
+// across a twenty-minute twilight, so it moves with every passing nanosecond:
+// a spec built now and a spec built a moment later are never equal, and the
+// day only looks stable because most of it saturates at 0 or 1. A test pins
+// the clock to compare two specs exactly (sysc-1076).
+var weatherNow = seam.New(time.Now)
 
 // weatherEffectSpec maps the existing weather icon vocabulary to the host's
 // effect catalogue. The icon name includes day/night state, so the mapper
@@ -54,7 +62,7 @@ func weatherEffectSpec(reading services.Reading) (ui.EffectSpec, bool) {
 	spec := ui.EffectSpec{
 		Program:   ui.EffectWeather,
 		Variant:   variant,
-		Daylight:  weatherDaylight(reading, time.Now()),
+		Daylight:  weatherDaylight(reading, weatherNow.Get()()),
 		Seed:      weatherEffectSeed,
 		Intensity: intensity,
 		Speed:     speed,

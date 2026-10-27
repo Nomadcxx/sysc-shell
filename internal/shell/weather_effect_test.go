@@ -106,13 +106,16 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 
 func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
 	reading := observedWeather()
+	pinWeatherClock(t, weatherClockFixture)
 	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346, nil)
 	effect := firstWeatherEffect(hero)
 	if effect == nil || effect.Key != "weather:hero" {
 		t.Fatalf("hero effect = %+v, want the stable hero effect", effect)
 	}
 	want, ok := weatherEffectSpec(reading)
-	want.Daylight = effect.Effect.Daylight
+	// Daylight stays in the comparison. The tree built the spec and the line
+	// above built another, so without a pinned clock the two disagree in the
+	// low decimals whenever the run lands inside a twilight blend (sysc-1076).
 	if !ok || effect.Effect != want {
 		t.Fatalf("hero effect spec = %+v, want %+v", effect.Effect, want)
 	}
@@ -169,6 +172,7 @@ func TestWeatherMetaLineKeepsTheStaleWarning(t *testing.T) {
 
 func TestControlCentreWeatherUsesTheSameWeatherEffect(t *testing.T) {
 	reading := observedWeather()
+	pinWeatherClock(t, weatherClockFixture)
 	r := &Registry{reading: reading}
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
 	page := ccWeather(r, h)
@@ -178,7 +182,7 @@ func TestControlCentreWeatherUsesTheSameWeatherEffect(t *testing.T) {
 	}
 	want, ok := weatherEffectSpec(reading)
 	want.SceneBias = -1 // the Control Centre card is wide enough to split
-	want.Daylight = effect.Effect.Daylight
+	// Daylight is left to be compared, for the reason the hero case gives.
 	if !ok || effect.Effect != want {
 		t.Fatalf("Today effect spec = %+v, want %+v", effect.Effect, want)
 	}
@@ -195,6 +199,20 @@ func firstWeatherEffect(root *ui.Node) *ui.Node {
 		}
 	})
 	return effect
+}
+
+// The blend itself is covered by TestWeatherDaylightFollowsSunriseAndSunset.
+// What was missing is the clock: the blend moves continuously, so two specs
+// built a moment apart never compare equal outside the flat 0 and 1 parts of
+// the day, and the run only failed inside the twenty-minute twilight windows
+// around sunrise and sunset (sysc-1076).
+var weatherClockFixture = time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+
+// pinWeatherClock freezes the daylight blend for one test and puts the real
+// clock back when the test ends.
+func pinWeatherClock(t *testing.T, at time.Time) {
+	t.Helper()
+	t.Cleanup(weatherNow.Swap(func() time.Time { return at }))
 }
 
 func TestWeatherPanelFitsLaptopScale(t *testing.T) {
