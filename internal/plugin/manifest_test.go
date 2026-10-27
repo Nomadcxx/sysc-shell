@@ -3,6 +3,7 @@ package plugin
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -213,6 +214,64 @@ func TestLoadManifestRejectsASymlinkOutOfTheDirectory(t *testing.T) {
 	}
 	if err := loadErr(t, dir); err == nil {
 		t.Fatal("a symlink out of the plugin directory was accepted")
+	}
+}
+
+func TestResolveExecKeepsVerifiedTargetAfterSymlinkSwap(t *testing.T) {
+	t.Parallel()
+
+	// The entry point that passed containment must be what later runs: a
+	// same-user swap of the declared symlink after resolve must not redirect
+	// execution to a binary outside the plugin tree.
+	dir := writePlugin(t, timerManifest, "")
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	safe := filepath.Join(dir, "bin", "safe")
+	outside := filepath.Join(t.TempDir(), "outside")
+	safeBody := "#!/bin/sh\nprintf 'safe' > '" + marker + "'\n"
+	evilBody := "#!/bin/sh\nprintf 'evil' > '" + marker + "'\n"
+	if err := os.WriteFile(safe, []byte(safeBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte(evilBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "bin", "sysc-plugin-timer")
+	if err := os.Symlink(safe, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	realSafe, err := filepath.EvalSymlinks(safe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ExecPath != realSafe {
+		t.Fatalf("ExecPath = %q, want verified path %q", m.ExecPath, realSafe)
+	}
+
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(m.ExecPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("running verified ExecPath: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "safe" {
+		t.Fatalf("after symlink swap, ran %q; want the verified in-tree binary", got)
 	}
 }
 
