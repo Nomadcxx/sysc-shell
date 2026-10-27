@@ -1060,7 +1060,7 @@ func TestClosedLauncherServiceWaitsForItsActivationCallback(t *testing.T) {
 		for {
 			select {
 			case rows := <-svc.Results():
-				if slices.ContainsFunc(rows, func(row launcher.Result) bool { return row.Entry.ID == rowID }) {
+				if slices.ContainsFunc(rows.Results, func(row launcher.Result) bool { return row.Entry.ID == rowID }) {
 					return
 				}
 			case <-deadline:

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -350,8 +351,26 @@ func (r *Registry) launcherCopy(text string) error {
 	return nil
 }
 
+// launcherRun starts an activated entry through the compositor. The spawn argv
+// arrives as "niri msg action spawn --" plus the command, the same shape the
+// launcher's own default used.
+//
+// sysc-launch v0.5.0 starts the desktop command directly when no Run is
+// configured. That would make the shell the parent of every application it
+// launches, leave the compositor unaware of them, and give them the shell's
+// lifetime. The shell is Niri first, so it names the spawn path itself.
+func (r *Registry) launcherRun(_ context.Context, argv []string) error {
+	if len(argv) == 0 {
+		return errors.New("launcher: empty spawn argv")
+	}
+	if r.runArgv == nil {
+		return errors.New("launcher: no spawn runner is wired")
+	}
+	return r.runArgv(argv)
+}
+
 // launcherServiceConfig is the service wiring shared by the live launcher and
-// its tests; the caller adds Scan, Run and History as it needs.
+// its tests; the caller adds Scan and History as it needs.
 func (r *Registry) launcherServiceConfig() launcher.ServiceConfig {
 	r.ensureLauncherSnaps()
 	r.launcherMu.Lock()
@@ -363,6 +382,7 @@ func (r *Registry) launcherServiceConfig() launcher.ServiceConfig {
 		},
 		Providers:         r.launcherProviders(),
 		ApplicationsGlyph: "glyph:apps",
+		Run:               r.launcherRun,
 		TerminalDesktopID: func() string {
 			if prefs := r.launcherAppPrefs.Load(); prefs != nil {
 				return prefs.defaultTerminalID

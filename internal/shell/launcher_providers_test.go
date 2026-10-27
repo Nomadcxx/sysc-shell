@@ -76,6 +76,39 @@ func TestLauncherServiceUsesSelectedTerminalAfterConfigReload(t *testing.T) {
 	}
 }
 
+func TestLauncherServiceConfigSpawnsThroughTheCompositor(t *testing.T) {
+	r := newPanelRegistry(t)
+	var mu sync.Mutex
+	var spawned []string
+	r.runArgv = func(argv []string) error {
+		mu.Lock()
+		spawned = slices.Clone(argv)
+		mu.Unlock()
+		return nil
+	}
+
+	serviceConfig := r.launcherServiceConfig()
+	if serviceConfig.Run == nil {
+		t.Fatal("the launcher service has no spawn runner: an application would be started directly")
+	}
+	serviceConfig.Scan = func() []launcher.Entry {
+		return []launcher.Entry{{ID: "firefox.desktop", Name: "Firefox", Argv: []string{"firefox"}}}
+	}
+	svc := launcher.NewService(serviceConfig)
+	defer svc.Close()
+	<-svc.Results()
+	if err := svc.Activate("firefox.desktop", ""); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"niri", "msg", "action", "spawn", "--", "firefox"}
+	if !slices.Equal(spawned, want) {
+		t.Fatalf("spawn argv = %v, want %v", spawned, want)
+	}
+}
+
 func TestCalcProviderRows(t *testing.T) {
 	r := newPanelRegistry(t)
 	p := r.calcProvider()
@@ -117,7 +150,7 @@ func TestInlineCalcShowsOnlyRealExpressions(t *testing.T) {
 	for q, wantCalc := range map[string]bool{"6*7": true, "2048": false, "firefox": false} {
 		svc.Query(q)
 		got := <-svc.Results()
-		hasCalc := len(got) > 0 && strings.HasPrefix(got[0].Entry.ID, "calc:")
+		hasCalc := len(got.Results) > 0 && strings.HasPrefix(got.Results[0].Entry.ID, "calc:")
 		if hasCalc != wantCalc {
 			t.Errorf("%q: calc row %v, want %v (%+v)", q, hasCalc, wantCalc, got)
 		}
@@ -190,7 +223,7 @@ func TestClipboardProviderRequiresExplicitPrefix(t *testing.T) {
 	<-svc.Results()
 	query := func(text string) []launcher.Result {
 		svc.Query(text)
-		return <-svc.Results()
+		return (<-svc.Results()).Results
 	}
 	contains := func(rows []launcher.Result, id string) bool {
 		for _, row := range rows {
@@ -680,12 +713,12 @@ func TestLauncherSearchFindsBareSessionAction(t *testing.T) {
 	svc.Query("reboot")
 	select {
 	case rows := <-svc.Results():
-		for _, row := range rows {
+		for _, row := range rows.Results {
 			if row.Entry.ID == "session-reboot" && row.Entry.Name == "Reboot" {
 				return
 			}
 		}
-		t.Fatalf("bare reboot search rows = %+v", rows)
+		t.Fatalf("bare reboot search rows = %+v", rows.Results)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for session search results")
 	}
