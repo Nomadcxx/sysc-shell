@@ -70,6 +70,11 @@ func TestTurningTheLockKeyOSDOffLeavesTheBarWidgetAlone(t *testing.T) {
 		t.Fatal("the bar replaced the service the OSD relay owns")
 	}
 
+	// The relay takes the poller's lease when it starts, so wait for the
+	// poller before the switch: the assertion below is about the OSD going
+	// off, not about the relay having been scheduled.
+	waitLockKeysPolling(t, svc)
+
 	off := config.Default()
 	off.Panels.OSDLockKeys = false
 	reloadLockKeys(t, r, off)
