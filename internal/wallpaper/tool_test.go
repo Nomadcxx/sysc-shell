@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 )
@@ -225,5 +226,32 @@ func TestProbeFindsAPerUserTerminalInstall(t *testing.T) {
 	}
 	if caps.EngineFor(KindEffect) != EngineTerminal {
 		t.Fatalf("kind effect engine = %q, want %q", caps.EngineFor(KindEffect), EngineTerminal)
+	}
+}
+
+// TestTheGSlapperProbeIsBounded pins the bound on the gslapper capability
+// probe.
+//
+// The probe runs while the shell holds the registry lock, so a build that
+// does not answer --help would hold that lock for the life of the process
+// (sysc-2007). The sibling catalog probe is bounded; this one is now too.
+func TestTheGSlapperProbeIsBounded(t *testing.T) {
+	dir := t.TempDir()
+	hanging := filepath.Join(dir, "gslapper")
+	if err := fakebin.Write(hanging, "#!/bin/sh\nexec /bin/sleep 30\n", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	withToolDirs(t, dir)
+
+	start := time.Now()
+	caps := probeCapabilities(nil)
+	held := time.Since(start)
+
+	if held > 10*time.Second {
+		t.Fatalf("the capability probe took %s, want it bounded by the probe timeout", held)
+	}
+	if caps.GSlapper {
+		t.Fatal("a probe that never answered reported the capability")
 	}
 }
