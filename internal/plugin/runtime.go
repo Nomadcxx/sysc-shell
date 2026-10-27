@@ -436,8 +436,16 @@ func (r *Runtime) launch(ctx context.Context) error {
 		HandshakeTimeout: r.opts.HandshakeTimeout,
 		ShutdownGrace:    r.opts.ShutdownGrace,
 	}
-	sess, err := sup.Start(ctx)
+	// The plugin's process runs under the session's context, not the host's.
+	// A host context that ends takes the plugin process down with it, and a
+	// plugin killed that way never gets to stop what it owns: the recorder's
+	// backend would keep recording the screen with nobody left to stop it.
+	// The session context ends when the runtime stops the plugin, which
+	// happens after the plugin has been asked to stop.
+	sessionCtx, cancelSession := context.WithCancel(context.WithoutCancel(ctx))
+	sess, err := sup.Start(sessionCtx)
 	if err != nil {
+		cancelSession()
 		var incompatible *IncompatibleError
 		if errors.As(err, &incompatible) {
 			r.setState(StateIncompatible, err.Error())
@@ -447,13 +455,14 @@ func (r *Runtime) launch(ctx context.Context) error {
 		return err
 	}
 
-	sessionCtx, cancelSession := context.WithCancel(ctx)
 	r.mu.Lock()
 	if r.generation != generation || r.stopping {
 		// The user disabled this plugin while it was starting.
 		r.mu.Unlock()
-		cancelSession()
+		// The plugin is asked to stop before its context ends: a plugin
+		// killed by its own context never gets to stop what it owns.
 		sess.Close()
+		cancelSession()
 		return nil
 	}
 	q := make(chan outItem, sendQueueDepth)
@@ -591,9 +600,11 @@ func (r *Runtime) Stop() {
 	r.early = nil
 	r.mu.Unlock()
 
-	if cancelSession != nil {
-		cancelSession()
-	}
+	// The plugin is asked to stop before its context ends. A context that
+	// ends first takes the plugin process down, and a plugin killed that way
+	// cannot stop what it owns, so the order here is the difference between
+	// a plugin that cleans up after itself and one that leaves a process
+	// behind with nobody left to own it.
 	if sess != nil {
 		sess.Close()
 		r.mu.Lock()
@@ -602,6 +613,9 @@ func (r *Runtime) Stop() {
 		if r.opts.SessionEnded != nil {
 			r.opts.SessionEnded()
 		}
+	}
+	if cancelSession != nil {
+		cancelSession()
 	}
 	r.setState(StateDisabled, "")
 }
