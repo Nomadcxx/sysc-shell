@@ -183,7 +183,13 @@ func TestSettingsBarPreviewUsesRegistryFontCatalog(t *testing.T) {
 	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
 	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
-	if image := reg.paintSettingsBar(&PanelHost{}, cfg, 800, cfg.Bar.SurfaceExtent(), 120); image == nil {
+	// The preview reads the registry's live state, and the night light relay
+	// writes that state from its own goroutine, so the lock is the contract
+	// the production caller keeps too.
+	reg.mu.Lock()
+	image := reg.paintSettingsBar(&PanelHost{}, cfg, 800, cfg.Bar.SurfaceExtent(), 120)
+	reg.mu.Unlock()
+	if image == nil {
 		t.Fatal("settings bar preview did not render")
 	}
 	if reg.fontCatalog.catalog == nil {
