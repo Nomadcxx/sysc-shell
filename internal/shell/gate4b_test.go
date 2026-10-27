@@ -168,22 +168,17 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 	reg.setAudio(services.NewAudio(15*time.Millisecond, bin))
 	reg.setTestBar(1, &Bar{conn: "DP-1"})
 	reg.setTestBar(2, &Bar{conn: "DP-2"})
-	baselineDeadline := time.After(3 * time.Second)
-	baselinePoll := time.NewTicker(5 * time.Millisecond)
-	defer baselinePoll.Stop()
-	for {
-		if _, ready := reg.audio.CachedState(); ready {
-			break
-		}
-		select {
-		case <-baselinePoll.C:
-		case <-baselineDeadline:
-			t.Fatal("audio service did not establish its baseline")
-		}
-	}
+	// The service polls wpctl on a cadence of its own and the OSD follows
+	// the change it reports, so the two waits are separate: the first waits
+	// for the poll to have seen the volume, the second for the OSD request
+	// that follows from it. Sharing one window made the check fail on the
+	// laptop bench, where the poll had not run yet when the window ran out,
+	// and the failure named the OSD rather than the poll.
+	waitForAudioLevel(t, reg, 40, 3*time.Second)
 	if err := os.WriteFile(filepath.Join(dir, "vol"), []byte("0.70\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	waitForAudioLevel(t, reg, 70, 3*time.Second)
 	deadline := time.After(3 * time.Second)
 	seen := map[string]bool{}
 	for len(seen) < 2 {
@@ -194,6 +189,27 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 			}
 		case <-deadline:
 			t.Fatalf("osd surfaces = %v, want osd:1 and osd:2", seen)
+		}
+	}
+}
+
+// waitForAudioLevel waits for the audio service to report the given level.
+// The service caches the last poll it made, so this is the settled state of
+// the poll rather than a guess about when the poll will run.
+func waitForAudioLevel(t *testing.T, reg *Registry, level int, within time.Duration) {
+	t.Helper()
+	deadline := time.After(within)
+	poll := time.NewTicker(5 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		if st, ready := reg.audio.CachedState(); ready && st.Level == level {
+			return
+		}
+		select {
+		case <-poll.C:
+		case <-deadline:
+			st, ready := reg.audio.CachedState()
+			t.Fatalf("audio service reported level %d (baseline ready %v), want %d", st.Level, ready, level)
 		}
 	}
 }
