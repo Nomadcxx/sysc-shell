@@ -258,6 +258,52 @@ func TestConfigReloadWithoutOutputRetainsStatus(t *testing.T) {
 	}
 }
 
+// A refusal that arrives before the first output has no bar to draw the
+// notice on. It waits for one instead of being lost, because a configuration
+// rejected at startup is the one refusal the user cannot see anywhere else.
+func TestConfigReloadNoticeWaitsForTheFirstOutput(t *testing.T) {
+	reg := newPanelRegistry(t)
+	reg.RecordConfigReload(&config.Diagnostic{Field: "bar.height", Message: "value is not positive"})
+	if reg.OSD().Visible() {
+		t.Fatal("the notice appeared without an output")
+	}
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("the notice enqueued an auxiliary request: %+v", req)
+	default:
+	}
+
+	withTestBar(t, reg, 7, reg.cfg)
+	reg.showPendingConfigNotice()
+	reqs := drainAux(t, reg, 1)
+	if reqs[0].Open == nil || reqs[0].Open.ID != "osd:7" {
+		t.Fatalf("pending notice request = %+v", reqs[0])
+	}
+
+	// The notice is shown once, not once per output.
+	withTestBar(t, reg, 8, reg.cfg)
+	reg.showPendingConfigNotice()
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("the pending notice was shown twice: %+v", req)
+	default:
+	}
+}
+
+// A recovered configuration clears the pending notice with it.
+func TestConfigReloadNoticeIsDroppedWhenTheConfigurationRecovers(t *testing.T) {
+	reg := newPanelRegistry(t)
+	reg.RecordConfigReload(&config.Diagnostic{Field: "bar.height", Message: "value is not positive"})
+	reg.RecordConfigReload(nil)
+	withTestBar(t, reg, 7, reg.cfg)
+	reg.showPendingConfigNotice()
+	select {
+	case req := <-reg.AuxRequests():
+		t.Fatalf("a recovered configuration still showed a notice: %+v", req)
+	default:
+	}
+}
+
 func configReloadStatusNodes(root *ui.Node) []*ui.Node {
 	var out []*ui.Node
 	var walk func(*ui.Node)

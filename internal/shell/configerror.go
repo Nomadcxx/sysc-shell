@@ -45,7 +45,14 @@ func (r *Registry) RecordConfigReload(err error) {
 		r.rebuildPanel(h)
 		settingsPub = &wayland.Invalidation{Global: h.output, SurfaceID: panelSurfaceID(PanelSettings)}
 	}
-	showOSD := message != "" && r.configReloadNoticeAllowedLocked() && len(r.bars) > 0 && r.osd != nil
+	allowed := r.configReloadNoticeAllowedLocked()
+	noOutput := len(r.bars) == 0
+	showOSD := message != "" && allowed && !noOutput && r.osd != nil
+	// A refusal that arrives before the first output has no bar to draw the
+	// notice on. It waits for one instead of being lost: a configuration
+	// rejected at startup is the one refusal the user cannot see anywhere
+	// else, because the shell never reached a state where it could say so.
+	r.configReloadNotice = message != "" && allowed && noOutput
 	osdText := i18n.T(i18n.Resolve(r.cfg.Session.Language), "config.not-applied", "Config not applied")
 	r.mu.Unlock()
 	if settingsPub != nil {
@@ -54,6 +61,24 @@ func (r *Registry) RecordConfigReload(err error) {
 	if showOSD {
 		r.osd.Show(OSDView{Kind: osdConfigError, Text: osdText})
 	}
+}
+
+// showPendingConfigNotice draws a refusal that arrived before there was an
+// output to draw it on. The OSD needs a bar, so a startup refusal waits for
+// the first one. It runs outside Registry.mu, on the caller's goroutine.
+func (r *Registry) showPendingConfigNotice() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if !r.configReloadNotice || !r.configReloadNoticeAllowedLocked() || len(r.bars) == 0 || r.osd == nil {
+		r.mu.Unlock()
+		return
+	}
+	r.configReloadNotice = false
+	osdText := i18n.T(i18n.Resolve(r.cfg.Session.Language), "config.not-applied", "Config not applied")
+	r.mu.Unlock()
+	r.osd.Show(OSDView{Kind: osdConfigError, Text: osdText})
 }
 
 // Caller holds Registry.mu. A rejected config can be reported safely over IPC

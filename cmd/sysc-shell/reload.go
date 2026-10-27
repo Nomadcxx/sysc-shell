@@ -50,7 +50,7 @@ func queueReload(reloads chan<- struct{}) {
 }
 
 // submit snapshots the owner's error before placing the latest result in the
-// one-slot queue. The Wayland callback is the sole producer.
+// one-slot queue. The Wayland callback and the startup path are the producers.
 func (r *reloadRelay) submit(err error) {
 	if r == nil {
 		return

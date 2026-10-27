@@ -129,6 +129,10 @@ type Registry struct {
 	// Both are protected by Registry.mu and copied by Status.
 	configReloadError   string
 	configReloadErrorAt string
+	// configReloadNotice remembers a refusal that arrived before any output
+	// existed. The OSD needs a bar to draw on, so the notice waits for the
+	// first one rather than being lost.
+	configReloadNotice bool
 	// previewing keeps the preview session open until hide so its committed
 	// generation reason can be restored. previewTheme is the separate in-memory
 	// presentation used by every surface; commits clear it without persisting it.
@@ -1795,6 +1799,10 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	}
 
 	toastOutputs, plugins := r.adoptBar(global, connector, bar, leases)
+
+	// A configuration refused at startup had no output to show the refusal
+	// on. The first bar gives it one, so the notice is not lost.
+	r.showPendingConfigNotice()
 
 	r.SyncToastOutputs(toastOutputs)
 	if plugins != nil {
