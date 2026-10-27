@@ -32,7 +32,7 @@ func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			reading := services.Reading{Observed: true, Code: tt.code, IsDay: tt.isDay}
-			spec, ok := weatherEffectSpec(reading)
+			spec, ok := weatherEffectSpec(reading, time.Now())
 			if !ok {
 				t.Fatal("observed reading did not produce an effect")
 			}
@@ -53,13 +53,13 @@ func TestWeatherEffectStateKeepsStaleAndSkipsStaticReadings(t *testing.T) {
 	observed := observedWeather()
 	observed.FetchedAt = time.Now().Add(-90 * time.Minute)
 	observed.FailedSince = time.Now().Add(-30 * time.Minute)
-	if node := weatherEffectNode(observed, "weather:hero", 0); node == nil {
+	if node := weatherEffectNode(observed, "weather:hero", 0, time.Now()); node == nil {
 		t.Fatal("stale observed reading lost its animated effect")
 	}
-	if node := weatherEffectNode(services.Reading{}, "weather:hero", 0); node != nil {
+	if node := weatherEffectNode(services.Reading{}, "weather:hero", 0, time.Now()); node != nil {
 		t.Fatal("placeholder reading produced an effect")
 	}
-	if node := weatherEffectNode(services.Reading{FailedSince: time.Now()}, "weather:hero", 0); node != nil {
+	if node := weatherEffectNode(services.Reading{FailedSince: time.Now()}, "weather:hero", 0, time.Now()); node != nil {
 		t.Fatal("error reading produced an effect")
 	}
 }
@@ -74,7 +74,7 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 	}
 	reading := observedWeather()
 
-	got := weatherCardWithEffect(card, reading, "weather:hero", 0)
+	got := weatherCardWithEffect(card, reading, "weather:hero", 0, time.Now())
 	if got != card {
 		t.Fatal("weather wrapper replaced the card node")
 	}
@@ -104,15 +104,54 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 	}
 }
 
+// pinnedWeatherDate is the date of the pinned reading's daily row. It is a
+// fixed past date, so the wall clock can never select it by accident.
+const pinnedWeatherDate = "2026-10-21"
+
+// pinnedWeather returns a reading and the instant of its sunrise. The
+// daylight is half way through its blend at that instant, so a comparison
+// against it fails loudly if the clock drifts.
+func pinnedWeather(t *testing.T) (services.Reading, time.Time) {
+	t.Helper()
+	loc, err := time.LoadLocation("Australia/Sydney")
+	if err != nil {
+		t.Fatal("tzdata is embedded; LoadLocation failed:", err)
+	}
+	zone := loc.String()
+	day := true
+	reading := services.Reading{
+		Observed: true, Temperature: 18.4, Unit: services.UnitCelsius, Code: 0,
+		Timezone: &zone, IsDay: &day,
+		Daily: []services.Day{{
+			Date: pinnedWeatherDate, Code: 0, High: 22, Low: 6,
+			Sunrise: pinnedWeatherDate + "T06:12", Sunset: pinnedWeatherDate + "T18:44",
+		}},
+	}
+	return reading, time.Date(2026, time.October, 21, 6, 12, 0, 0, loc)
+}
+
+// The daylight is a smooth function of the wall clock, so a card and the
+// spec it is compared against can straddle a twilight boundary and
+// disagree. The effect reads one clock, so the two see the same sky.
+func TestWeatherEffectSpecReadsTheClockItIsGiven(t *testing.T) {
+	reading, now := pinnedWeather(t)
+	spec, ok := weatherEffectSpec(reading, now)
+	if !ok {
+		t.Fatal("observed reading did not produce an effect")
+	}
+	if spec.Daylight != 0.5 {
+		t.Fatalf("daylight at sunrise = %v, want 0.5", spec.Daylight)
+	}
+}
+
 func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
-	reading := observedWeather()
-	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346, nil)
+	reading, now := pinnedWeather(t)
+	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346, nil, now)
 	effect := firstWeatherEffect(hero)
 	if effect == nil || effect.Key != "weather:hero" {
 		t.Fatalf("hero effect = %+v, want the stable hero effect", effect)
 	}
-	want, ok := weatherEffectSpec(reading)
-	want.Daylight = effect.Effect.Daylight
+	want, ok := weatherEffectSpec(reading, now)
 	if !ok || effect.Effect != want {
 		t.Fatalf("hero effect spec = %+v, want %+v", effect.Effect, want)
 	}
@@ -168,17 +207,16 @@ func TestWeatherMetaLineKeepsTheStaleWarning(t *testing.T) {
 }
 
 func TestControlCentreWeatherUsesTheSameWeatherEffect(t *testing.T) {
-	reading := observedWeather()
-	r := &Registry{reading: reading}
+	reading, now := pinnedWeather(t)
+	r := &Registry{reading: reading, weatherClock: func() time.Time { return now }}
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
 	page := ccWeather(r, h)
 	effect := firstWeatherEffect(page.Children[0])
 	if effect == nil || effect.Key != "weather:today" {
 		t.Fatalf("Today effect = %+v, want the stable Today effect", effect)
 	}
-	want, ok := weatherEffectSpec(reading)
+	want, ok := weatherEffectSpec(reading, now)
 	want.SceneBias = -1 // the Control Centre card is wide enough to split
-	want.Daylight = effect.Effect.Daylight
 	if !ok || effect.Effect != want {
 		t.Fatalf("Today effect spec = %+v, want %+v", effect.Effect, want)
 	}

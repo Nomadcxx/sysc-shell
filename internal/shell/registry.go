@@ -266,6 +266,12 @@ type Registry struct {
 	// watch the reveal's pacing without racing the wall clock; production
 	// leaves it nil and the animator runs on time.Now.
 	animClock func() time.Time
+	// weatherClock is the clock the weather effect samples. The daylight
+	// value is a smooth function of the wall clock, so two calls that
+	// straddle a twilight boundary disagree. Tests freeze it to keep a
+	// build and the spec it is compared against on the same sky;
+	// production leaves it nil and the effect runs on time.Now.
+	weatherClock func() time.Time
 	// sound plays the shell's cues; nil until the first cue with sounds on.
 	sound cuePlayer
 	// newSoundPlayer makes it. Tests replace it with a counting player.

@@ -346,7 +346,7 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 		location = weatherLocation(r.cfg.Weather, reading)
 	}
 	today := weatherHeroCard(reading, location, m,
-		max(ccBodyWidth(h)-2*m.CardPadding, 0), ccTodayH, weatherTodayEffectKey, tr)
+		max(ccBodyWidth(h)-2*m.CardPadding, 0), ccTodayH, weatherTodayEffectKey, tr, r.weatherNow())
 
 	// Four slots share the body width and the three gaps between them. The
 	// width is derived rather than written down: it was 143 for a gap of 8,
