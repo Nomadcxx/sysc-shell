@@ -310,6 +310,18 @@ func markdownListNode(text string, width, gap, budget int, measure func(string) 
 
 func markdownTableRow(line string) bool { return strings.Contains(line, "|") }
 
+// markdownTableRowStyled reports whether line is shaped like a row of the
+// table whose header line carries the given outer-pipe style. Rows of one
+// table share that style, so a line with a pipe that does not match it is
+// prose following the table and must not be absorbed as a row.
+func markdownTableRowStyled(line string, lead, trail bool) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.Contains(trimmed, "|") {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "|") == lead && strings.HasSuffix(trimmed, "|") == trail
+}
+
 func markdownTableStart(lines []string, start int) bool {
 	if start < 0 || start+1 >= len(lines) || !markdownTableRow(lines[start]) || !markdownTableRow(lines[start+1]) {
 		return false
@@ -336,8 +348,10 @@ func markdownTable(lines []string, start, width, gap, budget int, add func(*ui.N
 	}
 	cellGap := max(gap/2, 0)
 	cellWidth := max((width-cellGap*(columns-1))/columns, 1)
+	lead := strings.HasPrefix(strings.TrimSpace(lines[start]), "|")
+	trail := strings.HasSuffix(strings.TrimSpace(lines[start]), "|")
 	i := start
-	for i < len(lines) && markdownTableRow(lines[i]) {
+	for i < len(lines) && (i == start+1 || markdownTableRowStyled(lines[i], lead, trail)) {
 		cells := markdownTableCells(lines[i])
 		i++
 		if markdownTableRule(cells) {
@@ -362,7 +376,7 @@ func markdownTable(lines []string, start, width, gap, budget int, add func(*ui.N
 		}
 		budget -= 1 + 2*columns
 		maxColumns = max((budget-1)/2, 0)
-		if maxColumns < columns && i < len(lines) && markdownTableRow(lines[i]) {
+		if maxColumns < columns && i < len(lines) && (i == start+1 || markdownTableRowStyled(lines[i], lead, trail)) {
 			return i, true
 		}
 	}
