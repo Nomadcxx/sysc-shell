@@ -66,14 +66,18 @@ type hostedView struct {
 	Revision   uint64
 	Root       *ui.Node
 	// Events belongs to the rendered revision, not the newer wire tree.
-	Events     map[string][]v1.EventKind
-	tree       *plugin.ViewTree
-	Failed     bool
-	Label      string
-	Width      int
-	Height     int
-	Title      string
-	SurfaceKey string
+	Events map[string][]v1.EventKind
+	tree   *plugin.ViewTree
+	Failed bool
+	Label  string
+	Width  int
+	Height int
+	// RequestedWidth/Height retain the manifest or panel.resize request;
+	// Width/Height are the current host-granted bounds.
+	RequestedWidth  int
+	RequestedHeight int
+	Title           string
+	SurfaceKey      string
 }
 
 type pluginAnchor struct {
@@ -1268,7 +1272,8 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	// size is what the surface will actually be. The manifest declares a
 	// size; a short or narrow output fits it down, and view.open must say so
 	// or the plugin lays out for a box it never gets (sysc-578).
-	size := ui.Rect{W: spec.Width, H: spec.Height}
+	requested := ui.Rect{W: spec.Width, H: spec.Height}
+	size := requested
 	if err == nil {
 		if bar, ok := h.r.bars[global]; ok {
 			// triggerLocked carries the output's logical size. Without it the
@@ -1314,6 +1319,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 		Plugin: pluginID, Entry: p.Entry, Instance: p.Instance,
 		Output: p.Output, Generation: global, Kind: v1.ViewPanel,
 		Width: size.W, Height: size.H,
+		RequestedWidth: requested.W, RequestedHeight: requested.H,
 	}
 	h.mu.Unlock()
 
@@ -1334,6 +1340,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 		Plugin: pluginID, Entry: p.Entry, Instance: p.Instance,
 		Output: p.Output, Generation: global, Kind: v1.ViewPanel,
 		Width: size.W, Height: size.H,
+		RequestedWidth: requested.W, RequestedHeight: requested.H,
 	}
 	h.openView(view, false)
 	h.mu.Lock()
@@ -1491,11 +1498,59 @@ func (h *pluginHost) panelSize() ui.Rect {
 	return ui.Rect{W: 320, H: 280}
 }
 
+// panelRequestedSize returns the plugin's declared or latest requested body
+// size. It is separate from panelSize, which reports the current grant.
+func (h *pluginHost) panelRequestedSize() ui.Rect {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.panel != nil {
+		if h.panel.RequestedWidth > 0 && h.panel.RequestedHeight > 0 {
+			return ui.Rect{W: h.panel.RequestedWidth, H: h.panel.RequestedHeight}
+		}
+		if h.panel.Width > 0 && h.panel.Height > 0 {
+			return ui.Rect{W: h.panel.Width, H: h.panel.Height}
+		}
+	}
+	return ui.Rect{W: 320, H: 280}
+}
+
+// panelPlacementChangedLocked updates the hosted bounds after the placement
+// owner refits the panel. Caller holds Registry.mu; Runtime.Send only queues
+// the immutable message, and its writer remains on the runtime goroutine.
+func (h *pluginHost) panelPlacementChangedLocked(output uint32, size ui.Rect) {
+	if size.W <= 0 || size.H <= 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	v := h.panel
+	if v == nil || v.Kind != v1.ViewPanel || v.Generation != output ||
+		(v.Width == size.W && v.Height == size.H) {
+		return
+	}
+	v.Width, v.Height = size.W, size.H
+	if current := h.views[v.ID]; current != nil && current != v {
+		current.Width, current.Height = size.W, size.H
+	}
+	slot := h.slots[v.Plugin]
+	if slot == nil || slot.rt == nil {
+		return
+	}
+	protocol := slot.rt.Protocol()
+	if protocol.Major != v1.ProtocolMajor || protocol.Minor < v1.ViewResizeMinor {
+		return
+	}
+	if err := slot.rt.Send(&v1.ViewResize{ViewID: v.ID, Width: size.W, Height: size.H}); err != nil {
+		slog.Warn("could not queue plugin panel resize", "plugin", v.Plugin, "view", v.ID, "err", err)
+	}
+}
+
 // resizePanel retargets the calling plugin's open panel. The request is fitted
 // to the output as view.open's is (sysc-578), and the tree re-lays-out at the
 // granted bounds at once; the reply reports the fitted size and the
 // compositor's configure completes the surface.
 func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
+	requested := ui.Rect{W: p.Width, H: p.Height}
 	h.r.mu.Lock()
 	global, open := h.r.panels.Output(PanelPlugin)
 	host := h.r.panelHosts[PanelPlugin]
@@ -1504,10 +1559,10 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, 
 		return v1.PanelResizeResult{}, errors.New("panel surface is not open")
 	}
 	place := host.place
-	place.Panel = ui.Rect{W: p.Width, H: p.Height}
+	place.Panel = requested
 	p.Width, p.Height = place.FittedSize()
 	place.Panel.W, place.Panel.H = p.Width, p.Height
-	host.place, host.rect = place, place.Rect()
+	host.place, host.rect, host.requestedPanel = place, place.Rect(), requested
 	// The surface keeps the joints it opened with around the new body,
 	// which is also what surfaceBody places it by (sysc-588).
 	joints := place.Joints()
@@ -1517,14 +1572,20 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, 
 	if joints != (Joints{}) {
 		input = []ui.Rect{host.surfaceBody(sw, sh)}
 	}
-	h.r.mu.Unlock()
 	h.mu.Lock()
 	if h.panel == nil {
 		h.mu.Unlock()
+		h.r.mu.Unlock()
 		return v1.PanelResizeResult{}, errors.New("no open panel to resize")
 	}
 	h.panel.Width, h.panel.Height = p.Width, p.Height
+	h.panel.RequestedWidth, h.panel.RequestedHeight = requested.W, requested.H
+	if current := h.views[h.panel.ID]; current != nil && current != h.panel {
+		current.Width, current.Height = p.Width, p.Height
+		current.RequestedWidth, current.RequestedHeight = requested.W, requested.H
+	}
 	h.mu.Unlock()
+	h.r.mu.Unlock()
 	h.refreshPanel()
 	w, hgt := uint32(sw), uint32(sh)
 	top, bottom := int32(margins.Top), int32(margins.Bottom)

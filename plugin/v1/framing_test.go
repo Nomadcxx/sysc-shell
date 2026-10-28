@@ -125,6 +125,23 @@ func TestEncodeStampsTheRegisteredType(t *testing.T) {
 	}
 }
 
+func TestViewResizeRoundTripsGrantedBounds(t *testing.T) {
+	t.Parallel()
+
+	out := encodeOne(t, &ViewResize{ViewID: "v1", Width: 800, Height: 720})
+	got, err := NewDecoder(bytes.NewReader(out), ToPlugin).Decode()
+	if err != nil {
+		t.Fatalf("decode view.resize: %v", err)
+	}
+	resize, ok := got.(*ViewResize)
+	if !ok {
+		t.Fatalf("decoded %T, want *ViewResize", got)
+	}
+	if resize.ViewID != "v1" || resize.Width != 800 || resize.Height != 720 {
+		t.Fatalf("view.resize = %+v, want v1 at 800x720", resize)
+	}
+}
+
 func TestDecodeRejectsUnknownMessageType(t *testing.T) {
 	t.Parallel()
 
