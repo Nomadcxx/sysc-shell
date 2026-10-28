@@ -96,13 +96,13 @@ of the commit gate.
 | Module | Pin |
 |---|---|
 | sysc-clipboard | `v0.1.4-0.20261019192617-18b64bffd9e7` |
-| sysc-wayland | `v0.3.2` |
-| sysc-launch | `v0.4.0` |
+| sysc-wayland | `v0.3.3` |
+| sysc-launch | `v0.5.0` |
 | sysc-metrics | `v0.7.3` |
 | sysc-notify | `v0.1.1` |
-| sysc-terminal | `v0.2.2-0.20261022013002-57dd64b663ae` |
+| sysc-terminal | `v0.3.2` |
 | sysc-tray | `v0.1.2` |
-| sysc-Go | `v1.0.9` (indirect) |
+| sysc-Go | `v1.0.12` (indirect) |
 
 ## Continuous integration
 
