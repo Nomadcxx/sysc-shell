@@ -2313,6 +2313,146 @@ func TestPluginPanelViewOpenReportsTheGrantedSize(t *testing.T) {
 	t.Fatal("no panel view opened")
 }
 
+func TestPluginPanelReceivesResizeOnOutputSizeChanges(t *testing.T) {
+	const pluginID = "org.sysc.screen-recorder"
+	for _, tc := range []struct {
+		name       string
+		mode       func(string) string
+		minor      int
+		wantEvents int
+	}{
+		{name: "minor 22", mode: func(path string) string { return "record-host:" + path }, minor: 22, wantEvents: 4},
+		{name: "minor 21", mode: func(path string) string { return "minor21-record-host:" + path }, minor: 21},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "host-messages.jsonl")
+			reg := bindManifestPlugin(t, tc.mode(logPath), pluginID, testRecorderPanelManifest, []string{pluginID})
+			newHosts(t, reg, map[uint32]string{7: "DP-1"})
+			waitPluginText(t, reg.bars[7], "hello")
+			bar := reg.bars[7]
+			bar.setOutputSize(1536, 864)
+			if err := bar.Configure(1536, BarHeight, 150); err != nil {
+				t.Fatal(err)
+			}
+			opened, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+				Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = drainAux(t, reg, 2)
+
+			callbacks := reg.bindHost(7, bar, wayland.HostCallbacks{
+				OutputSize: bar.setOutputSize,
+				Configure:  bar.Configure,
+			})
+			callbacks.OutputSize(900, 600)
+			reg.mu.Lock()
+			host := reg.panelHosts[PanelPlugin]
+			shrunk := host.place.Panel
+			reg.mu.Unlock()
+			if shrunk.W == 640 && shrunk.H == 720 {
+				t.Fatalf("output resize did not constrain the panel: %+v", shrunk)
+			}
+
+			callbacks.OutputSize(1536, 864)
+			reg.mu.Lock()
+			expanded := reg.panelHosts[PanelPlugin].place.Panel
+			reg.mu.Unlock()
+			if expanded.W != 640 || expanded.H != 720 {
+				t.Fatalf("expanded panel = %dx%d, want restored manifest request 640x720", expanded.W, expanded.H)
+			}
+
+			requested, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 520, Height: 480})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requested.Width != 520 || requested.Height != 480 {
+				t.Fatalf("panel.resize grant = %+v, want 520x480", requested)
+			}
+			_ = drainAux(t, reg, 1)
+			callbacks.OutputSize(450, 350)
+			reg.mu.Lock()
+			shrunkAgain := reg.panelHosts[PanelPlugin].place.Panel
+			reg.mu.Unlock()
+			if shrunkAgain.W == 520 && shrunkAgain.H == 480 {
+				t.Fatalf("second output resize did not constrain the requested panel: %+v", shrunkAgain)
+			}
+			callbacks.OutputSize(1536, 864)
+			reg.mu.Lock()
+			expandedAgain := reg.panelHosts[PanelPlugin].place.Panel
+			reg.mu.Unlock()
+			if expandedAgain.W != 520 || expandedAgain.H != 480 {
+				t.Fatalf("expanded panel after panel.resize = %dx%d, want restored request 520x480", expandedAgain.W, expandedAgain.H)
+			}
+
+			reg.plugins.mu.Lock()
+			slot := reg.plugins.slots[pluginID]
+			reg.plugins.mu.Unlock()
+			if slot == nil {
+				t.Fatal("plugin runtime disappeared")
+			}
+			if got := slot.rt.Protocol(); got.Major != v1.ProtocolMajor || got.Minor != tc.minor {
+				t.Fatalf("negotiated protocol = %+v, want 1.%d", got, tc.minor)
+			}
+			if err := slot.rt.Send(&v1.ViewResync{ViewID: opened.ViewID}); err != nil {
+				t.Fatalf("queue view.resync barrier: %v", err)
+			}
+			messages := waitPluginHostMessages(t, logPath, opened.ViewID)
+			var resizes []*v1.ViewResize
+			for _, message := range messages {
+				if resize, ok := message.(*v1.ViewResize); ok {
+					resizes = append(resizes, resize)
+				}
+			}
+			if len(resizes) != tc.wantEvents {
+				t.Fatalf("got %d view.resize events, want %d: %+v", len(resizes), tc.wantEvents, resizes)
+			}
+			if tc.wantEvents == 0 {
+				return
+			}
+			if resizes[0].Width != shrunk.W || resizes[0].Height != shrunk.H {
+				t.Errorf("shrink event = %dx%d, want fitted %dx%d", resizes[0].Width, resizes[0].Height, shrunk.W, shrunk.H)
+			}
+			if resizes[1].Width != 640 || resizes[1].Height != 720 {
+				t.Errorf("expand event = %dx%d, want restored request 640x720", resizes[1].Width, resizes[1].Height)
+			}
+			if resizes[2].Width != shrunkAgain.W || resizes[2].Height != shrunkAgain.H {
+				t.Errorf("second shrink event = %dx%d, want fitted %dx%d", resizes[2].Width, resizes[2].Height, shrunkAgain.W, shrunkAgain.H)
+			}
+			if resizes[3].Width != 520 || resizes[3].Height != 480 {
+				t.Errorf("second expand event = %dx%d, want restored resize request 520x480", resizes[3].Width, resizes[3].Height)
+			}
+		})
+	}
+}
+
+func waitPluginHostMessages(t testing.TB, path, viewID string) []v1.Message {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			decoder := v1.NewDecoder(bytes.NewReader(data), v1.ToPlugin)
+			var messages []v1.Message
+			for {
+				message, err := decoder.Decode()
+				if err != nil {
+					break
+				}
+				messages = append(messages, message)
+				if barrier, ok := message.(*v1.ViewResync); ok && barrier.ViewID == viewID {
+					return messages
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(path)
+	t.Fatalf("plugin did not receive view.resync barrier; messages: %s", data)
+	return nil
+}
+
 func plantPNG(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))

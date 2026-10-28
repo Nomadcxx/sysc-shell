@@ -66,6 +66,15 @@ func HelperServe(args []string) int {
 		time.Sleep(time.Minute)
 		return 0
 	}
+	recordHost := ""
+	legacyMinor := -1
+	if p, ok := strings.CutPrefix(mode, "minor21-record-host:"); ok {
+		recordHost, legacyMinor = p, 21
+		mode = "ok"
+	} else if p, ok := strings.CutPrefix(mode, "record-host:"); ok {
+		recordHost = p
+		mode = "ok"
+	}
 	// record-input:<path> appends each input event. A host that drops the
 	// last buffered change never produces a line for it.
 	recordInput := ""
@@ -125,6 +134,9 @@ func HelperServe(args []string) int {
 	}
 
 	protocol, _ := v1.NegotiateProtocol(hello.Supported)
+	if legacyMinor >= 0 {
+		protocol.Minor = legacyMinor
+	}
 	reply := &v1.PluginHello{
 		Protocol:     protocol,
 		Plugin:       hello.Plugin,
@@ -282,6 +294,19 @@ func HelperServe(args []string) int {
 		msg, err := in.Decode()
 		if err != nil {
 			return 0
+		}
+		if recordHost != "" {
+			f, err := os.OpenFile(recordHost, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "helper: open host-message log: %v\n", err)
+				return 1
+			}
+			writeErr := v1.NewEncoder(f).Encode(msg)
+			closeErr := f.Close()
+			if writeErr != nil || closeErr != nil {
+				fmt.Fprintf(os.Stderr, "helper: record host message: %v %v\n", writeErr, closeErr)
+				return 1
+			}
 		}
 		switch m := msg.(type) {
 		case *v1.HostShutdown:

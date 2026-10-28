@@ -26,7 +26,9 @@ const (
 	// declares it is confined to them where the kernel offers Landlock.
 	// Minor 21 adds view.error, the host's answer to a publish it refused:
 	// the plugin learns why its view is not on screen instead of guessing.
-	ProtocolMinor = 21
+	// Minor 22 adds view.resize, so a plugin can relayout when the host's
+	// granted panel bounds change after opening.
+	ProtocolMinor = 22
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.
@@ -36,6 +38,9 @@ const (
 // does not know instead of ignoring it.
 const ViewErrorMinor = 21
 
+// ViewResizeMinor is the first protocol minor that carries view.resize.
+const ViewResizeMinor = 22
+
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
 // message rather than guessing.
@@ -44,6 +49,7 @@ const (
 	TypeHostHello       = "host.hello"
 	TypeHostShutdown    = "host.shutdown"
 	TypeViewOpen        = "view.open"
+	TypeViewResize      = "view.resize"
 	TypeViewClose       = "view.close"
 	TypeViewResync      = "view.resync"
 	TypeViewError       = "view.error"
@@ -173,6 +179,16 @@ type ViewOpen struct {
 }
 
 func (*ViewOpen) messageType() string { return TypeViewOpen }
+
+// ViewResize reports the current granted logical bounds of an open view.
+type ViewResize struct {
+	Type   string `json:"type"`
+	ViewID string `json:"view_id"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+func (*ViewResize) messageType() string { return TypeViewResize }
 
 // ViewClose retires a view. The plugin keeps running.
 type ViewClose struct {

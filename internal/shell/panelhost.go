@@ -108,6 +108,9 @@ type PanelHost struct {
 	// preferredMain is the panel's original bar-axis anchor before reflow.
 	preferredMain int
 	place         Placement
+	// requestedPanel keeps a plugin panel's declared/latest requested body
+	// size so output reflow can grow it again after a temporary fit.
+	requestedPanel ui.Rect
 	// rect is the placed panel body in output coordinates, excluding joints.
 	rect   ui.Rect
 	root   *ui.Node
@@ -1246,6 +1249,9 @@ func (r *Registry) repositionPanelsLocked(output uint32) {
 			trigger.AnchorX = h.preferredMain
 		}
 		size := h.place.Panel
+		if h.id == PanelPlugin && h.requestedPanel.W > 0 && h.requestedPanel.H > 0 {
+			size = h.requestedPanel
+		}
 		switch h.id {
 		case PanelSettings:
 			size = settingsPanelSize(trigger.OutW, trigger.OutH)
@@ -1262,6 +1268,10 @@ func (r *Registry) repositionPanelsLocked(output uint32) {
 	}
 	updated := r.restorePanelPositionsLocked(output)
 	for _, h := range hosts {
+		if h.id == PanelPlugin && r.plugins != nil &&
+			(oldPlaces[h].Panel.W != h.place.Panel.W || oldPlaces[h].Panel.H != h.place.Panel.H) {
+			r.plugins.panelPlacementChangedLocked(output, h.place.Panel)
+		}
 		if (oldPlaces[h] != h.place || oldRects[h] != h.rect) && !updated[h] {
 			r.sendPanelPlacementLocked(h)
 		}
@@ -1373,8 +1383,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		outH = 1080
 	}
 	size := panelTargetSize(id)
+	requestedPanel := size
 	if id == PanelPlugin && r.plugins != nil {
 		size = r.plugins.panelSize()
+		requestedPanel = r.plugins.panelRequestedSize()
 	}
 	if id == PanelAudio {
 		size = audioPanelSize(outW, outH)
@@ -1403,6 +1415,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		output:          output,
 		openOrder:       r.panelOrder,
 		place:           place,
+		requestedPanel:  requestedPanel,
 		pointer:         interaction{stateLayer: true},
 		stopAnim:        make(chan struct{}),
 		shieldQuiet:     time.Now().Add(shieldQuietFor),

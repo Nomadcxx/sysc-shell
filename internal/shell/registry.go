@@ -3283,6 +3283,7 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 			r.depthClocks.outputSize(bar.connector(), global, width, height)
 		}
 		if width > 0 && height > 0 {
+			r.refreshPanelPlacements(global, bar)
 			r.mu.Lock()
 			if r.bars[global] == bar {
 				r.tryOpenOnboardingLocked(global)
