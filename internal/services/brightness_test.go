@@ -43,6 +43,52 @@ func TestBrightnessZeroDevicesUnavailable(t *testing.T) {
 	}
 }
 
+func TestBrightnessConcurrentAvailableWaitsForInitialScan(t *testing.T) {
+	b := testBrightness(t, t.TempDir(), "brightnessctl", 0)
+	if err := os.WriteFile(filepath.Join(b.devRoot, "i2c-1"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probeStarted := make(chan struct{})
+	allowProbe := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(allowProbe) }) }
+	t.Cleanup(release)
+	b.probe = func(int) (string, int, int, error) {
+		close(probeStarted)
+		<-allowProbe
+		return "DP-1", 100, 100, nil
+	}
+
+	first := make(chan bool, 1)
+	go func() { first <- b.Available() }()
+	<-probeStarted
+
+	secondStarted := make(chan struct{})
+	second := make(chan bool, 1)
+	go func() {
+		close(secondStarted)
+		second <- b.Available()
+	}()
+	<-secondStarted
+	select {
+	case got := <-second:
+		t.Fatalf("concurrent Available returned %t before the initial scan finished", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	release()
+	for name, result := range map[string]<-chan bool{"first": first, "second": second} {
+		select {
+		case got := <-result:
+			if !got {
+				t.Errorf("%s Available() = false after the initial scan found a display", name)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("%s Available() did not finish after the initial scan", name)
+		}
+	}
+}
+
 func TestEnumerateBacklightsSymlink(t *testing.T) {
 	t.Parallel()
 	devicesRoot := t.TempDir()
