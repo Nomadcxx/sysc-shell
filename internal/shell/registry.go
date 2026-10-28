@@ -2203,19 +2203,19 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 }
 
 func (r *Registry) toggleNotifyDND() {
-	r.mu.Lock()
-	_, on := r.notify.dndState(time.Now())
-	r.setDND(!on)
-	if r.toasts != nil {
-		r.toasts.recompute()
-	}
 	var changed []uint32
-	for global, bar := range r.bars {
-		if bar.apply(r.viewLocked(bar.connector())) {
-			changed = append(changed, global)
+	r.withLock(func() {
+		_, on := r.notify.dndState(time.Now())
+		r.setDND(!on)
+		if r.toasts != nil {
+			r.toasts.recompute()
 		}
-	}
-	r.mu.Unlock()
+		for global, bar := range r.bars {
+			if bar.apply(r.viewLocked(bar.connector())) {
+				changed = append(changed, global)
+			}
+		}
+	})
 	r.publish(changed)
 }
 
@@ -2288,206 +2288,220 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 		Hosts: callbacks,
 		Commit: func() {
 			once.Do(func() {
-				r.mu.Lock()
-				pluginsEnabledChanged := !slices.Equal(r.cfg.Plugins.Enabled, cfg.Plugins.Enabled)
-				applicationPreferencesChanged := r.cfg.Applications.DefaultTerminal != cfg.Applications.DefaultTerminal ||
-					!slices.Equal(r.cfg.Applications.Favourites, cfg.Applications.Favourites) ||
-					!slices.Equal(r.cfg.Applications.Hidden, cfg.Applications.Hidden)
-				polkitPolicyChanged := r.cfg.Session.PolkitAgent != cfg.Session.PolkitAgent
-				polkitNeedsStart := len(bars) > 0 && r.polkitAgent == nil
-				outgoing := r.leases
-				outgoingBars := r.bars
-				geometryOutputs := make(map[uint32]bool)
-				disabledOutputs := make(map[uint32]bool)
-				for global, oldBar := range outgoingBars {
-					oldPolicy := r.cfg.ForConnector(oldBar.connector())
-					nextPolicy := cfg.ForConnector(oldBar.connector())
-					if !nextPolicy.Enabled {
-						disabledOutputs[global] = true
-					}
-					if barGeometryChanged(oldPolicy, nextPolicy) {
-						geometryOutputs[global] = true
-					}
-				}
-				for global, nextBar := range bars {
-					oldPolicy := r.cfg.ForConnector(nextBar.connector())
-					nextPolicy := cfg.ForConnector(nextBar.connector())
-					if barGeometryChanged(oldPolicy, nextPolicy) {
-						geometryOutputs[global] = true
-					}
-				}
-				depthClockFontChanged := r.cfg.Bar.FontFamily != cfg.Bar.FontFamily
-				depthClockVisualChanged := r.cfg.Wallpaper.Scale != cfg.Wallpaper.Scale ||
-					r.tokens != tok || depthClockFontChanged ||
-					r.cfg.Bar.FontSize != cfg.Bar.FontSize
-				mediaConfigChanged := r.cfg.Media.Preferred != cfg.Media.Preferred ||
-					!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
-				launcherConfigChanged := !sameLauncherCommandProviders(r.cfg.Launcher.Providers, cfg.Launcher.Providers) ||
-					!sameLauncherActions(r.cfg.Launcher.Actions, cfg.Launcher.Actions)
-				lockKeysOSDChanged := r.cfg.Panels.OSDLockKeys != cfg.Panels.OSDLockKeys
-				var media *services.Media
-				var depthEffects depthClockEffects
-				// Coordinates, unit and city are the request, not a lease
-				// parameter, so the service has to be told. Each call is a
-				// no-op unless its value changed, which is the common case
-				// for an unrelated reload.
-				r.weather.Reconfigure(
-					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
-				r.weather.SetLocationConfigured(cfg.Weather.Configured)
-				r.weather.SetLocationLabel(cfg.Weather.Location)
-				r.weather.SetCity(cfg.Weather.City)
-				r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
-				r.syncNightLightWeatherLeaseLocked(cfg)
-				if len(geometryOutputs) > 0 {
-					r.dwell.leave()
-					for global := range geometryOutputs {
-						r.closeTrayOutputLocked(global)
-						r.mediaStrip.outputLostLocked(global)
-						if h := r.runningMenu; h != nil && h.open_ && h.output == global {
-							h.closeLocked()
+				var (
+					pluginsEnabledChanged bool
+					polkitPolicyChanged   bool
+					polkitNeedsStart      bool
+					mediaConfigChanged    bool
+					outgoing              map[uint32][]*services.Lease
+					outgoingBars          map[uint32]*Bar
+					surfacePubs           []wayland.Invalidation
+					toastOutputs          map[string]uint32
+					plugins               *pluginHost
+					wallpaperSvc          *wallpaper.Service
+					media                 *services.Media
+					depthEffects          depthClockEffects
+				)
+				r.withLock(func() {
+					pluginsEnabledChanged = !slices.Equal(r.cfg.Plugins.Enabled, cfg.Plugins.Enabled)
+					applicationPreferencesChanged := r.cfg.Applications.DefaultTerminal != cfg.Applications.DefaultTerminal ||
+						!slices.Equal(r.cfg.Applications.Favourites, cfg.Applications.Favourites) ||
+						!slices.Equal(r.cfg.Applications.Hidden, cfg.Applications.Hidden)
+					polkitPolicyChanged = r.cfg.Session.PolkitAgent != cfg.Session.PolkitAgent
+					polkitNeedsStart = len(bars) > 0 && r.polkitAgent == nil
+					outgoing = r.leases
+					outgoingBars = r.bars
+					geometryOutputs := make(map[uint32]bool)
+					disabledOutputs := make(map[uint32]bool)
+					for global, oldBar := range outgoingBars {
+						oldPolicy := r.cfg.ForConnector(oldBar.connector())
+						nextPolicy := cfg.ForConnector(oldBar.connector())
+						if !nextPolicy.Enabled {
+							disabledOutputs[global] = true
 						}
-						if disabledOutputs[global] {
-							r.closePanelsOnOutputLocked(global)
+						if barGeometryChanged(oldPolicy, nextPolicy) {
+							geometryOutputs[global] = true
 						}
 					}
-				}
-				for _, bar := range bars {
-					bar.apply(r.viewLocked(bar.connector()))
-				}
-				r.cfg = cfg
-				if applicationPreferencesChanged {
-					r.storeLauncherAppPreferences(cfg.Applications)
-				}
-				r.syncSoundLocked()
-				r.pushIdleInputsLocked()
-				// panels.osd_lock_keys applies on a reload like its
-				// neighbours do: on wires the relay up, off takes its
-				// lease back and stops the poller. No restart.
-				if lockKeysOSDChanged {
-					if cfg.Panels.OSDLockKeys {
-						r.startLockKeys(cfg)
-					} else {
-						r.stopLockKeys()
-					}
-				}
-				// An open settings panel holds its own draft. A genuine reload
-				// replaces it; a reload from its own delayed write rebases any
-				// newer edits over the written config.
-				r.settingsWriteMu.Lock()
-				settingsWriteReloadAt := -1
-				for i, written := range r.settingsWriteReloads {
-					if reflect.DeepEqual(written.config, cfg) {
-						settingsWriteReloadAt = i
-					}
-				}
-				settingsWriteReload := settingsWriteReloadAt >= 0
-				if settingsWriteReload {
-					r.settingsWriteReloads = slices.Clone(r.settingsWriteReloads[settingsWriteReloadAt+1:])
-				} else {
-					retained := r.settingsWriteReloads[:0]
-					for _, written := range r.settingsWriteReloads {
-						if written.generation > configGeneration {
-							retained = append(retained, written)
+					for global, nextBar := range bars {
+						oldPolicy := r.cfg.ForConnector(nextBar.connector())
+						nextPolicy := cfg.ForConnector(nextBar.connector())
+						if barGeometryChanged(oldPolicy, nextPolicy) {
+							geometryOutputs[global] = true
 						}
 					}
-					clear(r.settingsWriteReloads[len(retained):])
-					r.settingsWriteReloads = retained
-				}
-				for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
-					if h := r.panelHosts[id]; h != nil {
-						if id == PanelSettings {
-							h.invalidateSettingsBrowseIfChanged(cfg)
-							if settingsWriteReload {
-								draft := cfg.Clone()
-								if err := applySettingsWriteChanges(&draft, h.settingsWriteChanges, r.palettes); err == nil {
-									h.draft = draft
-								} else {
-									settingsWriteReload = false
-								}
+					depthClockFontChanged := r.cfg.Bar.FontFamily != cfg.Bar.FontFamily
+					depthClockVisualChanged := r.cfg.Wallpaper.Scale != cfg.Wallpaper.Scale ||
+						r.tokens != tok || depthClockFontChanged ||
+						r.cfg.Bar.FontSize != cfg.Bar.FontSize
+					mediaConfigChanged = r.cfg.Media.Preferred != cfg.Media.Preferred ||
+						!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
+					launcherConfigChanged := !sameLauncherCommandProviders(r.cfg.Launcher.Providers, cfg.Launcher.Providers) ||
+						!sameLauncherActions(r.cfg.Launcher.Actions, cfg.Launcher.Actions)
+					lockKeysOSDChanged := r.cfg.Panels.OSDLockKeys != cfg.Panels.OSDLockKeys
+					// Coordinates, unit and city are the request, not a lease
+					// parameter, so the service has to be told. Each call is a
+					// no-op unless its value changed, which is the common case
+					// for an unrelated reload.
+					r.weather.Reconfigure(
+						cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+					r.weather.SetLocationConfigured(cfg.Weather.Configured)
+					r.weather.SetLocationLabel(cfg.Weather.Location)
+					r.weather.SetCity(cfg.Weather.City)
+					r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
+					r.syncNightLightWeatherLeaseLocked(cfg)
+					if len(geometryOutputs) > 0 {
+						r.dwell.leave()
+						for global := range geometryOutputs {
+							r.closeTrayOutputLocked(global)
+							r.mediaStrip.outputLostLocked(global)
+							if h := r.runningMenu; h != nil && h.open_ && h.output == global {
+								h.closeLocked()
 							}
-							if !settingsWriteReload {
-								h.settingsWriteRevision++
-								h.settingsWriteChanges = nil
-								if h.writeTimer != nil {
-									h.writeTimer.Stop()
-									h.writeTimer = nil
-								}
-								h.draft = cfg.Clone()
+							if disabledOutputs[global] {
+								r.closePanelsOnOutputLocked(global)
 							}
+						}
+					}
+					for _, bar := range bars {
+						bar.apply(r.viewLocked(bar.connector()))
+					}
+					r.cfg = cfg
+					if applicationPreferencesChanged {
+						r.storeLauncherAppPreferences(cfg.Applications)
+					}
+					r.syncSoundLocked()
+					r.pushIdleInputsLocked()
+					// panels.osd_lock_keys applies on a reload like its
+					// neighbours do: on wires the relay up, off takes its
+					// lease back and stops the poller. No restart.
+					if lockKeysOSDChanged {
+						if cfg.Panels.OSDLockKeys {
+							r.startLockKeys(cfg)
 						} else {
-							h.draft = cfg.Clone()
-						}
-						h.set = r.settingsForLocked(h.draft)
-						if id == PanelSettings {
-							h.reseedSettingsFields()
-							h.reseedSettingsMenus()
+							r.stopLockKeys()
 						}
 					}
-				}
-				r.settingsWriteMu.Unlock()
-				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
-				media = r.media
-				r.tokens = tok
-				r.themeErr = ""
-				if genErr != nil {
-					r.themeErr = genErr.Error()
-				}
-				r.invalidateThemePreviewLocked()
-				if r.previewing {
-					r.previewPrevErr = r.themeErr
-				}
-				surfacePubs := r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
-				if launcherConfigChanged {
-					if h := r.panelHosts[PanelLauncher]; h != nil {
-						h.launcherAttempt++
-						r.launcherSendQuery(h, h.query)
+					// An open settings panel holds its own draft. A genuine reload
+					// replaces it; a reload from its own delayed write rebases any
+					// newer edits over the written config.
+					func() {
+						r.settingsWriteMu.Lock()
+						defer r.settingsWriteMu.Unlock()
+						settingsWriteReloadAt := -1
+						for i, written := range r.settingsWriteReloads {
+							if reflect.DeepEqual(written.config, cfg) {
+								settingsWriteReloadAt = i
+							}
+						}
+						settingsWriteReload := settingsWriteReloadAt >= 0
+						if settingsWriteReload {
+							r.settingsWriteReloads = slices.Clone(r.settingsWriteReloads[settingsWriteReloadAt+1:])
+						} else {
+							retained := r.settingsWriteReloads[:0]
+							for _, written := range r.settingsWriteReloads {
+								if written.generation > configGeneration {
+									retained = append(retained, written)
+								}
+							}
+							clear(r.settingsWriteReloads[len(retained):])
+							r.settingsWriteReloads = retained
+						}
+						for _, id := range []PanelID{PanelSettings, PanelTerminalArt} {
+							if h := r.panelHosts[id]; h != nil {
+								if id == PanelSettings {
+									h.invalidateSettingsBrowseIfChanged(cfg)
+									if settingsWriteReload {
+										draft := cfg.Clone()
+										if err := applySettingsWriteChanges(&draft, h.settingsWriteChanges, r.palettes); err == nil {
+											h.draft = draft
+										} else {
+											settingsWriteReload = false
+										}
+									}
+									if !settingsWriteReload {
+										h.settingsWriteRevision++
+										h.settingsWriteChanges = nil
+										if h.writeTimer != nil {
+											h.writeTimer.Stop()
+											h.writeTimer = nil
+										}
+										h.draft = cfg.Clone()
+									}
+								} else {
+									h.draft = cfg.Clone()
+								}
+								h.set = r.settingsForLocked(h.draft)
+								if id == PanelSettings {
+									h.reseedSettingsFields()
+									h.reseedSettingsMenus()
+								}
+							}
+						}
+					}()
+					r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
+					media = r.media
+					r.tokens = tok
+					r.themeErr = ""
+					if genErr != nil {
+						r.themeErr = genErr.Error()
+					}
+					r.invalidateThemePreviewLocked()
+					if r.previewing {
+						r.previewPrevErr = r.themeErr
+					}
+					surfacePubs = r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
+					if launcherConfigChanged {
+						if h := r.panelHosts[PanelLauncher]; h != nil {
+							h.launcherAttempt++
+							r.launcherSendQuery(h, h.query)
+							r.rebuildPanel(h)
+							surfacePubs = append(surfacePubs, wayland.Invalidation{
+								Global: h.output, SurfaceID: panelSurfaceID(PanelLauncher),
+							})
+						}
+					}
+					if depthClockVisualChanged && r.depthClocks != nil {
+						depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
+					}
+					r.bars = bars
+					r.leases = leases
+					r.shutdown.bars.store(r.barListLocked())
+					panelOutputs := make(map[uint32]bool)
+					for _, h := range r.panelHosts {
+						if h != nil && !disabledOutputs[h.output] {
+							panelOutputs[h.output] = true
+						}
+					}
+					for global := range panelOutputs {
+						r.repositionPanelsLocked(global)
+					}
+					for global, bar := range r.bars {
+						r.bindBarTrayLocked(global, bar.connector(), bar)
+						r.bindBarPluginLocked(bar)
+						r.bindBarPanelActionsLocked(global, bar)
+					}
+					if h := r.panelHosts[PanelSettings]; h != nil {
 						r.rebuildPanel(h)
+						h.closeUnrenderedSettingsMenu()
 						surfacePubs = append(surfacePubs, wayland.Invalidation{
-							Global: h.output, SurfaceID: panelSurfaceID(PanelLauncher),
+							Global: h.output, SurfaceID: panelSurfaceID(PanelSettings),
 						})
 					}
-				}
-				if depthClockVisualChanged && r.depthClocks != nil {
-					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
-				}
-				r.bars = bars
-				r.leases = leases
-				r.shutdown.bars.store(r.barListLocked())
-				panelOutputs := make(map[uint32]bool)
-				for _, h := range r.panelHosts {
-					if h != nil && !disabledOutputs[h.output] {
-						panelOutputs[h.output] = true
+					if applicationPreferencesChanged {
+						if output, ok := r.refreshOpenLauncherLocked(); ok {
+							surfacePubs = append(surfacePubs, wayland.Invalidation{
+								Global: output, SurfaceID: panelSurfaceID(PanelLauncher),
+							})
+						}
 					}
-				}
-				for global := range panelOutputs {
-					r.repositionPanelsLocked(global)
-				}
-				for global, bar := range r.bars {
-					r.bindBarTrayLocked(global, bar.connector(), bar)
-					r.bindBarPluginLocked(bar)
-					r.bindBarPanelActionsLocked(global, bar)
-				}
-				if h := r.panelHosts[PanelSettings]; h != nil {
-					r.rebuildPanel(h)
-					h.closeUnrenderedSettingsMenu()
-					surfacePubs = append(surfacePubs, wayland.Invalidation{
-						Global: h.output, SurfaceID: panelSurfaceID(PanelSettings),
-					})
-				}
-				if applicationPreferencesChanged {
-					if output, ok := r.refreshOpenLauncherLocked(); ok {
-						surfacePubs = append(surfacePubs, wayland.Invalidation{
-							Global: output, SurfaceID: panelSurfaceID(PanelLauncher),
-						})
-					}
-				}
-				// Seeded only: every replacement bar is reconfigured and
-				// repainted by the owner as part of adopting the candidate.
-				r.syncTrayLocked()
-				toastOutputs := r.outputGlobalsLocked()
-				plugins := r.plugins
-				wallpaperSvc := r.wallpaperSvc
-				r.mu.Unlock()
+					// Seeded only: every replacement bar is reconfigured and
+					// repainted by the owner as part of adopting the candidate.
+					r.syncTrayLocked()
+					toastOutputs = r.outputGlobalsLocked()
+					plugins = r.plugins
+					wallpaperSvc = r.wallpaperSvc
+				})
 				if wallpaperSvc != nil {
 					wallpaperSvc.SetCyclePolicy(wallpaperCyclePolicy(cfg.Wallpaper))
 				}

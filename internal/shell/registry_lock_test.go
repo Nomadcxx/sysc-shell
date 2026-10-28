@@ -53,3 +53,44 @@ func TestBarActionHandlerPanicDoesNotStrandTheRegistryLock(t *testing.T) {
 	}
 	r.mu.Unlock()
 }
+
+func TestToggleNotifyDNDPanicDoesNotStrandTheRegistryLock(t *testing.T) {
+	r := &Registry{cfg: config.Default()}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the notification handler did not panic")
+			}
+		}()
+		r.toggleNotifyDND()
+	}()
+
+	if !r.mu.TryLock() {
+		t.Fatal("toggleNotifyDND stranded the registry lock after a panic")
+	}
+	r.mu.Unlock()
+}
+
+func TestPreparedConfigCommitPanicDoesNotStrandTheRegistryLock(t *testing.T) {
+	r := &Registry{cfg: config.Default()}
+	prepared, err := r.PrepareConfigWithGeneration(config.Default(), nil, 0)
+	if err != nil {
+		t.Fatalf("PrepareConfigWithGeneration: %v", err)
+	}
+
+	// With no weather service installed, the first service reconfiguration
+	// panics after Commit has taken Registry.mu.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the config commit did not panic")
+			}
+		}()
+		prepared.Commit()
+	}()
+
+	if !r.mu.TryLock() {
+		t.Fatal("config commit stranded the registry lock after a panic")
+	}
+	r.mu.Unlock()
+}
