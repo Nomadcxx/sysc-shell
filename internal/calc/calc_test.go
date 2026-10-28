@@ -38,11 +38,21 @@ func TestEvalErrors(t *testing.T) {
 }
 
 func TestFormat(t *testing.T) {
-	cases := map[float64]string{42: "42", 3.5: "3.5", 14.142135623730951: "14.1421356237", -0.0: "0", 1e21: "1e+21", 0.1 + 0.2: "0.3"}
+	cases := map[float64]string{42: "42", 3.5: "3.5", 14.142135623730951: "14.1421356237", 1e21: "1e+21", 0.1 + 0.2: "0.3"}
 	for v, want := range cases {
 		if got := Format(v); got != want {
 			t.Errorf("Format(%v) = %q, want %q", v, got, want)
 		}
+	}
+}
+
+func TestFormatNegativeZero(t *testing.T) {
+	v := math.Copysign(0, -1)
+	if !math.Signbit(v) {
+		t.Fatal("test input is not negative zero")
+	}
+	if got := Format(v); got != "0" {
+		t.Fatalf("Format(math.Copysign(0, -1)) = %q, want %q", got, "0")
 	}
 }
 

@@ -105,12 +105,12 @@ func TestMaterializeMilkLiftsTowardWhite(t *testing.T) {
 	if meanLuma(lifted) <= meanLuma(dark) {
 		t.Fatal("milk did not lift luma")
 	}
+	if got, want := lifted.Pix[:4], []byte{146, 146, 146, 0xff}; !bytes.Equal(got, want) {
+		t.Fatalf("milk pixel = %v, want %v", got, want)
+	}
 	for i := 0; i+3 < len(lifted.Pix); i += 4 {
 		if lifted.Pix[i+3] != 0xff {
 			t.Fatalf("milk changed the alpha channel: %v", lifted.Pix[i:i+4])
-		}
-		if lifted.Pix[i] > 255 || lifted.Pix[i+1] > 255 || lifted.Pix[i+2] > 255 {
-			t.Fatal("milk overshot the channel range")
 		}
 	}
 }
