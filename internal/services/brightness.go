@@ -41,17 +41,20 @@ type brightnessDevice interface {
 }
 
 type Brightness struct {
-	mu       sync.Mutex
-	leases   leaseSet
-	interval time.Duration
-	root     string
-	bin      string
-	ok       bool
-	last     BrightnessState
-	hasLast  bool
-	stop     chan struct{}
-	done     chan struct{}
-	changes  chan BrightnessState
+	mu sync.Mutex
+	// refreshMu serializes scans with Available so it cannot read firstScan
+	// before the corresponding device list is published. Take it before mu.
+	refreshMu sync.Mutex
+	leases    leaseSet
+	interval  time.Duration
+	root      string
+	bin       string
+	ok        bool
+	last      BrightnessState
+	hasLast   bool
+	stop      chan struct{}
+	done      chan struct{}
+	changes   chan BrightnessState
 
 	devRoot      string
 	drmRoot      string
@@ -133,14 +136,23 @@ func (b *Brightness) Changes() <-chan BrightnessState { return b.changes }
 // performs a synchronous discovery so capability flags are honest before any
 // lease starts the poll loop; the result is then cached.
 func (b *Brightness) Available() bool {
+	b.refreshMu.Lock()
+	defer b.refreshMu.Unlock()
+	needsScan := func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.firstScan {
+			return false
+		}
+		b.firstScan = true
+		return true
+	}()
+	if needsScan {
+		b.refreshDevices()
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.firstScan {
-		b.firstScan = true
-		b.mu.Unlock()
-		b.refresh()
-		b.mu.Lock()
-	}
 	b.ok = len(b.devices) > 0
 	return b.ok
 }
@@ -417,6 +429,12 @@ func (b *Brightness) trackFailureLocked(d brightnessDevice, err error) {
 // monitors' own brightness handling. Unknown buses are scanned at most every
 // ddcRescanGap, which is also how a second hotplugged monitor appears.
 func (b *Brightness) refresh() {
+	b.refreshMu.Lock()
+	defer b.refreshMu.Unlock()
+	b.refreshDevices()
+}
+
+func (b *Brightness) refreshDevices() {
 	b.mu.Lock()
 	sysfs := enumerateBacklights(b.root, b.bin)
 	known, cooldown := b.knownDDC, b.cooldown
