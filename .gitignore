@@ -20,8 +20,10 @@ go.work.sum
 packages.txt
 measured-floors.json
 
-# Plans, roadmaps, research and decision notes stay local
+# Plans, roadmaps, reports and decision notes stay local
 docs/plans/
+docs/superpowers/plans/
+docs/2026-10-03-audit-sysc-shell-report.md
 docs/roadmap.md
 docs/prior-art.md
 reports/

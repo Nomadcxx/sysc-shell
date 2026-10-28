@@ -80,4 +80,4 @@ require (
 	github.com/rkoesters/xdg v0.0.1 // indirect
 )
 
-ignore ./docs
+ignore ./docs/plans
