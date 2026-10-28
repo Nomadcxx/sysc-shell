@@ -53,6 +53,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: check module tidy state
+        run: go mod tidy -diff
       # Recorder integration tests build the plugin from this pinned checkout.
       # The pin names the plugin generation the recorder tests were written
       # against: the checkout moves when the plugin moves, not on every commit
