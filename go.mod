@@ -79,5 +79,3 @@ require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/rkoesters/xdg v0.0.1 // indirect
 )
-
-ignore ./docs
