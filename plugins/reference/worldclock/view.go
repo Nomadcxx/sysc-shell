@@ -7,15 +7,20 @@ import (
 )
 
 func BarTree(first Reading) *v1.Node {
-	return &v1.Node{Kind: v1.KindRow, Gap: 8, Children: []*v1.Node{
-		{Kind: v1.KindText, Key: "time", Text: first.Clock, Tabular: true},
-	}}
+	return barReadout(first.Clock)
+}
+
+func barReadout(clock string) *v1.Node {
+	return &v1.Node{
+		Kind: v1.KindButton, ID: "open", Key: "time", Text: clock, Tabular: true, Name: "Open world clock", Role: "button",
+		Events: []v1.EventKind{v1.EventActivate},
+	}
 }
 
 func BarTimePatch(first Reading) []v1.Replacement {
 	return []v1.Replacement{{
 		Key:  "time",
-		Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: first.Clock, Tabular: true},
+		Node: barReadout(first.Clock),
 	}}
 }
 

@@ -65,23 +65,23 @@ func TestBarTimePatchTouchesOnlyTheBarTimeNode(t *testing.T) {
 	}
 }
 
-func TestBarTreeIsARow(t *testing.T) {
+func TestBarTreeIsAnAccessibleActivationButton(t *testing.T) {
 	t.Parallel()
 	root := BarTree(Reading{Zone: "UTC", Clock: "15:04"})
 	if err := v1.Validate(root, v1.ViewBar); err != nil {
 		t.Fatal(err)
+	}
+	if root.Kind != v1.KindButton || root.ID != "open" || root.Name != "Open world clock" || root.Role != "button" ||
+		len(root.Events) != 1 || root.Events[0] != v1.EventActivate {
+		t.Fatalf("bar readout = %+v, want one accessible activation button", root)
 	}
 }
 
 func TestBarTreeShowsOnlyFirstCityReadout(t *testing.T) {
 	t.Parallel()
 	root := BarTree(Reading{Zone: "UTC", Clock: "15:04"})
-	if root.Kind != v1.KindRow || len(root.Children) != 1 {
-		t.Fatalf("bar root = %+v, want one time readout", root)
-	}
-	readout := root.Children[0]
-	if readout.Kind != v1.KindText || readout.Key != "time" || readout.Text != "15:04" || !readout.Tabular {
-		t.Fatalf("bar readout = %+v, want first city's tabular time", readout)
+	if root.Key != "time" || root.Text != "15:04" || !root.Tabular {
+		t.Fatalf("bar readout = %+v, want first city's time", root)
 	}
 }
 

@@ -2,10 +2,11 @@ package timer
 
 import v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 
-func BarTree(remaining string, _ bool) *v1.Node {
-	return &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{
-		{Kind: v1.KindText, Text: remaining, Tabular: true},
-	}}
+func BarTree(remaining string) *v1.Node {
+	return &v1.Node{
+		Kind: v1.KindButton, ID: "open", Text: remaining, Tabular: true, Name: "Open timer", Role: "button",
+		Events: []v1.EventKind{v1.EventActivate},
+	}
 }
 
 func TooltipTree(remaining string) *v1.Node {

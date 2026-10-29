@@ -59,7 +59,7 @@ func run(in *os.File, out *os.File) error {
 			var root *v1.Node
 			switch v.kind {
 			case v1.ViewBar:
-				root = timer.BarTree(text, tm.Running())
+				root = timer.BarTree(text)
 			case v1.ViewTooltip:
 				root = timer.TooltipTree(text)
 			default:
@@ -115,6 +115,8 @@ func run(in *os.File, out *os.File) error {
 
 func handleInput(ctx context.Context, c *v1.Client, tm *timer.Timer, m *v1.InputEvent) {
 	switch m.Node {
+	case "open":
+		_, _ = c.Call(ctx, v1.CallPanelOpen, v1.PanelParams{Entry: "panel", Output: m.Output, Instance: m.ViewID})
 	case "start":
 		tm.Start()
 		save(ctx, c, tm)

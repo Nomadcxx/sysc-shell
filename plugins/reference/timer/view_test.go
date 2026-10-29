@@ -6,18 +6,15 @@ import (
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
-func TestBarTreeIsReadoutOnly(t *testing.T) {
+func TestBarTreeActivatesTheTimerPanelFromItsReadout(t *testing.T) {
 	t.Parallel()
-	root := BarTree("04:12", true)
+	root := BarTree("04:12")
 	if err := v1.Validate(root, v1.ViewBar); err != nil {
 		t.Fatal(err)
 	}
-	if root.Kind != v1.KindRow || len(root.Children) != 1 {
-		t.Fatalf("bar root = %+v, want a row with one readout", root)
-	}
-	readout := root.Children[0]
-	if readout.Kind != v1.KindText || readout.Text != "04:12" || !readout.Tabular {
-		t.Fatalf("bar readout = %+v, want tabular remaining time", readout)
+	if root.Kind != v1.KindButton || root.ID != "open" || root.Text != "04:12" || !root.Tabular || root.Name != "Open timer" || root.Role != "button" ||
+		len(root.Events) != 1 || root.Events[0] != v1.EventActivate {
+		t.Fatalf("bar readout = %+v, want one accessible activation button", root)
 	}
 }
 
