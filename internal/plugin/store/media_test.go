@@ -1,10 +1,12 @@
 package store
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -111,5 +113,70 @@ func TestWantReplacementCancelsAnUnneededFetch(t *testing.T) {
 	}
 	if _, ok := f.st.State().Media[unneeded.SHA256]; ok {
 		t.Fatal("the replaced README remained in the current media state")
+	}
+}
+
+func TestFetchMediaRunsQueuedOperationBetweenDownloads(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	firstBody, secondBody := []byte("first"), []byte("second")
+	firstStarted, releaseFirst := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	defer release()
+	events := make(chan string, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body []byte
+		switch r.URL.Path {
+		case "/first":
+			close(firstStarted)
+			<-releaseFirst
+			body = firstBody
+		case "/second":
+			events <- "second download"
+			body = secondBody
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	f.st.opts.Installer.Client = srv.Client()
+
+	first := MediaKey{URL: srv.URL + "/first", SHA256: sum(firstBody), Max: 1024}
+	second := MediaKey{URL: srv.URL + "/second", SHA256: sum(secondBody), Max: 1024}
+	f.st.Want([]MediaKey{first, second})
+	select {
+	case <-firstStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first media download did not start")
+	}
+
+	done, err := f.st.enqueue(op{name: "install test", run: func(context.Context) error {
+		events <- "queued install"
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+
+	var got [2]string
+	for i := range got {
+		select {
+		case got[i] = <-events:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("operation/download order = %v; timed out waiting for event %d", got, i+1)
+		}
+	}
+	if got != [2]string{"queued install", "second download"} {
+		t.Fatalf("operation/download order = %v, want queued install before second download", got)
+	}
+	f.await(done, nil)
+	for _, key := range []MediaKey{first, second} {
+		if media := waitMedia(t, f.st, key.SHA256); media.Err != nil || media.Path == "" {
+			t.Fatalf("media %s = %+v", key.SHA256, media)
+		}
 	}
 }

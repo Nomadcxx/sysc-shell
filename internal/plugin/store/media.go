@@ -74,6 +74,9 @@ func (s *Store) Want(keys []MediaKey) {
 
 func (s *Store) fetchMedia(ctx context.Context, keys []MediaKey) {
 	for _, key := range keys {
+		if !s.runQueuedOps(ctx) {
+			return
+		}
 		s.mu.Lock()
 		current, wanted := s.mediaWanted[key.SHA256]
 		if !wanted || current != key {
