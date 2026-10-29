@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bytes"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"strings"
 	"testing"
@@ -56,11 +57,16 @@ func TestStyleRendersOnePictureCardPerOption(t *testing.T) {
 	if len(cards.Children) != 3 {
 		t.Fatalf("%d style cards, want 3", len(cards.Children))
 	}
+	var firstPixels []byte
 	for i, opt := range []string{"frosted", "solid", "islands"} {
 		c := cards.Children[i]
 		imgs := findAllKind(c, ui.KindImage)
 		if c.Action != "pick:bar.style="+opt || len(imgs) == 0 || imgs[0].Image == nil {
 			t.Errorf("card %d = %q without a picture", i, c.Action)
+		} else if i == 0 {
+			firstPixels = imgs[0].Image.Pix
+		} else if bytes.Equal(imgs[0].Image.Pix, firstPixels) {
+			t.Errorf("card %s has the same pixels as the first style card", opt)
 		}
 		if (c.State&ui.StateSelected != 0) != (opt == h.draft.Bar.Style) {
 			t.Errorf("card %s selection is wrong", opt)
@@ -114,8 +120,11 @@ func TestBarAppearanceLeadsWithPreviewAndCards(t *testing.T) {
 	if body == nil || len(body.Children) < 3 {
 		t.Fatal("Appearance body is missing its blocks")
 	}
-	if len(findAllKind(body.Children[0], ui.KindImage)) == 0 {
-		t.Error("the first block is not the preview")
+	if findAction(body.Children[0], "set:bar.enabled") == nil {
+		t.Error("Enabled is not the first block on Appearance")
+	}
+	if len(findAllKind(body.Children[1], ui.KindImage)) == 0 {
+		t.Error("the preview does not follow Enabled")
 	}
 	if findAction(body, "pick:bar.style=islands") == nil || findAction(body, "pick:bar.shape=floating") == nil {
 		t.Fatal("Style or Shape picture cards are missing")
@@ -137,6 +146,9 @@ func TestFrostDimsWhenTheStyleIsSolidAndAllDimWhenTheBarIsOff(t *testing.T) {
 	h.root = settingsTree(nil, h)
 	if frost := findAction(h.root, "set:bar.frost-opacity"); frost == nil || frost.State&ui.StateDisabled == 0 {
 		t.Fatal("frost opacity is live under a solid bar")
+	}
+	if text := renderText(h.root); !strings.Contains(text, "Applies to the Frosted style.") {
+		t.Fatalf("disabled frost row does not explain why it is unavailable: %q", text)
 	}
 	if hgt := findAction(h.root, "set:bar.height"); hgt != nil && hgt.State&ui.StateDisabled != 0 {
 		t.Fatal("bar height dimmed under a solid bar")

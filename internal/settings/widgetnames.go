@@ -45,10 +45,9 @@ var widgetNames = map[string]string{
 	"workspace":       "Workspaces",
 }
 
-// WidgetName is the label the editor shows for one item. A group is named for
-// what it is; a plugin placement is named by its entry, which is the only part
-// of it that means anything to a person, and falls back to the raw id so an
-// unknown token is visible rather than blank.
+// WidgetName is the label the editor shows for one item. A plugin placement
+// uses its catalogue name when the resolver knows it, and falls back to the
+// plugin ID so an unknown token is visible rather than blank.
 func WidgetName(it config.Item, plugin func(id string) string) string {
 	switch it.ID {
 	case "group":

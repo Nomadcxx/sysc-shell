@@ -2594,6 +2594,9 @@ func TestSettingsRailCarriesAnIconPerSection(t *testing.T) {
 	if selected != 1 {
 		t.Errorf("%d tabs read as selected, want exactly the open one", selected)
 	}
+	if _, ok := settingsSectionIcons["Displays"]; ok {
+		t.Error("Displays is a Bar page, not a settings rail section")
+	}
 }
 
 // TestSearchGroupsMatchesUnderTheirSection: the shipped pane and Noctalia both
@@ -3705,15 +3708,11 @@ func TestSettingsAddressesResolvePages(t *testing.T) {
 
 func TestOpeningTheOldDisplaysSectionLandsOnBarDisplays(t *testing.T) {
 	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+	if err := reg.HandlePanelByName("open", "settings", "Displays"); err != nil {
 		t.Fatal(err)
 	}
-	_ = drainAux(t, reg, 2)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	if err := reg.selectPanelSectionLocked(PanelSettings, "Displays"); err != nil {
-		t.Fatal(err)
-	}
 	h := reg.panelHosts[PanelSettings]
 	if h.section != "Bar" || h.settingsPage != "Displays" {
 		t.Fatalf("landed on %q/%q", h.section, h.settingsPage)
