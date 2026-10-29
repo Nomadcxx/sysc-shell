@@ -53,6 +53,13 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	children = append(children, pluginStoreChips(h, state, inner, metrics)...)
 	allFailed, stale := pluginStoreSourceState(state.Sources)
+	hasEnabledSource := false
+	for _, source := range r.cfg.Plugins.EffectiveSources() {
+		if source.Enabled {
+			hasEnabledSource = true
+			break
+		}
+	}
 	sourceAttempted := false
 	for _, source := range state.Sources {
 		if !source.FetchedAt.IsZero() || source.Err != nil {
@@ -60,10 +67,12 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 			break
 		}
 	}
-	loading := strings.Contains(strings.ToLower(state.Busy), "refresh") || !sourceAttempted
+	loading := strings.Contains(strings.ToLower(state.Busy), "refresh") || (hasEnabledSource && !sourceAttempted)
 	switch {
 	case h.pluginStoreRefreshErr != "":
 		children = append(children, pluginStoreBanner(h, "Refresh failed", h.pluginStoreRefreshErr, true, inner, metrics))
+	case !hasEnabledSource:
+		children = append(children, pluginStoreBanner(h, "No plugin sources enabled", "Enable a source in Settings to browse plugins.", false, inner, metrics))
 	case loading:
 		children = append(children, pluginStoreBanner(h, "Loading plugins…", "", false, inner, metrics))
 	case allFailed:
@@ -74,7 +83,7 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	if len(listings) == 0 {
-		if !loading && !allFailed && h.pluginStoreRefreshErr == "" {
+		if hasEnabledSource && !loading && !allFailed && h.pluginStoreRefreshErr == "" {
 			children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
 				{Kind: ui.KindText, Text: "No plugins match", TextRole: theme.RoleTitle},
 				{Kind: ui.KindText, Text: "Try another search, source or category.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},

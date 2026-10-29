@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -141,6 +142,21 @@ func TestPluginStorePanelHeadlessRendersEveryGridStateAtBothSizes(t *testing.T) 
 				_ = reg
 			})
 		}
+	}
+}
+
+func TestPluginStoreWithNoEnabledSourcesDoesNotShowLoading(t *testing.T) {
+	reg, host, _ := openPluginStoreTestPanel(t, store.State{}, ui.Rect{W: 1600, H: 1000})
+	reg.mu.Lock()
+	reg.cfg.Plugins.Sources = []config.PluginSource{{Name: config.BuiltinPluginSource.Name, Enabled: false}}
+	reg.rebuildPanel(host)
+	loading := pluginStoreHasText(host.root, "Loading plugins…")
+	noSources := pluginStoreHasText(host.root, "No plugin sources enabled")
+	noMatches := pluginStoreHasText(host.root, "No plugins match")
+	reg.mu.Unlock()
+
+	if loading || !noSources || noMatches {
+		t.Fatalf("zero-source state: loading=%v, no-sources message=%v, no-matches message=%v", loading, noSources, noMatches)
 	}
 }
 
