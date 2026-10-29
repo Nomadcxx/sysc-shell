@@ -604,14 +604,23 @@ func parseCCPrivacySnapshot(raw []byte) (*ccPrivacySnapshot, error) {
 				category.InstalledTruncated, len(category.Installed)) {
 			return nil, fmt.Errorf("invalid privacy category")
 		}
+		if ccPrivacyGradeRank(snapshot.Overall.Grade) < ccPrivacyGradeRank(category.Grade) {
+			return nil, fmt.Errorf("privacy overall grade is safer than category %q", category.Name)
+		}
 		for _, app := range category.Installed {
 			if app.Name == "" || !ccPrivacyTextFits(app.Name, ccPrivacyLabelLimit) || !validCCPrivacyGrade(app.Grade) {
 				return nil, fmt.Errorf("invalid installed privacy app")
+			}
+			if ccPrivacyGradeRank(category.Grade) < ccPrivacyGradeRank(app.Grade) {
+				return nil, fmt.Errorf("privacy category grade is safer than installed app %q", app.Name)
 			}
 		}
 		if category.Worst != nil && (category.Worst.Name == "" || !ccPrivacyTextFits(category.Worst.Name, ccPrivacyLabelLimit) ||
 			!validCCPrivacyGrade(category.Worst.Grade)) {
 			return nil, fmt.Errorf("invalid worst privacy app")
+		}
+		if category.Worst != nil && ccPrivacyGradeRank(category.Grade) < ccPrivacyGradeRank(category.Worst.Grade) {
+			return nil, fmt.Errorf("privacy category grade is safer than its worst app")
 		}
 	}
 	for _, finding := range snapshot.Findings {
@@ -641,6 +650,21 @@ func validCCPrivacyGrade(grade string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func ccPrivacyGradeRank(grade string) int {
+	switch grade {
+	case "green":
+		return 0
+	case "amber":
+		return 1
+	case "red":
+		return 2
+	case "unknown":
+		return 3
+	default:
+		return -1
 	}
 }
 
