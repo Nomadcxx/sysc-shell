@@ -307,11 +307,16 @@ type PanelHost struct {
 	fields             map[string]*ui.Field
 	editors            map[string]*retainedEditor
 
-	launcherResults []launcher.Result
-	launcherSel     int
-	launcherScroll  int
-	launcherMenuID  string
-	launcherActions []launcher.Action
+	launcherResults              []launcher.Result
+	launcherBaseResults          []launcher.Result
+	launcherCategory             string
+	launcherGrid                 bool
+	launcherCompact              bool
+	launcherBrowseControlsHeight int
+	launcherSel                  int
+	launcherScroll               int
+	launcherMenuID               string
+	launcherActions              []launcher.Action
 	// launcherAttempt stamps the user's current launcher interaction; an
 	// activation completion applies only while its stamp is still current.
 	// launcherPendingAttempt is handed to the serialized service activation,
@@ -1472,6 +1477,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		svc := r.launcherServiceLocked()
 		svc.Open()
 		r.launcherSendQuery(h, "")
+		r.refreshLauncherApplicationsLocked(h)
 	}
 	if id == PanelWallpaper {
 		h.search = ui.NewField("")
@@ -3104,12 +3110,12 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	// the accept key everywhere else, because fieldKey reports no focus for a
 	// control. Enter submits by falling through to the path it always took,
 	// so a launcher still runs its selection and a form still activates.
-	// The launcher is type-to-search: its well always has focus, and the list
-	// keys (Up, Down, Page, Home, End, Enter) drive the results, not the caret.
+	// The launcher is type-to-search: Up/Down and paging navigate results;
+	// horizontal grid movement uses Alt so Left/Right can move the caret.
 	if h.id == PanelFiles && h.filesKeyPress(r, key, k) {
 		return true
 	}
-	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
+	if h.id == PanelLauncher && h.launcherKeyPressWithMods(r, key, k.Mods) {
 		return true
 	}
 	if res, focused := h.fieldKey(r, k); focused && res.Handled && !res.Submit {
@@ -3301,7 +3307,12 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 		return true
 	}
 	if h.id == PanelLauncher {
-		h.launcherMoveSel(r, wheelRows(delta, launcherSlotHeight))
+		layout := launcherLayoutFor(r, h)
+		rows := wheelRows(delta, layout.itemHeight)
+		if layout.grid {
+			rows *= layout.columns
+		}
+		h.launcherMoveSel(r, rows)
 		return true
 	}
 	if !h.scrollBy(delta) {

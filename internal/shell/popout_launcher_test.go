@@ -299,15 +299,14 @@ func TestLauncherListFillsThePanel(t *testing.T) {
 	// chrome estimate and the laid-out chrome disagreeing, so writing either
 	// side as a number is what lets them drift apart unnoticed.
 	//
-	// At the 76-tall slot the remainder is seven whole rows and a cap of the
-	// eighth. It was eight rows before the row took DMS's 12/16 padding; the
-	// row grew and the panel did not, so a row had to go.
-	if list.Bounds.H != h.launcherListHeight() || bottom != wantBottom {
+	// Browse controls take one row above the list; six full result rows remain
+	// visible at the default density.
+	if list.Bounds.H != h.launcherListHeight(launcherLayoutFor(reg, h)) || bottom != wantBottom {
 		t.Fatalf("list %+v, want height %d ending at %d",
-			list.Bounds, h.launcherListHeight(), wantBottom)
+			list.Bounds, h.launcherListHeight(launcherLayoutFor(reg, h)), wantBottom)
 	}
-	if rows := list.Bounds.H / launcherSlotHeight; rows < 7 {
-		t.Fatalf("only %d rows visible; the taller panel is the whole point", rows)
+	if rows := list.Bounds.H / launcherSlotHeight; rows < 6 {
+		t.Fatalf("only %d rows visible below the browse controls; want at least 6", rows)
 	}
 }
 
@@ -341,8 +340,8 @@ func TestLauncherListFitsWhenResultsArriveBeforeConfigure(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	list := launcherListNode(t, h)
-	if list.Bounds.H != h.launcherListHeight() {
-		t.Fatalf("list height = %d, want %d", list.Bounds.H, h.launcherListHeight())
+	if list.Bounds.H != h.launcherListHeight(launcherLayoutFor(reg, h)) {
+		t.Fatalf("list height = %d, want %d", list.Bounds.H, h.launcherListHeight(launcherLayoutFor(reg, h)))
 	}
 }
 
@@ -358,10 +357,10 @@ func TestLauncherListEndsPartWayThroughARow(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	shown := h.launcherListHeight() % launcherSlotHeight
+	shown := h.launcherListHeight(launcherLayoutFor(reg, h)) % launcherSlotHeight
 	if shown == 0 {
 		t.Fatalf("the %d viewport is a whole number of %d rows; nothing says the list scrolls",
-			h.launcherListHeight(), launcherSlotHeight)
+			h.launcherListHeight(launcherLayoutFor(reg, h)), launcherSlotHeight)
 	}
 	// Enough of the row to read as a row: past its half of the gap and its top
 	// padding, into the glyph. Less than that and the strip is bare background.
@@ -1510,7 +1509,9 @@ func TestLauncherRowHeightSurvivesAMissingCommentAndIcon(t *testing.T) {
 
 	measure := h.measureText()
 	height := func(e launcher.Entry) int {
-		body := launcherRowBody(nil, h, e)
+		body := launcherRowBody(nil, h, e, launcherViewLayout{
+			iconSize: launcherIconSlot, rowPadTop: launcherRowPadTop,
+		})
 		root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{body}}
 		if err := ui.LayoutColumn(root, ui.Rect{W: h.place.Panel.W - 24, H: launcherRowHeight}, measure); err != nil {
 			t.Fatalf("layout %q: %v", e.Name, err)
@@ -2212,4 +2213,339 @@ func TestLauncherQueuedSnapshotDoesNotClearAwaiting(t *testing.T) {
 	if got := run.waitArgv(t); len(got) == 0 || got[len(got)-1] != "firefox" {
 		t.Fatalf("Enter after B's snapshot ran %v, want firefox", got)
 	}
+}
+
+func TestLauncherCategoryFilter(t *testing.T) {
+	rows := []launcher.Result{
+		{Entry: launcher.Entry{ID: "files.desktop", Name: "Files", Categories: []string{"Utility", "System"}}},
+		{Entry: launcher.Entry{ID: "music.desktop", Name: "Music", Categories: []string{"AudioVideo"}}},
+		{Entry: launcher.Entry{ID: "notes.desktop", Name: "Notes", Categories: []string{"Utility"}}},
+		{Entry: launcher.Entry{ID: "editor.desktop", Name: "Editor", Categories: []string{"Development"}}},
+	}
+
+	got := launcherCategoryResults(rows, "Utility")
+	if len(got) != 2 || got[0].Entry.ID != "files.desktop" || got[1].Entry.ID != "notes.desktop" {
+		t.Fatalf("Utility results = %#v, want Files then Notes", got)
+	}
+	if got := launcherCategoryResults(rows, ""); !slices.Equal(launcherResultIDs(got), []string{"files.desktop", "music.desktop", "notes.desktop", "editor.desktop"}) {
+		t.Fatalf("All result IDs = %q, want original order", launcherResultIDs(got))
+	}
+}
+
+func TestLauncherCategoryControlsFilterAndRestore(t *testing.T) {
+	entries := []launcher.Entry{
+		{ID: "files.desktop", Name: "Files", Categories: []string{"Utility", "System"}, Argv: []string{"files"}},
+		{ID: "music.desktop", Name: "Music", Categories: []string{"AudioVideo"}, Argv: []string{"music"}},
+		{ID: "notes.desktop", Name: "Notes", Categories: []string{"Utility"}, Argv: []string{"notes"}},
+		{ID: "editor.desktop", Name: "Editor", Categories: []string{"Development"}, Argv: []string{"editor"}},
+	}
+	reg, _, _ := openLauncherPanel(t, entries)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && findAction(h.root, "launcher-category:Utility") != nil
+	})
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	var categories []string
+	var visit func(*ui.Node)
+	visit = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if category, ok := strings.CutPrefix(n.Action, "launcher-category:"); ok {
+			categories = append(categories, category)
+		}
+		for _, child := range n.Children {
+			visit(child)
+		}
+	}
+	visit(h.root)
+	if want := []string{"", "AudioVideo", "Development", "System", "Utility"}; !slices.Equal(categories, want) {
+		reg.mu.Unlock()
+		t.Fatalf("category actions = %q, want %q", categories, want)
+	}
+	allIDs := launcherResultIDs(h.launcherResults)
+	category := findAction(h.root, "launcher-category:Utility")
+	if category == nil {
+		reg.mu.Unlock()
+		t.Fatal("Utility chip is missing")
+	}
+	h.launcherSel, h.launcherScroll = len(h.launcherResults)-1, 400
+	h.setFocus(category)
+	if h.launcherKeyPress(reg, keyEnter) {
+		reg.mu.Unlock()
+		t.Fatal("launcher consumed Enter on a category control as result activation")
+	}
+	if !h.keyInput(reg, ui.KeyInput{Code: keyEnter}) {
+		reg.mu.Unlock()
+		t.Fatal("Enter did not activate the focused Utility chip")
+	}
+	filteredIDs := launcherResultIDs(h.launcherResults)
+	if len(filteredIDs) != 2 || filteredIDs[0] != "files.desktop" || filteredIDs[1] != "notes.desktop" {
+		reg.mu.Unlock()
+		t.Fatalf("Utility result IDs = %q, want Files then Notes", filteredIDs)
+	}
+	if h.launcherSel != 0 || h.launcherScroll != 0 {
+		reg.mu.Unlock()
+		t.Fatalf("selection/scroll = %d/%d, want 0/0 after filtering", h.launcherSel, h.launcherScroll)
+	}
+	all := findAction(h.root, "launcher-category:")
+	if all == nil {
+		reg.mu.Unlock()
+		t.Fatal("All chip is missing")
+	}
+	h.setFocus(all)
+	if !h.keyInput(reg, ui.KeyInput{Code: keyEnter}) {
+		reg.mu.Unlock()
+		t.Fatal("Enter did not activate the focused All chip")
+	}
+	if got := launcherResultIDs(h.launcherResults); !slices.Equal(got, allIDs) {
+		reg.mu.Unlock()
+		t.Fatalf("All result IDs = %q, want %q", got, allIDs)
+	}
+	reg.mu.Unlock()
+}
+
+func TestLauncherCategoryFilterCombinesWithTextQuery(t *testing.T) {
+	entries := []launcher.Entry{
+		{ID: "files.desktop", Name: "Files", Categories: []string{"Utility"}, Argv: []string{"files"}},
+		{ID: "music.desktop", Name: "Music", Categories: []string{"AudioVideo"}, Argv: []string{"music"}},
+		{ID: "notes.desktop", Name: "Notes", Categories: []string{"Utility"}, Argv: []string{"notes"}},
+	}
+	reg, _, _ := openLauncherPanel(t, entries)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && findAction(h.root, "launcher-category:Utility") != nil
+	})
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	category := findAction(h.root, "launcher-category:Utility")
+	h.setFocus(category)
+	if !h.keyInput(reg, ui.KeyInput{Code: keyEnter}) {
+		reg.mu.Unlock()
+		t.Fatal("Enter did not activate the Utility chip")
+	}
+	h = reg.panelHosts[PanelLauncher]
+	h.query = "/apps notes"
+	h.search = ui.NewField(h.query)
+	reg.launcherSendQuery(h, h.query)
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) == 1 && h.launcherResults[0].Entry.ID == "notes.desktop"
+	})
+}
+
+func TestLauncherCategoryControlsStayOutOfProviderAndInlineViews(t *testing.T) {
+	reg, _, _ := openLauncherPanel(t, launcherTestEntries())
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	h.launcherGrid = true
+	h.launcherCompact = true
+	for _, query := range []string{"/win", "6*7"} {
+		h.query = query
+		r := launcherTree(reg, h)
+		if findAction(r, "launcher-category:") != nil {
+			reg.mu.Unlock()
+			t.Fatalf("category chips shown for non-application query %q", query)
+		}
+		list := findNode(r, func(n *ui.Node) bool { return n.Kind == ui.KindVirtualList })
+		if list == nil || list.ItemHeight != launcherSlotHeight {
+			reg.mu.Unlock()
+			t.Fatalf("browse layout changed for non-application query %q: %+v", query, list)
+		}
+	}
+	reg.mu.Unlock()
+}
+
+func TestLauncherBrowseControlsSwitchViewsAndCompact(t *testing.T) {
+	reg, _, _ := openLauncherPanel(t, launcherBrowseTestEntries(8))
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && findAction(h.root, "launcher-view:grid") != nil
+	})
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	listMode := findAction(h.root, "launcher-view:list")
+	gridMode := findAction(h.root, "launcher-view:grid")
+	compact := findAction(h.root, "launcher-compact")
+	if listMode == nil || gridMode == nil || compact == nil {
+		reg.mu.Unlock()
+		t.Fatal("launcher browsing controls are incomplete")
+	}
+	if !listMode.State.Has(ui.StateSelected) || gridMode.State.Has(ui.StateSelected) {
+		reg.mu.Unlock()
+		t.Fatal("list is not the selected default view")
+	}
+	columns := launcherGridColumns(560 - 2*theme.MarginL - launcherGridGap)
+	h.launcherSel, h.launcherScroll = len(h.launcherResults)-1, 120
+	h.setFocus(gridMode)
+	if !h.keyInput(reg, ui.KeyInput{Code: keyEnter}) {
+		reg.mu.Unlock()
+		t.Fatal("Enter did not select Grid")
+	}
+	if !h.launcherGrid || h.launcherSel != 0 || h.launcherScroll != 0 {
+		reg.mu.Unlock()
+		t.Fatalf("grid selection state = %v/%d/%d, want true/0/0", h.launcherGrid, h.launcherSel, h.launcherScroll)
+	}
+	list := launcherListNode(t, h)
+	if want := (len(h.launcherResults) + columns - 1) / columns; list.ItemCount != want {
+		reg.mu.Unlock()
+		t.Fatalf("grid rows = %d, want %d for %d results and %d columns", list.ItemCount, want, len(h.launcherResults), columns)
+	}
+	if findAction(h.root, "launch:4") == nil {
+		reg.mu.Unlock()
+		t.Fatal("grid tile lost its flat result index")
+	}
+	gridHeight := list.ItemHeight
+	compact = findAction(h.root, "launcher-compact")
+	h.launcherSel, h.launcherScroll = 4, 120
+	h.setFocus(compact)
+	if !h.keyInput(reg, ui.KeyInput{Code: keyEnter}) {
+		reg.mu.Unlock()
+		t.Fatal("Enter did not toggle Compact")
+	}
+	compact = findAction(h.root, "launcher-compact")
+	if !h.launcherCompact || compact == nil || !compact.State.Has(ui.StateSelected) || h.launcherSel != 0 || h.launcherScroll != 0 {
+		reg.mu.Unlock()
+		t.Fatalf("compact state = %v/%v/%d/%d", h.launcherCompact, compact, h.launcherSel, h.launcherScroll)
+	}
+	compactHeight := launcherListNode(t, h).ItemHeight
+	if compactHeight >= gridHeight {
+		reg.mu.Unlock()
+		t.Fatalf("compact grid item height = %d, want less than %d", compactHeight, gridHeight)
+	}
+	listMode = findAction(h.root, "launcher-view:list")
+	h.setFocus(listMode)
+	if !h.keyInput(reg, ui.KeyInput{Code: keyEnter}) {
+		reg.mu.Unlock()
+		t.Fatal("Enter did not select List")
+	}
+	list = launcherListNode(t, h)
+	if h.launcherGrid || list.ItemCount != len(h.launcherResults) || list.ItemHeight >= launcherSlotHeight {
+		reg.mu.Unlock()
+		t.Fatalf("compact list = grid:%v count:%d height:%d", h.launcherGrid, list.ItemCount, list.ItemHeight)
+	}
+	reg.mu.Unlock()
+}
+
+func TestLauncherGridKeyNavigationUsesVisualColumns(t *testing.T) {
+	reg, _, _ := openLauncherPanel(t, launcherBrowseTestEntries(8))
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	h.launcherGrid = true
+	reg.rebuildPanel(h)
+	columns := launcherGridColumns(560 - 2*theme.MarginL - launcherGridGap)
+	h.launcherSel = 1
+	if !h.launcherKeyPress(reg, keyDown) || h.launcherSel != 1+columns {
+		reg.mu.Unlock()
+		t.Fatalf("Down selected %d, want %d", h.launcherSel, 1+columns)
+	}
+	if !h.launcherKeyPressWithMods(reg, keyRight, ui.ModAlt) || h.launcherSel != 2+columns {
+		reg.mu.Unlock()
+		t.Fatalf("Right selected %d, want %d", h.launcherSel, 2+columns)
+	}
+	if !h.launcherKeyPress(reg, keyUp) || h.launcherSel != 2 {
+		reg.mu.Unlock()
+		t.Fatalf("Up selected %d, want 2", h.launcherSel)
+	}
+	if !h.launcherKeyPressWithMods(reg, keyLeft, ui.ModAlt) || h.launcherSel != 1 {
+		reg.mu.Unlock()
+		t.Fatalf("Left selected %d, want 1", h.launcherSel)
+	}
+	reg.mu.Unlock()
+}
+
+func TestLauncherBrowseWheelUsesVisibleItemHeight(t *testing.T) {
+	reg, _, _ := openLauncherPanel(t, launcherBrowseTestEntries(8))
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) == 8
+	})
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	h.launcherGrid = true
+	reg.rebuildPanel(h)
+	columns := launcherLayoutFor(reg, h).columns
+	h.launcherSel = 0
+	if !h.scrollAxis(reg, wayland.Event{AxisDiscrete: 1}) || h.launcherSel != columns {
+		reg.mu.Unlock()
+		t.Fatalf("grid wheel selected %d, want next visual row at %d columns", h.launcherSel, columns)
+	}
+
+	h.launcherGrid = false
+	h.launcherCompact = true
+	reg.rebuildPanel(h)
+	h.launcherSel = 0
+	if !h.scrollAxis(reg, wayland.Event{AxisValue: 120}) || h.launcherSel != 2 {
+		reg.mu.Unlock()
+		t.Fatalf("compact list wheel selected %d, want two 56px rows", h.launcherSel)
+	}
+	reg.mu.Unlock()
+}
+
+func TestLauncherGridHorizontalMovementPreservesSearchCaret(t *testing.T) {
+	reg, _, _ := openLauncherPanel(t, launcherBrowseTestEntries(8))
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	h.launcherGrid = true
+	h.search = ui.NewField("query")
+	reg.rebuildPanel(h)
+	h.launcherSel = 1
+	if !h.keyInput(reg, ui.KeyInput{Code: keyLeft, Sym: ui.SymLeft}) {
+		reg.mu.Unlock()
+		t.Fatal("Left did not edit the search field")
+	}
+	if h.search.Cursor != 4 || h.launcherSel != 1 {
+		reg.mu.Unlock()
+		t.Fatalf("Left moved caret/selection to %d/%d, want 4/1", h.search.Cursor, h.launcherSel)
+	}
+	if !h.keyInput(reg, ui.KeyInput{Code: keyRight, Sym: ui.SymRight, Mods: ui.ModAlt}) {
+		reg.mu.Unlock()
+		t.Fatal("Alt+Right did not move across the grid")
+	}
+	if h.search.Cursor != 4 || h.launcherSel != 2 {
+		reg.mu.Unlock()
+		t.Fatalf("Alt+Right moved caret/selection to %d/%d, want 4/2", h.search.Cursor, h.launcherSel)
+	}
+	reg.mu.Unlock()
+}
+
+func TestLauncherGridPointerUsesFlatResultIndex(t *testing.T) {
+	reg, run, requests := openLauncherPanel(t, launcherBrowseTestEntries(8))
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	h.launcherGrid = true
+	reg.rebuildPanel(h)
+	tile := findAction(h.root, "launch:4")
+	if tile == nil || tile.Bounds.W == 0 {
+		reg.mu.Unlock()
+		t.Fatal("fourth grid result has no arranged tile")
+	}
+	want := append([]string{"niri", "msg", "action", "spawn", "--"}, h.launcherResults[4].Entry.Argv...)
+	x, y := tile.Bounds.X+tile.Bounds.W/2, tile.Bounds.Y+tile.Bounds.H/2
+	reg.mu.Unlock()
+	requests[1].Open.Callbacks.Handle(wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnLeft,
+		X: float64(x), Y: float64(y),
+	})
+	if got := run.waitArgv(t); !slices.Equal(got, want) {
+		t.Fatalf("grid press launched %v, want result 4 argv %v", got, want)
+	}
+}
+
+func launcherBrowseTestEntries(count int) []launcher.Entry {
+	entries := make([]launcher.Entry, count)
+	for i := range entries {
+		entries[i] = launcher.Entry{
+			ID: fmt.Sprintf("app-%02d.desktop", i), Name: fmt.Sprintf("Application %02d", i),
+			Categories: []string{"Utility"}, Argv: []string{"app", fmt.Sprint(i)},
+		}
+	}
+	return entries
+}
+
+func launcherResultIDs(rows []launcher.Result) []string {
+	ids := make([]string, len(rows))
+	for i, row := range rows {
+		ids[i] = row.Entry.ID
+	}
+	return ids
 }
