@@ -41,9 +41,11 @@ type CallEnv struct {
 	// Protocol is the minor the plugin's manifest declares. It decides which
 	// names a refusal can tell the plugin to declare, and whether output
 	// context is gated at all.
-	Protocol            v1.Version
-	DeclaredPanels      []Panel
-	Store               StateStore
+	Protocol       v1.Version
+	DeclaredPanels []Panel
+	Store          StateStore
+	// StateChanged runs after a successful persistent state write.
+	StateChanged        func(key string)
 	OpenPanel           func(context.Context, v1.PanelParams) (v1.PanelResult, error)
 	ClosePanel          func(context.Context, v1.PanelParams) error
 	Notify              func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
@@ -558,6 +560,9 @@ func (d *Dispatcher) state(ctx context.Context, call *v1.HostCall) v1.HostReply 
 		}
 		if err := d.env.Store.Set(ctx, p.Key, p.Value); err != nil {
 			return failReply(call.ID, err.Error())
+		}
+		if d.env.StateChanged != nil {
+			d.env.StateChanged(p.Key)
 		}
 		return okReply(call.ID, nil)
 	case v1.CallStateList:
