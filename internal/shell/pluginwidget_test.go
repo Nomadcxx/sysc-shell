@@ -31,10 +31,11 @@ func TestPluginWidgetFailedPlaceholderOpensCamera(t *testing.T) {
 	}, 8, standardMetrics())
 	w := widgets[0]
 	w.refresh(barView{Plugins: map[string]pluginFrame{
-		"rec-1": {Failed: true, Label: "does not fit", ViewID: "v1", Revision: 1},
+		"rec-1": {Name: "Screen Recorder", Failed: true, Label: "does not fit", ViewID: "v1", Revision: 1},
 	}})
 	mark := w.inner.Children[0]
-	if mark.Text != "!" || mark.Action != "plugin:v1:camera" {
+	if mark.Text != "Screen Recorder" || mark.Tone != ui.ToneError ||
+		mark.Name != "Screen Recorder: does not fit" || mark.Action != "plugin:v1:camera" {
 		t.Fatalf("placeholder = %+v", mark)
 	}
 }

@@ -443,8 +443,11 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	case ui.KindEffect:
 		return paintEffect(c, n, style)
 
-	case ui.KindButton, ui.KindDragSource:
+	case ui.KindButton:
 		return paintButton(c, n, text, style, size)
+
+	case ui.KindDragSource:
+		return paintDragHandle(c, n, text, style, size)
 
 	case ui.KindScheduleGrid:
 		prev := c.restrict
@@ -501,6 +504,9 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	// A process-table row may carry a flat selection or interaction wash. Its
 	// square edge is deliberate: the table surface owns the rounded outline.
 	case ui.KindRow:
+		if n.Fill == ui.FillContainerHigh && n.Shape == ui.ShapeCard {
+			return paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n))
+		}
 		fill, fg, layered := rowFill(style, n)
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		if n.Shape != ui.ShapeInherit {
@@ -529,6 +535,10 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 
 	// Segmented rows own allocation, not chrome: each segment paints itself.
 	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented, ui.KindStack:
+		if n.Kind == ui.KindDropZone && n.DropActive {
+			fillRect(c, style.Scale120.PhysicalRect(n.Bounds), style.Track)
+			return nil
+		}
 		// A drop zone that names a fill is a card whose contents are droppable.
 		if n.Kind == ui.KindDropZone && n.Fill != ui.FillNone {
 			return paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n))
@@ -1829,7 +1839,18 @@ func resolveGradient(n *ui.Node, style Style) []gradientStop {
 // A button is a stadium unless it carries an explicit card radius.
 // A button is a stadium unless it carries an explicit card radius.
 func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	if n.Tone == ui.ToneSubtle && n.Fill == ui.FillNone {
+		ghostStyle := style
+		ghostStyle.Foreground = style.Subtle
+		return paintChrome(c, n, text, ghostStyle, size, Color{}, 0)
+	}
 	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
+}
+
+func paintDragHandle(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	ghost := *n
+	ghost.Fill = ui.FillNone
+	return paintChrome(c, &ghost, text, style, size, Color{}, 0)
 }
 
 // capsuleFill resolves the colour a named fill paints, for a caller that has a

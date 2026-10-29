@@ -1031,6 +1031,69 @@ func newPanelRegistryWithoutBridge(t *testing.T) *Registry {
 	return reg
 }
 
+func TestMarkPluginDropZonesOnlyMarksAcceptedActiveDrag(t *testing.T) {
+	accepted := &ui.Node{Kind: ui.KindDropZone, Accept: []string{"zone"}}
+	rejected := &ui.Node{Kind: ui.KindDropZone, Accept: []string{"note"}}
+	root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{accepted, rejected}}
+	source := &ui.Node{Kind: ui.KindDragSource, DragType: "zone"}
+	var drag ui.Drag
+	drag.Begin(source, 0, 0)
+	drag.Move(10, 0)
+
+	markPluginDropZones(root, &drag)
+	if !accepted.DropActive || rejected.DropActive {
+		t.Fatalf("drop zone state: accepted=%t rejected=%t", accepted.DropActive, rejected.DropActive)
+	}
+	drag.Cancel()
+	markPluginDropZones(root, &drag)
+	if accepted.DropActive || rejected.DropActive {
+		t.Fatalf("cancelled drag kept active drop zones: accepted=%t rejected=%t", accepted.DropActive, rejected.DropActive)
+	}
+}
+
+func TestPluginDragMotionInvalidatesOnlyWhenDropGapsActivate(t *testing.T) {
+	t.Parallel()
+
+	reg := newPanelRegistry(t)
+	h := &PanelHost{id: PanelPlugin}
+	h.drag.Begin(&ui.Node{Kind: ui.KindDragSource, DragType: "zone"}, 0, 0)
+	handle := h.handle(reg)
+
+	if handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 4}) {
+		t.Fatal("motion below the drag threshold invalidated the plugin panel")
+	}
+	if !handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 9}) {
+		t.Fatal("activating the drag did not invalidate the plugin panel")
+	}
+	if handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 10}) {
+		t.Fatal("steady active-drag motion invalidated unchanged drop gaps")
+	}
+}
+
+func TestPluginDropReleaseRedrawsWhenDeliveryFails(t *testing.T) {
+	t.Parallel()
+
+	reg := newPanelRegistry(t)
+	reg.plugins = nil
+	zone := &ui.Node{
+		Kind: ui.KindDropZone, Action: "plugin:v1:drop", Accept: []string{"zone"},
+		Bounds: ui.Rect{X: 8, Y: 8, W: 24, H: 3},
+	}
+	h := &PanelHost{id: PanelPlugin, root: &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{zone}}}
+	h.drag.Begin(&ui.Node{Kind: ui.KindDragSource, DragType: "zone", Payload: "zone-1"}, 0, 0)
+	h.drag.Move(10, 9)
+	if ui.FindDropZone(h.root, &h.drag) != zone {
+		t.Fatal("fixture drag did not hit the accepted drop zone")
+	}
+
+	if !h.handle(reg)(wayland.Event{Kind: wayland.EventPointerRelease, X: 10, Y: 9}) {
+		t.Fatal("failed plugin delivery did not invalidate the panel")
+	}
+	if h.drag.Source != nil {
+		t.Fatal("drop release left the drag active")
+	}
+}
+
 // A fixture built by newPanelRegistry cannot stall the suite. publishSurface
 // blocks on the cap-8 channel and only a consumer releases it, which is how CI
 // hung in TestEdgeReloadRetainsOpenPanels: that fixture published seven and had

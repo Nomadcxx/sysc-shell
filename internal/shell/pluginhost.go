@@ -1125,15 +1125,25 @@ func (h *pluginHost) frames(output string) map[string]pluginFrame {
 	tips := map[string]*hostedView{}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	names := make(map[string]string, len(h.catalog.Plugins))
+	for _, candidate := range h.catalog.Plugins {
+		if candidate.Err == nil && candidate.ShadowedBy == "" && candidate.Manifest.ID != "" {
+			names[candidate.Manifest.ID] = candidate.Manifest.Name
+		}
+	}
 	for _, v := range h.views {
 		if v.Output != output {
 			continue
 		}
 		switch v.Kind {
 		case v1.ViewBar:
+			name := names[v.Plugin]
+			if name == "" {
+				name = v.Plugin
+			}
 			out[v.Instance] = pluginFrame{
 				Root: v.Root, Revision: v.Revision, Failed: v.Failed, Label: v.Label,
-				ViewID: v.ID,
+				Name: name, ViewID: v.ID,
 			}
 		case v1.ViewTooltip:
 			tips[v.Instance] = v
@@ -1668,9 +1678,9 @@ func pluginPanelError(reason string, actions bool) *ui.Node {
 	rows := []*ui.Node{{Kind: ui.KindText, Text: reason, Tone: ui.ToneError}}
 	if actions {
 		rows = append(rows,
-			&ui.Node{Kind: ui.KindButton, Text: "Close", Action: "plugin-close", Name: "Close", Role: "button", Focusable: true},
-			&ui.Node{Kind: ui.KindButton, Text: "Retry", Action: "plugin-retry", Name: "Retry", Role: "button", Focusable: true},
-			&ui.Node{Kind: ui.KindButton, Text: "Disable", Action: "plugin-disable", Name: "Disable", Role: "button", Focusable: true},
+			&ui.Node{Kind: ui.KindButton, Text: "Close", Tone: ui.ToneSubtle, Action: "plugin-close", Name: "Close", Role: "button", Focusable: true},
+			&ui.Node{Kind: ui.KindButton, Text: "Retry", Fill: ui.FillAccent, Action: "plugin-retry", Name: "Retry", Role: "button", Focusable: true},
+			&ui.Node{Kind: ui.KindButton, Text: "Disable", Tone: ui.ToneError, Fill: ui.FillError, Action: "plugin-disable", Name: "Disable", Role: "button", Focusable: true},
 		)
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: rows}

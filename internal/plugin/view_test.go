@@ -273,8 +273,8 @@ func TestConvertResolvesAButtonIcon(t *testing.T) {
 	if button.Text != string(want) || button.Action != "camera" {
 		t.Fatalf("button = %+v", button)
 	}
-	if button.Fill != ui.FillNone {
-		t.Fatalf("camera fill = %v, want no chrome (the pill is the fill)", button.Fill)
+	if button.Fill != ui.FillAccent {
+		t.Fatalf("camera fill = %v, want primary button chrome", button.Fill)
 	}
 }
 
@@ -373,6 +373,60 @@ func TestConvertCarriesHeightIntoTheShellTree(t *testing.T) {
 	}
 	if got.Children[0].Height != 8 {
 		t.Errorf("text height = %d, want 8", got.Children[0].Height)
+	}
+}
+
+func TestConvertMapsPluginButtonToneToFill(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *v1.Node
+		want ui.Fill
+	}{
+		{name: "primary", node: &v1.Node{Kind: v1.KindButton, Text: "Start"}, want: ui.FillAccent},
+		{name: "destructive", node: &v1.Node{Kind: v1.KindButton, Text: "Reset", Tone: v1.ToneError}, want: ui.FillError},
+		{name: "subtle", node: &v1.Node{Kind: v1.KindButton, Text: "Close", Tone: v1.ToneSubtle}, want: ui.FillNone},
+		{name: "icon-only primary", node: &v1.Node{Kind: v1.KindButton, Icon: "camera"}, want: ui.FillAccent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := convertNode(tc.node, "root")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Fill != tc.want {
+				t.Errorf("button fill = %v, want %v", got.Fill, tc.want)
+			}
+		})
+	}
+}
+
+func TestConvertPreservesDropZoneHeight(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{
+		Kind: v1.KindDropZone, ID: "insert", Height: 3,
+		Accept: []string{"zone"}, Events: []v1.EventKind{v1.EventDrop},
+	}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if zone := got.Children[0]; zone.Kind != ui.KindDropZone || zone.Height != 3 {
+		t.Errorf("drop zone = kind %q height %d, want kind %q height 3", zone.Kind, zone.Height, ui.KindDropZone)
+	}
+}
+
+func TestConvertMarksPaddedPluginRowsAsCards(t *testing.T) {
+	t.Parallel()
+
+	got, err := convertNode(&v1.Node{Kind: v1.KindRow, Padding: 6}, "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Fill != ui.FillContainerHigh || got.Shape != ui.ShapeCard {
+		t.Errorf("padded row = fill %v shape %v, want card fill and shape", got.Fill, got.Shape)
 	}
 }
 

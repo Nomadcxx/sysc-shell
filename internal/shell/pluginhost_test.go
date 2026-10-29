@@ -881,7 +881,7 @@ func TestPluginHostFailurePlaceholderLeavesBuiltinsIntact(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		w := pluginWidget(reg.bars[1])
-		if w.inner != nil && w.inner.Width == pluginPlaceholderWidth {
+		if w.inner != nil && w.inner.Width == pluginPlaceholderWidth && pluginWidgetLabel(reg.bars[1]) == "Timer" {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -889,6 +889,9 @@ func TestPluginHostFailurePlaceholderLeavesBuiltinsIntact(t *testing.T) {
 	w := pluginWidget(reg.bars[1])
 	if w.inner == nil || w.inner.Width != pluginPlaceholderWidth {
 		t.Fatalf("placeholder width = %+v", w.inner)
+	}
+	if got := pluginWidgetLabel(reg.bars[1]); got != "Timer" {
+		t.Fatalf("placeholder label = %q, want the manifest name Timer", got)
 	}
 	clock := ""
 	reg.bars[1].mu.Lock()
@@ -901,6 +904,23 @@ func TestPluginHostFailurePlaceholderLeavesBuiltinsIntact(t *testing.T) {
 	reg.bars[1].mu.Unlock()
 	if clock == "" {
 		t.Fatal("built-in clock was cleared by a failed plugin")
+	}
+}
+
+func TestPluginPanelErrorUsesButtonRoles(t *testing.T) {
+	root := pluginPanelError("failed", true)
+	if len(root.Children) != 4 {
+		t.Fatalf("error panel has %d children, want reason and three actions", len(root.Children))
+	}
+	close, retry, disable := root.Children[1], root.Children[2], root.Children[3]
+	if close.Text != "Close" || close.Tone != ui.ToneSubtle || close.Fill != ui.FillNone {
+		t.Errorf("close button = %+v, want a subtle ghost", close)
+	}
+	if retry.Text != "Retry" || retry.Tone == ui.ToneError || retry.Fill != ui.FillAccent {
+		t.Errorf("retry button = %+v, want the primary role", retry)
+	}
+	if disable.Text != "Disable" || disable.Tone != ui.ToneError || disable.Fill != ui.FillError {
+		t.Errorf("disable button = %+v, want the destructive role", disable)
 	}
 }
 
@@ -933,6 +953,19 @@ func pluginWidgetName(bar *Bar) string {
 		}
 	}
 	return name
+}
+
+func pluginWidgetLabel(bar *Bar) string {
+	bar.mu.Lock()
+	defer bar.mu.Unlock()
+	for _, section := range bar.widgets() {
+		for _, widget := range section {
+			if widget.tooltip == "org.sysc.timer" && widget.inner != nil && len(widget.inner.Children) > 0 {
+				return widget.inner.Children[0].Text
+			}
+		}
+	}
+	return ""
 }
 
 // The placeholder is not just a gap in the bar: its accessible name is the

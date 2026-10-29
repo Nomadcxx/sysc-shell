@@ -467,12 +467,14 @@ type Node struct {
 	// AriaDisabled keeps a disabled destination in keyboard traversal so its
 	// accessible name can explain why it is unavailable. Activation remains
 	// blocked by StateDisabled.
-	AriaDisabled  bool
-	Name          string
-	Role          string
-	DragType      string
-	Payload       string
-	Accept        []string
+	AriaDisabled bool
+	Name         string
+	Role         string
+	DragType     string
+	Payload      string
+	Accept       []string
+	// DropActive is a host render hint for a drop zone an active drag accepts.
+	DropActive    bool
 	Multiline     bool
 	SubmitOnEnter bool
 	// Masked asks the renderer to draw one bullet per rune instead of the

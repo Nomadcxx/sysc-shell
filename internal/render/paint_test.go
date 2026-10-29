@@ -721,6 +721,50 @@ func TestPaintButtonTextUsesOnPrimary(t *testing.T) {
 	t.Fatal("button label painted no OnPrimary pixel")
 }
 
+func TestPaintButtonFillFollowsToneAndKind(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node ui.Node
+		want Color
+	}{
+		{name: "primary", node: ui.Node{Kind: ui.KindButton, Text: "Start", Fill: ui.FillAccent}, want: testStyle.Accent},
+		{name: "destructive", node: ui.Node{Kind: ui.KindButton, Text: "Reset", Tone: ui.ToneError, Fill: ui.FillError}, want: testStyle.Error},
+		{name: "drag handle", node: ui.Node{Kind: ui.KindDragSource}, want: Color{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestCanvas(t, 60, 40)
+			n := tc.node
+			n.Bounds = ui.Rect{X: 10, Y: 8, W: 32, H: 24}
+			if err := paintNode(c, &n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+				t.Fatal(err)
+			}
+			centerX, centerY := n.Bounds.X+n.Bounds.W/2, n.Bounds.Y+n.Bounds.H/2
+			if got := pixelAt(t, c, centerX, centerY); got != tc.want {
+				t.Errorf("center fill = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPaintSubtleButtonHasGhostFill(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, 60, 40)
+	n := &ui.Node{
+		Kind: ui.KindButton, Tone: ui.ToneSubtle,
+		Bounds: ui.Rect{X: 10, Y: 8, W: 32, H: 24},
+	}
+	if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 26, 20); got != (Color{}) {
+		t.Errorf("ghost button fill = %+v, want transparent", got)
+	}
+}
+
 func TestPaintDefaultButtonDoesNotFillTheLabel(t *testing.T) {
 	t.Parallel()
 
@@ -754,6 +798,40 @@ func TestPaintErrorFillButtonUsesTheErrorToken(t *testing.T) {
 	cx, cy := btn.Bounds.X+btn.Bounds.W/2, btn.Bounds.Y+btn.Bounds.H/2
 	if got := pixelAt(t, c, cx, cy); got != style.Error && got != style.OnPrimary {
 		t.Fatalf("error chip center = %+v, want error %+v or OnPrimary", got, style.Error)
+	}
+}
+
+func TestPaintPaddedRowUsesTheCardFill(t *testing.T) {
+	t.Parallel()
+
+	style := testStyle
+	style.Shapes.Card = 6
+	row := &ui.Node{
+		Kind: ui.KindRow, Padding: 6, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Bounds: ui.Rect{X: 10, Y: 8, W: 20, H: 20},
+	}
+	c := newTestCanvas(t, 40, 36)
+	if err := paintNode(c, row, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 20, 18); got != style.Capsule {
+		t.Errorf("padded row fill = %+v, want capsule %+v", got, style.Capsule)
+	}
+	if got := pixelAt(t, c, 11, 13); got != style.Capsule {
+		t.Errorf("card corner pixel = %+v, want the rounded card fill %+v", got, style.Capsule)
+	}
+}
+
+func TestPaintPaddedUnstyledRowRemainsUnfilled(t *testing.T) {
+	t.Parallel()
+
+	row := &ui.Node{Kind: ui.KindRow, Padding: 8, Bounds: ui.Rect{X: 10, Y: 8, W: 20, H: 20}}
+	c := newTestCanvas(t, 40, 36)
+	if err := paintNode(c, row, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 20, 18); got != (Color{}) {
+		t.Errorf("unstyled padded row fill = %+v, want transparent", got)
 	}
 }
 
@@ -2994,6 +3072,37 @@ func TestDropZoneWithAFillPaintsItsCard(t *testing.T) {
 	}
 	if bytes.Equal(zone(ui.FillContainerHigh), zone(ui.FillNone)) {
 		t.Fatal("a filled drop zone painted nothing")
+	}
+}
+
+func TestDropZonePaintsTrackOnlyWhenActive(t *testing.T) {
+	t.Parallel()
+
+	for _, active := range []bool{false, true} {
+		t.Run(map[bool]string{false: "idle", true: "active"}[active], func(t *testing.T) {
+			c := newTestCanvas(t, 36, 20)
+			zone := &ui.Node{
+				Kind: ui.KindDropZone, Height: 3, DropActive: active,
+				Bounds: ui.Rect{X: 4, Y: 8, W: 24, H: 3},
+			}
+			if err := paintNode(c, zone, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+				t.Fatal(err)
+			}
+			want := Color{}
+			if active {
+				want = testStyle.Track
+			}
+			for y := 8; y < 11; y++ {
+				if got := pixelAt(t, c, 12, y); got != want {
+					t.Errorf("pixel at drop gap y=%d = %+v, want %+v", y, got, want)
+				}
+			}
+			for _, y := range []int{7, 11} {
+				if got := pixelAt(t, c, 12, y); got != (Color{}) {
+					t.Errorf("pixel outside drop gap y=%d = %+v, want transparent", y, got)
+				}
+			}
+		})
 	}
 }
 
