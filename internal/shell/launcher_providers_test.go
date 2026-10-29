@@ -127,6 +127,26 @@ func TestCalcProviderRows(t *testing.T) {
 	}
 }
 
+func TestCalcProviderConvertsLengthAndCopiesTargetUnit(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.mu.Lock()
+	r.panelHosts[PanelLauncher] = &PanelHost{id: PanelLauncher, inputSerial: 77, stopAnim: make(chan struct{})}
+	r.mu.Unlock()
+	p := r.calcProvider()
+	rows := p.Query("12 km to mi")
+	want := "7.45645430685 mi"
+	if len(rows) != 1 || rows[0].Entry.ID != "calc:"+want || rows[0].Entry.Name != "= "+want ||
+		rows[0].Entry.Comment != "12 km to mi · Enter copies" {
+		t.Fatalf("conversion rows %+v", rows)
+	}
+	if err := p.Activate("12 km to mi", rows[0].Entry.ID, ""); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if got := <-r.Selections(); got.Copy != want || got.Serial != 77 {
+		t.Fatalf("copy request %+v, want %q with serial 77", got, want)
+	}
+}
+
 func TestCalcPrefixWithoutAnExpressionShowsTheHint(t *testing.T) {
 	for _, q := range []string{"/calc 2+", "/calc", "/calc 2048"} {
 		rows := launcherWithHints(q, nil)

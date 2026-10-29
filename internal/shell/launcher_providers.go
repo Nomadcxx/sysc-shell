@@ -193,22 +193,29 @@ func launcherSelectionArgv(template []string, query, selection string) []string 
 	return argv
 }
 
-const calcHintComment = "Try 6*7 · sqrt(2) · 2^10 · sin(pi/2)"
+const calcHintComment = "Try 6*7 · sqrt(2) · 2^10 · sin(pi/2) · 12 km to mi"
 
 func (r *Registry) calcProvider() launcher.Provider {
 	const prefix = config.LauncherCalcPrefix
 	return launcher.Provider{
 		Name: "Calculator", Prefix: prefix, Glyph: "glyph:calculate", Inline: true,
-		Description: "Arithmetic as you type · Enter copies",
+		Description: "Arithmetic and conversions as you type · Enter copies",
 		Query: func(q string) []launcher.Result {
-			if !calc.IsExpression(q) {
-				return nil
-			}
-			v, err := calc.Eval(q)
-			if err != nil {
-				return nil
+			v, unit, converted := calc.ConvertLength(q)
+			if !converted {
+				if !calc.IsExpression(q) {
+					return nil
+				}
+				var err error
+				v, err = calc.Eval(q)
+				if err != nil {
+					return nil
+				}
 			}
 			s := calc.Format(v)
+			if unit != "" {
+				s += " " + unit
+			}
 			return []launcher.Result{{Entry: launcher.Entry{ID: "calc:" + s, Name: "= " + s,
 				Comment: strings.TrimSpace(q) + " · Enter copies", IconName: "glyph:calculate"}}}
 		},
