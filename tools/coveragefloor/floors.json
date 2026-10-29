@@ -39,7 +39,9 @@
     "plugin/catalog": 85.57,
     "plugin/lint": 93.33,
     "plugin/v1": 89.24,
+    "plugins/reference/timer": 78.37,
     "plugins/reference/weather": 76.32,
+    "plugins/reference/worldclock": 85.27,
     "tools/coveragefloor": 73.91,
     "tools/depdrift": 45.4,
     "tools/docscheck": 87.77,
@@ -50,7 +52,9 @@
     "weather": 90.75
   },
   "exclusions": {
+    "cmd/sysc-plugin-timer": "a plugin host wrapper. The code it starts lives in plugins/reference/timer, which has its own tests.",
     "cmd/sysc-plugin-weather": "a plugin host wrapper. The code it starts lives in plugins/reference/weather, which has its own tests.",
+    "cmd/sysc-plugin-world-clock": "a plugin host wrapper. The code it starts lives in plugins/reference/worldclock, which has its own tests.",
     "internal/platform/wayland/backgroundeffect": "a generated protocol binding. The file is written by go-wayland-scanner from protocols/ext-background-effect-v1.xml, so a floor here would measure generated code rather than this tree's own work.",
     "internal/platform/wayland/fractionalscale": "a generated protocol binding. The file is written by go-wayland-scanner from protocols/fractional-scale-v1.xml, so a floor here would measure generated code rather than this tree's own work.",
     "internal/platform/wayland/inhibit": "a generated protocol binding. The file is written by go-wayland-scanner from the zwp-keyboard-shortcuts-inhibit protocol, so a floor here would measure generated code rather than this tree's own work.",
