@@ -87,6 +87,56 @@ func TestStyleRendersOnePictureCardPerOption(t *testing.T) {
 	}
 }
 
+func TestPictureCardsKeepLastGoodImagesWhenDraftFails(t *testing.T) {
+	reg, h := openSettingsForPreview(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	entry := *h.set.ByPath("bar.style")
+	good := settingsPictureCards(reg, h, entry)
+	lastGood := make(map[string]*ui.Image, len(entry.Options))
+	for i, opt := range entry.Options {
+		images := findAllKind(good.Children[i], ui.KindImage)
+		if len(images) == 0 || images[0].Image == nil {
+			t.Fatalf("style %s did not render a starting image", opt)
+		}
+		lastGood[opt] = images[0].Image
+	}
+
+	h.draft.Bar.Gap = -5 // fails theme validation
+	bad := settingsPictureCards(reg, h, entry)
+	for i, opt := range entry.Options {
+		images := findAllKind(bad.Children[i], ui.KindImage)
+		if len(images) == 0 || images[0].Image != lastGood[opt] {
+			t.Errorf("style %s did not retain its own last-good image", opt)
+		}
+	}
+}
+
+func TestStylePictureCardsUseTheSameImageHeight(t *testing.T) {
+	reg, h := openSettingsForPreview(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	entry := *h.set.ByPath("bar.style")
+	wantHeight := 0
+	for _, opt := range entry.Options {
+		cfg := h.draft
+		if err := entry.Set(&cfg, opt); err != nil {
+			t.Fatalf("set style %s: %v", opt, err)
+		}
+		wantHeight = max(wantHeight, cfg.Bar.SurfaceExtent())
+	}
+	cards := settingsPictureCards(reg, h, entry)
+	for i, opt := range entry.Options {
+		images := findAllKind(cards.Children[i], ui.KindImage)
+		if len(images) == 0 || images[0].Image == nil {
+			t.Fatalf("style %s has no image", opt)
+		}
+		if images[0].ImageH != wantHeight || images[0].Image.Height != wantHeight*h.scale120/120 {
+			t.Errorf("style %s image slot is %d logical / %d raster pixels; want %d / %d", opt, images[0].ImageH, images[0].Image.Height, wantHeight, wantHeight*h.scale120/120)
+		}
+	}
+}
+
 func TestPreviewKeepsTheLastGoodImageOnABadDraft(t *testing.T) {
 	reg, h := openSettingsForPreview(t)
 	reg.mu.Lock()

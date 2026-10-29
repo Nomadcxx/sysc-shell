@@ -226,6 +226,9 @@ type PanelHost struct {
 	// they were painted from. Building one scans system fonts; the
 	// Appearance page cost 38 ms a rebuild on the Wayland owner without it.
 	barImages map[string]*ui.Image
+	// barCardImages keeps each option's last successful card image while its
+	// current draft cannot be rendered.
+	barCardImages map[string]*ui.Image
 	// settingsScrollTop makes the next rebuild open the body at the top: a
 	// page or section switch. rebuildPanel otherwise carries the old offset.
 	settingsScrollTop bool
