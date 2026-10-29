@@ -1082,6 +1082,8 @@ func TestPluginDropReleaseRedrawsWhenDeliveryFails(t *testing.T) {
 	h := &PanelHost{id: PanelPlugin, root: &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{zone}}}
 	h.drag.Begin(&ui.Node{Kind: ui.KindDragSource, DragType: "zone", Payload: "zone-1"}, 0, 0)
 	h.drag.Move(10, 9)
+	h.pressed = "source"
+	h.pointer.setPress("source")
 	if ui.FindDropZone(h.root, &h.drag) != zone {
 		t.Fatal("fixture drag did not hit the accepted drop zone")
 	}
@@ -1091,6 +1093,9 @@ func TestPluginDropReleaseRedrawsWhenDeliveryFails(t *testing.T) {
 	}
 	if h.drag.Source != nil {
 		t.Fatal("drop release left the drag active")
+	}
+	if h.pressed != "" || h.pointer.press != "" {
+		t.Fatalf("drop release retained press state: pressed=%q pointer=%q", h.pressed, h.pointer.press)
 	}
 }
 

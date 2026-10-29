@@ -1036,6 +1036,9 @@ func widgetTooltip(w textWidget) string {
 	if w.node != nil && w.node.Tooltip != "" {
 		return w.node.Tooltip
 	}
+	if w.inner != nil && w.inner.Tooltip != "" {
+		return w.inner.Tooltip
+	}
 	return w.tooltip
 }
 

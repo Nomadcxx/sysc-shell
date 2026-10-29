@@ -40,6 +40,56 @@ func TestPluginWidgetFailedPlaceholderOpensCamera(t *testing.T) {
 	}
 }
 
+func TestPluginWidgetRootlessSnapshotStaysInStartingState(t *testing.T) {
+	t.Parallel()
+
+	widgets := buildWidgets([]config.Item{
+		{ID: "plugin", Plugin: "org.sysc.recorder", Entry: "bar", Instance: "rec-1"},
+	}, 8, standardMetrics())
+	w := widgets[0]
+	if !w.refresh(barView{Plugins: map[string]pluginFrame{
+		"rec-1": {Name: "Screen Recorder", ViewID: "v1", Revision: 1},
+	}}) {
+		t.Fatal("first rootless snapshot did not refresh the placeholder")
+	}
+	mark := w.inner.Children[0]
+	if mark.Kind != ui.KindText || mark.Action != "" || mark.Tone == ui.ToneError ||
+		mark.MaxWidth != pluginPlaceholderWidth ||
+		mark.Name != "Screen Recorder: starting" {
+		t.Fatalf("rootless snapshot placeholder = %+v, want a neutral starting label", mark)
+	}
+}
+
+func TestPluginPlaceholderLongNameFitsItsSlotAndHasAFullNameTooltip(t *testing.T) {
+	t.Parallel()
+
+	const name = "Long Privacy Monitor Plugin With A Manifest Name Beyond The Bar Slot"
+	widgets := buildWidgets([]config.Item{
+		{ID: "plugin", Plugin: "org.sysc.monitor", Entry: "bar", Instance: "monitor-1"},
+	}, 8, standardMetrics())
+	w := widgets[0]
+	if !w.refresh(barView{Plugins: map[string]pluginFrame{
+		"monitor-1": {Name: name, Failed: true, Label: "unavailable", ViewID: "v1", Revision: 1},
+	}}) {
+		t.Fatal("failed snapshot did not refresh the placeholder")
+	}
+	mark := w.inner.Children[0]
+	wantName := name + ": unavailable"
+	if mark.Text != name || mark.Name != wantName || mark.Width != pluginPlaceholderWidth {
+		t.Fatalf("placeholder mark = %+v, want the full name and a %dpx box", mark, pluginPlaceholderWidth)
+	}
+	if got := widgetTooltip(w); got != wantName {
+		t.Fatalf("placeholder tooltip = %q, want full name %q", got, wantName)
+	}
+	measure := func(text string, _ ui.TextAttrs) (int, int) { return len([]rune(text)) * 8, 16 }
+	if err := ui.Layout(w.inner, ui.Rect{W: pluginPlaceholderWidth, H: 24}, measure); err != nil {
+		t.Fatalf("layout fixed-width placeholder: %v", err)
+	}
+	if mark.Bounds.W != pluginPlaceholderWidth {
+		t.Fatalf("visible placeholder width = %d, want reserved %dpx", mark.Bounds.W, pluginPlaceholderWidth)
+	}
+}
+
 func TestPluginWidgetRefreshAdoptsPreparedTree(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{

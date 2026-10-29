@@ -2984,6 +2984,8 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				dropX, dropY := int(h.drag.X), int(h.drag.Y)
 				payload, ok := h.drag.Drop(zone)
 				h.drag.Cancel()
+				h.pressed = ""
+				h.pointerChanged(r, h.pointer.setPress(""))
 				if ok && zone != nil {
 					if strings.HasPrefix(zone.Action, "bar-lane:") {
 						return h.barDrop(r, zone, payload, dropX, dropY)

@@ -535,13 +535,20 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 
 	// Segmented rows own allocation, not chrome: each segment paints itself.
 	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented, ui.KindStack:
-		if n.Kind == ui.KindDropZone && n.DropActive {
+		if n.Kind == ui.KindDropZone && n.DropActive && n.Fill == ui.FillNone {
 			fillRect(c, style.Scale120.PhysicalRect(n.Bounds), style.Track)
-			return nil
 		}
 		// A drop zone that names a fill is a card whose contents are droppable.
 		if n.Kind == ui.KindDropZone && n.Fill != ui.FillNone {
-			return paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n))
+			if err := paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n)); err != nil {
+				return err
+			}
+			if n.DropActive {
+				box := style.Scale120.PhysicalRect(n.Bounds)
+				radius := chromeRadius(style, nodeRadius(style, n, capsuleInherit(style, n)), box)
+				c.StrokeRounded(box, radius, max(1, style.Scale120.Physical(1)), style.Accent)
+			}
+			return nil
 		}
 		for i, child := range n.Children {
 			if child == nil {
