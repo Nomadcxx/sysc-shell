@@ -409,6 +409,8 @@ type PanelHost struct {
 	processStatus    string
 	processStatusErr error
 	processSelected  services.ProcessIdentity
+	processMemory    services.ProcessMemory
+	processMemoryOf  services.ProcessIdentity
 	// monitorOptions swaps the info card's facts for the view options.
 	monitorOptions bool
 	// processExpanded holds the group keys the user opened, and
@@ -3187,6 +3189,8 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		}
 		if h.id == PanelMonitor && h.processSelected != (services.ProcessIdentity{}) {
 			h.processSelected = services.ProcessIdentity{}
+			h.processMemory = services.ProcessMemory{}
+			h.processMemoryOf = services.ProcessIdentity{}
 			r.rebuildPanel(h)
 			return true
 		}

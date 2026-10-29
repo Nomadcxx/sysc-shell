@@ -71,12 +71,17 @@ type Snapshot struct {
 type Process = metrics.Process
 type ProcessCPU = metrics.CPUUsage
 type ProcessIdentity = metrics.ProcessIdentity
+type ProcessMemory = metrics.ProcessMemory
 type ProcessSnapshot = metrics.ProcessSnapshot
 
 var ErrProcessIdentityChanged = metrics.ErrProcessIdentityChanged
 
 func ValidateProcessIdentity(identity ProcessIdentity) error {
 	return metrics.ValidateProcessIdentity(identity)
+}
+
+func ReadProcessMemory(identity ProcessIdentity) (ProcessMemory, error) {
+	return metrics.ReadProcessMemory(identity)
 }
 
 // ReadUptime is a one-shot /proc/uptime read. It is not on Snapshot: the

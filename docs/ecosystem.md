@@ -98,7 +98,7 @@ of the commit gate.
 | sysc-clipboard | `v0.1.4-0.20261019192617-18b64bffd9e7` |
 | sysc-wayland | `v0.3.3` |
 | sysc-launch | `v0.5.0` |
-| sysc-metrics | `v0.7.3` |
+| sysc-metrics | `v0.8.0` |
 | sysc-notify | `v0.1.1` |
 | sysc-terminal | `v0.3.2` |
 | sysc-tray | `v0.1.2` |

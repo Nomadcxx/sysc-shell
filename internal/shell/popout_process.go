@@ -536,10 +536,17 @@ func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
 	}
 	if n.Action == "monitor:detail:close" {
 		h.processSelected = services.ProcessIdentity{}
+		h.processMemory = services.ProcessMemory{}
+		h.processMemoryOf = services.ProcessIdentity{}
 		return rebuild()
 	}
 	if identity, ok := parseProcessIdentityAction(n.Action, "monitor:select"); ok {
-		h.processSelected = identity
+		if h.processSelected != identity {
+			h.processSelected = identity
+			h.processMemory = services.ProcessMemory{}
+			h.processMemoryOf = services.ProcessIdentity{}
+			r.scheduleProcessMemory(h, identity)
+		}
 		r.rebuildPanel(h)
 		return true
 	}
@@ -580,6 +587,8 @@ func (r *Registry) scheduleProcessSignal(h *PanelHost, identity services.Process
 			}
 			current.processStatus = fmt.Sprintf("Sent %s to PID %d", name, identity.PID)
 			current.processSelected = services.ProcessIdentity{}
+			current.processMemory = services.ProcessMemory{}
+			current.processMemoryOf = services.ProcessIdentity{}
 			current.processStatusErr = nil
 		} else {
 			current.processStatus = processSignalError(identity.PID, err)
@@ -590,6 +599,37 @@ func (r *Registry) scheduleProcessSignal(h *PanelHost, identity services.Process
 		r.mu.Unlock()
 		r.publishSurface(output, panelSurfaceID(PanelMonitor))
 	}()
+}
+
+func (r *Registry) scheduleProcessMemory(h *PanelHost, identity services.ProcessIdentity) {
+	read := r.readProcessMemory
+	go func() {
+		// The selection handler queues this while Registry.mu is held. Wait for
+		// that event path to release the lock before reading smaps_rollup.
+		r.mu.Lock()
+		r.mu.Unlock()
+
+		memory, err := read(identity)
+		if err != nil {
+			return
+		}
+		r.applyProcessMemory(h, identity, memory)
+	}()
+}
+
+func (r *Registry) applyProcessMemory(h *PanelHost, identity services.ProcessIdentity, memory services.ProcessMemory) {
+	r.mu.Lock()
+	current := r.panelHosts[PanelMonitor]
+	if current != h || current.processSelected != identity {
+		r.mu.Unlock()
+		return
+	}
+	current.processMemory = memory
+	current.processMemoryOf = identity
+	r.rebuildPanel(current)
+	output := current.output
+	r.mu.Unlock()
+	r.publishSurface(output, panelSurfaceID(PanelMonitor))
 }
 
 // scheduleMonitorCopy captures the sender while Registry.mu is held, then

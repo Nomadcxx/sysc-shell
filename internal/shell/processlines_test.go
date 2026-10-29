@@ -93,6 +93,23 @@ func TestSectionOrderAndGroupingByName(t *testing.T) {
 	}
 }
 
+func TestExecutableGroupingAndNewColumns(t *testing.T) {
+	a := proc(1, 0, "Web Content", 1000, 100, .1)
+	a.Executable, a.ExecutableValid = "/usr/lib/firefox/firefox", true
+	a.SwapBytes, a.SwapValid = 10, true
+	a.IO.ReadBytesPerSecond, a.IO.WriteBytesPerSecond, a.IO.Valid = 5, 7, true
+	b := proc(2, 0, "firefox", 1000, 200, .2)
+	b.Executable, b.ExecutableValid = a.Executable, true
+	kthread := proc(3, 0, "kworker/0:1", 0, 0, 0)
+
+	lines := projectProcessLines(lineInput([]services.Process{a, b, kthread}, nil))
+	g := findLine(t, lines, "exe:/usr/lib/firefox/firefox")
+	if g.Name != "firefox" || g.Totals.Swap != 10 || !g.Totals.SwapValid || g.Totals.IO != 12 || !g.Totals.IOValid {
+		t.Fatalf("group = %+v", g)
+	}
+	findLine(t, lines, "pid:3:30") // unreadable executable falls back to a name group of one
+}
+
 func TestSingleMemberGroupIsAPlainRowWithItsPID(t *testing.T) {
 	procs, apps := desktopFixture()
 	lines := projectProcessLines(lineInput(procs, apps))
