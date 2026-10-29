@@ -200,6 +200,8 @@ func (r *Registry) dndStateAt(now time.Time) (time.Time, bool) { return r.notify
 func (r *Registry) centerTree() *ui.Node { return r.centerTreeFor(nil) }
 
 func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
+	metrics := h.metrics()
+	padding := metrics.CardPadding
 	s := r.notify
 	s.mu.Lock()
 	active := make([]protocol.Notification, 0, len(s.active))
@@ -241,17 +243,17 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		}
 	}
 	// Filter sits inside the header capsule, which itself sits in the root
-	// column: both carry cardPadding, so the row's box is four pads shy of the
+	// column: both carry CardPadding, so the row's box is four pads shy of the
 	// surface. Setting Width past that squeezes "Yesterday (N)" out of its slot
 	// and the compositor tears the panel down.
-	innerW := surfaceW - 4*cardPadding
+	innerW := surfaceW - 4*padding
 	if innerW < 1 {
 		innerW = 1
 	}
 
 	header := &ui.Node{
 		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Shape: ui.ShapeLarge,
-		Padding: cardPadding, Children: []*ui.Node{
+		Padding: padding, Children: []*ui.Node{
 			{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{
 				centreHeaderRow(tr, dnd),
 				centreFilterRow(active, history, filter, now, innerW, tr),
@@ -272,14 +274,14 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 	for _, g := range activeGroups(active) {
 		latest := g.members[0]
 		raster := r.notificationLeadImageLocked(latest.AppIcon, latest.DesktopEntry, latest.Image)
-		live = append(live, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed(), tr))
+		live = append(live, activeGroupCardWithMetrics(g, now, expand == g.key, raster, r.linksAllowed(), tr, metrics))
 	}
 	for _, e := range history {
 		if !historyFilter(filter, e.Timestamp, now) {
 			continue
 		}
 		raster := r.notificationLeadImageLocked(e.AppIcon, e.DesktopEntry, e.Image)
-		closed = append(closed, HistoryCard(e, now, raster, r.linksAllowed(), tr))
+		closed = append(closed, historyCardWithMetrics(e, now, raster, r.linksAllowed(), tr, metrics))
 	}
 
 	body := []*ui.Node{}
@@ -302,7 +304,7 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 	// has to fit inside, so the value here is only a non-zero starting point.
 	scroll := &ui.Node{Kind: ui.KindScroll, Height: 1, Gap: cardGap, Children: body} // token-exempt: a placeholder fitNotificationBody overwrites, not a measured height
 	children = append(children, scroll)
-	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
+	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: padding, Children: children}
 	fitNotificationBody(root, scroll, surfaceW, surfaceH, h)
 	return root
 }

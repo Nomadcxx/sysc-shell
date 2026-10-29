@@ -1057,11 +1057,11 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	for _, group := range activeGroups(active) {
 		latest := group.members[0]
 		raster := r.notificationRasterLocked(latest.Image)
-		cards = append(cards, ActiveGroupCard(group, now, false, raster, false, tr))
+		cards = append(cards, activeGroupCardWithMetrics(group, now, false, raster, false, tr, m))
 	}
 	for _, entry := range history {
 		raster := r.notificationRasterLocked(entry.Image)
-		cards = append(cards, HistoryCard(entry, now, raster, false, tr))
+		cards = append(cards, historyCardWithMetrics(entry, now, raster, false, tr, m))
 	}
 	if len(cards) == 0 {
 		empty := monitorCard(m, []*ui.Node{

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -202,6 +203,36 @@ func TestCardsSitOnTheHighContainer(t *testing.T) {
 	}
 	if card.Fill != ui.FillContainerHigh {
 		t.Fatalf("card fill = %v, want ContainerHigh", card.Fill)
+	}
+}
+
+func TestCenterCardsUsePanelCardPadding(t *testing.T) {
+	for _, density := range []theme.Density{theme.DensityCompact, theme.DensityComfortable} {
+		t.Run(string(density), func(t *testing.T) {
+			r, h := panelAtDensity(t, PanelNotifications, density)
+			now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
+			r.applyNotify(snap(1, note(1, "live")))
+			r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+				History: ptrH(historyEntry(2, "mail", "Mail", "closed", now.Add(-time.Hour), true))}))
+
+			want, ok := theme.MetricsFor(density)
+			if !ok {
+				t.Fatalf("no %s density row", density)
+			}
+			tree := r.centerTreeFor(h)
+			if tree.Padding != want.CardPadding {
+				t.Errorf("centre root padding = %d, want density row's %d", tree.Padding, want.CardPadding)
+			}
+			cards := cardsOf(tree)
+			if len(cards) < 3 {
+				t.Fatalf("centre has %d cards, want header, active, and history", len(cards))
+			}
+			for i, card := range cards {
+				if card.Padding != want.CardPadding {
+					t.Errorf("card %d padding = %d, want density row's %d", i, card.Padding, want.CardPadding)
+				}
+			}
+		})
 	}
 }
 
