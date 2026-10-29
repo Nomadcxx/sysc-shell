@@ -23,10 +23,11 @@ type wakePipe struct {
 	aux     []AuxRequest
 	// selection and pastes are clipboard requests from the shell and paste
 	// reads finished on their goroutines, both served by the owner.
-	selection []SelectionRequest
-	pastes    []pasteResult
-	idle      []IdleRequest
-	gamma     []GammaRequest
+	selection  []SelectionRequest
+	activation []ActivationTokenRequest
+	pastes     []pasteResult
+	idle       []IdleRequest
+	gamma      []GammaRequest
 	// reload is set when a SIGHUP arrived. The owner reads and clears it, so
 	// repeated signals during one wait coalesce into a single reload.
 	reload bool
@@ -42,7 +43,7 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult, idleCh <-chan IdleRequest, gammaCh <-chan GammaRequest) <-chan struct{} {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, activationCh <-chan ActivationTokenRequest, pastes <-chan pasteResult, idleCh <-chan IdleRequest, gammaCh <-chan GammaRequest) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -79,6 +80,13 @@ func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation
 				w.mu.Lock()
 				w.selection = append(w.selection, req)
 				w.mu.Unlock()
+				w.signal()
+			case req, ok := <-activationCh:
+				if !ok {
+					activationCh = nil
+					continue
+				}
+				w.pushActivation(req)
 				w.signal()
 			case p := <-pastes:
 				w.mu.Lock()
@@ -136,6 +144,20 @@ func (w *wakePipe) takeSelection() []SelectionRequest {
 	w.mu.Lock()
 	out := w.selection
 	w.selection = nil
+	w.mu.Unlock()
+	return out
+}
+
+func (w *wakePipe) pushActivation(req ActivationTokenRequest) {
+	w.mu.Lock()
+	w.activation = append(w.activation, req)
+	w.mu.Unlock()
+}
+
+func (w *wakePipe) takeActivation() []ActivationTokenRequest {
+	w.mu.Lock()
+	out := w.activation
+	w.activation = nil
 	w.mu.Unlock()
 	return out
 }

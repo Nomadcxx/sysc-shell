@@ -419,11 +419,15 @@ type PanelHost struct {
 	processExpanded  map[string]bool
 	processCollapsed map[string]bool
 
-	clipboardSelectedID       string
-	clipboardConfirmScope     string
-	clipboardDeleteConfirmID  string
-	clipboardThumbnails       map[string]*ui.Image
-	clipboardThumbnailRequest map[string]struct{}
+	clipboardSelectedID        string
+	clipboardMultiSelect       bool
+	clipboardSelectedIDs       map[string]struct{}
+	clipboardDeleteManyConfirm bool
+	clipboardFilter            string
+	clipboardConfirmScope      string
+	clipboardDeleteConfirmID   string
+	clipboardThumbnails        map[string]*ui.Image
+	clipboardThumbnailRequest  map[string]struct{}
 	// onbPage and onbScroll are the wizard's step and retained body scroll.
 	onbPage             onboardingPage
 	onbScroll           int
@@ -5162,6 +5166,9 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 		h.clipboardThumbnails = nil
 		h.clipboardThumbnailRequest = nil
 		h.clipboardSelectedID = ""
+		h.clipboardMultiSelect = false
+		h.clipboardSelectedIDs = nil
+		h.clipboardDeleteManyConfirm = false
 		h.clipboardConfirmScope = ""
 		h.clipboardDeleteConfirmID = ""
 	}

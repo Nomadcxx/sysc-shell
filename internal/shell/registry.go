@@ -180,10 +180,11 @@ type Registry struct {
 	aux           chan wayland.AuxRequest
 	// selections carries text fields' copy and paste requests to the
 	// platform's clipboard.
-	selections  chan wayland.SelectionRequest
-	gammaEvents chan wayland.GammaEvent
-	panels      PanelSet
-	panelHosts  map[PanelID]*PanelHost
+	selections       chan wayland.SelectionRequest
+	activationTokens chan wayland.ActivationTokenRequest
+	gammaEvents      chan wayland.GammaEvent
+	panels           PanelSet
+	panelHosts       map[PanelID]*PanelHost
 	// panelsPublish feeds the "panels" IPC topic while someone subscribes;
 	// it is nil otherwise (PanelsTopic).
 	panelsPublish func(any)
@@ -419,6 +420,9 @@ type Registry struct {
 	// launcherActivationMu serializes Service.Activate calls so each provider
 	// callback sees its own launcherPendingAttempt.
 	launcherActivationMu sync.Mutex
+	// launcherActivationSerial is the input serial for the current serialized
+	// activation callback. Registry.mu protects it.
+	launcherActivationSerial uint32
 	// launcherApplications is an immutable copy for Settings. A refresh is
 	// requested under Registry.mu and fetched off the Wayland owner.
 	launcherApplications   atomic.Pointer[launcherApplicationSnapshot]
@@ -534,6 +538,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		invalidations:            make(chan wayland.Invalidation, 8),
 		aux:                      make(chan wayland.AuxRequest, 8),
 		selections:               make(chan wayland.SelectionRequest, 8),
+		activationTokens:         make(chan wayland.ActivationTokenRequest, 8),
 		polkitOutputEvents:       make(chan struct{}, 1),
 		panelHosts:               make(map[PanelID]*PanelHost),
 		panelShields:             make(map[uint32]*PanelHost),

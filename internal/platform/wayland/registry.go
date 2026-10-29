@@ -37,6 +37,7 @@ var interfaceMaximum = map[string]uint32{
 	// Optional like screencopy: frost needs it, a bar without it stays solid.
 	"ext_background_effect_manager_v1": 1,
 	"ext_idle_notifier_v1":             2,
+	"xdg_activation_v1":                1,
 	// Optional: without it the night light says the compositor does not
 	// offer gamma control, everything else is unaffected.
 	"zwlr_gamma_control_manager_v1": 1,

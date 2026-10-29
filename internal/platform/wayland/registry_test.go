@@ -83,6 +83,26 @@ func TestKeyboardShortcutsInhibitIsKnownButNotRequired(t *testing.T) {
 	}
 }
 
+func TestXDGActivationIsKnownButNotRequired(t *testing.T) {
+	t.Parallel()
+	const iface = "xdg_activation_v1"
+	if got, ok := bindVersion(iface, 9); !ok || got != 1 {
+		t.Fatalf("bindVersion = %d/%v, want 1 and known", got, ok)
+	}
+	rs := newRegistryState()
+	if got, ok := rs.addGlobal(10, iface, 1); !ok || got != 1 {
+		t.Fatalf("addGlobal = %d/%v, want 1 and recorded", got, ok)
+	}
+	if _, ok := rs.singletons[iface]; !ok {
+		t.Fatal("activation manager was not recorded")
+	}
+	for _, name := range requiredSingletons {
+		if name == iface {
+			t.Fatal("a compositor without activation tokens must still start")
+		}
+	}
+}
+
 // A compositor that runs a seat for injected input advertises a second
 // wl_seat. The shell must keep the user's, which is advertised first, and a
 // removal of the other must not forget the bound one.

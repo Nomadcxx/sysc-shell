@@ -215,6 +215,73 @@ func TestLauncherServiceConfigSpawnsThroughTheCompositor(t *testing.T) {
 	}
 }
 
+func TestLauncherRunPassesActivationTokenToApplication(t *testing.T) {
+	t.Parallel()
+
+	r := newPanelRegistry(t)
+	spawned := make(chan []string, 1)
+	r.runArgv = func(argv []string) error {
+		spawned <- slices.Clone(argv)
+		return nil
+	}
+	serviceConfig := r.launcherServiceConfig()
+	serviceConfig.Scan = func() []launcher.Entry {
+		return []launcher.Entry{{ID: "firefox.desktop", Name: "Firefox", Argv: []string{"firefox"}}}
+	}
+	svc := launcher.NewService(serviceConfig)
+	t.Cleanup(svc.Close)
+	<-svc.Results()
+
+	serial := make(chan uint32, 1)
+	go func() {
+		req := <-r.ActivationTokens()
+		serial <- req.Serial
+		req.Done <- "activation-token"
+	}()
+	if err := r.activateLauncherService(&PanelHost{}, svc, 4, "firefox.desktop", "", 91); err != nil {
+		t.Fatalf("activateLauncherService: %v", err)
+	}
+	select {
+	case got := <-serial:
+		if got != 91 {
+			t.Fatalf("activation serial = %d, want 91", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("launcher did not request an activation token")
+	}
+	got := <-spawned
+	want := []string{"niri", "msg", "action", "spawn", "--", "env", "XDG_ACTIVATION_TOKEN=activation-token", "firefox"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("argv = %v, want %v", got, want)
+	}
+}
+
+func TestLauncherRunFallsBackWhenActivationTokenIsInvalid(t *testing.T) {
+	t.Parallel()
+
+	r := newPanelRegistry(t)
+	spawned := make(chan []string, 1)
+	r.runArgv = func(argv []string) error {
+		spawned <- slices.Clone(argv)
+		return nil
+	}
+	r.mu.Lock()
+	r.launcherActivationSerial = 91
+	r.mu.Unlock()
+	go func() {
+		req := <-r.ActivationTokens()
+		req.Done <- "invalid\x00token"
+	}()
+
+	want := []string{"niri", "msg", "action", "spawn", "--", "firefox"}
+	if err := r.launcherRun(context.Background(), want); err != nil {
+		t.Fatalf("launcherRun: %v", err)
+	}
+	if got := <-spawned; !slices.Equal(got, want) {
+		t.Fatalf("argv = %v", got)
+	}
+}
+
 func TestCalcProviderRows(t *testing.T) {
 	r := newPanelRegistry(t)
 	p := r.calcProvider()
@@ -391,6 +458,7 @@ func (s launcherClipboardSender) RestoreWithRequestID(id string) (string, error)
 }
 func (launcherClipboardSender) Pin(string, bool) error                   { return nil }
 func (launcherClipboardSender) Delete(string) error                      { return nil }
+func (launcherClipboardSender) DeleteMany([]string) error                { return nil }
 func (launcherClipboardSender) Clear(clipboardprotocol.ClearScope) error { return nil }
 func (launcherClipboardSender) Thumbnail(string, uint16) error           { return nil }
 func (launcherClipboardSender) Resync() error                            { return nil }

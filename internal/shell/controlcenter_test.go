@@ -2177,6 +2177,13 @@ func TestParsePrivacySnapshotRejectsInvalidOrUnboundedStates(t *testing.T) {
 			`"overall":{"grade":"red"`, `"overall":{"grade":"amber"`, 1),
 		"overall hides unknown category": strings.Replace(privacySnapshotFixture,
 			`"name":"Browser","grade":"red","installed"`, `"name":"Browser","grade":"unknown","installed"`, 1),
+		"overall hides red sandbox": strings.Replace(
+			strings.ReplaceAll(strings.Replace(privacySnapshotFixture,
+				`"overall":{"grade":"red"`, `"overall":{"grade":"amber"`, 1),
+				`"grade":"red"`, `"grade":"green"`),
+			`,"network":`, `,"sandbox":{"applicable":true,"grade":"red"},"network":`, 1),
+		"invalid sandbox grade": strings.Replace(privacySnapshotFixture,
+			`,"network":`, `,"sandbox":{"applicable":true,"grade":"perfect"},"network":`, 1),
 		"telemetry false": strings.Replace(privacySnapshotFixture, `"telemetry_connections_unknown":true`, `"telemetry_connections_unknown":false`, 1),
 		"bad list count":  strings.Replace(privacySnapshotFixture, `"findings_shown":1`, `"findings_shown":6`, 1),
 		"oversized":       strings.Repeat("x", 128*1024+1),
