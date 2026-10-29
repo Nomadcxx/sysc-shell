@@ -345,6 +345,15 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		}
 		out.Shape = shape
 	}
+	if n.Kind == v1.KindRow && n.Padding >= 6 {
+		// ponytail: v1 uses padding as the row-card marker; padded toolbars inherit a card until a second consumer needs a dedicated kind.
+		if out.Fill == ui.FillNone {
+			out.Fill = ui.FillContainerHigh
+		}
+		if out.Shape == ui.ShapeInherit {
+			out.Shape = ui.ShapeCard
+		}
+	}
 	if n.Stroke != 0 || n.StrokeFill != "" {
 		strokeFill := ui.FillOutline
 		if n.StrokeFill != "" {
@@ -430,6 +439,11 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Kind = ui.KindButton
 		out.Text = n.Text
 		out.StrokeColor = n.MarkerColor
+		if n.Tone == v1.ToneError {
+			out.Fill = ui.FillError
+		} else if n.Tone != v1.ToneSubtle && out.Fill == ui.FillNone {
+			out.Fill = ui.FillAccent
+		}
 		if n.Icon != "" {
 			icon, err := iconNode(n.Icon, path)
 			if err != nil {
@@ -466,7 +480,6 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 			out.Action = "" // no action route: activation is blocked
 		}
 		if n.Tone == v1.ToneError && n.Text != "" {
-			out.Fill = ui.FillError
 			if out.Padding == 0 {
 				out.Padding = 4
 			}

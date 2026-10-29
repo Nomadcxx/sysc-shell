@@ -20,6 +20,7 @@ type pluginFrame struct {
 	Tooltip  *ui.Node
 	Revision uint64
 	Failed   bool
+	Name     string
 	Label    string
 	ViewID   string
 }
@@ -58,6 +59,7 @@ func buildPluginWidget(item config.Item) textWidget {
 	applyPluginPlaceholder(row, item.Plugin, "starting", "")
 	rev := new(uint64)
 	*rev = ^uint64(0)
+	lastName := item.Plugin
 	tip := new(*ui.Node)
 	return textWidget{
 		node:           row,
@@ -83,21 +85,22 @@ func buildPluginWidget(item config.Item) textWidget {
 					id = ^id
 				}
 			}
+			name := item.Plugin
+			if ok && frame.Name != "" {
+				name = frame.Name
+			}
 			if ok && !frame.Failed {
 				*tip = frame.Tooltip
 			} else {
 				*tip = nil
 			}
-			if id == *rev {
+			if id == *rev && name == lastName {
 				return false
 			}
 			*rev = id
+			lastName = name
 			if !ok || frame.Failed || frame.Root == nil {
-				label := item.Plugin
-				if frame.Label != "" {
-					label = frame.Label
-				}
-				applyPluginPlaceholder(row, label, statusFor(frame, ok), frame.ViewID)
+				applyPluginPlaceholder(row, name, statusFor(frame, ok), frame.ViewID)
 				return true
 			}
 			adoptPluginNode(row, frame.Root)
@@ -117,24 +120,28 @@ func statusFor(frame pluginFrame, ok bool) string {
 }
 
 func applyPluginPlaceholder(row *ui.Node, name, status, viewID string) {
+	accessibleName := name
+	if status != "" {
+		accessibleName += ": " + status
+	}
 	row.Kind = ui.KindRow
 	row.Width = pluginPlaceholderWidth
 	row.Gap = 0
 	row.Action = ""
-	row.Name = name
+	row.Name = accessibleName
 	row.Role = "status"
 	mark := &ui.Node{
-		Kind: ui.KindText, Text: "!", Tone: ui.ToneError,
-		Name: name, Role: "status",
+		Kind: ui.KindText, Text: name, Tone: ui.ToneError,
+		Name: accessibleName, Role: "status", Tooltip: status,
 	}
 	if viewID != "" {
 		mark.Kind = ui.KindButton
+		mark.Fill = ui.FillError
 		mark.Action = pluginActionPrefix + viewID + ":" + "camera"
 		mark.Role = "button"
 		mark.Focusable = true
 	}
 	row.Children = []*ui.Node{mark}
-	_ = status
 }
 
 func adoptPluginNode(dst, src *ui.Node) {

@@ -2716,6 +2716,22 @@ func markMenuRowHover(root *ui.Node, path string, m *Menu, x, y int) {
 	walk(root)
 }
 
+func markPluginDropZones(root *ui.Node, drag *ui.Drag) {
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindDropZone {
+			n.DropActive = drag != nil && drag.Accepts(n)
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
 func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride int) error {
 	if err := h.ensureText(); err != nil {
 		return err
@@ -2745,6 +2761,9 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 	// every consumer that addresses children by position -- applyEditorView's
 	// live-to-copy mirror above all -- still sees the tree it expects.
 	root := copyNodeVisible(h.root, ui.Rect{}, false)
+	if h.id == PanelPlugin {
+		markPluginDropZones(root, &h.drag)
+	}
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, -pageOffset)
 	}
@@ -2835,19 +2854,17 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				return false
 			}
 			if h.drag.Source != nil {
+				wasActive := h.drag.Active()
 				h.drag.Move(e.X, e.Y)
 				if !h.drag.Active() {
 					return false
 				}
 				if h.id == PanelSettings {
-					// Repaint only when the drop target actually changes.
-					// Nothing in the paint path reads drag state, so a repaint
-					// per motion event produced pixel-identical output at the
-					// cost of a full software render of the surface -- which
-					// is what made dragging feel like heavy load.
+					// The settings lane paints one hover target, so repaint only
+					// when it changes. Plugin gaps change once when dragging starts.
 					return h.barDragHover()
 				}
-				return true
+				return !wasActive
 			}
 			if h.sliderDrag != nil {
 				ui.SliderAt(h.sliderDrag, h.hoverX)
