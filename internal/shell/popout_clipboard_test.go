@@ -24,9 +24,12 @@ type clipboardRecorder struct {
 		id     string
 		pinned bool
 	}
-	deleted string
-	cleared []clipboardprotocol.ClearScope
-	thumbs  []string
+	deleted  string
+	cleared  []clipboardprotocol.ClearScope
+	thumbs   []string
+	copied   []string
+	copyErr  error
+	copyCall chan string
 }
 
 func (r *clipboardRecorder) Restore(id string) error {
@@ -55,6 +58,14 @@ func (r *clipboardRecorder) Thumbnail(id string, _ uint16) error {
 }
 
 func (r *clipboardRecorder) Resync() error { return nil }
+
+func (r *clipboardRecorder) Copy(text string) error {
+	r.copied = append(r.copied, text)
+	if r.copyCall != nil {
+		r.copyCall <- text
+	}
+	return r.copyErr
+}
 
 func testClipboardEntry(id string, kind clipboardprotocol.Kind, preview string, pinned bool) clipboardprotocol.Entry {
 	return clipboardprotocol.Entry{

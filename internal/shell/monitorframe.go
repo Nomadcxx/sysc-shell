@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -120,21 +121,28 @@ func monitorInfoCard(in monitorView, middle *ui.Node) *ui.Node {
 }
 
 func monitorFactsColumn(f machineFacts) *ui.Node {
-	row := func(icon, text string) *ui.Node {
+	row := func(icon, label, text string) *ui.Node {
 		if text == "" {
 			text = ccDash
 		}
+		value := &ui.Node{Kind: ui.KindText, Text: text, MaxWidth: monitorFactMaxW}
+		if text != ccDash {
+			value.Action = "monitor:copy:" + url.QueryEscape(text)
+			value.Name = "Copy " + label
+			value.Role = "button"
+			value.Focusable = true
+		}
 		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: icon, IconSize: monitorFactIcon, Tone: ui.ToneSubtle},
-			{Kind: ui.KindText, Text: text, MaxWidth: monitorFactMaxW},
+			value,
 		}}
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-		row("desktop_windows", f.Distro),
-		row("content_copy", f.Kernel),
-		row("memory", f.CPU),
-		row("developer_board", f.Board),
-		row("schedule", f.UptimeLong),
+		row("desktop_windows", "distro", f.Distro),
+		row("content_copy", "kernel", f.Kernel),
+		row("memory", "CPU", f.CPU),
+		row("developer_board", "board", f.Board),
+		row("schedule", "uptime", f.UptimeLong),
 	}}
 }
 

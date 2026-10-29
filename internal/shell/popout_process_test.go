@@ -3,6 +3,7 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"syscall"
 	"testing"
@@ -95,6 +96,72 @@ func TestSelectedProcessRowKeepsAVisibleHighlight(t *testing.T) {
 	row := processLineRow(h, processView(processFixture()), processLine{Kind: lineProcess, Identity: process.Identity, Name: process.Name})
 	if row.Kind != ui.KindRow || row.Fill != ui.FillSoft || row.Stroke != 0 {
 		t.Fatalf("selected row = kind %v fill %v stroke %d, want one flat soft wash", row.Kind, row.Fill, row.Stroke)
+	}
+}
+
+func TestMonitorCopyActionRunsOffLockAndReportsResult(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status string
+	}{
+		{name: "success", status: "Copied to clipboard"},
+		{name: "failure", err: errors.New("daemon offline"), status: "Could not copy to clipboard: daemon offline"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := newPanelRegistry(t)
+			sender := &clipboardRecorder{
+				copyErr: tc.err, copyCall: make(chan string, 1),
+			}
+			reg.BindClipboard(sender)
+			if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+				t.Fatal(err)
+			}
+			_ = drainAux(t, reg, 2)
+			h := reg.panelHosts[PanelMonitor]
+			const value = "beta --Chrome-Helper"
+			reg.mu.Lock()
+			handled := h.activateMonitor(reg, &ui.Node{Action: "monitor:copy:" + url.QueryEscape(value)})
+			select {
+			case <-sender.copyCall:
+				reg.mu.Unlock()
+				t.Fatal("clipboard copy began before the panel handler released Registry.mu")
+			case <-time.After(10 * time.Millisecond):
+			}
+			reg.mu.Unlock()
+			if !handled {
+				t.Fatal("copy action was not handled")
+			}
+			select {
+			case copied := <-sender.copyCall:
+				if copied != value || len(sender.copied) != 1 || sender.copied[0] != value {
+					t.Fatalf("copied = %q / %v, want %q", copied, sender.copied, value)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("clipboard copy did not complete")
+			}
+			deadline := time.After(time.Second)
+			for {
+				reg.mu.Lock()
+				status, statusErr := h.processStatus, h.processStatusErr
+				reg.mu.Unlock()
+				if status == tc.status {
+					if (statusErr != nil) != (tc.err != nil) {
+						t.Fatalf("processStatusErr = %v, want failure %v", statusErr, tc.err)
+					}
+					if tc.err != nil && !errors.Is(statusErr, tc.err) {
+						t.Fatalf("processStatusErr = %v, want %v", statusErr, tc.err)
+					}
+					break
+				}
+				select {
+				case <-time.After(time.Millisecond):
+				case <-deadline:
+					t.Fatalf("process status = %q, want %q", status, tc.status)
+				}
+			}
+		})
 	}
 }
 

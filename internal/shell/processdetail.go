@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -87,9 +88,19 @@ func detailPairs(pairs [][2]string, valueWidth int) *ui.Node {
 		if value == "" {
 			value = ccDash
 		}
+		field := strings.TrimSuffix(kv[0], ":")
+		valueNode := &ui.Node{
+			Kind: ui.KindText, Text: value, MaxWidth: valueWidth, Tabular: true, Name: field + " value",
+		}
+		if value != ccDash {
+			valueNode.Action = "monitor:copy:" + url.QueryEscape(value)
+			valueNode.Name = "Copy " + field + " value"
+			valueNode.Role = "button"
+			valueNode.Focusable = true
+		}
 		col.Children = append(col.Children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: kv[0], Tone: ui.ToneSubtle, MinWidthText: "io write:"},
-			{Kind: ui.KindText, Text: value, MaxWidth: valueWidth, Tabular: true, Name: kv[0] + " value"},
+			valueNode,
 		}})
 	}
 	return col

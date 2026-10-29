@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"net/url"
 	"testing"
 	"time"
 
@@ -74,6 +75,26 @@ func TestInfoCardShowsFiveFactsAndTwoGauges(t *testing.T) {
 	}
 	if mem := findKind(findByName(card, "Memory gauge"), ui.KindRadialGauge); mem == nil || !mem.Absent {
 		t.Fatalf("memory gauge without a sample = %+v, want absent", mem)
+	}
+}
+
+func TestMachineFactsAreCopyButtonsExceptMissingValues(t *testing.T) {
+	column := monitorFactsColumn(machineFacts{Distro: "Arch Linux", Kernel: "", CPU: "Ryzen 5"})
+	wants := []struct {
+		text   string
+		action string
+	}{{"Arch Linux", "monitor:copy:" + url.QueryEscape("Arch Linux")}, {ccDash, ""}, {"Ryzen 5", "monitor:copy:" + url.QueryEscape("Ryzen 5")}}
+	for i, want := range wants {
+		value := column.Children[i].Children[1]
+		if value.Text != want.text || value.Action != want.action {
+			t.Errorf("fact %d = text %q action %q, want %q / %q", i, value.Text, value.Action, want.text, want.action)
+		}
+		if want.action != "" && (value.Role != "button" || !value.Focusable) {
+			t.Errorf("fact %d is not an accessible button: %+v", i, value)
+		}
+		if want.action == "" && value.Focusable {
+			t.Errorf("missing fact %d is focusable: %+v", i, value)
+		}
 	}
 }
 
