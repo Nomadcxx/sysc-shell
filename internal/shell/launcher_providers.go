@@ -73,7 +73,7 @@ const launcherWindowResultPrefix = "window:"
 
 func (r *Registry) windowsProvider() launcher.Provider {
 	return launcher.Provider{
-		Name: "Windows", Prefix: "/win", Glyph: "glyph:desktop_windows",
+		Name: "Windows", Prefix: config.LauncherWindowsPrefix, Glyph: "glyph:desktop_windows",
 		Description: "Browse open windows · Search titles and applications",
 		Query: func(query string) []launcher.Result {
 			r.mu.Lock()

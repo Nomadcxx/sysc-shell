@@ -1929,6 +1929,7 @@ func TestLauncherCommandProviderRejectsInvalidRoutesAndCommands(t *testing.T) {
 		{"missing prefix", `{"launcher":{"providers":[{"name":"Files","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[0].prefix"},
 		{"duplicate prefix", `{"launcher":{"providers":[{"name":"A","prefix":"/same","command":["list"],"on_select":["open"]},{"name":"B","prefix":"/same","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[1].prefix"},
 		{"built in prefix", `{"launcher":{"providers":[{"name":"Calculator","prefix":"/calc","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[0].prefix"},
+		{"built in window prefix", `{"launcher":{"providers":[{"name":"Windows","prefix":"/win","command":["list"],"on_select":["open"]}]}}`, "launcher.providers[0].prefix"},
 		{"query in executable", `{"launcher":{"providers":[{"name":"Files","prefix":"/files","command":["{query}"],"on_select":["open"]}]}}`, "launcher.providers[0].command"},
 		{"selection in executable", `{"launcher":{"providers":[{"name":"Files","prefix":"/files","command":["list"],"on_select":["{selection}"]}]}}`, "launcher.providers[0].on_select"},
 	} {
