@@ -162,18 +162,37 @@ func (s *Store) Run(ctx context.Context) {
 				slog.Warn("plugin store: daily refresh skipped; operation queue is full")
 			}
 		case o := <-s.ops:
-			s.setBusy(o.name)
-			err := o.run(ctx)
-			s.mu.Lock()
-			if o.id != "" {
-				s.errs[o.id] = err
-			}
-			s.mu.Unlock()
-			s.rebuild()
-			s.setBusy("")
-			o.done <- err
+			s.runOp(ctx, o)
 		case keys := <-s.mediaWant:
 			s.fetchMedia(ctx, keys)
+		}
+	}
+}
+
+func (s *Store) runOp(ctx context.Context, o op) {
+	s.setBusy(o.name)
+	err := o.run(ctx)
+	s.mu.Lock()
+	if o.id != "" {
+		s.errs[o.id] = err
+	}
+	s.mu.Unlock()
+	s.rebuild()
+	s.setBusy("")
+	o.done <- err
+}
+
+// runQueuedOps keeps media work from holding the store's single worker away
+// from user operations. It returns false when the store is shutting down.
+func (s *Store) runQueuedOps(ctx context.Context) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case o := <-s.ops:
+			s.runOp(ctx, o)
+		default:
+			return true
 		}
 	}
 }
