@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -24,12 +25,14 @@ type clipboardRecorder struct {
 		id     string
 		pinned bool
 	}
-	deleted  string
-	cleared  []clipboardprotocol.ClearScope
-	thumbs   []string
-	copied   []string
-	copyErr  error
-	copyCall chan string
+	deleted       string
+	deleteMany    [][]string
+	deleteManyErr error
+	cleared       []clipboardprotocol.ClearScope
+	thumbs        []string
+	copied        []string
+	copyErr       error
+	copyCall      chan string
 }
 
 func (r *clipboardRecorder) Restore(id string) error {
@@ -45,6 +48,11 @@ func (r *clipboardRecorder) Pin(id string, pinned bool) error {
 func (r *clipboardRecorder) Delete(id string) error {
 	r.deleted = id
 	return nil
+}
+
+func (r *clipboardRecorder) DeleteMany(ids []string) error {
+	r.deleteMany = append(r.deleteMany, append([]string(nil), ids...))
+	return r.deleteManyErr
 }
 
 func (r *clipboardRecorder) Clear(scope clipboardprotocol.ClearScope) error {
@@ -376,6 +384,92 @@ func TestClipboardActionsRouteThroughDaemonAndConfirmClears(t *testing.T) {
 	}
 	if len(sender.cleared) != 1 || sender.cleared[0] != clipboardprotocol.ClearAll {
 		t.Fatalf("clear calls = %v", sender.cleared)
+	}
+}
+
+func TestClipboardMultiDeleteConfirmsAndSendsOneBatch(t *testing.T) {
+	r := clipboardTestRegistry([]clipboardprotocol.Entry{
+		testClipboardEntry("one", clipboardprotocol.KindText, "one", false),
+		testClipboardEntry("two", clipboardprotocol.KindText, "two", false),
+		testClipboardEntry("three", clipboardprotocol.KindText, "three", false),
+	})
+	sender := &clipboardRecorder{}
+	r.clipboardSender = sender
+	h := &PanelHost{id: PanelClipboard, place: Placement{Panel: panelTargetSize(PanelClipboard)}, theme: DefaultTheme(), search: ui.NewField("")}
+	h.root = laidOutClipboardTree(r, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+
+	if !activateClipboardAction(t, r, h, "clipboard:selection:toggle") {
+		t.Fatal("selection mode was not actionable")
+	}
+	list := findClipboardList(h.root)
+	if list == nil || list.ItemCount != 3 || list.Item(0).Role != "checkbox" || !list.Item(0).Focusable {
+		t.Fatalf("selection rows = %+v, want accessible checkbox rows", list)
+	}
+	if !activateClipboardAction(t, r, h, "clipboard:select:two") || !activateClipboardAction(t, r, h, "clipboard:select:one") {
+		t.Fatal("could not select two clipboard entries")
+	}
+	if !treeHasText(h.root, "Delete selected (2)") {
+		t.Fatalf("selected-count action missing: %v", texts(h.root))
+	}
+	if len(sender.deleteMany) != 0 {
+		t.Fatalf("selection sent a delete before confirmation: %v", sender.deleteMany)
+	}
+	if !activateClipboardAction(t, r, h, "clipboard:delete-selected") || !treeHasText(h.root, "Delete 2 clipboard items?") {
+		t.Fatalf("batch confirmation missing: %v", texts(h.root))
+	}
+	if len(sender.deleteMany) != 0 {
+		t.Fatalf("opening confirmation sent a delete: %v", sender.deleteMany)
+	}
+	if !activateClipboardAction(t, r, h, "clipboard:confirm-delete-many") {
+		t.Fatal("batch confirmation was not actionable")
+	}
+	if len(sender.deleteMany) != 1 || len(sender.deleteMany[0]) != 2 || sender.deleteMany[0][0] != "one" || sender.deleteMany[0][1] != "two" {
+		t.Fatalf("batch calls = %v, want one history-ordered batch [one two]", sender.deleteMany)
+	}
+	if !treeHasText(h.root, "Delete selected (0)") {
+		t.Fatalf("successful delete retained selection: %v", texts(h.root))
+	}
+}
+
+func TestClipboardMultiDeleteKeepsSelectionOnErrorAndPrunesRemovedIDs(t *testing.T) {
+	r := clipboardOnlyRegistry([]clipboardprotocol.Entry{
+		testClipboardEntry("one", clipboardprotocol.KindText, "one", false),
+		testClipboardEntry("two", clipboardprotocol.KindText, "two", false),
+		testClipboardEntry("three", clipboardprotocol.KindText, "three", false),
+	})
+	t.Cleanup(func() { close(r.closed) })
+	sender := &clipboardRecorder{deleteManyErr: errors.New("daemon unavailable")}
+	r.BindClipboard(sender)
+	h := &PanelHost{id: PanelClipboard, output: 7, stopAnim: make(chan struct{}), place: Placement{Panel: panelTargetSize(PanelClipboard)}, theme: DefaultTheme(), search: ui.NewField("")}
+	r.panelHosts[PanelClipboard] = h
+	h.root = laidOutClipboardTree(r, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+	if !activateClipboardAction(t, r, h, "clipboard:selection:toggle") ||
+		!activateClipboardAction(t, r, h, "clipboard:select:one") ||
+		!activateClipboardAction(t, r, h, "clipboard:select:two") ||
+		!activateClipboardAction(t, r, h, "clipboard:delete-selected") ||
+		!activateClipboardAction(t, r, h, "clipboard:confirm-delete-many") {
+		t.Fatal("could not submit selected batch")
+	}
+	if !treeHasText(h.root, "Delete selected (2)") || !treeHasText(h.root, "daemon unavailable") {
+		t.Fatalf("failed batch lost selection or error: %v", texts(h.root))
+	}
+
+	r.ApplyClipboard(clipboardUpdate{Connected: true, Snapshot: clipboardprotocol.Snapshot{
+		Revision: 2, Entries: []clipboardprotocol.Entry{
+			testClipboardEntry("two", clipboardprotocol.KindText, "two", false),
+			testClipboardEntry("three", clipboardprotocol.KindText, "three", false),
+		}, Persistence: clipboardprotocol.PersistenceDurable, Wayland: clipboardprotocol.WaylandReady,
+	}})
+	if !treeHasText(h.root, "Delete selected (1)") || !treeHasText(h.root, "Delete 1 clipboard item?") {
+		t.Fatalf("snapshot did not prune stale selection: %v", texts(h.root))
+	}
+	list := findClipboardList(h.root)
+	if list == nil || list.ItemCount != 2 || list.Item(0).Action != "clipboard:select:two" || !list.Item(0).State.Has(ui.StateSelected) {
+		t.Fatalf("remaining selected row = %+v, want two selected", list)
 	}
 }
 

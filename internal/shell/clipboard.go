@@ -36,6 +36,7 @@ type clipboardCommandSender interface {
 	Restore(string) error
 	Pin(string, bool) error
 	Delete(string) error
+	DeleteMany([]string) error
 	Clear(clipboardprotocol.ClearScope) error
 	Thumbnail(string, uint16) error
 	Resync() error
@@ -273,6 +274,7 @@ func (r *Registry) ApplyClipboard(update clipboardUpdate) []uint32 {
 		if projectionChanged {
 			h.errLabel = ""
 			pruneClipboardImages(h, r.clipboard.Snapshot.Entries)
+			pruneClipboardSelections(h, r.clipboard.Snapshot.Entries)
 			panelChanged = true
 		}
 		if update.Message.Type == clipboardprotocol.TypeError && update.Message.Error != nil && h.errLabel != update.Message.Error.Message {
