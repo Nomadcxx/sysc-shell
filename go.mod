@@ -7,7 +7,7 @@ module github.com/Nomadcxx/sysc-shell
 go 1.26.10
 
 require (
-	github.com/Nomadcxx/sysc-clipboard v0.1.5
+	github.com/Nomadcxx/sysc-clipboard v0.1.6-0.20261029180712-8ba273c1f3c1
 	github.com/Nomadcxx/sysc-wayland v0.3.3
 	// hold: v0.2.0 declares go 1.27.1, and the toolchain floor is an
 	// organisation-wide decision (see sysc-2015)

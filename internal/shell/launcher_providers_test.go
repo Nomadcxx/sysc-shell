@@ -458,6 +458,7 @@ func (s launcherClipboardSender) RestoreWithRequestID(id string) (string, error)
 }
 func (launcherClipboardSender) Pin(string, bool) error                   { return nil }
 func (launcherClipboardSender) Delete(string) error                      { return nil }
+func (launcherClipboardSender) DeleteMany([]string) error                { return nil }
 func (launcherClipboardSender) Clear(clipboardprotocol.ClearScope) error { return nil }
 func (launcherClipboardSender) Thumbnail(string, uint16) error           { return nil }
 func (launcherClipboardSender) Resync() error                            { return nil }

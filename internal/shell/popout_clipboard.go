@@ -74,7 +74,7 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 		clipboardHeader(m, tr),
 		field,
 		clipboardFilterRow(filter, max(panelW-2*m.PanelPadding, 1), m, tr),
-		clipboardToolbar(m, tr),
+		clipboardToolbar(h, m, tr),
 	}
 	if state := clipboardStatus(view, m, tr); state != nil {
 		children = append(children, state)
@@ -111,9 +111,9 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 		if h.errLabel != "" {
 			used += 16 + m.CardGap
 		}
-		if h.clipboardConfirmScope != "" || h.clipboardDeleteConfirmID != "" {
+		if h.clipboardConfirmScope != "" || h.clipboardDeleteConfirmID != "" || h.clipboardDeleteManyConfirm {
 			used += clipboardConfirmHeight
-		} else if selectedOK {
+		} else if selectedOK && !h.clipboardMultiSelect {
 			used += clipboardDetailHeight
 		}
 		used += m.CardGap
@@ -125,7 +125,9 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 		children = append(children, clipboardConfirmCard("clear", h.clipboardConfirmScope, m, tr))
 	} else if h.clipboardDeleteConfirmID != "" {
 		children = append(children, clipboardConfirmCard("delete", h.clipboardDeleteConfirmID, m, tr))
-	} else if selectedOK {
+	} else if h.clipboardDeleteManyConfirm {
+		children = append(children, clipboardConfirmCard("delete-many", fmt.Sprint(len(h.clipboardSelectedIDs)), m, tr))
+	} else if selectedOK && !h.clipboardMultiSelect {
 		children = append(children, clipboardDetail(r, h, selected, m, tr))
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: m.CardGap, Padding: m.PanelPadding, Children: children}
@@ -146,8 +148,21 @@ func clipboardHeader(m theme.Metrics, tr translateFunc) *ui.Node {
 
 func clipboardHeaderHeight(m theme.Metrics) int { return m.StandardControl }
 
-func clipboardToolbar(m theme.Metrics, tr translateFunc) *ui.Node {
+func clipboardToolbar(h *PanelHost, m theme.Metrics, tr translateFunc) *ui.Node {
+	if h != nil && h.clipboardMultiSelect {
+		count := len(h.clipboardSelectedIDs)
+		deleteLabel := fmt.Sprintf(cardT(tr, "clip.delete_selected", "Delete selected (%d)"), count)
+		delete := clipboardButton("clipboard:delete-selected", deleteLabel, cardT(tr, "clip.delete_selected_hint", "Delete selected clipboard items"), m)
+		if count == 0 {
+			delete.State |= ui.StateDisabled
+		}
+		return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: m.CardGap, Children: []*ui.Node{
+			delete,
+			clipboardButton("clipboard:selection:toggle", cardT(tr, "clip.cancel_selection", "Cancel selection"), cardT(tr, "clip.cancel_selection_hint", "Stop selecting clipboard items"), m),
+		}}
+	}
 	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: m.CardGap, Children: []*ui.Node{
+		clipboardButton("clipboard:selection:toggle", cardT(tr, "clip.select_items", "Select items"), cardT(tr, "clip.select_items_hint", "Select multiple clipboard items"), m),
 		clipboardButton("clipboard:clear:unpinned", cardT(tr, "clip.clear_unpinned", "Clear unpinned"), cardT(tr, "clip.clear_unpinned_hint", "Clear unpinned clipboard entries"), m),
 		clipboardButton("clipboard:clear:all", cardT(tr, "clip.clear_all", "Clear all"), cardT(tr, "clip.clear_all_hint", "Clear all clipboard history"), m),
 	}}
@@ -237,6 +252,35 @@ func clipboardEntryByID(entries []clipboardprotocol.Entry, id string) (clipboard
 	return clipboardprotocol.Entry{}, false
 }
 
+func selectedClipboardIDsInOrder(entries []clipboardprotocol.Entry, selected map[string]struct{}) []string {
+	ids := make([]string, 0, len(selected))
+	for _, entry := range entries {
+		if _, ok := selected[entry.ID]; ok {
+			ids = append(ids, entry.ID)
+		}
+	}
+	return ids
+}
+
+func pruneClipboardSelections(h *PanelHost, entries []clipboardprotocol.Entry) {
+	if h == nil || len(h.clipboardSelectedIDs) == 0 {
+		return
+	}
+	present := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		present[entry.ID] = struct{}{}
+	}
+	for id := range h.clipboardSelectedIDs {
+		if _, ok := present[id]; !ok {
+			delete(h.clipboardSelectedIDs, id)
+		}
+	}
+	if len(h.clipboardSelectedIDs) == 0 {
+		h.clipboardSelectedIDs = nil
+		h.clipboardDeleteManyConfirm = false
+	}
+}
+
 func filterClipboardEntries(entries []clipboardprotocol.Entry, query, filter string) []clipboardprotocol.Entry {
 	query = strings.ToLower(strings.TrimSpace(query))
 	filtered := make([]clipboardprotocol.Entry, 0, len(entries))
@@ -307,6 +351,19 @@ func clipboardRow(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, sele
 	if entry.Pinned {
 		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: cardT(tr, "clip.pinned", "Pinned"), TextRole: theme.RoleCaption, Tone: ui.ToneAccent})
 	}
+	action := "clipboard:restore:" + entry.ID
+	role := "button"
+	if h != nil && h.clipboardMultiSelect {
+		_, selected = h.clipboardSelectedIDs[entry.ID]
+		action = "clipboard:select:" + entry.ID
+		role = "checkbox"
+		name = cardT(tr, "clip.select_item", "Select clipboard item")
+		if preview != "" {
+			name += ": " + preview
+		} else if entry.Kind == clipboardprotocol.KindImage {
+			name += ": image"
+		}
+	}
 	labelW := max(panelW-2*m.PanelPadding-2*m.CardPadding-clipboardThumbnailSize-m.CardGap, 120)
 	body := &ui.Node{Kind: ui.KindRow, Gap: m.CardGap, Children: []*ui.Node{
 		previewNode,
@@ -321,8 +378,8 @@ func clipboardRow(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, sele
 		state |= ui.StateSelected
 	}
 	return &ui.Node{
-		Kind: ui.KindButton, Key: "clipboard-row:" + entry.ID, Action: "clipboard:restore:" + entry.ID,
-		Name: name, Role: "button", Focusable: true, Height: clipboardRowHeight,
+		Kind: ui.KindButton, Key: "clipboard-row:" + entry.ID, Action: action,
+		Name: name, Role: role, Focusable: true, Height: clipboardRowHeight,
 		Padding: m.CardPadding, Fill: fill, Shape: ui.ShapeMedium, State: state, Children: []*ui.Node{body},
 	}
 }
@@ -360,6 +417,7 @@ func clipboardDetail(r *Registry, h *PanelHost, entry clipboardprotocol.Entry, m
 func clipboardConfirmCard(kind, value string, m theme.Metrics, tr translateFunc) *ui.Node {
 	title := cardT(tr, "clip.confirm_clear", "Clear clipboard history?")
 	confirmAction := "clipboard:confirm-clear:" + value
+	confirmName := cardT(tr, "clip.confirm_hint", "Confirm destructive clipboard action")
 	if value == string(clipboardprotocol.ClearAll) {
 		title = cardT(tr, "clip.confirm_clear_all", "Clear all clipboard history?")
 	} else if value == string(clipboardprotocol.ClearUnpinned) {
@@ -368,12 +426,20 @@ func clipboardConfirmCard(kind, value string, m theme.Metrics, tr translateFunc)
 	if kind == "delete" {
 		title = cardT(tr, "clip.confirm_delete", "Delete clipboard item?")
 		confirmAction = "clipboard:confirm-delete:" + value
+	} else if kind == "delete-many" {
+		if value == "1" {
+			title = cardT(tr, "clip.confirm_delete_one", "Delete 1 clipboard item?")
+		} else {
+			title = fmt.Sprintf(cardT(tr, "clip.confirm_delete_many", "Delete %s clipboard items?"), value)
+		}
+		confirmAction = "clipboard:confirm-delete-many"
+		confirmName = cardT(tr, "clip.confirm_delete_many_hint", "Confirm deletion of selected clipboard items")
 	}
 	return &ui.Node{Kind: ui.KindCapsule, Height: clipboardConfirmHeight, Padding: m.CardPadding,
 		Fill: ui.FillErrorContainer, Shape: ui.ShapeCard, Children: []*ui.Node{{Kind: ui.KindColumn, Gap: m.CardGap, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: title, TextRole: theme.RoleTitle},
 			{Kind: ui.KindRow, Height: m.CompactControl, Gap: m.CardGap, Children: []*ui.Node{
-				clipboardButton(confirmAction, cardT(tr, "clip.confirm", "Confirm"), cardT(tr, "clip.confirm_hint", "Confirm destructive clipboard action"), m),
+				clipboardButton(confirmAction, cardT(tr, "clip.confirm", "Confirm"), confirmName, m),
 				clipboardButton("clipboard:cancel-"+kind, cardT(tr, "common.cancel", "Cancel"), cardT(tr, "clip.cancel_hint", "Cancel destructive clipboard action"), m),
 			}},
 		}}}}
@@ -490,6 +556,15 @@ func (h *PanelHost) clipboardSelectionFromFocus() {
 func (h *PanelHost) clipboardKeyPress(r *Registry, key uint32) bool {
 	switch key {
 	case keyDelete:
+		if h.clipboardMultiSelect {
+			if len(h.clipboardSelectedIDs) > 0 {
+				h.clipboardDeleteManyConfirm = true
+				h.clipboardDeleteConfirmID = ""
+				h.clipboardConfirmScope = ""
+				r.rebuildPanel(h)
+			}
+			return true
+		}
 		h.clipboardSelectionFromFocus()
 		id := h.clipboardSelectedID
 		if id == "" {
@@ -520,7 +595,9 @@ func (h *PanelHost) clipboardKeyPress(r *Registry, key uint32) bool {
 		for i, focus := range h.focus {
 			if focus != nil && focus.StableKey() == row.StableKey() {
 				h.roving.Set(i)
-				h.clipboardSelectedID = strings.TrimPrefix(row.Action, "clipboard:restore:")
+				if id, ok := strings.CutPrefix(row.Action, "clipboard:restore:"); ok {
+					h.clipboardSelectedID = id
+				}
 				r.rebuildPanel(h)
 				if key == keyHome {
 					h.scrollTo(0)
@@ -574,6 +651,69 @@ func (h *PanelHost) activateClipboard(r *Registry, n *ui.Node) bool {
 	}
 	if action == "clipboard-close" {
 		r.closePanelLocked(h.id)
+		return true
+	}
+	if action == "clipboard:selection:toggle" {
+		h.clipboardMultiSelect = !h.clipboardMultiSelect
+		h.clipboardSelectedIDs = nil
+		h.clipboardDeleteManyConfirm = false
+		h.clipboardDeleteConfirmID = ""
+		h.clipboardConfirmScope = ""
+		r.rebuildPanel(h)
+		return true
+	}
+	if id, ok := strings.CutPrefix(action, "clipboard:select:"); ok {
+		if !h.clipboardMultiSelect {
+			return true
+		}
+		if _, exists := clipboardEntryByID(r.clipboard.Snapshot.Entries, id); !exists {
+			return true
+		}
+		if h.clipboardSelectedIDs == nil {
+			h.clipboardSelectedIDs = make(map[string]struct{})
+		}
+		if _, exists := h.clipboardSelectedIDs[id]; exists {
+			delete(h.clipboardSelectedIDs, id)
+		} else {
+			h.clipboardSelectedIDs[id] = struct{}{}
+		}
+		h.clipboardDeleteManyConfirm = false
+		h.clipboardConfirmScope = ""
+		h.clipboardDeleteConfirmID = ""
+		r.rebuildPanel(h)
+		return true
+	}
+	if action == "clipboard:delete-selected" {
+		if h.clipboardMultiSelect && len(h.clipboardSelectedIDs) > 0 {
+			h.clipboardDeleteManyConfirm = true
+			h.clipboardConfirmScope = ""
+			h.clipboardDeleteConfirmID = ""
+			r.rebuildPanel(h)
+		}
+		return true
+	}
+	if action == "clipboard:cancel-delete-many" {
+		h.clipboardDeleteManyConfirm = false
+		r.rebuildPanel(h)
+		return true
+	}
+	if action == "clipboard:confirm-delete-many" {
+		ids := selectedClipboardIDsInOrder(r.clipboard.Snapshot.Entries, h.clipboardSelectedIDs)
+		if len(ids) == 0 {
+			h.clipboardSelectedIDs = nil
+			h.clipboardDeleteManyConfirm = false
+			r.rebuildPanel(h)
+			return true
+		}
+		if err := h.clipboardCommand(r, "", func(sender clipboardCommandSender, _ string) error { return sender.DeleteMany(ids) }); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return true
+		}
+		h.clipboardSelectedIDs = nil
+		h.clipboardDeleteManyConfirm = false
+		h.errLabel = ""
+		r.rebuildPanel(h)
 		return true
 	}
 	if filter, ok := strings.CutPrefix(action, "clipboard:filter:"); ok {
