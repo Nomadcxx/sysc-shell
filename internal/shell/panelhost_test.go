@@ -1070,6 +1070,30 @@ func TestPluginDragMotionInvalidatesOnlyWhenDropGapsActivate(t *testing.T) {
 	}
 }
 
+func TestPluginDropReleaseRedrawsWhenDeliveryFails(t *testing.T) {
+	t.Parallel()
+
+	reg := newPanelRegistry(t)
+	reg.plugins = nil
+	zone := &ui.Node{
+		Kind: ui.KindDropZone, Action: "plugin:v1:drop", Accept: []string{"zone"},
+		Bounds: ui.Rect{X: 8, Y: 8, W: 24, H: 3},
+	}
+	h := &PanelHost{id: PanelPlugin, root: &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{zone}}}
+	h.drag.Begin(&ui.Node{Kind: ui.KindDragSource, DragType: "zone", Payload: "zone-1"}, 0, 0)
+	h.drag.Move(10, 9)
+	if ui.FindDropZone(h.root, &h.drag) != zone {
+		t.Fatal("fixture drag did not hit the accepted drop zone")
+	}
+
+	if !h.handle(reg)(wayland.Event{Kind: wayland.EventPointerRelease, X: 10, Y: 9}) {
+		t.Fatal("failed plugin delivery did not invalidate the panel")
+	}
+	if h.drag.Source != nil {
+		t.Fatal("drop release left the drag active")
+	}
+}
+
 // A fixture built by newPanelRegistry cannot stall the suite. publishSurface
 // blocks on the cap-8 channel and only a consumer releases it, which is how CI
 // hung in TestEdgeReloadRetainsOpenPanels: that fixture published seven and had

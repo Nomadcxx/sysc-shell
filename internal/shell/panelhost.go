@@ -2984,7 +2984,8 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 					if strings.HasPrefix(zone.Action, "bar-lane:") {
 						return h.barDrop(r, zone, payload, dropX, dropY)
 					}
-					return r.deliverPluginText(zone.Action, payload, v1.EventDrop)
+					r.deliverPluginText(zone.Action, payload, v1.EventDrop)
+					return true
 				}
 				return true
 			}
