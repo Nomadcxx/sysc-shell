@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -24,6 +25,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 func renderText(n *ui.Node) string {
@@ -2047,6 +2049,91 @@ func TestCalendarPageRendersPluginSnapshotEvents(t *testing.T) {
 	}
 	if dots != 7 {
 		t.Fatalf("calendar page drew %d event dots, want 7", dots)
+	}
+}
+
+func TestCalendarPageRebuildsWhenPluginPublishes(t *testing.T) {
+	reg := newPanelRegistryWithoutBridge(t)
+	reg.now = time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
+	state, err := plugin.OpenStore(t.TempDir(), ccCalendarPluginID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateDoc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(calendarSnapshotState), &stateDoc); err != nil {
+		t.Fatal(err)
+	}
+	oldSnapshot := json.RawMessage(strings.Replace(string(stateDoc[ccCalendarStateKey]), "Standup", "Old standup", 1))
+	newSnapshot := json.RawMessage(strings.Replace(string(stateDoc[ccCalendarStateKey]), "Standup", "Updated standup", 1))
+	if err := state.Set(context.Background(), ccCalendarStateKey, oldSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	host := &pluginHost{r: reg, slots: map[string]*pluginSlot{
+		ccCalendarPluginID: {store: state},
+	}}
+	reg.mu.Lock()
+	reg.plugins = host
+	reg.mu.Unlock()
+	t.Cleanup(func() {
+		reg.mu.Lock()
+		if reg.plugins == host {
+			reg.plugins = nil
+		}
+		reg.mu.Unlock()
+	})
+	if err := reg.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	if err := reg.selectPanelSectionLocked(PanelControlCenter, "calendar"); err != nil {
+		reg.mu.Unlock()
+		t.Fatal(err)
+	}
+	h := reg.panelHosts[PanelControlCenter]
+	before := renderText(h.root)
+	reg.mu.Unlock()
+	if !strings.Contains(before, "Old standup") {
+		t.Fatalf("initial calendar page = %q, want the stored snapshot", before)
+	}
+	for len(reg.invalidations) > 0 {
+		<-reg.invalidations
+	}
+
+	runtime := plugin.NewRuntime(plugin.Candidate{Manifest: plugin.Manifest{ID: ccCalendarPluginID}}, plugin.RuntimeOptions{})
+	env := host.callEnv(ccCalendarPluginID, runtime, state)
+	env.Granted = []plugin.Capability{plugin.CapStateWrite}
+	params, err := json.Marshal(v1.StateSetParams{Key: ccCalendarStateKey, Value: newSnapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := plugin.NewDispatcher(env).Handle(context.Background(), &v1.HostCall{
+		ID: "calendar-snapshot", Call: v1.CallStateSet, Params: params,
+	})
+	if !reply.OK {
+		t.Fatalf("state.set reply = %+v", reply)
+	}
+	want := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelControlCenter)}
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case inv := <-reg.invalidations:
+			if inv != want {
+				t.Fatalf("calendar invalidation = %+v, want %+v", inv, want)
+			}
+			reg.mu.Lock()
+			got := renderText(h.root)
+			reg.mu.Unlock()
+			if strings.Contains(got, "Updated standup") {
+				return
+			}
+		case <-timer.C:
+			reg.mu.Lock()
+			got := renderText(h.root)
+			reg.mu.Unlock()
+			t.Fatalf("calendar page remained stale after state.set: %q", got)
+		}
 	}
 }
 

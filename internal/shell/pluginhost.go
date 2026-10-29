@@ -554,6 +554,23 @@ func (h *pluginHost) stateValue(id, key string) (json.RawMessage, bool) {
 	return slot.store.Get(key)
 }
 
+func (h *pluginHost) stateChanged(id, key string) {
+	if h == nil || h.r == nil || id != ccCalendarPluginID || key != ccCalendarStateKey {
+		return
+	}
+	r := h.r
+	r.mu.Lock()
+	panel := r.panelHosts[PanelControlCenter]
+	if r.plugins != h || panel == nil || panel.section != "calendar" {
+		r.mu.Unlock()
+		return
+	}
+	r.rebuildPanel(panel)
+	output := panel.output
+	r.mu.Unlock()
+	r.publishSurface(output, panelSurfaceID(PanelControlCenter))
+}
+
 func (h *pluginHost) stopPlugin(id string) {
 	h.settleTextFlush()
 
@@ -1169,7 +1186,11 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 		Protocol:       m.Protocol,
 		DeclaredPanels: m.Panels,
 		Store:          store,
-		CallTimeout:    pluginCallTimeout,
+		StateChanged: func(key string) {
+			// Panel rebuilds can outlast the plugin host-call timeout.
+			go h.stateChanged(id, key)
+		},
+		CallTimeout: pluginCallTimeout,
 		OpenPanel: func(ctx context.Context, p v1.PanelParams) (v1.PanelResult, error) {
 			if err := ctx.Err(); err != nil {
 				return v1.PanelResult{}, err
