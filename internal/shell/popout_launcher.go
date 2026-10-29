@@ -1217,9 +1217,10 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess
 	h.errLabel = ""
 	h.launcherAttempt++
 	attempt := h.launcherAttempt
+	serial := h.inputSerial
 	svc := r.launcherServiceLocked()
 	go func() {
-		err := r.activateLauncherService(h, svc, attempt, id, action)
+		err := r.activateLauncherService(h, svc, attempt, id, action, serial)
 		r.mu.Lock()
 		host := r.panelHosts[PanelLauncher]
 		if host == nil || host.launcherAttempt != attempt {
@@ -1289,14 +1290,18 @@ func (r *Registry) runClipboardPaste() {
 	}
 }
 
-func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, attempt uint64, id, action string) error {
+func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, attempt uint64, id, action string, serial uint32) error {
 	r.launcherActivationMu.Lock()
 	defer r.launcherActivationMu.Unlock()
 	r.mu.Lock()
 	h.launcherPendingAttempt = attempt
+	r.launcherActivationSerial = serial
 	r.mu.Unlock()
 
 	err := svc.Activate(id, action)
+	r.mu.Lock()
+	r.launcherActivationSerial = 0
+	r.mu.Unlock()
 	if errors.Is(err, launcher.ErrServiceClosed) {
 		r.mu.Lock()
 		closed := r.launcherServiceCloseDone[svc]

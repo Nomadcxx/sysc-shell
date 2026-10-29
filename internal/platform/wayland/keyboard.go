@@ -206,6 +206,9 @@ func (o *owner) deliverKey(serial, key, state uint32) {
 	if o.keyFocus.unit == nil {
 		return
 	}
+	if state == uint32(client.KeyboardKeyStatePressed) {
+		o.recordActivationInput(serial, o.keyFocus.unit.surface)
+	}
 	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, o.keyEvent(kind, key, serial))
 }
 

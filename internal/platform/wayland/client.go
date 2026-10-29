@@ -17,6 +17,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/screencopy"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/xdgactivation"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
@@ -137,6 +138,9 @@ type Callbacks struct {
 	// Selection asks the owner to copy to or paste from the system
 	// clipboard. It is owned by the caller and may be nil.
 	Selection <-chan SelectionRequest
+	// Activation asks the owner to create an xdg-activation token for an input
+	// serial. It is owned by the caller and may be nil.
+	Activation <-chan ActivationTokenRequest
 	// Idle arms and disarms compositor idle notifications. It is owned by
 	// the caller and may be nil.
 	Idle <-chan IdleRequest
@@ -219,7 +223,7 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	pastes := make(chan pasteResult, 4)
-	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, pastes, callbacks.Idle, callbacks.Gamma)
+	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, callbacks.Activation, pastes, callbacks.Idle, callbacks.Gamma)
 	defer func() {
 		cancel()
 		<-bridgeDone
@@ -272,6 +276,12 @@ type owner struct {
 	// zwp-keyboard-shortcuts-inhibit; a selector then simply shares the
 	// compositor's keybinds.
 	inhibitMgr *inhibit.ZwpKeyboardShortcutsInhibitManagerV1
+	// activationMgr is nil when the compositor does not offer activation tokens.
+	activationMgr           *xdgactivation.XdgActivationV1
+	activationTokens        activationTokenSource
+	pendingActivationTokens map[activationToken]ActivationTokenRequest
+	activationInputSerial   uint32
+	activationInputSurface  *client.Surface
 	// backgroundEffect is nil when the compositor does not advertise
 	// ext-background-effect; caps records what it last said it can do.
 	backgroundEffect *backgroundeffect.ExtBackgroundEffectManagerV1
@@ -511,6 +521,13 @@ func (o *owner) bindGlobals() error {
 			return err
 		}
 	}
+	if _, ok := o.rs.singletons[xdgactivation.XdgActivationV1InterfaceName]; ok {
+		o.activationMgr = xdgactivation.NewXdgActivationV1(ctx)
+		if err := o.bindSingleton(xdgactivation.XdgActivationV1InterfaceName, o.activationMgr); err != nil {
+			return err
+		}
+		o.activationTokens = xdgActivationTokenSource{o.activationMgr}
+	}
 	if err := o.bindOptionalInput(ctx); err != nil {
 		return err
 	}
@@ -598,6 +615,12 @@ func (o *owner) hostBecameReady(h *OutputHost) error {
 
 func (o *owner) destroyGlobals() error {
 	var errs []error
+	o.destroyPendingActivationTokens()
+	if o.activationMgr != nil {
+		errs = append(errs, o.activationMgr.Destroy())
+		o.activationMgr = nil
+		o.activationTokens = nil
+	}
 	if o.viewporter != nil {
 		errs = append(errs, o.viewporter.Destroy())
 	}
@@ -697,6 +720,7 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 			kind := EventPointerRelease
 			if e.State == uint32(client.PointerButtonStatePressed) {
 				kind = EventPointerPress
+				o.recordActivationInput(e.Serial, o.focus.unit.surface)
 			}
 			// A button event carries no coordinates, so the focus position is
 			// what the press acts on.
@@ -1460,6 +1484,9 @@ func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResul
 			}
 			for _, req := range wake.takeSelection() {
 				o.handleSelection(req, pastes)
+			}
+			for _, req := range wake.takeActivation() {
+				o.requestActivationToken(req)
 			}
 			for _, req := range wake.takeIdle() {
 				o.armIdle(req.ID, req.TimeoutMS)

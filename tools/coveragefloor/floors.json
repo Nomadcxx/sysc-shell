@@ -57,6 +57,7 @@
     "internal/platform/wayland/layershell": "a generated protocol binding. The file is written by go-wayland-scanner from the wlr-layer-shell protocol, so a floor here would measure generated code rather than this tree's own work.",
     "internal/platform/wayland/screencopy": "a generated protocol binding. The file is written by go-wayland-scanner from the wlr-screencopy protocol, so a floor here would measure generated code rather than this tree's own work.",
     "internal/platform/wayland/viewporter": "a generated protocol binding. The file is written by go-wayland-scanner from the viewporter protocol, so a floor here would measure generated code rather than this tree's own work.",
+    "internal/platform/wayland/xdgactivation": "a generated protocol binding. The file is written by go-wayland-scanner from protocols/xdg-activation-v1.xml, so a floor here would measure generated code rather than this tree's own work.",
     "internal/platform/wayland/xdgshell": "a generated protocol binding. The file is written by go-wayland-scanner from the xdg-shell protocol, so a floor here would measure generated code rather than this tree's own work.",
     "tests/integration": "the package holds integration test code only; it has no statements of its own to measure",
     "tools/emojigen": "an authoring tool that regenerates internal/emoji/emoji.tsv from pinned Unicode and CLDR data. It is never run by go build, so there is nothing for the suite to cover."

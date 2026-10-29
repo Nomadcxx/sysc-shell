@@ -481,6 +481,7 @@ func run(ctx context.Context) (err error) {
 		Invalidations:    registry.Invalidations(),
 		Aux:              registry.AuxRequests(),
 		Selection:        registry.Selections(),
+		Activation:       registry.ActivationTokens(),
 		Idle:             idleSvc.Requests(),
 		IdleEvents:       idleSvc.Events(),
 		Gamma:            registry.GammaRequests(),
