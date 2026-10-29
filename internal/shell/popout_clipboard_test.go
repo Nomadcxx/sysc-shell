@@ -270,6 +270,74 @@ func TestClipboardSearchSelectsOnlyVisibleRows(t *testing.T) {
 	}
 }
 
+func TestClipboardKindFiltersComposeWithSearch(t *testing.T) {
+	short := testClipboardEntry("short", clipboardprotocol.KindText, "short text", false)
+	short.Size = 200
+	long := testClipboardEntry("long", clipboardprotocol.KindText, "long text", false)
+	long.Size = 201
+	image := testClipboardEntry("image", clipboardprotocol.KindImage, "", false)
+	image.MIME = "image/png"
+	r := clipboardTestRegistry([]clipboardprotocol.Entry{short, long, image})
+	h := &PanelHost{id: PanelClipboard, place: Placement{Panel: panelTargetSize(PanelClipboard)}, theme: DefaultTheme(), search: ui.NewField("")}
+	h.root = laidOutClipboardTree(r, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+	if all := findAction(h.root, "clipboard:filter:all"); all == nil || !all.State.Has(ui.StateSelected) {
+		t.Fatalf("default filter = %+v, want All selected", all)
+	}
+
+	filters := []struct {
+		action string
+		label  string
+		ids    []string
+	}{
+		{"clipboard:filter:all", "All", []string{"short", "long", "image"}},
+		{"clipboard:filter:text", "Text", []string{"short"}},
+		{"clipboard:filter:long_text", "Long text", []string{"long"}},
+		{"clipboard:filter:image", "Image", []string{"image"}},
+	}
+	for _, filter := range filters {
+		button := findAction(h.root, filter.action)
+		if button == nil || button.Name != filter.label || button.Role != "tab" || !button.Focusable {
+			t.Fatalf("filter button %q = %+v", filter.action, button)
+		}
+		if !activateClipboardAction(t, r, h, filter.action) {
+			t.Fatalf("filter action %q was not handled", filter.action)
+		}
+		list := findClipboardList(h.root)
+		if list == nil || list.ItemCount != len(filter.ids) {
+			t.Fatalf("filter %q list = %+v, want %v", filter.action, list, filter.ids)
+		}
+		for i, id := range filter.ids {
+			if got := list.Item(i); got == nil || got.Action != "clipboard:restore:"+id {
+				t.Fatalf("filter %q item %d = %+v, want %q", filter.action, i, got, id)
+			}
+		}
+		selected := findAction(h.root, filter.action)
+		if selected == nil || !selected.State.Has(ui.StateSelected) {
+			t.Fatalf("filter %q is not marked selected: %+v", filter.action, selected)
+		}
+		if focused := h.focused(); focused == nil || focused.Action != filter.action {
+			t.Fatalf("filter %q focus = %+v, want focus retained", filter.action, focused)
+		}
+	}
+
+	h.query = "long"
+	if !activateClipboardAction(t, r, h, "clipboard:filter:long_text") {
+		t.Fatal("long-text filter was not handled alongside search")
+	}
+	list := findClipboardList(h.root)
+	if list == nil || list.ItemCount != 1 || list.Item(0).Action != "clipboard:restore:long" {
+		t.Fatalf("matching long-text query list = %+v, want only long", list)
+	}
+
+	h.query = "missing"
+	h.root = laidOutClipboardTree(r, h)
+	if findClipboardList(h.root) != nil || !treeHasText(h.root, "No clipboard matches") {
+		t.Fatalf("query and long-text filter tree = %v, want no matches", texts(h.root))
+	}
+}
+
 func TestClipboardTextRowIconIsInMaterialSubset(t *testing.T) {
 	if !render.ValidMaterialIcon("content_copy") {
 		t.Fatal("content_copy is not in the material icon subset")

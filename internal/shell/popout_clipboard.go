@@ -15,12 +15,21 @@ const (
 	clipboardRowHeight     = 64
 	clipboardThumbnailSize = 48
 	clipboardDetailHeight  = 124
+	// Keep the text/long-text split aligned with DMS's 200-byte threshold.
+	clipboardLongTextThreshold = 200
 	// Two text lines plus the card inset and their inter-line gap. Keeping the
 	// full stack inside the capsule prevents the detail line from being clipped
 	// by a fixed-height notice.
 	clipboardStatusHeight   = 56
 	clipboardConfirmHeight  = 96
 	clipboardThumbnailMaxPX = 96
+)
+
+const (
+	clipboardFilterAll      = "all"
+	clipboardFilterText     = "text"
+	clipboardFilterLongText = "long_text"
+	clipboardFilterImage    = "image"
 )
 
 // clipboardTree is the one presenter for the daemon's metadata snapshot. The
@@ -49,7 +58,11 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 		view = r.clipboard
 	}
 	entries := view.Snapshot.Entries
-	filtered := filterClipboardEntries(entries, h.query)
+	filter := h.clipboardFilter
+	if filter == "" {
+		filter = clipboardFilterAll
+	}
+	filtered := filterClipboardEntries(entries, h.query, filter)
 	selected, selectedOK := clipboardSelection(h, filtered)
 
 	field := h.search.Node(cardT(tr, "clip.search", "Search"))
@@ -60,6 +73,7 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 	children := []*ui.Node{
 		clipboardHeader(m, tr),
 		field,
+		clipboardFilterRow(filter, max(panelW-2*m.PanelPadding, 1), m, tr),
 		clipboardToolbar(m, tr),
 	}
 	if state := clipboardStatus(view, m, tr); state != nil {
@@ -74,7 +88,7 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 		if len(entries) > 0 {
 			message = cardT(tr, "clip.no_matches", "No clipboard matches")
 		}
-		children = append(children, clipboardNotice(message, cardT(tr, "clip.hint.search", "Try a different search"), m))
+		children = append(children, clipboardNotice(message, cardT(tr, "clip.hint.search", "Try a different search or filter"), m))
 	} else {
 		rows := make([]*ui.Node, len(filtered))
 		for i, entry := range filtered {
@@ -90,7 +104,7 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 			},
 		}
 		used := 2*m.PanelPadding + clipboardHeaderHeight(m) + m.CardGap + m.StandardControl +
-			m.CardGap + clipboardToolbarHeight(m) + m.CardGap
+			m.CardGap + clipboardFilterHeight(m) + m.CardGap + clipboardToolbarHeight(m) + m.CardGap
 		if state := clipboardStatus(view, m, tr); state != nil {
 			used += clipboardStatusHeight + m.CardGap
 		}
@@ -141,6 +155,39 @@ func clipboardToolbar(m theme.Metrics, tr translateFunc) *ui.Node {
 
 func clipboardToolbarHeight(m theme.Metrics) int { return m.CompactControl }
 
+func clipboardFilterRow(active string, width int, m theme.Metrics, tr translateFunc) *ui.Node {
+	filters := []struct {
+		id  string
+		key string
+		eng string
+	}{
+		{clipboardFilterAll, "clip.filter_all", "All"},
+		{clipboardFilterText, "clip.filter_text", "Text"},
+		{clipboardFilterLongText, "clip.filter_long_text", "Long text"},
+		{clipboardFilterImage, "clip.filter_image", "Image"},
+	}
+	segments := make([]*ui.Node, 0, len(filters))
+	for _, filter := range filters {
+		label := cardT(tr, filter.key, filter.eng)
+		segment := &ui.Node{
+			Kind: ui.KindButton, Action: "clipboard:filter:" + filter.id,
+			Name: label, Role: "tab", Focusable: true,
+			Height: m.CompactControl, Padding: theme.MarginXXS,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption}},
+		}
+		if active == filter.id {
+			segment.State |= ui.StateSelected
+		}
+		segments = append(segments, segment)
+	}
+	return &ui.Node{
+		Kind: ui.KindSegmented, Key: "clipboard-filter", Gap: theme.MarginXXS,
+		Width: width, Height: m.CompactControl, Children: segments,
+	}
+}
+
+func clipboardFilterHeight(m theme.Metrics) int { return m.CompactControl }
+
 func clipboardStatus(view clipboardProjection, m theme.Metrics, tr translateFunc) *ui.Node {
 	if !view.Connected || view.Snapshot.Wayland != clipboardprotocol.WaylandReady {
 		return clipboardNotice(cardT(tr, "clip.unavailable", "Clipboard unavailable"), cardT(tr, "clip.hint.unavailable", "Start sysc-clipboard to capture and restore history"), m)
@@ -190,17 +237,32 @@ func clipboardEntryByID(entries []clipboardprotocol.Entry, id string) (clipboard
 	return clipboardprotocol.Entry{}, false
 }
 
-func filterClipboardEntries(entries []clipboardprotocol.Entry, query string) []clipboardprotocol.Entry {
+func filterClipboardEntries(entries []clipboardprotocol.Entry, query, filter string) []clipboardprotocol.Entry {
 	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return append([]clipboardprotocol.Entry(nil), entries...)
-	}
 	filtered := make([]clipboardprotocol.Entry, 0, len(entries))
 	for _, entry := range entries {
-		metadata := strings.ToLower(entry.Preview + " " + entry.MIME)
-		if strings.Contains(metadata, query) {
-			filtered = append(filtered, entry)
+		switch filter {
+		case "", clipboardFilterAll:
+		case clipboardFilterText:
+			if entry.Kind != clipboardprotocol.KindText || entry.Size > clipboardLongTextThreshold {
+				continue
+			}
+		case clipboardFilterLongText:
+			if entry.Kind != clipboardprotocol.KindText || entry.Size <= clipboardLongTextThreshold {
+				continue
+			}
+		case clipboardFilterImage:
+			if entry.Kind != clipboardprotocol.KindImage {
+				continue
+			}
+		default:
+			continue
 		}
+		metadata := strings.ToLower(entry.Preview + " " + entry.MIME)
+		if query != "" && !strings.Contains(metadata, query) {
+			continue
+		}
+		filtered = append(filtered, entry)
 	}
 	return filtered
 }
@@ -513,6 +575,16 @@ func (h *PanelHost) activateClipboard(r *Registry, n *ui.Node) bool {
 	if action == "clipboard-close" {
 		r.closePanelLocked(h.id)
 		return true
+	}
+	if filter, ok := strings.CutPrefix(action, "clipboard:filter:"); ok {
+		switch filter {
+		case clipboardFilterAll, clipboardFilterText, clipboardFilterLongText, clipboardFilterImage:
+			h.clipboardFilter = filter
+			r.rebuildPanel(h)
+			return true
+		default:
+			return false
+		}
 	}
 	if id, ok := strings.CutPrefix(action, "clipboard:restore:"); ok {
 		h.clipboardSelectedID = id

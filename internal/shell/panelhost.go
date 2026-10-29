@@ -420,6 +420,7 @@ type PanelHost struct {
 	processCollapsed map[string]bool
 
 	clipboardSelectedID       string
+	clipboardFilter           string
 	clipboardConfirmScope     string
 	clipboardDeleteConfirmID  string
 	clipboardThumbnails       map[string]*ui.Image
