@@ -22,15 +22,17 @@ func BarTimePatch(first Reading) []v1.Replacement {
 }
 
 func TimePatch(readings []Reading) []v1.Replacement {
-	out := make([]v1.Replacement, 0, len(readings)+1)
-	if len(readings) > 0 {
-		out = append(out, BarTimePatch(readings[0])...)
-	}
+	out := make([]v1.Replacement, 0, len(readings)*2)
 	for _, r := range readings {
-		key := "time:" + r.Zone
+		timeKey := "time:" + r.Zone
 		out = append(out, v1.Replacement{
-			Key:  key,
-			Node: &v1.Node{Kind: v1.KindText, Key: key, Text: r.Clock, Tabular: true},
+			Key:  timeKey,
+			Node: &v1.Node{Kind: v1.KindText, Key: timeKey, Text: r.Clock, Tabular: true},
+		})
+		offsetKey := "offset:" + r.Zone
+		out = append(out, v1.Replacement{
+			Key:  offsetKey,
+			Node: &v1.Node{Kind: v1.KindText, Key: offsetKey, Text: r.Offset},
 		})
 	}
 	return out
@@ -47,7 +49,7 @@ func PanelTree(readings []Reading, pendingAdd, pendingRemove, draft string) *v1.
 			},
 			{Kind: v1.KindText, Text: r.Zone},
 			{Kind: v1.KindText, Key: "time:" + r.Zone, Text: r.Clock, Tabular: true},
-			{Kind: v1.KindText, Text: r.Offset},
+			{Kind: v1.KindText, Key: "offset:" + r.Zone, Text: r.Offset},
 			{
 				Kind: v1.KindButton, ID: "rm:" + r.Zone, Text: "Remove", Name: "Remove " + r.Zone, Role: "button",
 				Events: []v1.EventKind{v1.EventActivate},

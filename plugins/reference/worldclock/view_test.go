@@ -29,13 +29,27 @@ func TestPanelTreeHasDragHandlesAndTimeKeys(t *testing.T) {
 	}
 }
 
-func TestTimePatchTouchesOnlyTimeNodes(t *testing.T) {
+func TestTimePatchUpdatesExistingPanelTimeAndOffsetNodes(t *testing.T) {
 	t.Parallel()
-	p := TimePatch([]Reading{{Zone: "UTC", Clock: "16:00", Offset: "UTC+0"}})
-	if len(p) != 2 {
-		t.Fatalf("replacements = %d", len(p))
+	root := PanelTree([]Reading{{Zone: "UTC", Clock: "15:00", Offset: "UTC+0"}}, "", "", "")
+	keys := map[string]bool{}
+	walk(root, func(n *v1.Node) {
+		if n.Key != "" {
+			keys[n.Key] = true
+		}
+	})
+	patch := TimePatch([]Reading{{Zone: "UTC", Clock: "16:00", Offset: "UTC+1"}})
+	got := map[string]string{}
+	for _, r := range patch {
+		if !keys[r.Key] {
+			t.Errorf("replacement key %q does not exist in panel tree", r.Key)
+		}
+		got[r.Key] = r.Node.Text
 	}
-	for _, r := range p {
+	if len(got) != 2 || got["time:UTC"] != "16:00" || got["offset:UTC"] != "UTC+1" {
+		t.Fatalf("patch values = %v", got)
+	}
+	for _, r := range patch {
 		if r.Node.Kind != v1.KindText {
 			t.Fatalf("patched %s, want text", r.Node.Kind)
 		}
