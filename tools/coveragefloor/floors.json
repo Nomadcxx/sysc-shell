@@ -41,7 +41,7 @@
     "plugin/v1": 89.24,
     "plugins/reference/timer": 78.37,
     "plugins/reference/weather": 76.32,
-    "plugins/reference/worldclock": 85.03,
+    "plugins/reference/worldclock": 85.27,
     "tools/coveragefloor": 73.91,
     "tools/depdrift": 45.4,
     "tools/docscheck": 87.77,

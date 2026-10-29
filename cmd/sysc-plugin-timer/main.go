@@ -88,6 +88,12 @@ func run(in *os.File, out *os.File) error {
 			case *v1.ViewOpen:
 				views[m.ViewID] = view{kind: m.View, instance: m.Instance}
 				publish()
+			case *v1.ViewResync:
+				if v, ok := views[m.ViewID]; ok {
+					v.rev = 0
+					views[m.ViewID] = v
+				}
+				publish()
 			case *v1.ViewClose:
 				delete(views, m.ViewID)
 			case *v1.InputEvent:

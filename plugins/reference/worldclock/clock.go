@@ -109,6 +109,9 @@ func (c *Clock) ConfirmRemove() {
 			next = append(next, z)
 		}
 	}
+	if len(next) == 0 {
+		next = append(next, "UTC")
+	}
 	c.zones = next
 	c.pendingRemove = ""
 }

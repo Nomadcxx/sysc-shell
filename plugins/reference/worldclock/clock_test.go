@@ -67,6 +67,16 @@ func TestRemoveWaitsForConfirmation(t *testing.T) {
 	}
 }
 
+func TestConfirmRemoveKeepsFallbackZone(t *testing.T) {
+	t.Parallel()
+	c := New()
+	c.ProposeRemove("UTC")
+	c.ConfirmRemove()
+	if got := c.Zones(); len(got) != 1 || got[0] != "UTC" {
+		t.Fatalf("zones after removing last zone = %v", got)
+	}
+}
+
 func TestRestoreKeepsOrderAndDropsJunk(t *testing.T) {
 	t.Parallel()
 	c := New()
