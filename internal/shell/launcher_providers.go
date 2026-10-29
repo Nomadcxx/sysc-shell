@@ -432,20 +432,40 @@ func (r *Registry) launcherCopy(text string) error {
 
 // launcherRun starts an activated entry through the compositor. The spawn argv
 // arrives as "niri msg action spawn --" plus the command, the same shape the
-// launcher's own default used.
+// launcher's own default used. The env helper runs inside Niri's spawn so the
+// token reaches the application process rather than the IPC client.
 //
 // sysc-launch v0.5.0 starts the desktop command directly when no Run is
 // configured. That would make the shell the parent of every application it
 // launches, leave the compositor unaware of them, and give them the shell's
 // lifetime. The shell is Niri first, so it names the spawn path itself.
-func (r *Registry) launcherRun(_ context.Context, argv []string) error {
+func (r *Registry) launcherRun(ctx context.Context, argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("launcher: empty spawn argv")
 	}
-	if r.runArgv == nil {
+	r.mu.Lock()
+	run := r.runArgv
+	serial := r.launcherActivationSerial
+	r.mu.Unlock()
+	if run == nil {
 		return errors.New("launcher: no spawn runner is wired")
 	}
-	return r.runArgv(argv)
+	if token := r.requestActivationToken(ctx, serial); token != "" {
+		argv = niriSpawnWithActivationToken(argv, token)
+	}
+	return run(argv)
+}
+
+func niriSpawnWithActivationToken(argv []string, token string) []string {
+	prefix := []string{"niri", "msg", "action", "spawn", "--"}
+	if token == "" || strings.ContainsRune(token, '\x00') ||
+		len(argv) < len(prefix) || !slices.Equal(argv[:len(prefix)], prefix) {
+		return argv
+	}
+	spawn := make([]string, 0, len(argv)+2)
+	spawn = append(spawn, argv[:len(prefix)]...)
+	spawn = append(spawn, "env", "XDG_ACTIVATION_TOKEN="+token)
+	return append(spawn, argv[len(prefix):]...)
 }
 
 // launcherServiceConfig is the service wiring shared by the live launcher and
