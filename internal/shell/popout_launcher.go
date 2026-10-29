@@ -69,7 +69,7 @@ const (
 	// launcherHints is sysc-greet's own help line, verbatim. The greeter puts
 	// the same string under every menu, so the launcher reads as the same
 	// family rather than inventing its own key legend.
-	launcherHints = "\u2191\u2193 Navigate \u2022 Enter Select \u2022 Esc Close"
+	launcherHints = "\u2191\u2193 Navigate \u2022 Alt+\u2190\u2192 Grid \u2022 Enter Select \u2022 Esc Close"
 	// launcherSlashRun is one side of the rail. sysc-greet pads its own rails
 	// to a fixed width and lets the count fall where it may; this one is a
 	// fixed six each side because the mark between them is a raster, not text,
@@ -204,23 +204,23 @@ func (r *Registry) refreshLauncherApplicationsLocked(h *PanelHost) {
 		} else {
 			r.launcherApplications.Store(&launcherApplicationSnapshot{attemptedAt: now})
 		}
-		currentHost := r.panelHosts[PanelSettings]
-		visible := currentHost != nil && currentHost.section == "Applications"
-		surface := PanelSettings
-		var output uint32
-		if visible {
-			r.rebuildPanel(currentHost)
-			output = currentHost.output
-		} else if currentHost = r.panelHosts[PanelLauncher]; currentHost != nil {
-			r.rebuildPanel(currentHost)
-			output = currentHost.output
-			surface = PanelLauncher
-			visible = true
+		var visible []wayland.Invalidation
+		if settingsHost := r.panelHosts[PanelSettings]; settingsHost != nil && settingsHost.section == "Applications" {
+			r.rebuildPanel(settingsHost)
+			visible = append(visible, wayland.Invalidation{
+				Global: settingsHost.output, SurfaceID: panelSurfaceID(PanelSettings),
+			})
+		}
+		if launcherHost := r.panelHosts[PanelLauncher]; launcherHost != nil {
+			r.rebuildPanel(launcherHost)
+			visible = append(visible, wayland.Invalidation{
+				Global: launcherHost.output, SurfaceID: panelSurfaceID(PanelLauncher),
+			})
 		}
 		r.mu.Unlock()
 
-		if visible {
-			r.publishSurface(output, panelSurfaceID(surface))
+		for _, surface := range visible {
+			r.publishSurface(surface.Global, surface.SurfaceID)
 		}
 	}()
 }
@@ -1029,7 +1029,13 @@ func (h *PanelHost) launcherVisibleOffset(count int, layout launcherViewLayout) 
 }
 
 func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
-	if focused := h.focused(); focused != nil && focused.Kind != ui.KindTextField {
+	return h.launcherKeyPressWithMods(r, key, h.mods)
+}
+
+func (h *PanelHost) launcherKeyPressWithMods(r *Registry, key uint32, mods ui.Mods) bool {
+	focused := h.focused()
+	fieldFocused := focused != nil && focused.Kind == ui.KindTextField
+	if focused != nil && !fieldFocused {
 		return false
 	}
 	n := len(h.launcherResults)
@@ -1051,12 +1057,12 @@ func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 		h.launcherMoveSel(r, delta)
 		return true
 	case keyLeft:
-		if layout.grid {
+		if layout.grid && (!fieldFocused || mods.Has(ui.ModAlt)) {
 			h.launcherMoveSel(r, -1)
 			return true
 		}
 	case keyRight:
-		if layout.grid {
+		if layout.grid && (!fieldFocused || mods.Has(ui.ModAlt)) {
 			h.launcherMoveSel(r, 1)
 			return true
 		}

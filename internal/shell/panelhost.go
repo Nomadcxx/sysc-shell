@@ -3110,12 +3110,12 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	// the accept key everywhere else, because fieldKey reports no focus for a
 	// control. Enter submits by falling through to the path it always took,
 	// so a launcher still runs its selection and a form still activates.
-	// The launcher is type-to-search: its well always has focus, and the list
-	// keys (Up, Down, Page, Home, End, Enter) drive the results, not the caret.
+	// The launcher is type-to-search: Up/Down and paging navigate results;
+	// horizontal grid movement uses Alt so Left/Right can move the caret.
 	if h.id == PanelFiles && h.filesKeyPress(r, key, k) {
 		return true
 	}
-	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
+	if h.id == PanelLauncher && h.launcherKeyPressWithMods(r, key, k.Mods) {
 		return true
 	}
 	if res, focused := h.fieldKey(r, k); focused && res.Handled && !res.Submit {

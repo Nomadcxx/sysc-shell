@@ -2439,7 +2439,7 @@ func TestLauncherGridKeyNavigationUsesVisualColumns(t *testing.T) {
 		reg.mu.Unlock()
 		t.Fatalf("Down selected %d, want %d", h.launcherSel, 1+columns)
 	}
-	if !h.launcherKeyPress(reg, keyRight) || h.launcherSel != 2+columns {
+	if !h.launcherKeyPressWithMods(reg, keyRight, ui.ModAlt) || h.launcherSel != 2+columns {
 		reg.mu.Unlock()
 		t.Fatalf("Right selected %d, want %d", h.launcherSel, 2+columns)
 	}
@@ -2447,7 +2447,7 @@ func TestLauncherGridKeyNavigationUsesVisualColumns(t *testing.T) {
 		reg.mu.Unlock()
 		t.Fatalf("Up selected %d, want 2", h.launcherSel)
 	}
-	if !h.launcherKeyPress(reg, keyLeft) || h.launcherSel != 1 {
+	if !h.launcherKeyPressWithMods(reg, keyLeft, ui.ModAlt) || h.launcherSel != 1 {
 		reg.mu.Unlock()
 		t.Fatalf("Left selected %d, want 1", h.launcherSel)
 	}
@@ -2477,6 +2477,33 @@ func TestLauncherBrowseWheelUsesVisibleItemHeight(t *testing.T) {
 	if !h.scrollAxis(reg, wayland.Event{AxisValue: 120}) || h.launcherSel != 2 {
 		reg.mu.Unlock()
 		t.Fatalf("compact list wheel selected %d, want two 56px rows", h.launcherSel)
+	}
+	reg.mu.Unlock()
+}
+
+func TestLauncherGridHorizontalMovementPreservesSearchCaret(t *testing.T) {
+	reg, _, _ := openLauncherPanel(t, launcherBrowseTestEntries(8))
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	h.launcherGrid = true
+	h.search = ui.NewField("query")
+	reg.rebuildPanel(h)
+	h.launcherSel = 1
+	if !h.keyInput(reg, ui.KeyInput{Code: keyLeft, Sym: ui.SymLeft}) {
+		reg.mu.Unlock()
+		t.Fatal("Left did not edit the search field")
+	}
+	if h.search.Cursor != 4 || h.launcherSel != 1 {
+		reg.mu.Unlock()
+		t.Fatalf("Left moved caret/selection to %d/%d, want 4/1", h.search.Cursor, h.launcherSel)
+	}
+	if !h.keyInput(reg, ui.KeyInput{Code: keyRight, Sym: ui.SymRight, Mods: ui.ModAlt}) {
+		reg.mu.Unlock()
+		t.Fatal("Alt+Right did not move across the grid")
+	}
+	if h.search.Cursor != 4 || h.launcherSel != 2 {
+		reg.mu.Unlock()
+		t.Fatalf("Alt+Right moved caret/selection to %d/%d, want 4/2", h.search.Cursor, h.launcherSel)
 	}
 	reg.mu.Unlock()
 }
