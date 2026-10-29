@@ -17,7 +17,7 @@
     "internal/notifyclient": 83.65,
     "internal/onboarding": 68.75,
     "internal/platform/niri": 73.1,
-    "internal/platform/wayland": 47.84,
+    "internal/platform/wayland": 47.28,
     "internal/platform/wayland/gamma": 17.75,
     "internal/plugin": 76.79,
     "internal/plugin/store": 82.33,
