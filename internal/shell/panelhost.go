@@ -307,11 +307,16 @@ type PanelHost struct {
 	fields             map[string]*ui.Field
 	editors            map[string]*retainedEditor
 
-	launcherResults []launcher.Result
-	launcherSel     int
-	launcherScroll  int
-	launcherMenuID  string
-	launcherActions []launcher.Action
+	launcherResults              []launcher.Result
+	launcherBaseResults          []launcher.Result
+	launcherCategory             string
+	launcherGrid                 bool
+	launcherCompact              bool
+	launcherBrowseControlsHeight int
+	launcherSel                  int
+	launcherScroll               int
+	launcherMenuID               string
+	launcherActions              []launcher.Action
 	// launcherAttempt stamps the user's current launcher interaction; an
 	// activation completion applies only while its stamp is still current.
 	// launcherPendingAttempt is handed to the serialized service activation,
@@ -1472,6 +1477,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		svc := r.launcherServiceLocked()
 		svc.Open()
 		r.launcherSendQuery(h, "")
+		r.refreshLauncherApplicationsLocked(h)
 	}
 	if id == PanelWallpaper {
 		h.search = ui.NewField("")
@@ -3301,7 +3307,12 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 		return true
 	}
 	if h.id == PanelLauncher {
-		h.launcherMoveSel(r, wheelRows(delta, launcherSlotHeight))
+		layout := launcherLayoutFor(r, h)
+		rows := wheelRows(delta, layout.itemHeight)
+		if layout.grid {
+			rows *= layout.columns
+		}
+		h.launcherMoveSel(r, rows)
 		return true
 	}
 	if !h.scrollBy(delta) {
