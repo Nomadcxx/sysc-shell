@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -120,6 +121,9 @@ func TestFetchMediaRunsQueuedOperationBetweenDownloads(t *testing.T) {
 	f := newStoreFixture(t, nil)
 	firstBody, secondBody := []byte("first"), []byte("second")
 	firstStarted, releaseFirst := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	defer release()
 	events := make(chan string, 2)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body []byte
@@ -156,7 +160,7 @@ func TestFetchMediaRunsQueuedOperationBetweenDownloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	close(releaseFirst)
+	release()
 
 	var got [2]string
 	for i := range got {
