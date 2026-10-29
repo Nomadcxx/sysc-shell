@@ -60,7 +60,7 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 			break
 		}
 	}
-	loading := len(state.Listings) == 0 && (strings.Contains(strings.ToLower(state.Busy), "refresh") || !sourceAttempted)
+	loading := strings.Contains(strings.ToLower(state.Busy), "refresh") || !sourceAttempted
 	switch {
 	case h.pluginStoreRefreshErr != "":
 		children = append(children, pluginStoreBanner(h, "Refresh failed", h.pluginStoreRefreshErr, true, inner, metrics))

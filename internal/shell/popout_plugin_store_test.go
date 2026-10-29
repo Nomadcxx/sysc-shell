@@ -92,15 +92,16 @@ func TestPluginStorePanelHeadlessRendersEveryGridStateAtBothSizes(t *testing.T) 
 	withScreenshot.Entry.Screenshot = &catalog.Screenshot{URL: "https://example.com/timer.png", SHA256: strings.Repeat("c", 64)}
 	withoutScreenshot := modelListing("org.sysc.clock", "Clock", "community", "utilities", "1.0.0")
 	states := []struct {
-		name  string
-		state store.State
-		want  string
+		name     string
+		state    store.State
+		want     string
+		alsoWant string
 	}{
 		{name: "not fetched", state: store.State{Sources: []store.SourceState{{Name: "sysc"}}}, want: "Loading plugins…"},
 		{name: "loading", state: store.State{Busy: "refresh"}, want: "Loading plugins…"},
 		{name: "results and no screenshot", state: store.State{
 			Sources: []store.SourceState{{Name: "sysc"}}, Listings: []store.Listing{withScreenshot, withoutScreenshot},
-		}, want: "Clock"},
+		}, want: "Clock", alsoWant: "Loading plugins…"},
 		{name: "empty", state: store.State{Sources: []store.SourceState{{Name: "sysc", FetchedAt: time.Now()}}}, want: "No plugins match"},
 		{name: "all sources failed", state: store.State{
 			Sources: []store.SourceState{{Name: "sysc", Err: errors.New("network unreachable")}},
@@ -124,6 +125,9 @@ func TestPluginStorePanelHeadlessRendersEveryGridStateAtBothSizes(t *testing.T) 
 				}
 				if !pluginStoreHasText(host.root, tc.want) {
 					t.Fatalf("panel lacks %q at %dx%d", tc.want, width, height)
+				}
+				if tc.alsoWant != "" && !pluginStoreHasText(host.root, tc.alsoWant) {
+					t.Fatalf("panel lacks %q at %dx%d", tc.alsoWant, width, height)
 				}
 				if !pluginStoreHasKind(host.root, ui.KindTextField) {
 					t.Fatal("panel has no search field")
@@ -265,7 +269,7 @@ func TestPluginStoreFilterAndSortControlsUpdateTheGrid(t *testing.T) {
 	clock.Installed = &store.Record{Source: "community", Version: "1.0.0"}
 	appearance := modelListing("org.sysc.editor", "Editor", "sysc", "appearance", "1.0.0")
 	state := store.State{
-		Sources:  []store.SourceState{{Name: "sysc"}, {Name: "community"}},
+		Sources:  []store.SourceState{{Name: "sysc", FetchedAt: time.Now()}, {Name: "community", FetchedAt: time.Now()}},
 		Listings: []store.Listing{timer, clock, appearance},
 	}
 	reg, host, _ := openPluginStoreTestPanel(t, state, ui.Rect{W: 1600, H: 1000})
