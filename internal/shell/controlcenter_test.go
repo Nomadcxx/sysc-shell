@@ -2113,20 +2113,27 @@ func TestCalendarPageRebuildsWhenPluginPublishes(t *testing.T) {
 	if !reply.OK {
 		t.Fatalf("state.set reply = %+v", reply)
 	}
-	reg.mu.Lock()
-	got := renderText(h.root)
-	reg.mu.Unlock()
-	if !strings.Contains(got, "Updated standup") {
-		t.Fatalf("calendar page remained stale after state.set: %q", got)
-	}
-	select {
-	case inv := <-reg.invalidations:
-		want := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelControlCenter)}
-		if inv != want {
-			t.Fatalf("calendar invalidation = %+v, want %+v", inv, want)
+	want := wayland.Invalidation{Global: 7, SurfaceID: panelSurfaceID(PanelControlCenter)}
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case inv := <-reg.invalidations:
+			if inv != want {
+				t.Fatalf("calendar invalidation = %+v, want %+v", inv, want)
+			}
+			reg.mu.Lock()
+			got := renderText(h.root)
+			reg.mu.Unlock()
+			if strings.Contains(got, "Updated standup") {
+				return
+			}
+		case <-timer.C:
+			reg.mu.Lock()
+			got := renderText(h.root)
+			reg.mu.Unlock()
+			t.Fatalf("calendar page remained stale after state.set: %q", got)
 		}
-	default:
-		t.Fatal("calendar state update rebuilt without invalidating the surface")
 	}
 }
 

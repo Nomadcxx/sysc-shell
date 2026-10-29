@@ -1187,7 +1187,8 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 		DeclaredPanels: m.Panels,
 		Store:          store,
 		StateChanged: func(key string) {
-			h.stateChanged(id, key)
+			// Panel rebuilds can outlast the plugin host-call timeout.
+			go h.stateChanged(id, key)
 		},
 		CallTimeout: pluginCallTimeout,
 		OpenPanel: func(ctx context.Context, p v1.PanelParams) (v1.PanelResult, error) {
