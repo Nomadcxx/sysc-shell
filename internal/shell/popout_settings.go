@@ -92,7 +92,6 @@ var settingsSectionIcons = map[string]string{
 	"Screensaver":   "schedule",
 	"Night Light":   "bedtime",
 	"Weather":       "partly_cloudy_day",
-	"Displays":      "display_settings",
 	"Tray":          "apps",
 	"Applications":  "apps",
 	"Plugins":       "extension",
@@ -852,9 +851,9 @@ func settingsMeasure(h *PanelHost) ui.MeasureText {
 }
 
 // settingsBarPage is one of Bar's pages (settings redesign D8). Appearance
-// leads with the live preview and the Style and Shape picture cards, above
-// the rest of its groups; Layout is the lane editor; Displays holds the
-// per-output overrides.
+// starts with the Enabled control, then the live preview and Style and Shape
+// picture cards; Layout is the lane editor; Displays holds the per-output
+// overrides.
 func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
 	var entries []settings.Entry
 	if h.set != nil {
@@ -872,23 +871,29 @@ func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
 		}
 		return settingsPageColumn(h, entries)
 	}
-	var lead []*ui.Node
-	if r != nil {
-		lead = append(lead, settingsBarPreview(r, h))
-	}
+	var lead, pictureCards []*ui.Node
 	var rest []settings.Entry
 	for _, e := range entries {
+		if e.Path == "bar.enabled" {
+			rows := settingsGroupRows(h, []settings.Entry{e}, settingsCardInner(h))
+			lead = append(lead, settingsGroupCard(h, "", rows))
+			continue
+		}
 		if e.Present == settings.PresentCards {
-			cards := []*ui.Node{settingsCardsFor(r, h, e)}
+			cardRows := []*ui.Node{settingsCardsFor(r, h, e)}
 			if reason := settingsBarDimReason(h, e.Path); reason != "" {
-				settingsDimRow(&ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{{Kind: ui.KindColumn}, cards[0]}}, reason)
-				cards = append(cards, &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+				settingsDimRow(&ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{{Kind: ui.KindColumn}, cardRows[0]}}, reason)
+				cardRows = append(cardRows, &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 			}
-			lead = append(lead, settingsGroupCard(h, e.Label, cards))
+			pictureCards = append(pictureCards, settingsGroupCard(h, e.Label, cardRows))
 			continue
 		}
 		rest = append(rest, e)
 	}
+	if r != nil {
+		lead = append(lead, settingsBarPreview(r, h))
+	}
+	lead = append(lead, pictureCards...)
 	col := settingsPageColumn(h, rest, lead...)
 	settingsDimBarRows(h, col)
 	return col

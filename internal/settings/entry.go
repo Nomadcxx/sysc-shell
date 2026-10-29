@@ -27,9 +27,6 @@ type Getter func(config.Config) string
 // Setter writes one setting, validating the string form itself.
 type Setter func(*config.Config, string) error
 
-// Entry is one setting. Its accessors live here rather than in a switch so a
-// setting is declared in exactly one place and the compiler enforces that a
-// new entry carries them.
 // Presentation is how a row shows its control (design D2). The zero value
 // keeps the kind's own control, except that a short enum renders segmented.
 type Presentation uint8
@@ -47,6 +44,9 @@ const (
 	PresentSwatch
 )
 
+// Entry is one setting. Its accessors live here rather than in a switch so a
+// setting is declared in exactly one place and the compiler enforces that a
+// new entry carries them.
 type Entry struct {
 	Path     string
 	Label    string
