@@ -164,6 +164,29 @@ func settingsBarTop(img *ui.Image, height, scale120 int) *ui.Image {
 	return &crop
 }
 
+// settingsBarPadHeight centers a shorter strip in the shared card slot without
+// stretching its rendered bar.
+func settingsBarPadHeight(img *ui.Image, height, scale120 int) *ui.Image {
+	if img == nil {
+		return nil
+	}
+	if !ui.Scale120(scale120).Valid() {
+		scale120 = int(ui.ScaleUnit)
+	}
+	wantHeight := height * scale120 / 120
+	if wantHeight <= img.Height {
+		return img
+	}
+	stride := img.Width * 4
+	pix := make([]byte, stride*wantHeight)
+	top := (wantHeight - img.Height) / 2
+	for y := 0; y < img.Height; y++ {
+		src := y * img.Stride
+		copy(pix[(top+y)*stride:], img.Pix[src:src+stride])
+	}
+	return &ui.Image{Width: img.Width, Height: wantHeight, Stride: stride, Pix: pix}
+}
+
 // settingsPictureCardW is the widest a picture card's bar segment gets.
 const settingsPictureCardW = 240
 
@@ -182,21 +205,42 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 	imgW := min(settingsPictureCardW, max(cardW-2*pad, 0))
 	measure := settingsMeasure(h)
 	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Name: e.Label, Role: "radiogroup"}
+	sideBar := h.draft.Bar.Edge == "left" || h.draft.Bar.Edge == "right"
+	commonImgH := 0
+	if !sideBar {
+		for _, opt := range e.Options {
+			cfg := h.draft
+			if e.Set == nil || e.Set(&cfg, opt) != nil {
+				continue
+			}
+			commonImgH = max(commonImgH, cfg.Bar.SurfaceExtent())
+		}
+	}
 	for _, opt := range e.Options {
 		cfg := h.draft
 		if e.Set == nil || e.Set(&cfg, opt) != nil {
 			continue
 		}
 		label := settingsOptionLabel(opt)
-		imgH := cfg.Bar.SurfaceExtent()
+		imgH := commonImgH
 		imgWForNode := imgW
 		img := r.settingsBarImage(h, cfg, settingsPreviewLayoutW(h, imgW))
-		if cfg.Bar.Edge == "left" || cfg.Bar.Edge == "right" {
+		if sideBar {
 			imgH = min(imgW, h.place.Output.H)
 			imgWForNode = cfg.Bar.SurfaceExtent()
 			img = settingsBarTop(img, imgH, h.scale120)
 		} else {
 			img = settingsBarEnd(img, imgW, h.scale120)
+			img = settingsBarPadHeight(img, imgH, h.scale120)
+		}
+		cacheKey := e.Path + "\x00" + opt
+		if img == nil {
+			img = h.barCardImages[cacheKey]
+		} else {
+			if h.barCardImages == nil {
+				h.barCardImages = make(map[string]*ui.Image)
+			}
+			h.barCardImages[cacheKey] = img
 		}
 		_, labelH := measure(label, ui.TextAttrs{})
 		// A button sizes to a control, not to its content, so the card states
