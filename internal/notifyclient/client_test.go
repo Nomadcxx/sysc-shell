@@ -339,6 +339,30 @@ func TestClientRefusesToSendWhileDetached(t *testing.T) {
 	}
 }
 
+func TestWriteLoopClosesSocketWhenFrameWriteFails(t *testing.T) {
+	service := startService(t)
+	client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: SocketPath(service.dir), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	service.accept(t)
+
+	// An expired deadline forces the frame write to fail without racing peer cleanup.
+	if err := client.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	writer := make(chan []byte, 1)
+	writer <- []byte("{}")
+	(&Client{}).writeLoop(client, writer, make(chan struct{}))
+
+	if err := client.SetWriteDeadline(time.Time{}); err == nil {
+		if _, err := client.Write([]byte("probe")); err == nil {
+			t.Fatal("writeLoop left the socket open after a failed frame write")
+		}
+	}
+}
+
 // fakeService is the presenter socket the real service would bind.
 type fakeService struct {
 	dir      string
