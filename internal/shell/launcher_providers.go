@@ -3,8 +3,11 @@ package shell
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/emoji"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
@@ -21,7 +25,7 @@ import (
 // of Activate waits without holding Registry.mu, so they may take it.
 func (r *Registry) launcherProviders() []launcher.Provider {
 	providers := []launcher.Provider{
-		r.calcProvider(), r.emojiProvider(), r.clipboardProvider(), r.notesProvider(), r.sessionProvider(), r.launcherActionProvider(),
+		r.calcProvider(), r.emojiProvider(), r.clipboardProvider(), r.windowsProvider(), r.notesProvider(), r.sessionProvider(), r.launcherActionProvider(),
 	}
 	for _, cfg := range r.cfg.Launcher.Providers {
 		cfg := cfg
@@ -63,6 +67,74 @@ func (r *Registry) launcherProviders() []launcher.Provider {
 		}
 	}
 	return providers
+}
+
+const launcherWindowResultPrefix = "window:"
+
+func (r *Registry) windowsProvider() launcher.Provider {
+	return launcher.Provider{
+		Name: "Windows", Prefix: "/win", Glyph: "glyph:desktop_windows",
+		Description: "Browse open windows · Search titles and applications",
+		Query: func(query string) []launcher.Result {
+			r.mu.Lock()
+			entries := make([]launcher.Entry, 0)
+			for _, app := range r.running {
+				for _, window := range app.Members {
+					name := window.Title
+					if name == "" {
+						name = app.Name
+					}
+					entry := launcher.Entry{
+						ID:   launcherWindowResultPrefix + strconv.FormatUint(window.ID, 10),
+						Name: name, Comment: app.Name, IconName: app.Icon,
+					}
+					if window.AppID != "" {
+						entry.Keywords = []string{window.AppID}
+					}
+					entries = append(entries, entry)
+				}
+			}
+			r.mu.Unlock()
+			return launcherRank(entries, query, nil)
+		},
+		Activate: func(_, id, _ string) error {
+			value, ok := strings.CutPrefix(id, launcherWindowResultPrefix)
+			if !ok || value == "" {
+				return errors.New("launcher: unsupported window")
+			}
+			windowID, err := strconv.ParseUint(value, 10, 64)
+			if err != nil {
+				return errors.New("launcher: invalid window ID")
+			}
+
+			r.mu.Lock()
+			found := false
+			for _, app := range r.running {
+				for _, window := range app.Members {
+					if window.ID == windowID {
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+			send := r.niriSend
+			r.mu.Unlock()
+			if !found {
+				return errors.New("launcher: window no longer exists")
+			}
+
+			action := niri.FocusWindow{ID: windowID}
+			if send != nil {
+				return send(action)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			return niri.Action(ctx, os.Getenv("NIRI_SOCKET"), action)
+		},
+	}
 }
 
 const launcherActionResultPrefix = "launcher-action:"
