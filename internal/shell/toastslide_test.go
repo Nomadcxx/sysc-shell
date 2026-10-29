@@ -292,13 +292,16 @@ func TestToastResizeKeepsAnimatedInputInsideAcceptedSurface(t *testing.T) {
 	if len(region) != 1 {
 		t.Fatalf("animated input region = %+v, want the visible part of one card", region)
 	}
-	if got := region[0]; got != (ui.Rect{X: 0, Y: 12, W: 288, H: 56}) {
-		t.Fatalf("animated input rect = %+v, want the visible card area inside the accepted surface", got)
-	}
 	r.mu.Lock()
 	drawn := h.drawnRect("eDP-1", h.cards["eDP-1"][0])
 	scale := ui.Scale120(h.scale120["eDP-1"])
 	r.mu.Unlock()
+	want := ui.Rect{X: max(drawn.X, 0), Y: max(drawn.Y, 0)}
+	want.W = min(300, drawn.X+drawn.W) - want.X
+	want.H = min(800, drawn.Y+drawn.H) - want.Y
+	if got := region[0]; got != want {
+		t.Fatalf("animated input rect = %+v, want visible card area %+v inside the accepted surface", got, want)
+	}
 	box := scale.PhysicalRect(drawn)
 	if box.X >= 0 || box.X+box.W >= 300 {
 		t.Fatalf("drawn card = %+v, want a partially clipped active slide", box)

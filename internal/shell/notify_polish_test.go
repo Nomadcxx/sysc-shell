@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -109,16 +110,20 @@ func TestNotifyCentreFiltersGroupMembersAcrossMidnight(t *testing.T) {
 }
 
 func TestNotifyToastIsItsOwnGround(t *testing.T) {
+	metrics, ok := theme.MetricsFor(theme.DensityDefault)
+	if !ok {
+		t.Fatal("default density metrics are missing")
+	}
 	toast := NotificationCard(baseNotification(), nil, false, nil)
-	if toast.Kind != ui.KindColumn || toast.Padding != cardPadding || toast.Children[0].Kind != ui.KindRow {
+	if toast.Kind != ui.KindColumn || toast.Padding != metrics.CardPadding || toast.Children[0].Kind != ui.KindRow {
 		t.Fatalf("toast root = %+v, want a padded column leading with the lead row", toast)
 	}
 	now := time.Now()
 	live := ActiveGroupCard(activeGroup{members: []protocol.Notification{baseNotification()}}, now, false, nil, false, nil)
 	history := HistoryCard(protocol.HistoryEntry{ID: 1, Summary: "history"}, now, nil, false, nil)
 	for _, card := range []*ui.Node{live, history} {
-		if card.Children[0].Fill != ui.FillContainerHigh {
-			t.Fatal("centre card lost its high container fill")
+		if card.Children[0].Fill != ui.FillContainerHigh || card.Children[0].Padding != metrics.CardPadding {
+			t.Fatalf("centre card = %+v, want high container with %d px padding", card.Children[0], metrics.CardPadding)
 		}
 	}
 }

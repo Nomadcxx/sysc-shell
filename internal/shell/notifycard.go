@@ -22,7 +22,6 @@ const (
 	// lead stays sharp on a scaled output.
 	notifyIconRaster = 64
 	cardGap          = 6
-	cardPadding      = 12
 	cardLeadGap      = 10
 	cardSectionGap   = 8
 	cardGlyphSize    = 18
@@ -32,6 +31,11 @@ const (
 
 const notificationRasterCacheBytes = 16 << 20
 const notificationRasterEntryBytes = 128
+
+func defaultNotificationMetrics() theme.Metrics {
+	m, _ := theme.MetricsFor(theme.DensityDefault)
+	return m
+}
 
 type notificationRasterEntry struct {
 	image  *protocol.Image
@@ -172,9 +176,9 @@ func valueMeter(value *int32) *ui.Node {
 
 // wrapNotifyCard is the centre's card chrome. A critical entry strokes the
 // error colour, the same edge a critical toast paints.
-func wrapNotifyCard(inner *ui.Node, critical bool, fill ui.Fill) *ui.Node {
+func wrapNotifyCard(inner *ui.Node, critical bool, fill ui.Fill, padding int) *ui.Node {
 	cap := &ui.Node{
-		Kind: ui.KindCapsule, Fill: fill, Padding: cardPadding, Shape: ui.ShapeCard,
+		Kind: ui.KindCapsule, Fill: fill, Padding: padding, Shape: ui.ShapeCard,
 		Action: inner.Action, Children: []*ui.Node{inner},
 	}
 	if critical {
@@ -335,7 +339,12 @@ func ExpandedNotificationCard(n protocol.Notification, raster *ui.Image, allowLi
 // ground, rim and blur around it. width is the card's laid-out width, which
 // the action rows pack against.
 func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time, width int, tr translateFunc) *ui.Node {
-	root := &ui.Node{Kind: ui.KindColumn, Gap: cardSectionGap, Padding: cardPadding, Children: []*ui.Node{
+	return notificationCardWithMetrics(n, raster, allowLinks, measure, wrap, now, width, tr, defaultNotificationMetrics())
+}
+
+func notificationCardWithMetrics(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time, width int, tr translateFunc, metrics theme.Metrics) *ui.Node {
+	padding := metrics.CardPadding
+	root := &ui.Node{Kind: ui.KindColumn, Gap: cardSectionGap, Padding: padding, Children: []*ui.Node{
 		notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, raster, n.Value, allowLinks, wrap, now, n.Timestamp),
 	}}
 
@@ -349,7 +358,7 @@ func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool
 		}
 		pills = append(pills, a)
 	}
-	rowWidth := width - 2*cardPadding
+	rowWidth := width - 2*padding
 	for _, row := range actionRows(pills, rowWidth, measure) {
 		// Only a pill too wide for any row takes the column, where it spans
 		// the card and its label clips; one that fits keeps its own width.
@@ -426,6 +435,10 @@ func markDefault(root *ui.Node, id uint32) {
 // HistoryCard builds one closed history row. A right-pinned remove control
 // is present when the pinned service accepts history.remove.
 func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allowLinks bool, tr translateFunc) *ui.Node {
+	return historyCardWithMetrics(e, now, raster, allowLinks, tr, defaultNotificationMetrics())
+}
+
+func historyCardWithMetrics(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allowLinks bool, tr translateFunc, metrics theme.Metrics) *ui.Node {
 	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, nil, now, e.Timestamp)
 	if historyRemoveSupported() {
 		inner = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
@@ -433,12 +446,16 @@ func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allow
 			centreRemoveButton(fmt.Sprintf("notify:%d:remove", e.ID), cardT(tr, "notify.remove", "Remove")),
 		}}
 	}
-	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical, ui.FillContainerHigh))
+	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical, ui.FillContainerHigh, metrics.CardPadding))
 }
 
 // ActiveGroupCard is one Current-tab group. Actions come from the newest
 // member. Expand lists up to 10 members.
 func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Image, allowLinks bool, tr translateFunc) *ui.Node {
+	return activeGroupCardWithMetrics(g, now, expanded, raster, allowLinks, tr, defaultNotificationMetrics())
+}
+
+func activeGroupCardWithMetrics(g activeGroup, now time.Time, expanded bool, raster *ui.Image, allowLinks bool, tr translateFunc, metrics theme.Metrics) *ui.Node {
 	if len(g.members) == 0 {
 		return &ui.Node{Kind: ui.KindColumn}
 	}
@@ -492,7 +509,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 			root.Children = append(root.Children, &ui.Node{Kind: ui.KindText, Text: m.Summary, Tone: toneFor(m.Urgency)})
 		}
 	}
-	return cardColumn(wrapNotifyCard(root, critical, ui.FillContainerHigh))
+	return cardColumn(wrapNotifyCard(root, critical, ui.FillContainerHigh, metrics.CardPadding))
 }
 
 func cardColumn(n *ui.Node) *ui.Node {

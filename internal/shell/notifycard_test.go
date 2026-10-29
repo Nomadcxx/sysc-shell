@@ -635,7 +635,7 @@ func TestNotifyCardKeepsALonePillAtItsOwnWidth(t *testing.T) {
 	if pill == nil {
 		t.Fatal("no Reply pill")
 	}
-	if full := toastCardWidth - 2*cardPadding; pill.Bounds.W >= full {
+	if full := toastCardWidth - 2*defaultNotificationMetrics().CardPadding; pill.Bounds.W >= full {
 		t.Fatalf("lone pill is %d px wide, the full row; want its own width", pill.Bounds.W)
 	}
 }

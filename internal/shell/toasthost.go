@@ -1110,11 +1110,12 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 // several lines once a drag has expanded it.
 func (h *toastHost) cardOf(n protocol.Notification) *ui.Node {
 	icon := h.r.notificationLeadImageLocked(n.AppIcon, n.DesktopEntry, n.Image)
+	metrics := h.r.surfaceTheme().Metrics
 	var wrap func(string) []string
 	if h.expanded[n.ID] {
-		wrap = h.wrapBody
+		wrap = func(s string) []string { return h.wrapBody(s, metrics.CardPadding) }
 	}
-	return notificationCard(n, icon, h.r.linksAllowed(), h.measureText(), wrap, time.Now(), h.cardWidth(), cfgT(h.r.cfg))
+	return notificationCardWithMetrics(n, icon, h.r.linksAllowed(), h.measureText(), wrap, time.Now(), h.cardWidth(), cfgT(h.r.cfg), metrics)
 }
 
 // cardWidth is the width toast cards lay out at: the design width, or
@@ -1130,9 +1131,9 @@ func (h *toastHost) cardWidth() int {
 	return width
 }
 
-func (h *toastHost) wrapBody(s string) []string {
+func (h *toastHost) wrapBody(s string, padding int) []string {
 	measure := h.measureText()
-	width := h.cardWidth() - 2*cardPadding - cardIconSize - cardLeadGap
+	width := h.cardWidth() - 2*padding - cardIconSize - cardLeadGap
 	return wrapLines(s, width, func(text string) int {
 		w, _ := measure(text, ui.TextAttrs{})
 		return w
