@@ -3106,6 +3106,36 @@ func TestDropZonePaintsTrackOnlyWhenActive(t *testing.T) {
 	}
 }
 
+func TestActiveFilledDropZoneKeepsCardAndChildren(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, 24, 24)
+	zone := &ui.Node{
+		Kind: ui.KindDropZone, Fill: ui.FillContainerHigh, DropActive: true,
+		Bounds: ui.Rect{W: 24, H: 24},
+		Children: []*ui.Node{{
+			Kind: ui.KindCapsule, Fill: ui.FillError, Bounds: ui.Rect{X: 8, Y: 8, W: 8, H: 8},
+		}},
+	}
+	if err := paintNode(c, zone, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 12, 5); got != testStyle.Capsule {
+		t.Errorf("card pixel = %+v, want card fill %+v", got, testStyle.Capsule)
+	}
+	if got := pixelAt(t, c, 12, 12); got != testStyle.Error {
+		t.Errorf("child pixel = %+v, want child fill %+v", got, testStyle.Error)
+	}
+	got := pixelAt(t, c, 12, 0)
+	nearAccent := func(channel, accent uint8) bool {
+		return math.Abs(float64(int(channel)-int(accent))) <= 4
+	}
+	if !nearAccent(got.R, testStyle.Accent.R) || !nearAccent(got.G, testStyle.Accent.G) ||
+		!nearAccent(got.B, testStyle.Accent.B) || !nearAccent(got.A, testStyle.Accent.A) {
+		t.Errorf("active edge = %+v, want accent %+v within antialiasing tolerance", got, testStyle.Accent)
+	}
+}
+
 func TestNotePapersAreDistinctAndFixed(t *testing.T) {
 	fills := []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac}
 	seen := map[Color]bool{}

@@ -388,6 +388,8 @@ func TestConvertMapsPluginButtonToneToFill(t *testing.T) {
 		{name: "destructive", node: &v1.Node{Kind: v1.KindButton, Text: "Reset", Tone: v1.ToneError}, want: ui.FillError},
 		{name: "subtle", node: &v1.Node{Kind: v1.KindButton, Text: "Close", Tone: v1.ToneSubtle}, want: ui.FillNone},
 		{name: "icon-only primary", node: &v1.Node{Kind: v1.KindButton, Icon: "camera"}, want: ui.FillAccent},
+		{name: "explicit surface", node: &v1.Node{Kind: v1.KindButton, Text: "Close", Fill: "surface"}, want: ui.FillNone},
+		{name: "explicit surface beats destructive tone", node: &v1.Node{Kind: v1.KindButton, Text: "Reset", Tone: v1.ToneError, Fill: "surface"}, want: ui.FillNone},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

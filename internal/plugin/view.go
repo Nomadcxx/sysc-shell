@@ -439,10 +439,12 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Kind = ui.KindButton
 		out.Text = n.Text
 		out.StrokeColor = n.MarkerColor
-		if n.Tone == v1.ToneError {
-			out.Fill = ui.FillError
-		} else if n.Tone != v1.ToneSubtle && out.Fill == ui.FillNone {
-			out.Fill = ui.FillAccent
+		if n.Fill == "" {
+			if n.Tone == v1.ToneError {
+				out.Fill = ui.FillError
+			} else if n.Tone != v1.ToneSubtle {
+				out.Fill = ui.FillAccent
+			}
 		}
 		if n.Icon != "" {
 			icon, err := iconNode(n.Icon, path)

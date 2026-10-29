@@ -56,7 +56,7 @@ func stampPluginActions(n *ui.Node, viewID string) {
 
 func buildPluginWidget(item config.Item) textWidget {
 	row := &ui.Node{Kind: ui.KindRow, Width: pluginPlaceholderWidth}
-	applyPluginPlaceholder(row, item.Plugin, "starting", "")
+	applyPluginPlaceholder(row, item.Plugin, "starting", false, "")
 	rev := new(uint64)
 	*rev = ^uint64(0)
 	lastName := item.Plugin
@@ -100,7 +100,7 @@ func buildPluginWidget(item config.Item) textWidget {
 			*rev = id
 			lastName = name
 			if !ok || frame.Failed || frame.Root == nil {
-				applyPluginPlaceholder(row, name, statusFor(frame, ok), frame.ViewID)
+				applyPluginPlaceholder(row, name, statusFor(frame, ok), ok && frame.Failed, frame.ViewID)
 				return true
 			}
 			adoptPluginNode(row, frame.Root)
@@ -116,10 +116,13 @@ func statusFor(frame pluginFrame, ok bool) string {
 	if frame.Label != "" {
 		return frame.Label
 	}
-	return "failed"
+	if frame.Failed {
+		return "failed"
+	}
+	return "starting"
 }
 
-func applyPluginPlaceholder(row *ui.Node, name, status, viewID string) {
+func applyPluginPlaceholder(row *ui.Node, name, status string, failed bool, viewID string) {
 	accessibleName := name
 	if status != "" {
 		accessibleName += ": " + status
@@ -128,18 +131,23 @@ func applyPluginPlaceholder(row *ui.Node, name, status, viewID string) {
 	row.Width = pluginPlaceholderWidth
 	row.Gap = 0
 	row.Action = ""
+	row.Tooltip = accessibleName
 	row.Name = accessibleName
 	row.Role = "status"
 	mark := &ui.Node{
-		Kind: ui.KindText, Text: name, Tone: ui.ToneError,
-		Name: accessibleName, Role: "status", Tooltip: status,
+		Kind: ui.KindText, Text: name, MaxWidth: pluginPlaceholderWidth, Tone: ui.ToneSubtle,
+		Name: accessibleName, Role: "status", Tooltip: accessibleName,
 	}
-	if viewID != "" {
-		mark.Kind = ui.KindButton
-		mark.Fill = ui.FillError
-		mark.Action = pluginActionPrefix + viewID + ":" + "camera"
-		mark.Role = "button"
-		mark.Focusable = true
+	if failed {
+		mark.Tone = ui.ToneError
+		if viewID != "" {
+			mark.Kind = ui.KindButton
+			mark.Width = pluginPlaceholderWidth
+			mark.Fill = ui.FillError
+			mark.Action = pluginActionPrefix + viewID + ":" + "camera"
+			mark.Role = "button"
+			mark.Focusable = true
+		}
 	}
 	row.Children = []*ui.Node{mark}
 }
