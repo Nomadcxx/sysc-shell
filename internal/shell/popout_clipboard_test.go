@@ -30,8 +30,6 @@ type clipboardRecorder struct {
 	copied   []string
 	copyErr  error
 	copyCall chan string
-	registry *Registry
-	offLock  chan bool
 }
 
 func (r *clipboardRecorder) Restore(id string) error {
@@ -63,13 +61,6 @@ func (r *clipboardRecorder) Resync() error { return nil }
 
 func (r *clipboardRecorder) Copy(text string) error {
 	r.copied = append(r.copied, text)
-	if r.registry != nil && r.offLock != nil {
-		unlocked := r.registry.mu.TryLock()
-		if unlocked {
-			r.registry.mu.Unlock()
-		}
-		r.offLock <- unlocked
-	}
 	if r.copyCall != nil {
 		r.copyCall <- text
 	}

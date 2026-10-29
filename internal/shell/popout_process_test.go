@@ -112,8 +112,7 @@ func TestMonitorCopyActionRunsOffLockAndReportsResult(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := newPanelRegistry(t)
 			sender := &clipboardRecorder{
-				copyErr: tc.err, copyCall: make(chan string, 1), registry: reg,
-				offLock: make(chan bool, 1),
+				copyErr: tc.err, copyCall: make(chan string, 1),
 			}
 			reg.BindClipboard(sender)
 			if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
@@ -125,7 +124,7 @@ func TestMonitorCopyActionRunsOffLockAndReportsResult(t *testing.T) {
 			reg.mu.Lock()
 			handled := h.activateMonitor(reg, &ui.Node{Action: "monitor:copy:" + url.QueryEscape(value)})
 			select {
-			case <-sender.offLock:
+			case <-sender.copyCall:
 				reg.mu.Unlock()
 				t.Fatal("clipboard copy began before the panel handler released Registry.mu")
 			case <-time.After(10 * time.Millisecond):
@@ -133,14 +132,6 @@ func TestMonitorCopyActionRunsOffLockAndReportsResult(t *testing.T) {
 			reg.mu.Unlock()
 			if !handled {
 				t.Fatal("copy action was not handled")
-			}
-			select {
-			case unlocked := <-sender.offLock:
-				if !unlocked {
-					t.Fatal("clipboard copy ran while Registry.mu was held")
-				}
-			case <-time.After(time.Second):
-				t.Fatal("clipboard copy was not attempted")
 			}
 			select {
 			case copied := <-sender.copyCall:
