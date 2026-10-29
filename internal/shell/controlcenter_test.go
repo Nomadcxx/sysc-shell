@@ -2164,10 +2164,19 @@ func TestParsePrivacySnapshotRejectsInvalidOrUnboundedStates(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"empty":           "",
-		"malformed":       "{",
-		"future schema":   strings.Replace(privacySnapshotFixture, `"schema":1`, `"schema":2`, 1),
-		"invalid grade":   strings.Replace(privacySnapshotFixture, `"overall":{"grade":"red"`, `"overall":{"grade":"excellent"`, 1),
+		"empty":         "",
+		"malformed":     "{",
+		"future schema": strings.Replace(privacySnapshotFixture, `"schema":1`, `"schema":2`, 1),
+		"invalid grade": strings.Replace(privacySnapshotFixture, `"overall":{"grade":"red"`, `"overall":{"grade":"excellent"`, 1),
+		"category hides installed app grade": strings.Replace(privacySnapshotFixture,
+			`"name":"Browser","grade":"red","installed"`, `"name":"Browser","grade":"green","installed"`, 1),
+		"category hides unknown worst app": strings.Replace(privacySnapshotFixture,
+			`"worst":{"id":"chrome","name":"Google Chrome","grade":"red"}`,
+			`"worst":{"id":"chrome","name":"Google Chrome","grade":"unknown"}`, 1),
+		"overall hides red category": strings.Replace(privacySnapshotFixture,
+			`"overall":{"grade":"red"`, `"overall":{"grade":"amber"`, 1),
+		"overall hides unknown category": strings.Replace(privacySnapshotFixture,
+			`"name":"Browser","grade":"red","installed"`, `"name":"Browser","grade":"unknown","installed"`, 1),
 		"telemetry false": strings.Replace(privacySnapshotFixture, `"telemetry_connections_unknown":true`, `"telemetry_connections_unknown":false`, 1),
 		"bad list count":  strings.Replace(privacySnapshotFixture, `"findings_shown":1`, `"findings_shown":6`, 1),
 		"oversized":       strings.Repeat("x", 128*1024+1),
@@ -2260,7 +2269,7 @@ func TestPrivacyGradePresentationUsesWordsAndThemeFills(t *testing.T) {
 		{"unknown", "Unrated", ui.FillSoft, "shield"},
 		{"future", "Unrated", ui.FillSoft, "shield"},
 	} {
-		raw := strings.Replace(privacySnapshotFixture, `"grade":"red"`, `"grade":"`+tc.grade+`"`, 1)
+		raw := strings.ReplaceAll(privacySnapshotFixture, `"grade":"red"`, `"grade":"`+tc.grade+`"`)
 		r := &Registry{now: time.Date(2026, time.October, 20, 12, 1, 0, 0, time.UTC)}
 		withPrivacyPlugin(t, r, `{"control_center":`+raw+`}`)
 		h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
