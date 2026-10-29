@@ -309,6 +309,34 @@ func TestClientBackpressureReturnsBusy(t *testing.T) {
 	}
 }
 
+func TestWriteLoopStopsWhenSocketWriteFails(t *testing.T) {
+	service := startService(t)
+	socket, err := dial(service.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.accept(t)
+	if err := socket.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	writer := make(chan []byte, 1)
+	writer <- []byte("frame")
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		(&Client{}).writeLoop(socket, writer, stop)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		close(stop)
+		<-done
+		t.Fatal("write loop did not stop after the socket write failed")
+	}
+}
+
 func TestClientReconnectsWithAFreshGeneration(t *testing.T) {
 	service := startService(t)
 	messages := make(chan Message, 32)
