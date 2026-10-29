@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"net/url"
 	"syscall"
 	"testing"
 
@@ -48,6 +49,25 @@ func TestDetailViewShowsTheSelectedProcessAndItsActions(t *testing.T) {
 	}
 	if kill.AriaDisabled || force.AriaDisabled {
 		t.Fatal("own process actions are disabled")
+	}
+}
+
+func TestDetailValuesAreCopyButtonsExceptMissingValues(t *testing.T) {
+	values := detailPairs([][2]string{{"PID:", "27"}, {"exe:", ccDash}}, detailWideValueW)
+	for i, want := range []struct {
+		text   string
+		action string
+	}{{"27", "monitor:copy:" + url.QueryEscape("27")}, {ccDash, ""}} {
+		value := values.Children[i].Children[1]
+		if value.Text != want.text || value.Action != want.action {
+			t.Errorf("value %d = text %q action %q, want %q / %q", i, value.Text, value.Action, want.text, want.action)
+		}
+		if want.action != "" && (value.Role != "button" || !value.Focusable) {
+			t.Errorf("value %d is not an accessible button: %+v", i, value)
+		}
+		if want.action == "" && value.Focusable {
+			t.Errorf("missing value %d is focusable: %+v", i, value)
+		}
 	}
 }
 

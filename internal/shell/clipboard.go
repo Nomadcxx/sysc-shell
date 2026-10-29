@@ -32,6 +32,7 @@ type clipboardBarSummary struct {
 type clipboardUpdate = clipboardclient.Update
 
 type clipboardCommandSender interface {
+	Copy(string) error
 	Restore(string) error
 	Pin(string, bool) error
 	Delete(string) error

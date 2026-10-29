@@ -268,6 +268,7 @@ func (launcherClipboardSender) Delete(string) error                      { retur
 func (launcherClipboardSender) Clear(clipboardprotocol.ClearScope) error { return nil }
 func (launcherClipboardSender) Thumbnail(string, uint16) error           { return nil }
 func (launcherClipboardSender) Resync() error                            { return nil }
+func (launcherClipboardSender) Copy(string) error                        { return nil }
 
 func TestClipboardRestoreCompletionsMatchRequestIDs(t *testing.T) {
 	reg := newPanelRegistry(t)

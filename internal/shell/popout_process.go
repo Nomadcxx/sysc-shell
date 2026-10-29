@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -467,6 +468,14 @@ func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
 	case a == "monitor:close":
 		r.closePanelLocked(h.id)
 		return true
+	case strings.HasPrefix(a, "monitor:copy:"):
+		value, err := url.QueryUnescape(strings.TrimPrefix(a, "monitor:copy:"))
+		if err != nil || value == "" || value == ccDash {
+			return false
+		}
+		h.processStatus, h.processStatusErr = "", nil
+		r.scheduleMonitorCopy(h, value)
+		return true
 	case a == "monitor:settings":
 		return r.openSettingsAtLocked(h.output, "Monitor")
 	case a == "monitor:options":
@@ -574,6 +583,42 @@ func (r *Registry) scheduleProcessSignal(h *PanelHost, identity services.Process
 			current.processStatusErr = nil
 		} else {
 			current.processStatus = processSignalError(identity.PID, err)
+			current.processStatusErr = err
+		}
+		r.rebuildPanel(current)
+		output := current.output
+		r.mu.Unlock()
+		r.publishSurface(output, panelSurfaceID(PanelMonitor))
+	}()
+}
+
+// scheduleMonitorCopy captures the sender while Registry.mu is held, then
+// queues the clipboard command and updates the panel away from the event path.
+func (r *Registry) scheduleMonitorCopy(h *PanelHost, value string) {
+	sender := r.clipboardSender
+	go func() {
+		// The action handler scheduled this while holding r.mu. Wait for it to
+		// finish before calling the clipboard client.
+		r.mu.Lock()
+		r.mu.Unlock()
+
+		var err error
+		if sender == nil {
+			err = errors.New("clipboard daemon unavailable")
+		} else {
+			err = sender.Copy(value)
+		}
+		r.mu.Lock()
+		current := r.panelHosts[PanelMonitor]
+		if current != h {
+			r.mu.Unlock()
+			return
+		}
+		if err == nil {
+			current.processStatus = "Copied to clipboard"
+			current.processStatusErr = nil
+		} else {
+			current.processStatus = "Could not copy to clipboard: " + err.Error()
 			current.processStatusErr = err
 		}
 		r.rebuildPanel(current)

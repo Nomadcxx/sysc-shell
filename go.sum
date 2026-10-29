@@ -4,6 +4,8 @@ github.com/Nomadcxx/sysc-Go v1.0.12 h1:3PrOKTrcgMaSVxMJil6RI4GVXcQirtB0kR3xqsey0
 github.com/Nomadcxx/sysc-Go v1.0.12/go.mod h1:T5ZxuZ8/aboDuOyxs1kIqPpELPtJXeQJlY5XomGJGpQ=
 github.com/Nomadcxx/sysc-clipboard v0.1.4-0.20261019192617-18b64bffd9e7 h1:S3RRDaeP59WV9qn3Z8MEA2OuPqh24uRNF6/ZLNHp6pE=
 github.com/Nomadcxx/sysc-clipboard v0.1.4-0.20261019192617-18b64bffd9e7/go.mod h1:7cmxzqX/qI30j30Yd0aVh1aOmIE9Z0lUjmBgkT1fe9w=
+github.com/Nomadcxx/sysc-clipboard v0.1.5 h1:Xz9/a8eKPVcoUJOxS8tYVHGOmQlr2KVSX4dBOn40rg0=
+github.com/Nomadcxx/sysc-clipboard v0.1.5/go.mod h1:egfFypWBC2Xbe0uVAqwLext3Rkm135dcyDZtp7Qr4Eg=
 github.com/Nomadcxx/sysc-launch v0.5.0 h1:5Ka9oX9HTQWkQTXWflxNFYrFoA1/2NcKxKgc0kxBkQs=
 github.com/Nomadcxx/sysc-launch v0.5.0/go.mod h1:0KGfEGqQ3mptJJnOMmzAHhDAsuEvTfIuLBwKpefIb1Y=
 github.com/Nomadcxx/sysc-metrics v0.7.3 h1:34D6JptNqKUw/pOuL2Yoo2yAe7wDI5i1GKkvSkAqaVo=
