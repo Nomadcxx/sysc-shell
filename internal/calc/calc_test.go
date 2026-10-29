@@ -56,6 +56,32 @@ func TestFormatNegativeZero(t *testing.T) {
 	}
 }
 
+func TestConvertLength(t *testing.T) {
+	cases := []struct {
+		in       string
+		want     float64
+		wantUnit string
+		wantOK   bool
+	}{
+		{"12 km to mi", 7.456454306848, "mi", true},
+		{"2 + 1 km to m", 3000, "m", true},
+		{"1 mi to km", 1.609344, "km", true},
+		{"1e308 km to mi", 6.21371192237334e307, "mi", true},
+		{"12 kg to mi", 0, "", false},
+		{"12 km to kg", 0, "", false},
+		{"12 km to", 0, "", false},
+		{"1e308 km to mm", 0, "", false},
+	}
+	for _, tc := range cases {
+		got, unit, ok := ConvertLength(tc.in)
+		tolerance := math.Max(1, math.Abs(tc.want)) * 1e-12
+		if ok != tc.wantOK || unit != tc.wantUnit || ok && math.Abs(got-tc.want) > tolerance {
+			t.Errorf("ConvertLength(%q) = (%v, %q, %v), want (%v, %q, %v)",
+				tc.in, got, unit, ok, tc.want, tc.wantUnit, tc.wantOK)
+		}
+	}
+}
+
 // Review focus 1.
 func TestInlineRuleNegatives(t *testing.T) {
 	for _, s := range []string{"2048", "e", "pi", "firefox", "-3", "(2)", "", "6*"} {

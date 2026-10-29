@@ -53,6 +53,37 @@ func Format(v float64) string {
 	return strconv.FormatFloat(v, 'g', 12, 64)
 }
 
+var lengthUnitsMeters = map[string]float64{
+	"mm": 0.001, "cm": 0.01, "m": 1, "km": 1000,
+	"in": 0.0254, "ft": 0.3048, "yd": 0.9144, "mi": 1609.344,
+}
+
+// ConvertLength evaluates a numeric expression followed by a length unit and
+// "to" plus a target unit, such as "12 km to mi". It reports false when the
+// input does not match the supported conversion form.
+func ConvertLength(expr string) (float64, string, bool) {
+	fields := strings.Fields(strings.ToLower(expr))
+	if len(fields) < 4 || fields[len(fields)-2] != "to" {
+		return 0, "", false
+	}
+	from, target := fields[len(fields)-3], fields[len(fields)-1]
+	fromMeters, fromOK := lengthUnitsMeters[from]
+	targetMeters, targetOK := lengthUnitsMeters[target]
+	if !fromOK || !targetOK {
+		return 0, "", false
+	}
+
+	value, err := Eval(strings.Join(fields[:len(fields)-3], " "))
+	if err != nil {
+		return 0, "", false
+	}
+	converted := value * (fromMeters / targetMeters)
+	if math.IsNaN(converted) || math.IsInf(converted, 0) {
+		return 0, "", false
+	}
+	return converted, target, true
+}
+
 func (p *parser) peek() byte {
 	if p.pos < len(p.s) {
 		return p.s[p.pos]
