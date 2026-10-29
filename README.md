@@ -285,6 +285,9 @@ to search it. `on_select` receives the full output line as `{selection}` and the
 evaluation. Fixed actions appear in launcher search; actions marked `"dangerous": true` stay hidden
 until you also set `"allow_dangerous": true`.
 
+The launcher also lists open Niri windows. Type `/win` to browse them or `/win <query>` to search
+window titles, app names and app IDs, then select a result to focus it.
+
 ### Checking the config file
 
 ```bash

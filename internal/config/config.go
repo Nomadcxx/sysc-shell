@@ -394,6 +394,7 @@ const (
 	LauncherAppsPrefix    = "/apps"
 	LauncherCalcPrefix    = "/calc"
 	LauncherEmojiPrefix   = "/emo"
+	LauncherWindowsPrefix = "/win"
 	LauncherNotesPrefix   = "/nt"
 	LauncherSessionPrefix = "/session"
 	LauncherActionsPrefix = "/action"

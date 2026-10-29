@@ -627,7 +627,7 @@ func applyLauncher(w wireLauncher, path string) (Launcher, error) {
 	}
 	reservedPrefixes := map[string]struct{}{
 		LauncherAppsPrefix: {}, LauncherCalcPrefix: {}, LauncherEmojiPrefix: {},
-		LauncherNotesPrefix: {}, LauncherSessionPrefix: {}, LauncherActionsPrefix: {},
+		LauncherWindowsPrefix: {}, LauncherNotesPrefix: {}, LauncherSessionPrefix: {}, LauncherActionsPrefix: {},
 	}
 	seenPrefixes := make(map[string]struct{}, len(w.Providers))
 	for i, provider := range w.Providers {

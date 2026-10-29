@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"slices"
 	"strings"
@@ -13,8 +14,113 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
+
+func TestWindowsProvider(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.running = []runningAppSlot{
+		{Name: "Firefox", Icon: "firefox", Members: []niri.Window{
+			{ID: 42, Title: "Niri Manual", AppID: "org.mozilla.firefox"},
+			{ID: 43, Title: "Inbox - Webmail", AppID: "org.mozilla.firefox"},
+		}},
+		{Name: "Code", Icon: "code", Members: []niri.Window{
+			{ID: 44, Title: "Untitled editor", AppID: "org.example.editor"},
+		}},
+	}
+
+	provider := findWindowsProvider(t, r)
+	if provider.Name != "Windows" || provider.Glyph != "glyph:desktop_windows" || provider.Inline {
+		t.Fatalf("windows provider metadata = %+v", provider)
+	}
+
+	browse := provider.Query("")
+	if len(browse) != 3 {
+		t.Fatalf("browse returned %d windows, want 3: %+v", len(browse), browse)
+	}
+	byID := make(map[string]launcher.Result, len(browse))
+	for _, row := range browse {
+		byID[row.Entry.ID] = row
+	}
+	manual, ok := byID["window:42"]
+	if !ok || manual.Entry.Name != "Niri Manual" || manual.Entry.Comment != "Firefox" || manual.Entry.IconName != "firefox" ||
+		!slices.Contains(manual.Entry.Keywords, "org.mozilla.firefox") {
+		t.Fatalf("window row = %+v, want title, app name, app ID, and resolved icon", manual)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{query: "Manual", want: []string{"window:42"}},
+		{query: "org.mozilla.firefox", want: []string{"window:42", "window:43"}},
+		{query: "Firefox", want: []string{"window:42", "window:43"}},
+	} {
+		rows := provider.Query(tc.query)
+		got := make([]string, 0, len(rows))
+		for _, row := range rows {
+			got = append(got, row.Entry.ID)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("query %q returned %v, want %v", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestWindowsProviderActivation(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.running = []runningAppSlot{{Name: "Firefox", Members: []niri.Window{{ID: 42, Title: "Niri Manual", AppID: "org.mozilla.firefox"}}}}
+	provider := findWindowsProvider(t, r)
+
+	var sent []any
+	r.niriSend = func(action any) error {
+		sent = append(sent, action)
+		return nil
+	}
+	if err := provider.Activate("Manual", "window:42", ""); err != nil {
+		t.Fatalf("Activate current window: %v", err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent %d Niri actions, want 1", len(sent))
+	}
+	if action, ok := sent[0].(niri.FocusWindow); !ok || action.ID != 42 {
+		t.Fatalf("sent action = %#v, want FocusWindow{ID: 42}", sent[0])
+	}
+
+	if err := provider.Activate("Manual", "window:bad", ""); err == nil {
+		t.Fatal("malformed window ID activated without an error")
+	}
+	if len(sent) != 1 {
+		t.Fatalf("malformed ID sent a Niri action: %v", sent)
+	}
+
+	r.running = nil
+	if err := provider.Activate("Manual", "window:42", ""); err == nil {
+		t.Fatal("closed window activated without an error")
+	}
+	if len(sent) != 1 {
+		t.Fatalf("stale window sent a Niri action: %v", sent)
+	}
+
+	r.running = []runningAppSlot{{Name: "Firefox", Members: []niri.Window{{ID: 42, Title: "Niri Manual", AppID: "org.mozilla.firefox"}}}}
+	r.niriSend = func(any) error { return errors.New("niri refused focus") }
+	if err := provider.Activate("Manual", "window:42", ""); err == nil || err.Error() != "niri refused focus" {
+		t.Fatalf("Niri action error = %v, want refusal propagated", err)
+	}
+}
+
+func findWindowsProvider(t *testing.T, r *Registry) launcher.Provider {
+	t.Helper()
+	for _, provider := range r.launcherProviders() {
+		if provider.Prefix == "/win" {
+			return provider
+		}
+	}
+	t.Fatal("launcher has no /win provider")
+	return launcher.Provider{}
+}
 
 func TestLauncherServiceConfigReadsDefaultTerminalAfterConfigReload(t *testing.T) {
 	r := newPanelRegistry(t)
