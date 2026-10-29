@@ -317,6 +317,8 @@ type Registry struct {
 	niriSend func(any) error
 	// signalProcess validates PID identity and delivers TERM/KILL off Registry.mu.
 	signalProcess func(services.ProcessIdentity, syscall.Signal) error
+	// readProcessMemory samples the selected process's smaps_rollup off Registry.mu.
+	readProcessMemory func(services.ProcessIdentity) (services.ProcessMemory, error)
 
 	// notify is the service-owned notification projection.
 	notify             *notifyState
@@ -550,6 +552,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		autoPauseFPS:             make(map[string]int),
 		readBattery:              metrics.ReadBattery,
 		signalProcess:            signalProcessDefault,
+		readProcessMemory:        services.ReadProcessMemory,
 		notify:                   newNotifyState(),
 		batteryWarning:           newBatteryWarning(),
 		clipboard:                newClipboardProjection(),

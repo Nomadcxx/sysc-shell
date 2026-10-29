@@ -68,8 +68,16 @@ func processDetailCard(h *PanelHost, in monitorView, snap services.ProcessSnapsh
 	if exe == "" {
 		exe = ccDash
 	}
-	ioRead, ioWrite := ccDash, ccDash // Task 13 fills these from the per-process I/O rates
-	private, shared := ccDash, ccDash // Task 13 fills these from the per-process memory detail
+	ioRead, ioWrite := ccDash, ccDash
+	if p.IO.Valid {
+		ioRead = formatProcessBytes(uint64(p.IO.ReadBytesPerSecond)) + "/s"
+		ioWrite = formatProcessBytes(uint64(p.IO.WriteBytesPerSecond)) + "/s"
+	}
+	private, shared := ccDash, ccDash
+	if h.processMemoryOf == id {
+		private = formatProcessBytes(h.processMemory.PrivateBytes)
+		shared = formatProcessBytes(h.processMemory.SharedBytes)
+	}
 	left := detailPairs([][2]string{
 		{"comm:", p.Name}, {"PID:", strconv.Itoa(p.Identity.PID)}, {"PPID:", strconv.Itoa(p.ParentPID)},
 		{"exe:", exe}, {"cmdline:", strings.Join(p.Args, " ")}, {"cpu:", cpu},

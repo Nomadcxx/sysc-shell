@@ -63,13 +63,18 @@ type processLineInput struct {
 	AppIcon       func(name string) string
 }
 
-// processExecutable, processSwap and processIO read fields the pinned
-// sysc-metrics release does not carry yet. Task 13 of the system monitor
-// panel plan makes them read the new fields; until then every process is
-// grouped by name and SWAP and DISK are unavailable.
-func processExecutable(p services.Process) string   { return "" }
-func processSwap(p services.Process) (uint64, bool) { return 0, false }
-func processIO(p services.Process) (float64, bool)  { return 0, false }
+func processExecutable(p services.Process) string {
+	if p.ExecutableValid {
+		return p.Executable
+	}
+	return ""
+}
+
+func processSwap(p services.Process) (uint64, bool) { return p.SwapBytes, p.SwapValid }
+
+func processIO(p services.Process) (float64, bool) {
+	return p.IO.ReadBytesPerSecond + p.IO.WriteBytesPerSecond, p.IO.Valid
+}
 
 // projectProcessLines is the whole process table as flat lines: an
 // Applications section keyed by open windows and a Processes section grouped
