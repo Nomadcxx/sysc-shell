@@ -878,11 +878,6 @@ func pluginManagerSourcesTree(r *Registry, h *PanelHost, metrics theme.Metrics) 
 		stateByName[state.Name] = state
 	}
 	sources := r.cfg.Plugins.EffectiveSources()
-	for _, state := range r.pluginStoreSnapshot.Sources {
-		if !slices.ContainsFunc(sources, func(source config.PluginSource) bool { return source.Name == state.Name }) {
-			sources = append(sources, config.PluginSource{Name: state.Name, URL: state.URL})
-		}
-	}
 	rows := []*ui.Node{{Kind: ui.KindText, Text: cardT(hostT(h), "plugins.sources_hint1", "Lower sources override higher ones when they offer the same plugin."), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true}}
 	for _, source := range sources {
 		rows = append(rows, pluginManagerSourceRow(h, source, stateByName[source.Name], inner, metrics))
@@ -1314,15 +1309,6 @@ func (r *Registry) setPluginSourceEnabledLocked(h *PanelHost, name string, enabl
 	if !found && name == config.BuiltinPluginSource.Name {
 		next.Plugins.Sources = append(next.Plugins.Sources, config.PluginSource{Name: name, Enabled: enabled})
 		found = true
-	}
-	if !found {
-		for _, source := range r.pluginStoreSnapshot.Sources {
-			if source.Name == name {
-				next.Plugins.Sources = append(next.Plugins.Sources, config.PluginSource{Name: name, URL: source.URL, Enabled: enabled})
-				found = true
-				break
-			}
-		}
 	}
 	if !found {
 		h.pluginManagerError = "source is no longer configured"

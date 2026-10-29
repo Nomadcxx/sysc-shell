@@ -460,10 +460,14 @@ func (h *PanelHost) pluginStoreLeaveDetail(r *Registry) {
 func (h *PanelHost) pluginStorePageDetail(r *Registry, up bool) {
 	delta := max(h.place.Panel.H-2*pluginStorePadding, 1)
 	if up {
-		h.pluginStoreDetailScroll = max(h.pluginStoreDetailScroll-delta, 0)
-	} else {
-		h.pluginStoreDetailScroll += delta
+		delta = -delta
 	}
+	scroll := findScroll(h.root)
+	if scroll == nil {
+		return
+	}
+	ui.ScrollBy(scroll, delta)
+	h.notePluginStoreScroll(scroll)
 	r.rebuildPanel(h)
 }
 

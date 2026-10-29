@@ -375,6 +375,7 @@ type PanelHost struct {
 	pluginStoreDetail         string
 	pluginStoreConsent        *pluginStorePinnedConsent
 	pluginStoreRemoveConfirm  bool
+	pluginStoreRefreshErr     string
 	pluginStoreDetailErr      string
 	pluginStorePending        *pluginStorePendingOp
 	pluginStoreDetailScroll   int

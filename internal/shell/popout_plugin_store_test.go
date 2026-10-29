@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -33,6 +34,7 @@ func TestPluginStorePanelBuildsAndHeadlessRendersEmptyState(t *testing.T) {
 	}
 	for _, output := range []ui.Rect{{W: 1600, H: 1000}, {W: 1229, H: 691}} {
 		reg := newPanelRegistry(t)
+		reg.pluginStoreSnapshot = store.State{Sources: []store.SourceState{{Name: "sysc", FetchedAt: time.Now()}}}
 		if err := reg.OpenPanel(id, 7, Trigger{BarEdge: "top", OutW: output.W, OutH: output.H}); err != nil {
 			t.Fatalf("open on %dx%d: %v", output.W, output.H, err)
 		}
@@ -91,15 +93,17 @@ func TestPluginStorePanelHeadlessRendersEveryGridStateAtBothSizes(t *testing.T) 
 	withScreenshot.Entry.Screenshot = &catalog.Screenshot{URL: "https://example.com/timer.png", SHA256: strings.Repeat("c", 64)}
 	withoutScreenshot := modelListing("org.sysc.clock", "Clock", "community", "utilities", "1.0.0")
 	states := []struct {
-		name  string
-		state store.State
-		want  string
+		name     string
+		state    store.State
+		want     string
+		alsoWant string
 	}{
+		{name: "not fetched", state: store.State{Sources: []store.SourceState{{Name: "sysc"}}}, want: "Loading plugins…"},
 		{name: "loading", state: store.State{Busy: "refresh"}, want: "Loading plugins…"},
 		{name: "results and no screenshot", state: store.State{
 			Sources: []store.SourceState{{Name: "sysc"}}, Listings: []store.Listing{withScreenshot, withoutScreenshot},
-		}, want: "Clock"},
-		{name: "empty", state: store.State{}, want: "No plugins match"},
+		}, want: "Clock", alsoWant: "Loading plugins…"},
+		{name: "empty", state: store.State{Sources: []store.SourceState{{Name: "sysc", FetchedAt: time.Now()}}}, want: "No plugins match"},
 		{name: "all sources failed", state: store.State{
 			Sources: []store.SourceState{{Name: "sysc", Err: errors.New("network unreachable")}},
 		}, want: "All sources failed"},
@@ -123,6 +127,9 @@ func TestPluginStorePanelHeadlessRendersEveryGridStateAtBothSizes(t *testing.T) 
 				if !pluginStoreHasText(host.root, tc.want) {
 					t.Fatalf("panel lacks %q at %dx%d", tc.want, width, height)
 				}
+				if tc.alsoWant != "" && !pluginStoreHasText(host.root, tc.alsoWant) {
+					t.Fatalf("panel lacks %q at %dx%d", tc.alsoWant, width, height)
+				}
 				if !pluginStoreHasKind(host.root, ui.KindTextField) {
 					t.Fatal("panel has no search field")
 				}
@@ -135,6 +142,21 @@ func TestPluginStorePanelHeadlessRendersEveryGridStateAtBothSizes(t *testing.T) 
 				_ = reg
 			})
 		}
+	}
+}
+
+func TestPluginStoreWithNoEnabledSourcesDoesNotShowLoading(t *testing.T) {
+	reg, host, _ := openPluginStoreTestPanel(t, store.State{}, ui.Rect{W: 1600, H: 1000})
+	reg.mu.Lock()
+	reg.cfg.Plugins.Sources = []config.PluginSource{{Name: config.BuiltinPluginSource.Name, Enabled: false}}
+	reg.rebuildPanel(host)
+	loading := pluginStoreHasText(host.root, "Loading plugins…")
+	noSources := pluginStoreHasText(host.root, "No plugin sources enabled")
+	noMatches := pluginStoreHasText(host.root, "No plugins match")
+	reg.mu.Unlock()
+
+	if loading || !noSources || noMatches {
+		t.Fatalf("zero-source state: loading=%v, no-sources message=%v, no-matches message=%v", loading, noSources, noMatches)
 	}
 }
 
@@ -170,6 +192,31 @@ func TestPluginStoreKeyboardSelectionClampsAtGridEdges(t *testing.T) {
 		if host.pluginStoreSelected != last {
 			t.Fatalf("selection exceeded last card on key %d: %q", key, host.pluginStoreSelected)
 		}
+	}
+}
+
+func TestPluginStoreRefreshShowsQueueErrorAndUsesDistinctRetryAction(t *testing.T) {
+	state := store.State{Sources: []store.SourceState{{Name: "sysc", Err: errors.New("offline")}}}
+	reg, host, _ := openPluginStoreTestPanel(t, state, ui.Rect{W: 1600, H: 1000})
+	st := store.New(store.Options{})
+	reg.pluginStore = st
+	var refreshErr error
+	for range 32 {
+		if _, err := st.Refresh(); err != nil {
+			refreshErr = err
+			break
+		}
+	}
+	if refreshErr == nil {
+		t.Fatal("filling the refresh queue did not produce an error")
+	}
+
+	headerRefresh := pluginStoreFindAction(host.root, "store-refresh") != nil
+	bannerRetry := pluginStoreFindAction(host.root, "store-retry") != nil
+	pluginStoreActivateAction(t, reg, host, "store-refresh")
+	refreshErrorShown := pluginStoreHasText(host.root, refreshErr.Error())
+	if !headerRefresh || !bannerRetry || !refreshErrorShown {
+		t.Fatalf("refresh feedback: header=%v retry=%v queue error shown=%v", headerRefresh, bannerRetry, refreshErrorShown)
 	}
 }
 
@@ -238,7 +285,7 @@ func TestPluginStoreFilterAndSortControlsUpdateTheGrid(t *testing.T) {
 	clock.Installed = &store.Record{Source: "community", Version: "1.0.0"}
 	appearance := modelListing("org.sysc.editor", "Editor", "sysc", "appearance", "1.0.0")
 	state := store.State{
-		Sources:  []store.SourceState{{Name: "sysc"}, {Name: "community"}},
+		Sources:  []store.SourceState{{Name: "sysc", FetchedAt: time.Now()}, {Name: "community", FetchedAt: time.Now()}},
 		Listings: []store.Listing{timer, clock, appearance},
 	}
 	reg, host, _ := openPluginStoreTestPanel(t, state, ui.Rect{W: 1600, H: 1000})
