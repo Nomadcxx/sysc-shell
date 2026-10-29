@@ -441,6 +441,7 @@ type ccPrivacySnapshot struct {
 	Hint                string              `json:"hint"`
 	GeneratedAt         time.Time           `json:"generated_at"`
 	Overall             ccPrivacyOverall    `json:"overall"`
+	Sandbox             *ccPrivacySandbox   `json:"sandbox"`
 	Network             ccPrivacyNetwork    `json:"network"`
 	Categories          []ccPrivacyCategory `json:"categories"`
 	CategoriesShown     int                 `json:"categories_shown"`
@@ -460,6 +461,11 @@ type ccPrivacyOverall struct {
 	Grade    string `json:"grade"`
 	Findings int    `json:"findings"`
 	High     int    `json:"high"`
+}
+
+type ccPrivacySandbox struct {
+	Applicable bool   `json:"applicable"`
+	Grade      string `json:"grade"`
 }
 
 type ccPrivacyNetwork struct {
@@ -551,6 +557,14 @@ func parseCCPrivacySnapshot(raw []byte) (*ccPrivacySnapshot, error) {
 	}
 	if !validCCPrivacyGrade(snapshot.Overall.Grade) {
 		return nil, fmt.Errorf("invalid privacy overall grade %q", snapshot.Overall.Grade)
+	}
+	if sandbox := snapshot.Sandbox; sandbox != nil {
+		if !validCCPrivacyGrade(sandbox.Grade) {
+			return nil, fmt.Errorf("invalid Flatpak sandbox grade %q", sandbox.Grade)
+		}
+		if sandbox.Applicable && ccPrivacyGradeRank(snapshot.Overall.Grade) < ccPrivacyGradeRank(sandbox.Grade) {
+			return nil, fmt.Errorf("privacy overall grade is safer than Flatpak sandbox grade")
+		}
 	}
 	if snapshot.Overall.Findings < 0 || snapshot.Overall.High < 0 || snapshot.Overall.High > snapshot.Overall.Findings {
 		return nil, fmt.Errorf("invalid privacy finding totals")
