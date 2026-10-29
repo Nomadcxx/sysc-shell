@@ -53,8 +53,17 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	children = append(children, pluginStoreChips(h, state, inner, metrics)...)
 	allFailed, stale := pluginStoreSourceState(state.Sources)
-	loading := strings.Contains(strings.ToLower(state.Busy), "refresh") && len(state.Listings) == 0
+	sourceAttempted := false
+	for _, source := range state.Sources {
+		if !source.FetchedAt.IsZero() || source.Err != nil {
+			sourceAttempted = true
+			break
+		}
+	}
+	loading := len(state.Listings) == 0 && (strings.Contains(strings.ToLower(state.Busy), "refresh") || !sourceAttempted)
 	switch {
+	case h.pluginStoreRefreshErr != "":
+		children = append(children, pluginStoreBanner(h, "Refresh failed", h.pluginStoreRefreshErr, true, inner, metrics))
 	case loading:
 		children = append(children, pluginStoreBanner(h, "Loading plugins…", "", false, inner, metrics))
 	case allFailed:
@@ -65,7 +74,7 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	if len(listings) == 0 {
-		if !loading && !allFailed {
+		if !loading && !allFailed && h.pluginStoreRefreshErr == "" {
 			children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
 				{Kind: ui.KindText, Text: "No plugins match", TextRole: theme.RoleTitle},
 				{Kind: ui.KindText, Text: "Try another search, source or category.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
@@ -323,7 +332,7 @@ func pluginStoreBanner(h *PanelHost, title, detail string, retry bool, width int
 	actionsW := 0
 	var trailing *ui.Node
 	if retry {
-		trailing = pluginStoreButton("store-refresh", "Retry", metrics)
+		trailing = pluginStoreButton("store-retry", "Retry", metrics)
 		actionsW = settingsResetWidth(h) + theme.MarginM
 	}
 	textW := max(width-2*metrics.CardPadding-metrics.IconNormal-theme.MarginM-actionsW, 1)
@@ -712,10 +721,17 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 	switch {
 	case n.Action == "store-close":
 		r.closePanelLocked(PanelPluginStore)
-	case n.Action == "store-refresh":
+	case n.Action == "store-refresh" || n.Action == "store-retry":
 		if r.pluginStore != nil {
-			_, _ = r.pluginStore.Refresh()
+			if _, err := r.pluginStore.Refresh(); err != nil {
+				h.pluginStoreRefreshErr = err.Error()
+			} else {
+				h.pluginStoreRefreshErr = ""
+			}
+		} else {
+			h.pluginStoreRefreshErr = "plugin store unavailable"
 		}
+		r.rebuildPanel(h)
 	case n.Action == "store-clear":
 		h.pluginStoreQuery = BrowseQuery{Sort: SortName}
 		if h.search != nil {

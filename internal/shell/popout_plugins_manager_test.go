@@ -97,6 +97,25 @@ func TestPluginManagerSourcesHeadlessShowsFreshStaleAndAddWarning(t *testing.T) 
 	}
 }
 
+func TestPluginManagerDoesNotToggleSourceOnlyInStoreSnapshot(t *testing.T) {
+	state := store.State{Sources: []store.SourceState{{
+		Name: "stale", URL: "https://example.com/stale",
+	}}}
+	reg, host, _ := openPluginManagerTestPanel(t, config.Default(), state)
+	reg.configPath = filepath.Join(t.TempDir(), "config.json")
+	reg.mu.Lock()
+	host.pluginManagerTab = "sources"
+	reg.rebuildPanel(host)
+	staleToggleShown := pluginStoreFindAction(host.root, "plugins-source-toggle:stale") != nil
+	reg.handlePluginManager(host, &ui.Node{Action: "plugins-source-toggle:stale"})
+	configuredSources := len(reg.cfg.Plugins.Sources)
+	reg.mu.Unlock()
+
+	if staleToggleShown || configuredSources != 0 {
+		t.Fatalf("snapshot-only source: toggle shown=%v, configured sources=%d", staleToggleShown, configuredSources)
+	}
+}
+
 func TestPluginManagerUpdateAllRendersMixedConsentReviewSet(t *testing.T) {
 	a := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.5.0")
 	b := modelListing("org.sysc.editor", "Editor", "sysc", "appearance", "2.0.0")

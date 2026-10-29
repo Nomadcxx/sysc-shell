@@ -98,6 +98,43 @@ func TestPluginStoreDetailConsentPinsDisplayedReleaseAndShowsErrors(t *testing.T
 	renderPluginStorePanel(t, panel)
 }
 
+func TestPluginStoreDetailPageDownStopsAtContentEnd(t *testing.T) {
+	listing := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.4.0")
+	sha := strings.Repeat("a", 64)
+	listing.Entry.Readme = &catalog.Screenshot{URL: "https://example.com/README.md", SHA256: sha}
+	state := store.State{Listings: []store.Listing{listing}}
+	reg, host, panel := openPluginStoreTestPanel(t, state, ui.Rect{W: 1229, H: 691})
+	reg.mu.Lock()
+	host.pluginStoreDetail = pluginStoreKey(listing)
+	reg.pluginStoreReadmes = map[string]string{sha: strings.Repeat("## Section\n\nA long paragraph of plugin documentation that wraps across the detail panel.\n\n", 80)}
+	reg.rebuildPanel(host)
+	reg.mu.Unlock()
+	renderPluginStorePanel(t, panel)
+
+	reg.mu.Lock()
+	scroll := findScroll(host.root)
+	if scroll == nil {
+		reg.mu.Unlock()
+		t.Fatal("detail has no scroll viewport")
+	}
+	maxOffset := scroll.ContentH - scroll.Bounds.H
+	delta := max(host.place.Panel.H-2*pluginStorePadding, 1)
+	if maxOffset <= delta {
+		reg.mu.Unlock()
+		t.Fatalf("detail content is too short to exercise PageDown: max offset=%d page=%d", maxOffset, delta)
+	}
+	start := maxOffset - delta/2
+	host.pluginStoreDetailScroll = start
+	scroll.ScrollOffset = start
+	host.pluginStorePageDetail(reg, false)
+	got := host.pluginStoreDetailScroll
+	reg.mu.Unlock()
+
+	if got != maxOffset {
+		t.Fatalf("PageDown offset = %d, want content end %d", got, maxOffset)
+	}
+}
+
 func TestPluginStoreRemoveNeedsInlineConfirmation(t *testing.T) {
 	listing := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.4.0")
 	listing.Installed = &store.Record{Source: "sysc", Version: "1.3.0"}
