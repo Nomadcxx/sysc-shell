@@ -101,26 +101,12 @@ func TestOnboardingHasBrandedHeaderAndUniformPillActions(t *testing.T) {
 	if brandPill.PaddingX < brandPill.Padding+theme.MarginS {
 		t.Errorf("wordmark pill horizontal padding = %d, want at least %d for a little more room at the sides", brandPill.PaddingX, brandPill.Padding+theme.MarginS)
 	}
-	mark := onboardingNodeByKey(h.root, "onb-ascii-wordmark")
-	if mark == nil || mark.Kind != ui.KindColumn || len(mark.Children) != 9 {
-		t.Fatalf("ASCII wordmark = %+v, want eight mark rows and its tagline", mark)
-	}
+	mark := onboardingNodeByKey(h.root, "onb-wordmark")
 	if len(brandPill.Children) != 1 || brandPill.Children[0] != mark {
-		t.Fatalf("wordmark pill contents = %+v, want only the complete ASCII mark", brandPill.Children)
+		t.Fatalf("wordmark pill contents = %+v, want only the painted wordmark", brandPill.Children)
 	}
-	if mark.Name != "SYSC" || mark.Role != "img" {
-		t.Fatalf("ASCII wordmark semantics = %q/%q, want image named SYSC", mark.Name, mark.Role)
-	}
-	for i, row := range mark.Children {
-		if got := len([]rune(row.Text)); got != 69 {
-			t.Errorf("ASCII wordmark row %d has %d cells, want 69", i, got)
-		}
-		if row.Kind != ui.KindText || row.TextRole != theme.RoleMono || row.Tone != ui.ToneAccent || row.Bold || !row.CenterX {
-			t.Errorf("ASCII wordmark row %d = %+v, want centred regular-weight mono accent text", i, row)
-		}
-	}
-	if !strings.Contains(mark.Children[8].Text, "SEE YOU IN SPACE COWBOY") {
-		t.Fatalf("ASCII wordmark lost its tagline: %q", mark.Children[8].Text)
+	if strings.Contains(renderText(h.root), "SEE YOU IN SPACE COWBOY") {
+		t.Fatal("the wordmark kept its tagline")
 	}
 	if strings.Contains(strings.ToLower(onbIntroWelcome), "sysc-shell provides") {
 		t.Fatalf("welcome copy still explains shell architecture: %q", onbIntroWelcome)
@@ -187,7 +173,7 @@ func TestOnboardingBrandAndMoveHintComposition(t *testing.T) {
 	h := reg.panelHosts[PanelOnboarding]
 	header := onboardingNodeByKey(h.root, "onb-header")
 	pill := onboardingNodeByKey(h.root, "onb-brand-pill")
-	mark := onboardingNodeByKey(h.root, "onb-ascii-wordmark")
+	mark := onboardingNodeByKey(h.root, "onb-wordmark")
 	setup := onboardingNodeByKey(h.root, "onb-setup-label")
 	footer := onboardingNodeByKey(h.root, "onb-footer")
 	hint := onboardingNodeByKey(h.root, "onb-move-hint")
@@ -203,10 +189,8 @@ func TestOnboardingBrandAndMoveHintComposition(t *testing.T) {
 			t.Errorf("%s center = %d, want panel center %d", name, got, center)
 		}
 	}
-	for i, row := range mark.Children {
-		if got := row.Bounds.X + row.Bounds.W/2; abs(got-(pill.Bounds.X+pill.Bounds.W/2)) > 1 {
-			t.Errorf("wordmark row %d center = %d, want pill center %d", i, got, pill.Bounds.X+pill.Bounds.W/2)
-		}
+	if got := mark.Bounds.X + mark.Bounds.W/2; abs(got-(pill.Bounds.X+pill.Bounds.W/2)) > 1 {
+		t.Errorf("wordmark center = %d, want pill center %d", got, pill.Bounds.X+pill.Bounds.W/2)
 	}
 	if got := pill.Bounds.Y - (h.root.Bounds.Y + h.root.Padding); got < h.metrics().PanelPadding {
 		t.Errorf("brand top inset = %d, want at least %d", got, h.metrics().PanelPadding)
@@ -295,13 +279,13 @@ func TestOnboardingBrandPillFitsResponsivePanel(t *testing.T) {
 				t.Fatal(err)
 			}
 			root := reg.panelHosts[PanelOnboarding].root
-			mark := onboardingNodeByKey(root, "onb-ascii-wordmark")
+			mark := onboardingNodeByKey(root, "onb-wordmark")
+			wantW := onbWordmarkW
 			if tc.name == "compact" {
-				if mark == nil || len(mark.Children) != 1 || mark.Children[0].Text != "SYSC" {
-					t.Fatalf("compact wordmark = %+v, want the compact SYSC row", mark)
-				}
-			} else if mark == nil || len(mark.Children) != 9 {
-				t.Fatalf("full wordmark = %+v, want the complete ASCII mark", mark)
+				wantW = (onbWordmarkW + 1) / 2
+			}
+			if mark == nil || mark.ImageW != wantW {
+				t.Fatalf("%s wordmark is missing or not %d wide", tc.name, wantW)
 			}
 			pill := onboardingNodeByKey(root, "onb-brand-pill")
 			left := root.Bounds.X + root.Padding
@@ -321,9 +305,8 @@ func TestOnboardingBrandPillFitsResponsivePanel(t *testing.T) {
 			if hint.Bounds.W < wantHintWidth {
 				t.Errorf("move hint width = %d, want at least %d for %q", hint.Bounds.W, wantHintWidth, hint.Text)
 			}
-			markWidth, _ := reg.panelHosts[PanelOnboarding].measureText()(mark.Children[0].Text, ui.TextAttrsOf(mark.Children[0]))
-			if pill.Bounds.W < markWidth+2*pill.Padding {
-				t.Errorf("brand pill width = %d, want full wordmark width %d plus %d padding on both sides", pill.Bounds.W, markWidth, pill.Padding)
+			if pill.Bounds.W < mark.ImageW+2*pill.Padding {
+				t.Errorf("brand pill width = %d, want full wordmark width %d plus %d padding on both sides", pill.Bounds.W, mark.ImageW, pill.Padding)
 			}
 		})
 	}

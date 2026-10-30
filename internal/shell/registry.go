@@ -3367,6 +3367,10 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 		}
 		next := r.panelThemeForState(h.output, cfg, tokens)
 		h.retheme(withPanelRadius(next, h))
+		if h.id == PanelOnboarding {
+			// The wordmark is a raster painted in the palette.
+			r.rebuildPanel(h)
+		}
 		r.startSurfaceFrames(h)
 	}
 	if r.toasts != nil {

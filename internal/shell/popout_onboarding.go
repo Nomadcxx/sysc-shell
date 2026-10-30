@@ -5,7 +5,6 @@ import (
 	"log"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
@@ -111,45 +110,11 @@ var onbIntroKeys = [onbPages]string{
 	"onboarding.intro.idle", "onboarding.intro.plugins", "onboarding.intro.ready",
 }
 
-// onboardingSyscWordmarkRows is the desktop's SYSC.txt art, rendered like
-// the Moonbit plugin's mono wordmark. The source's leading tab is expanded to
-// eight spaces so the tagline keeps its terminal alignment in shaped text.
-var onboardingSyscWordmarkRows = padOnboardingRows(
-	`  ██████████████░████░       ████░   ██████████████░  ██████████████░`,
-	`████████████████░████░       ████░ ████████████████░████████████████░`,
-	`████░            ██████░   ██████░ ████░            ████░`,
-	`██████████████░    ████████████░   ██████████████░  ████░`,
-	`  ██████████████░    ████████░       ██████████████░████░`,
-	`            ████░      ████░                   ████░████░`,
-	`████████████████░      ████░       ████████████████░████████████████░`,
-	`██████████████░        ████░       ██████████████░    ██████████████░`,
-	`        //////////////SEE YOU IN SPACE COWBOY//////////`,
-)
-
-func padOnboardingRows(rows ...string) []string {
-	width := 0
-	for _, row := range rows {
-		width = max(width, utf8.RuneCountInString(row))
-	}
-	for i, row := range rows {
-		rows[i] += strings.Repeat(" ", width-utf8.RuneCountInString(row))
-	}
-	return rows
-}
-
 func onboardingSyscWordmark(h *PanelHost) *ui.Node {
-	rows := onboardingSyscWordmarkRows
 	if onbBodyWidth(h) < onbStepRailMinWidth {
-		rows = []string{"SYSC"}
+		return onboardingWordmark(h, (onbWordmarkW+1)/2, onbWordmarkH/2)
 	}
-	children := make([]*ui.Node, 0, len(rows))
-	for _, row := range rows {
-		children = append(children, &ui.Node{
-			Kind: ui.KindText, Text: row, TextRole: theme.RoleMono,
-			Tone: ui.ToneAccent, CenterX: true,
-		})
-	}
-	return &ui.Node{Kind: ui.KindColumn, Key: "onb-ascii-wordmark", Name: "SYSC", Role: "img", Children: children}
+	return onboardingWordmark(h, onbWordmarkW, onbWordmarkH)
 }
 
 // onbBodyKey names the wizard's one scroll so its offset can be restored

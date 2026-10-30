@@ -435,8 +435,12 @@ type PanelHost struct {
 	onbFontState        onboardingFontState
 	onbMoving           bool
 	onbMoveMode         bool
-	onbGrabX            int
-	onbGrabY            int
+	// onbWordmark is the wizard's painted wordmark, kept until the box or the
+	// palette it was painted for changes.
+	onbWordmark    *ui.Image
+	onbWordmarkFor onbWordmarkKey
+	onbGrabX       int
+	onbGrabY       int
 }
 
 func parsePanelName(name string) (PanelID, error) {

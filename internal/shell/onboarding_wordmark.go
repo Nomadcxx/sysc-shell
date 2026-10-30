@@ -14,6 +14,45 @@ import (
 //go:embed onboarding_wordmark.ans
 var onboardingWordmarkANSI string
 
+var onboardingWordmarkCells = parseANSIWordmark(onboardingWordmarkANSI)
+
+// The wordmark reserves 5×10 logical px per cell: 47×8 cells.
+const (
+	onbWordmarkW = 235
+	onbWordmarkH = 80
+)
+
+// onbWordmarkKey is what a cached wordmark raster was painted for.
+type onbWordmarkKey struct {
+	w, h   int
+	colors wordmarkColors
+}
+
+// onboardingWordmark is the rail's SYSC art as a w×h logical image, painted
+// at the panel's scale in the host palette.
+func onboardingWordmark(h *PanelHost, w, height int) *ui.Node {
+	scale := ui.Scale120(h.scale120)
+	if !scale.Valid() {
+		scale = 120
+	}
+	key := onbWordmarkKey{
+		w: scale.Physical(w), h: scale.Physical(height),
+		colors: wordmarkColors{
+			dim:    h.theme.Palette.Outline,
+			mid:    h.theme.Palette.OnSurfaceVariant,
+			bright: h.theme.Palette.OnSurface,
+		},
+	}
+	if h.onbWordmark == nil || h.onbWordmarkFor != key {
+		h.onbWordmark = rasterizeWordmark(onboardingWordmarkCells, key.w, key.h, key.colors)
+		h.onbWordmarkFor = key
+	}
+	return &ui.Node{
+		Kind: ui.KindImage, Key: "onb-wordmark", Name: "SYSC", Role: "img",
+		ImageW: w, ImageH: height, Image: h.onbWordmark,
+	}
+}
+
 type wordmarkCell struct {
 	glyph rune
 	fg    int
@@ -81,8 +120,11 @@ func applyWordmarkSGR(params string, fg, bg *int) {
 	}
 }
 
-func rasterizeWordmark(cells [][]wordmarkCell, cellW, cellH int, colors wordmarkColors) *ui.Image {
-	if cellW <= 0 || cellH <= 0 || len(cells) == 0 {
+// rasterizeWordmark paints the cells into a width×height raster. Cell edges
+// are spread proportionally, so a fractional scale tiles the box with cells
+// one pixel apart in size rather than leaving a gap at the edge.
+func rasterizeWordmark(cells [][]wordmarkCell, width, height int, colors wordmarkColors) *ui.Image {
+	if width <= 0 || height <= 0 || len(cells) == 0 {
 		return nil
 	}
 	cols := 0
@@ -96,10 +138,6 @@ func rasterizeWordmark(cells [][]wordmarkCell, cellW, cellH int, colors wordmark
 	}
 
 	maxInt := int(^uint(0) >> 1)
-	if cols > maxInt/cellW || len(cells) > maxInt/cellH {
-		return nil
-	}
-	width, height := cols*cellW, len(cells)*cellH
 	if width > maxInt/4 {
 		return nil
 	}
@@ -112,31 +150,35 @@ func rasterizeWordmark(cells [][]wordmarkCell, cellW, cellH int, colors wordmark
 		Pix: make([]byte, stride*height),
 	}
 
+	rows := len(cells)
 	for rowIndex, row := range cells {
+		y0, y1 := rowIndex*height/rows, (rowIndex+1)*height/rows
+		midY := y0 + (y1-y0)/2
 		for colIndex, cell := range row {
-			x0, y0 := colIndex*cellW, rowIndex*cellH
+			x0, x1 := colIndex*width/cols, (colIndex+1)*width/cols
+			midX := x0 + (x1-x0)/2
 			if cell.bg == 47 {
-				fillWordmarkRect(img, x0, y0, x0+cellW, y0+cellH, wordmarkColor(47, colors), 1)
+				fillWordmarkRect(img, x0, y0, x1, y1, wordmarkColor(47, colors), 1)
 			}
 
 			fg := wordmarkColor(cell.fg, colors)
 			switch cell.glyph {
 			case '█':
-				fillWordmarkRect(img, x0, y0, x0+cellW, y0+cellH, fg, 1)
+				fillWordmarkRect(img, x0, y0, x1, y1, fg, 1)
 			case '▀':
-				fillWordmarkRect(img, x0, y0, x0+cellW, y0+cellH/2, fg, 1)
+				fillWordmarkRect(img, x0, y0, x1, midY, fg, 1)
 			case '▄':
-				fillWordmarkRect(img, x0, y0+cellH/2, x0+cellW, y0+cellH, fg, 1)
+				fillWordmarkRect(img, x0, midY, x1, y1, fg, 1)
 			case '▌':
-				fillWordmarkRect(img, x0, y0, x0+cellW/2, y0+cellH, fg, 1)
+				fillWordmarkRect(img, x0, y0, midX, y1, fg, 1)
 			case '▐':
-				fillWordmarkRect(img, x0+cellW/2, y0, x0+cellW, y0+cellH, fg, 1)
+				fillWordmarkRect(img, midX, y0, x1, y1, fg, 1)
 			case '░':
-				fillWordmarkRect(img, x0, y0, x0+cellW, y0+cellH, fg, 0.25)
+				fillWordmarkRect(img, x0, y0, x1, y1, fg, 0.25)
 			case '▒':
-				fillWordmarkRect(img, x0, y0, x0+cellW, y0+cellH, fg, 0.5)
+				fillWordmarkRect(img, x0, y0, x1, y1, fg, 0.5)
 			case '▓':
-				fillWordmarkRect(img, x0, y0, x0+cellW, y0+cellH, fg, 0.75)
+				fillWordmarkRect(img, x0, y0, x1, y1, fg, 0.75)
 			}
 		}
 	}
