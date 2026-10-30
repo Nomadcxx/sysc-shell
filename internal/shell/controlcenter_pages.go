@@ -413,9 +413,10 @@ func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil {
 		errLabel = h.errLabel
 	}
+	snapshot, snapshotErr := ccPrivacySnapshotFor(r)
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
 		monitorCard(m, rows),
-		ccPrivacyAuditCard(m, ccPrivacySnapshotFor(r), now, errLabel),
+		ccPrivacyAuditCard(m, snapshot, now, errLabel, snapshotErr != nil),
 	}}
 }
 
@@ -519,19 +520,15 @@ type ccPrivacyReduced struct {
 }
 
 // ccPrivacySnapshotFor reads only the running privacy plugin's bounded schema-1 state.
-func ccPrivacySnapshotFor(r *Registry) *ccPrivacySnapshot {
+func ccPrivacySnapshotFor(r *Registry) (*ccPrivacySnapshot, error) {
 	if r == nil || r.plugins == nil {
-		return nil
+		return nil, nil
 	}
 	raw, ok := r.plugins.stateValue(ccPrivacyPluginID, ccPrivacyStateKey)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	snapshot, err := parseCCPrivacySnapshot(raw)
-	if err != nil {
-		return nil
-	}
-	return snapshot
+	return parseCCPrivacySnapshot(raw)
 }
 
 func parseCCPrivacySnapshot(raw []byte) (*ccPrivacySnapshot, error) {
@@ -709,11 +706,13 @@ func ccPrivacyTextFits(value string, limit int) bool {
 	return len(value) <= limit
 }
 
-func ccPrivacyAuditCard(m theme.Metrics, snapshot *ccPrivacySnapshot, now time.Time, errLabel string) *ui.Node {
+func ccPrivacyAuditCard(m theme.Metrics, snapshot *ccPrivacySnapshot, now time.Time, errLabel string, snapshotUnreadable bool) *ui.Node {
 	rows := []*ui.Node{monitorCardTitle("Privacy audit", 0)}
 	grade := "unknown"
 	detail := "No audit result is available. Check that the Privacybit plugin is enabled."
-	if snapshot != nil {
+	if snapshotUnreadable {
+		detail = "Audit status could not be read. Open the full audit or check the Privacybit plugin status."
+	} else if snapshot != nil {
 		switch {
 		case !snapshot.Available:
 			detail = strings.TrimSpace(snapshot.Reason + " " + snapshot.Hint)
