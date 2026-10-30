@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -138,18 +139,18 @@ func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: m.PanelPadding, Children: append(children, content)}
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: m.PanelPadding, Padding: m.PanelPadding, Children: []*ui.Node{
-		onbRail(h), content,
+		onbRail(r, h), content,
 	}}
 }
 
-func onbRail(h *PanelHost) *ui.Node {
+func onbRail(r *Registry, h *PanelHost) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindCapsule, Key: "onb-rail", Width: onbRailWidth, Padding: theme.MarginXL,
-		Fill: ui.FillContainer, Shape: ui.ShapeCard,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXL, Children: []*ui.Node{
 			onboardingWordmark(h, onbWordmarkW, onbWordmarkH),
-			onbStepper(h),
+			onbStepper(r, h),
 			onbRailFoot(h),
 		}}},
 	}
@@ -157,12 +158,138 @@ func onbRail(h *PanelHost) *ui.Node {
 
 func onbRailWidthInner() int { return onbRailWidth - 2*theme.MarginXL }
 
-func onbStepper(h *PanelHost) *ui.Node {
+// onbStepLabels name the steps in the rail; the step titles in the content
+// column are longer. Three labels are the titles themselves.
+var onbStepLabels = [onbPages]string{"Welcome", onbTitleAppearance, onbTitleRegion, onbTitleIdle, "Plugins", "Review"}
+
+var onbStepLabelKeys = [onbPages]string{
+	"onboarding.step.welcome", "onboarding.title.appearance", "onboarding.title.region",
+	"onboarding.title.idle", "onboarding.step.plugins", "onboarding.step.review",
+}
+
+func onbStepLabel(h *PanelHost, page onboardingPage) string {
+	return h.tr(onbStepLabelKeys[page], onbStepLabels[page])
+}
+
+const (
+	onbStepMarker = 26 // token-exempt: the stepper disc, sized to the prototype
+	onbStepLine   = 2  // token-exempt: the connector between discs
+	onbStepRow    = 52 // token-exempt: a disc and its connector, as in the prototype
+)
+
+// onbStepper lists every step as a button: any step can be opened, since
+// each is optional. A step behind the user shows what it chose.
+func onbStepper(r *Registry, h *PanelHost) *ui.Node {
+	m := h.metrics()
+	textWidth := max(onbRailWidthInner()-onbStepMarker-theme.MarginL-2*theme.MarginXS, 0)
 	items := make([]*ui.Node, 0, onbPages)
 	for page := onboardingPage(0); page < onbPages; page++ {
-		items = append(items, &ui.Node{Kind: ui.KindText, Text: onbTitle(h, page)})
+		label := onbStepLabel(h, page)
+		marker := &ui.Node{
+			Kind: ui.KindCapsule, Key: fmt.Sprintf("onb-step-marker:%d", page),
+			Width: onbStepMarker, Height: onbStepMarker, Shape: ui.ShapeCircle, CenterX: true,
+		}
+		line := ui.FillOutline
+		textTone := ui.ToneSubtle
+		switch {
+		case page < h.onbPage:
+			marker.Fill = ui.FillAccent
+			marker.Children = []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+				Kind: ui.KindIcon, Icon: "check", IconSize: m.IconSmall, CenterX: true, CenterY: true,
+			}}}}
+			line = ui.FillAccent
+			textTone = ui.ToneNormal
+		case page == h.onbPage:
+			marker.Fill = ui.FillSoft
+			marker.Stroke = 2 // token-exempt: the current step's ring
+			marker.StrokeFill = ui.FillAccent
+			textTone = ui.ToneNormal
+		default:
+			marker.Stroke = 1 // token-exempt: a hairline ring, not a ladder value
+			marker.StrokeFill = ui.FillOutline
+		}
+		if marker.Children == nil {
+			marker.Children = []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+				Kind: ui.KindText, Text: fmt.Sprintf("%d", int(page)+1), TextRole: theme.RoleMono,
+				CenterX: true, CenterY: true,
+			}}}}
+		}
+		track := []*ui.Node{marker}
+		if page+1 < onbPages {
+			track = append(track, &ui.Node{
+				Kind: ui.KindCapsule, Width: onbStepLine, Height: onbStepRow - onbStepMarker - theme.MarginXS,
+				Fill: line, Shape: ui.ShapeStadium, CenterX: true,
+			})
+		}
+		title := &ui.Node{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel, Tone: textTone, Bold: page == h.onbPage}
+		text := []*ui.Node{title}
+		if page < h.onbPage {
+			if summary := onbStepSummary(r, h, page); summary != "" {
+				line := h.wrappedText(summary, theme.RoleCaption, ui.ToneSubtle, textWidth, 1)
+				line.Key = fmt.Sprintf("onb-step-summary:%d", page)
+				text = append(text, line)
+			}
+		}
+		// A ghost row: the rail shows through, and only the current step
+		// carries the accent wash.
+		fill, tone := ui.FillNone, ui.ToneSubtle
+		if page == h.onbPage {
+			fill, tone = ui.FillSoft, ui.ToneNormal
+		}
+		items = append(items, &ui.Node{
+			Kind: ui.KindButton, Action: fmt.Sprintf("onb-step:%d", page), Name: label, Role: "button",
+			Focusable: true, Padding: theme.MarginXS, Shape: ui.ShapeMedium, Fill: fill, Tone: tone,
+			Children: []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+				Kind: ui.KindRow, Height: onbStepRow, Gap: theme.MarginL, Children: []*ui.Node{
+					{Kind: ui.KindColumn, Width: onbStepMarker, Gap: theme.MarginXS, Children: track},
+					{Kind: ui.KindColumn, Width: textWidth, Gap: theme.MarginXXS, Children: text},
+				},
+			}}}},
+		})
 	}
-	return &ui.Node{Kind: ui.KindColumn, Key: "onb-stepper", Gap: theme.MarginS, Children: items}
+	return &ui.Node{Kind: ui.KindColumn, Key: "onb-stepper", Children: items}
+}
+
+// onbStepSummary is what a step chose, read from the draft: the rail's
+// second line and the Review cards' value.
+func onbStepSummary(r *Registry, h *PanelHost, page onboardingPage) string {
+	switch page {
+	case onbAppearance:
+		summary := onbGet(h, "appearance.mode")
+		if name := onbWallpaperName(r, h); name != "" {
+			summary += " · " + name
+		}
+		return summary
+	case onbRegion:
+		city := strings.TrimSpace(h.draft.Weather.City)
+		if city == "" {
+			city = onbText(h, "summary.not_set", "not set")
+		}
+		unit := "°C"
+		if e := h.set.ByPath("weather.unit"); e != nil && e.Get(h.draft) == "fahrenheit" {
+			unit = "°F"
+		}
+		return city + " · " + unit
+	case onbIdle:
+		return onbIdleMode(h, settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin()))
+	case onbPlugins:
+		return fmt.Sprintf(onbText(h, "summary.plugins_selected", "%d selected"), len(onbSelectedPlugins(r, h)))
+	}
+	return ""
+}
+
+// onbWallpaperName names what the wizard's output shows, or "" when nothing
+// is assigned there.
+func onbWallpaperName(r *Registry, h *PanelHost) string {
+	bar, svc := r.bars[h.output], r.wallpaperServiceLocked()
+	if bar == nil || svc == nil {
+		return ""
+	}
+	assignment, ok := svc.Snapshot().Assignments[bar.connector()]
+	if !ok {
+		return ""
+	}
+	return wallpaperAssignmentLabel(assignment)
 }
 
 // onbRailFoot holds Not now and the move control under the stepper.
@@ -659,6 +786,16 @@ func onbSummary(r *Registry, h *PanelHost) []*ui.Node {
 }
 
 func onbPluginSummary(r *Registry, h *PanelHost) string {
+	selected := onbText(h, "summary.plugins_none", "none")
+	if names := onbSelectedPlugins(r, h); len(names) > 0 {
+		selected = strings.Join(names, ", ")
+	}
+	return fmt.Sprintf(onbText(h, "summary.plugins", "Startup plugins: %s"), selected)
+}
+
+// onbSelectedPlugins names the candidates the staged selection enables and
+// places on the bar.
+func onbSelectedPlugins(r *Registry, h *PanelHost) []string {
 	candidates := onbPluginCandidates(r)
 	view, err := onbPluginSelectionConfig(h.draft, candidates, h.onbPluginSelections)
 	if err != nil {
@@ -675,11 +812,7 @@ func onbPluginSummary(r *Registry, h *PanelHost) string {
 		}
 		names = append(names, name)
 	}
-	selected := onbText(h, "summary.plugins_none", "none")
-	if len(names) > 0 {
-		selected = strings.Join(names, ", ")
-	}
-	return fmt.Sprintf(onbText(h, "summary.plugins", "Startup plugins: %s"), selected)
+	return names
 }
 
 func onbGet(h *PanelHost, path string) string {
@@ -901,6 +1034,20 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 			return true
 		}
 		return false
+	}
+	if step, ok := strings.CutPrefix(n.Action, "onb-step:"); ok {
+		page, err := strconv.Atoi(step)
+		if err != nil || page < 0 || page >= int(onbPages) {
+			return false
+		}
+		h.onbPage = onboardingPage(page)
+		h.onbScroll = 0
+		if h.onbPage == onbRegion {
+			r.checkOnboardingFont(h)
+		}
+		r.rebuildPanel(h)
+		h.focusByName(onbStepLabel(h, h.onbPage))
+		return true
 	}
 	switch n.Action {
 	case "onb-move":

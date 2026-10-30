@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -84,8 +86,8 @@ func TestOnboardingFrameIsRailBesideContent(t *testing.T) {
 		t.Fatalf("root is kind %s with %d children, want a row of rail and content", h.root.Kind, len(h.root.Children))
 	}
 	rail, content := h.root.Children[0], h.root.Children[1]
-	if rail.Key != "onb-rail" || rail.Width != onbRailWidth || onbRailWidth != 280 || rail.Fill != ui.FillContainer {
-		t.Fatalf("rail = key %q width %d fill %d, want onb-rail 280 FillContainer", rail.Key, rail.Width, rail.Fill)
+	if rail.Key != "onb-rail" || rail.Width != onbRailWidth || onbRailWidth != 280 || rail.Fill != ui.FillContainerHigh {
+		t.Fatalf("rail = key %q width %d fill %d, want onb-rail 280 FillContainerHigh", rail.Key, rail.Width, rail.Fill)
 	}
 	if content.Key != "onb-content" {
 		t.Fatalf("second column key = %q, want onb-content", content.Key)
@@ -150,5 +152,101 @@ func TestOnboardingNarrowFrameFoldsRailIntoHeader(t *testing.T) {
 	}
 	if got, want := footer.Bounds.Y+footer.Bounds.H, content.Bounds.Y+content.Bounds.H-content.Padding; got != want {
 		t.Errorf("narrow footer ends at %d, want content end %d", got, want)
+	}
+}
+
+func TestOnboardingStepperMarksProgress(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	h.onbPage = onbRegion
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+	labels := []string{"Welcome", "Appearance", "Region and language", "When idle", "Plugins", "Review"}
+	for page := onboardingPage(0); page < onbPages; page++ {
+		step := byAction(h.root, fmt.Sprintf("onb-step:%d", page))
+		if step == nil || !step.Focusable || step.Role != "button" || step.Name != labels[page] {
+			t.Fatalf("step %d = %+v, want a focusable button named %q", page, step, labels[page])
+		}
+		marker := onboardingNodeByKey(step, fmt.Sprintf("onb-step-marker:%d", page))
+		if marker == nil || marker.Shape != ui.ShapeCircle {
+			t.Fatalf("step %d marker = %+v, want a circle", page, marker)
+		}
+		check := findNode(marker, func(n *ui.Node) bool { return n.Kind == ui.KindIcon && n.Icon == "check" })
+		switch {
+		case page < h.onbPage:
+			if marker.Fill != ui.FillAccent || check == nil {
+				t.Errorf("done step %d marker fill %d check %v, want an accent disc with a check", page, marker.Fill, check != nil)
+			}
+		case page == h.onbPage:
+			if marker.Fill != ui.FillSoft || marker.StrokeFill != ui.FillAccent || marker.Stroke != 2 || check != nil {
+				t.Errorf("current step marker = fill %d stroke %d/%d, want FillSoft with a 2 px accent ring", marker.Fill, marker.Stroke, marker.StrokeFill)
+			}
+		default:
+			if marker.StrokeFill != ui.FillOutline || marker.Stroke == 0 || marker.Fill == ui.FillAccent || check != nil {
+				t.Errorf("ahead step %d marker = fill %d stroke %d/%d, want an outline ring", page, marker.Fill, marker.Stroke, marker.StrokeFill)
+			}
+		}
+	}
+}
+
+func TestOnboardingStepperJumpsToAnyStep(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.onbPage = onbAppearance
+	h.onbScroll = 40
+	reg.rebuildPanel(h)
+	h.setFocus(byAction(h.root, "onb-step:4"))
+	if !h.activate(reg) {
+		t.Fatal("step 5 rejected activation")
+	}
+	if h.onbPage != onbPlugins || h.onbScroll != 0 {
+		t.Fatalf("after jump page=%d scroll=%d, want page %d and scroll 0", h.onbPage, h.onbScroll, onbPlugins)
+	}
+}
+
+func TestOnboardingStepperSummarisesEarlierSteps(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.draft.Weather.City = "Melbourne"
+	h.draft.Weather.Unit = "celsius"
+	h.onbPage = onbReady
+	reg.rebuildPanel(h)
+	want := map[onboardingPage]string{
+		onbAppearance: "Dark",
+		onbRegion:     "Melbourne · °C",
+		onbIdle:       "Nothing",
+		onbPlugins:    "0 selected",
+	}
+	for page, text := range want {
+		summary := onboardingNodeByKey(h.root, fmt.Sprintf("onb-step-summary:%d", page))
+		if summary == nil || !strings.Contains(treeText(summary), text) {
+			t.Errorf("step %d summary = %q, want it to contain %q", page, treeText(summary), text)
+		}
+	}
+	h.onbPage = onbRegion
+	reg.rebuildPanel(h)
+	for page := onbRegion; page < onbPages; page++ {
+		if onboardingNodeByKey(h.root, fmt.Sprintf("onb-step-summary:%d", page)) != nil {
+			t.Errorf("step %d shows a summary before the user reached it", page)
+		}
+	}
+}
+
+func TestOnboardingStepperFitsAboveRailFoot(t *testing.T) {
+	for _, size := range [][2]int{{1536, 864}, {1920, 1080}, {3440, 1440}} {
+		reg, h := openOnboardingAt(t, size[0], size[1], 120)
+		for _, page := range []onboardingPage{onbWelcome, onbReady} {
+			reg.mu.Lock()
+			h.onbPage = page
+			reg.rebuildPanel(h)
+			reg.mu.Unlock()
+			last := byAction(h.root, fmt.Sprintf("onb-step:%d", onbPages-1))
+			foot := onboardingNodeByKey(h.root, "onb-rail-foot")
+			if last == nil || foot == nil || last.Bounds.Y+last.Bounds.H > foot.Bounds.Y {
+				t.Errorf("%dx%d page %d: last step %+v runs into the rail foot %+v", size[0], size[1], page, last.Bounds, foot.Bounds)
+			}
+		}
 	}
 }
