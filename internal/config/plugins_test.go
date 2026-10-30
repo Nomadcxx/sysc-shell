@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // pluginConfig is a configuration exercising every plugin field: an enabled
@@ -47,6 +48,155 @@ func TestParseReadsPluginPlacementsAndSettings(t *testing.T) {
 	}
 	if got := cfg.Plugins.Instances["timer-1"]["label"]; got != "Tea" {
 		t.Errorf("instance setting label = %v, want Tea", got)
+	}
+}
+
+func TestParseMigratesLegacyWeatherPluginToNativeItem(t *testing.T) {
+	t.Parallel()
+
+	const input = `{
+  "bar": {"items": {"right": [
+    {"id": "plugin", "plugin": "org.sysc.weather", "entry": "bar", "instance": "weather-1"},
+    {"id": "plugin", "plugin": "org.sysc.timer", "entry": "bar", "instance": "timer-1"}
+  ]}},
+  "outputs": [{"connector": "DP-1", "bar": {"items": {"center": [
+    {"id": "group", "items": [
+      {"id": "plugin", "plugin": "org.sysc.weather", "entry": "bar", "instance": "weather-1"},
+      "clock"
+    ]}
+  ]}}}],
+  "plugins": {
+    "enabled": ["org.sysc.weather", "org.sysc.timer"],
+    "settings": {"org.sysc.weather": {
+      "latitude": -33.87,
+      "longitude": 151.21,
+      "unit": "fahrenheit",
+      "interval": "20m",
+      "bar_condition": true
+    }},
+    "instances": {"weather-1": {"label": "legacy weather"}}
+  }
+}`
+	cfg, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	wantRight := []Item{
+		{ID: "weather", ShowCondition: true},
+		{ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "timer-1"},
+	}
+	if !reflect.DeepEqual(cfg.Bar.Right, wantRight) {
+		t.Errorf("bar.right = %+v, want %+v", cfg.Bar.Right, wantRight)
+	}
+	if len(cfg.Outputs) != 1 || len(cfg.Outputs[0].Bar.Center) != 1 {
+		t.Fatalf("outputs = %+v", cfg.Outputs)
+	}
+	group := cfg.Outputs[0].Bar.Center[0]
+	if group.ID != "group" || len(group.Items) != 2 ||
+		!reflect.DeepEqual(group.Items[0], Item{ID: "weather", ShowCondition: true}) {
+		t.Errorf("output group = %+v, want native weather and clock", group)
+	}
+	if !cfg.Weather.Configured || cfg.Weather.Latitude != -33.87 || cfg.Weather.Longitude != 151.21 ||
+		cfg.Weather.Unit != "fahrenheit" || cfg.Weather.Interval != 20*time.Minute {
+		t.Errorf("weather = %+v, want legacy location and preferences", cfg.Weather)
+	}
+	if !reflect.DeepEqual(cfg.Plugins.Enabled, []string{"org.sysc.timer"}) {
+		t.Errorf("plugins.enabled = %v, want only timer", cfg.Plugins.Enabled)
+	}
+	if got := cfg.Plugins.Settings["org.sysc.weather"]["bar_condition"]; got != true {
+		t.Errorf("legacy plugin settings were not preserved: bar_condition = %v", got)
+	}
+	if got := cfg.Plugins.Instances["weather-1"]["label"]; got != "legacy weather" {
+		t.Errorf("legacy instance settings were not preserved: label = %v", got)
+	}
+}
+
+func TestParseKeepsNativeWeatherLocationOverLegacyPluginSettings(t *testing.T) {
+	t.Parallel()
+
+	const input = `{
+  "weather": {"latitude": 27.47, "longitude": 153.02, "unit": "celsius"},
+  "bar": {"items": {"right": [
+    {"id": "plugin", "plugin": "org.sysc.weather", "entry": "bar", "instance": "weather-1"}
+  ]}},
+  "plugins": {"settings": {"org.sysc.weather": {
+    "latitude": 51.5,
+    "longitude": -0.13,
+    "unit": "fahrenheit"
+  }}}
+}`
+	cfg, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.Weather.Latitude != 27.47 || cfg.Weather.Longitude != 153.02 || cfg.Weather.Unit != "celsius" {
+		t.Errorf("weather = %+v, want the existing native configuration", cfg.Weather)
+	}
+	if !reflect.DeepEqual(cfg.Bar.Right, []Item{{ID: "weather"}}) {
+		t.Errorf("bar.right = %+v, want native weather", cfg.Bar.Right)
+	}
+}
+
+func TestParseCopiesLegacyWeatherPreferencesWhenNativeLocationExists(t *testing.T) {
+	t.Parallel()
+
+	const input = `{
+  "weather": {"latitude": 27.47, "longitude": 153.02},
+  "bar": {"items": {"right": [
+    {"id": "plugin", "plugin": "org.sysc.weather", "entry": "bar", "instance": "weather-1"}
+  ]}},
+  "plugins": {"settings": {"org.sysc.weather": {
+    "unit": "fahrenheit",
+    "interval": "20m"
+  }}}
+}`
+	cfg, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.Weather.Latitude != 27.47 || cfg.Weather.Longitude != 153.02 || cfg.Weather.Unit != "fahrenheit" ||
+		cfg.Weather.Interval != 20*time.Minute {
+		t.Errorf("weather = %+v, want native place and legacy preferences", cfg.Weather)
+	}
+}
+
+func TestParseDropsLegacyWeatherPlacementWithoutAUsableLocation(t *testing.T) {
+	t.Parallel()
+
+	const input = `{
+  "bar": {"items": {"right": [
+    {"id": "plugin", "plugin": "org.sysc.weather", "entry": "bar", "instance": "weather-1"},
+    "clock"
+  ]}},
+  "outputs": [{"connector": "DP-1", "bar": {"items": {"left": [
+    {"id": "group", "items": [
+      {"id": "plugin", "plugin": "org.sysc.weather", "entry": "bar", "instance": "weather-2"}
+    ]}
+  ]}}}],
+  "plugins": {
+    "enabled": ["org.sysc.weather", "org.sysc.timer"],
+    "settings": {"org.sysc.weather": {"unit": "fahrenheit"}}
+  }
+}`
+	cfg, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Bar.Right, []Item{{ID: "clock", Format: "15:04", Boundary: time.Minute}}) {
+		t.Errorf("bar.right = %+v, want only the retained clock", cfg.Bar.Right)
+	}
+	if len(cfg.Outputs) != 1 || len(cfg.Outputs[0].Bar.Left) != 0 {
+		t.Errorf("output bar.left = %+v, want the empty legacy group removed", cfg.Outputs)
+	}
+	if !reflect.DeepEqual(cfg.Outputs[0].Bar.Right, []Item{{ID: "clock", Format: "15:04", Boundary: time.Minute}}) {
+		t.Errorf("inherited output bar.right = %+v, want only one clock", cfg.Outputs[0].Bar.Right)
+	}
+	if !reflect.DeepEqual(cfg.Plugins.Enabled, []string{"org.sysc.timer"}) {
+		t.Errorf("plugins.enabled = %v, want only timer", cfg.Plugins.Enabled)
+	}
+	if got := cfg.Plugins.Settings["org.sysc.weather"]["unit"]; got != "fahrenheit" {
+		t.Errorf("legacy plugin settings were not preserved: unit = %v", got)
 	}
 }
 
