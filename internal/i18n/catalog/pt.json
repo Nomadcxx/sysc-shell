@@ -321,7 +321,7 @@
  "onboarding.intro.idle": "Escolha o que acontece quando a sessão fica inativa ou mantenha o comportamento atual.",
  "onboarding.intro.plugins": "Escolha os plugins de barra instalados que quer ativar e colocar na barra. As escolhas são guardadas ao terminar; pode instalar plugins mais tarde nas Definições.",
  "onboarding.intro.ready": "Reveja as alterações aplicadas. As Definições incluem estes controlos e o resto do shell.",
- "onboarding.intro.region": "Configure a localização e as unidades meteorológicas. O idioma da interface segue a preferência da sessão; os teclados são geridos pelo sistema operativo.",
+ "onboarding.intro.region": "Configure a localização e as unidades meteorológicas e escolha o idioma da interface. O esquema do teclado continua a ser gerido pelo sistema operativo.",
  "onboarding.intro.welcome": "Configure o essencial para começar. As alterações são aplicadas à medida que escolhe e continuam disponíveis nas Definições.",
  "onboarding.region.city_description": "Introduza uma cidade ou localidade para consultar o tempo local.",
  "onboarding.region.language_description": "Escolha o idioma da interface; o esquema do teclado continua a ser gerido pelo sistema operativo.",

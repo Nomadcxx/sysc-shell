@@ -58,8 +58,8 @@ const (
 		"you make them and stay available later in Settings."
 	onbIntroAppearance = "Set the theme mode and wallpaper. Detailed palettes, " +
 		"schemes and bar layout stay in Settings."
-	onbIntroRegion = "Weather location and units. The interface language follows " +
-		"your session locale; keyboard layouts stay with the OS."
+	onbIntroRegion = "Set the weather location and units, and choose the interface " +
+		"language. Keyboard layouts stay with the OS."
 	onbIntroIdle = "Choose the action for an idle session, or keep the current " +
 		"behaviour. Timing and availability stay in Settings."
 	onbIntroPlugins = "Choose installed bar plugins to enable and place on the bar. " +
