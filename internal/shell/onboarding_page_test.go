@@ -1445,11 +1445,11 @@ func TestOnboardingStartupPluginsPageListsCurrentSelection(t *testing.T) {
 		t.Fatalf("page count = %d, want six including Startup plugins", onbPages)
 	}
 	toggle := byAction(h.root, "onb-plugin:org.example.timer")
-	if toggle == nil || toggle.Kind != ui.KindToggle || toggle.Role != "switch" || toggle.Value == 0 || !toggle.Focusable || toggle.Name != "Place Timer on the bar" {
+	if toggle == nil || toggle.Kind != ui.KindButton || toggle.Role != "checkbox" || toggle.Value == 0 || !toggle.Focusable || toggle.Name != "Place Timer on the bar" {
 		t.Fatalf("installed, enabled and placed plugin control = %+v", toggle)
 	}
-	if !strings.Contains(treeText(h.root), "Enabled · On bar") || !strings.Contains(treeText(h.root), "Bar widget: Clock") {
-		t.Fatalf("plugin row did not show its enabled/placement state and default widget: %q", treeText(h.root))
+	if onboardingNodeByKey(toggle, "onb-plugin-check:org.example.timer") == nil || !strings.Contains(treeText(toggle), "Bar widget: Clock") {
+		t.Fatalf("plugin tile did not show its check mark and default widget: %q", treeText(toggle))
 	}
 	if byAction(h.root, "onb-plugin:org.example.panel-only") != nil ||
 		byAction(h.root, "onb-plugin:org.example.missing-command") != nil {
@@ -1492,7 +1492,7 @@ func TestOnboardingPluginSelectionIsStagedUntilFinish(t *testing.T) {
 		t.Fatal("selecting a plugin mutated the config draft before Finish")
 	}
 	toggle = byAction(h.root, "onb-plugin:org.example.timer")
-	if toggle == nil || toggle.Value == 0 || !strings.Contains(treeText(h.root), "Enabled · On bar") {
+	if toggle == nil || toggle.Value == 0 || onboardingNodeByKey(toggle, "onb-plugin-check:org.example.timer").Fill != ui.FillAccent {
 		reg.mu.Unlock()
 		t.Fatal("staged plugin selection was not reflected in the page")
 	}
@@ -1530,7 +1530,7 @@ func TestOnboardingPluginSelectionIsStagedUntilFinish(t *testing.T) {
 		t.Fatal("deselecting a plugin mutated the config draft before Finish")
 	}
 	toggle = byAction(h.root, "onb-plugin:org.example.timer")
-	if toggle == nil || toggle.Value != 0 || !strings.Contains(treeText(h.root), "Disabled · Not on bar") {
+	if toggle == nil || toggle.Value != 0 || onboardingNodeByKey(toggle, "onb-plugin-check:org.example.timer").Fill == ui.FillAccent {
 		reg.mu.Unlock()
 		t.Fatal("staged plugin deselection was not reflected in the page")
 	}

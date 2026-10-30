@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -472,5 +474,92 @@ func TestOnboardingIdleOffersCardsWithReasons(t *testing.T) {
 	reg.rebuildPanel(h)
 	if screensaver := onboardingNodeByKey(h.root, "onb-idle:screensaver"); !screensaver.State.Has(ui.StateDisabled) {
 		t.Error("idle cards stay live while the idle action applies")
+	}
+}
+
+func TestOnboardingPluginsAreTilesFourPerRow(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	var candidates []plugin.Candidate
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("org.example.p%d", i)
+		candidates = append(candidates, plugin.Candidate{Manifest: plugin.Manifest{
+			ID: id, Name: fmt.Sprintf("Plugin %d", i), Widgets: []plugin.Widget{{ID: "w", Label: "Widget"}},
+		}})
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	previous := reg.plugins
+	reg.plugins = &pluginHost{r: reg, catalog: plugin.Catalog{Plugins: candidates}}
+	t.Cleanup(func() { reg.plugins = previous })
+	h.onbPluginSelections = map[string]bool{"org.example.p1": true}
+	h.onbPage = onbPlugins
+	reg.rebuildPanel(h)
+	var tiles []*ui.Node
+	for _, c := range candidates {
+		tile := byAction(h.root, "onb-plugin:"+c.Manifest.ID)
+		if tile == nil || tile.Kind != ui.KindButton || tile.Role != "checkbox" || !tile.Focusable {
+			t.Fatalf("%s tile = %+v, want a focusable checkbox button", c.Manifest.ID, tile)
+		}
+		tiles = append(tiles, tile)
+	}
+	for i := 1; i < 4; i++ {
+		if tiles[i].Bounds.Y != tiles[0].Bounds.Y || tiles[i].Bounds.W != tiles[0].Bounds.W {
+			t.Errorf("tile %d bounds %+v do not share the first row with %+v", i, tiles[i].Bounds, tiles[0].Bounds)
+		}
+	}
+	if tiles[4].Bounds.Y <= tiles[0].Bounds.Y {
+		t.Errorf("fifth tile %+v did not wrap to a second row", tiles[4].Bounds)
+	}
+	checked := onboardingNodeByKey(tiles[1], "onb-plugin-check:org.example.p1")
+	if tiles[1].Value != 1 || checked == nil || findNode(checked, func(n *ui.Node) bool { return n.Icon == "check" }) == nil {
+		t.Error("the selected tile shows no check mark")
+	}
+	if findNode(tiles[0], func(n *ui.Node) bool { return n.Icon == "check" }) != nil || tiles[0].Value != 0 {
+		t.Error("an unselected tile shows a check mark")
+	}
+	h.setFocus(tiles[0])
+	if !h.activate(reg) || !h.onbPluginSelections["org.example.p0"] {
+		t.Fatal("activating a tile did not stage its selection")
+	}
+}
+
+func TestOnboardingPluginStoreEmptyStateFinishesSetup(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	reg := newPanelRegistry(t)
+	setOnboardingTestConfig(t, reg, reg.cfg.Clone())
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelOnboarding]
+	h.onbPage = onbPlugins
+	reg.rebuildPanel(h)
+	open := byAction(h.root, "onb-plugin-store")
+	if open == nil || !strings.Contains(treeText(h.root), "No installed bar plugins") {
+		reg.mu.Unlock()
+		t.Fatalf("empty Plugins step = %q, want one line and the store action", treeText(h.root))
+	}
+	if status := onboardingNodeByKey(h.root, "onb-status"); status != nil && status.Text != "" {
+		reg.mu.Unlock()
+		t.Fatalf("empty Plugins step footer = %q, want no count", status.Text)
+	}
+	h.setFocus(open)
+	if !h.activate(reg) {
+		reg.mu.Unlock()
+		t.Fatal("the store action was not accepted")
+	}
+	if reg.panelHosts[PanelOnboarding] != nil {
+		reg.mu.Unlock()
+		t.Fatal("onboarding stayed open")
+	}
+	store := reg.panelHosts[PanelPluginStore]
+	if store == nil || store.output != 7 {
+		reg.mu.Unlock()
+		t.Fatalf("plugin store host = %+v, want it open on output 7", store)
+	}
+	reg.mu.Unlock()
+	state, err := onboarding.Load(onboarding.StatePath())
+	if err != nil || state.Outcome != onboarding.OutcomeCompleted {
+		t.Fatalf("outcome = %q (%v), want completed", state.Outcome, err)
 	}
 }

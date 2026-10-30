@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
@@ -462,7 +463,7 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 		children = append(children, onbIdleCards(r, h))
 		children = append(children, onbCaption(h, onbText(h, "hint.idle", onbIdleHint)))
 	case onbPlugins:
-		children = append(children, onbPluginRows(r, h)...)
+		children = append(children, onbPluginTiles(r, h)...)
 	case onbReady:
 		children = append(children, onbSummary(r, h)...)
 		children = append(children, onbCaption(h, onbText(h, "hint.ready", onbEntryHint)))
@@ -658,69 +659,96 @@ func onbWallpaperRow(r *Registry, h *PanelHost) *ui.Node {
 	}
 }
 
-func onbPluginRows(r *Registry, h *PanelHost) []*ui.Node {
+const onbPluginCheck = 20 // token-exempt: a tile's check disc
+
+// onbPluginTiles shows the installed bar plugins as tiles, four to a row on
+// the wide frame. Activating one stages it; nothing is written until setup
+// finishes. With none installed, the step offers the plugin store.
+func onbPluginTiles(r *Registry, h *PanelHost) []*ui.Node {
 	candidates := onbPluginCandidates(r)
 	if len(candidates) == 0 {
-		return []*ui.Node{onbCaption(h, onbText(h, "plugins.empty", "No installed bar plugins. Install plugins later in Settings."))}
+		return []*ui.Node{
+			onbCaption(h, onbText(h, "plugins.empty", "No installed bar plugins yet. The plugin store has more.")),
+			{Kind: ui.KindRow, Children: []*ui.Node{
+				onbActionButton(h, "onb-plugin-store", "action.plugin_store", "Open plugin store", "extension"),
+			}},
+		}
 	}
 	view, err := onbPluginSelectionConfig(h.draft, candidates, h.onbPluginSelections)
 	if err != nil {
 		view = h.draft
 	}
 	m := h.metrics()
-	innerWidth := max(onbContentWidth(h)-2*m.CardPadding, 0)
+	columns := 4
+	if !onbWide(h) {
+		columns = 2
+	}
+	width := (onbContentWidth(h) - (columns-1)*theme.MarginM) / columns
+	inner := max(width-2*m.CardPadding, 0)
 	var rows []*ui.Node
 	for i, candidate := range candidates {
-		if i > 0 {
-			rows = append(rows, &ui.Node{Kind: ui.KindSeparator, Width: innerWidth})
+		if i%columns == 0 {
+			rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM})
 		}
 		manifest := candidate.Manifest
 		name := manifest.Name
 		if name == "" {
 			name = manifest.ID
 		}
-		widget := manifest.Widgets[0]
-		widgetLabel := widget.Label
+		widgetLabel := manifest.Widgets[0].Label
 		if widgetLabel == "" {
-			widgetLabel = widget.ID
+			widgetLabel = manifest.Widgets[0].ID
 		}
-		enabled := slices.Contains(view.Plugins.Enabled, manifest.ID)
-		placed := onbConfigHasPluginPlacement(view, manifest.ID)
-		value := 0.0
-		if enabled && placed {
-			value = 1
+		selected := slices.Contains(view.Plugins.Enabled, manifest.ID) && onbConfigHasPluginPlacement(view, manifest.ID)
+		initial, _ := utf8.DecodeRuneInString(name)
+		check := &ui.Node{
+			Kind: ui.KindCapsule, Key: "onb-plugin-check:" + manifest.ID,
+			Width: onbPluginCheck, Height: onbPluginCheck, Shape: ui.ShapeCircle,
+			Stroke: 1, StrokeFill: ui.FillOutline, // token-exempt: a hairline ring, not a ladder value
 		}
-		state := onbText(h, "plugins.disabled", "Disabled")
-		if enabled {
-			state = onbText(h, "plugins.enabled", "Enabled")
+		if selected {
+			check.Fill, check.Stroke = ui.FillAccent, 0
+			check.Children = []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+				Kind: ui.KindIcon, Icon: "check", IconSize: m.IconSmall, CenterX: true, CenterY: true,
+			}}}}
 		}
-		placement := onbText(h, "plugins.not_on_bar", "Not on bar")
-		if placed {
-			placement = onbText(h, "plugins.on_bar", "On bar")
-		}
-		toggle := &ui.Node{
-			Kind: ui.KindToggle, Action: "onb-plugin:" + manifest.ID, Value: value,
-			Name: fmt.Sprintf(onbText(h, "plugins.toggle", "Place %s on the bar"), name),
-			Role: "switch", Focusable: true, Height: m.StandardControl,
-		}
-		toggleWidth, _, err := ui.Measure(toggle, h.measureText())
-		if err != nil {
-			toggleWidth = m.StandardControl
-		}
-		labelWidth := max(innerWidth-toggleWidth-theme.MarginL, 0)
-		label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelWidth, Children: []*ui.Node{
-			h.wrappedText(name, theme.RoleLabel, ui.ToneNormal, labelWidth, 0),
-			h.wrappedText(fmt.Sprintf(onbText(h, "plugins.widget", "Bar widget: %s"), widgetLabel), theme.RoleCaption, ui.ToneSubtle, labelWidth, 0),
-			h.wrappedText(state+" · "+placement, theme.RoleCaption, ui.ToneSubtle, labelWidth, 0),
+		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
+			{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
+				{
+					Kind: ui.KindCapsule, Width: onbBadge, Height: onbBadge, Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium,
+					Children: []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+						Kind: ui.KindText, Text: strings.ToUpper(string(initial)), TextRole: theme.RoleLabel, CenterX: true, CenterY: true,
+					}}}},
+				},
+				check,
+			}},
+			h.wrappedText(name, theme.RoleLabel, ui.ToneNormal, inner, 1),
+			h.wrappedText(fmt.Sprintf(onbText(h, "plugins.widget", "Bar widget: %s"), widgetLabel), theme.RoleCaption, ui.ToneSubtle, inner, 1),
 		}}
-		rows = append(rows, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: innerWidth, Gap: theme.MarginL, Children: []*ui.Node{label, toggle}})
+		height, err := ui.ContentHeight(body, inner, h.measureText())
+		if err != nil {
+			height = m.StandardControl
+		}
+		value := 0.0
+		tile := &ui.Node{
+			Kind: ui.KindButton, Action: "onb-plugin:" + manifest.ID, Role: "checkbox", Focusable: true,
+			Name:  fmt.Sprintf(onbText(h, "plugins.toggle", "Place %s on the bar"), name),
+			Width: width, Height: height + 2*m.CardPadding, Padding: m.CardPadding,
+			Shape: ui.ShapeCard, Fill: ui.FillContainerHigh,
+			Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
+			Children: []*ui.Node{body},
+		}
+		if selected {
+			value = 1
+			tile.Fill = ui.FillSoft
+			tile.Stroke = 2 // token-exempt: the chosen option's ring
+			tile.StrokeFill = ui.FillAccent
+		}
+		tile.Value = value
+		row := rows[len(rows)-1]
+		row.Children = append(row.Children, tile)
 	}
-	return []*ui.Node{{
-		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
-		Shape: ui.ShapeCard, Width: onbContentWidth(h), Children: []*ui.Node{{
-			Kind: ui.KindColumn, Gap: theme.MarginM, Children: rows,
-		}},
-	}}
+	return []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: rows}}
 }
 
 func onbPluginCandidates(r *Registry) []plugin.Candidate {
@@ -1135,7 +1163,7 @@ func onbFooter(r *Registry, h *PanelHost) *ui.Node {
 		main.AriaDisabled = true
 	}
 	status := &ui.Node{Kind: ui.KindText, Key: "onb-status", Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
-	if h.onbPage == onbPlugins {
+	if h.onbPage == onbPlugins && len(onbPluginCandidates(r)) > 0 {
 		status.Text = onbStepSummary(r, h, onbPlugins)
 	}
 	return &ui.Node{Kind: ui.KindRow, Key: "onb-footer", PinEnd: true, Children: []*ui.Node{
@@ -1367,15 +1395,18 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		}
 		r.closePanelLocked(h.id)
 		return true
-	case "onb-settings", "onb-launcher":
+	case "onb-settings", "onb-launcher", "onb-plugin-store":
 		if err := r.finishOnboardingLocked(h); err != nil {
 			h.errLabel = err.Error()
 			r.rebuildPanel(h)
 			return true
 		}
 		id := PanelSettings
-		if n.Action == "onb-launcher" {
+		switch n.Action {
+		case "onb-launcher":
 			id = PanelLauncher
+		case "onb-plugin-store":
+			id = PanelPluginStore
 		}
 		output := h.output
 		r.closePanelLocked(h.id)
