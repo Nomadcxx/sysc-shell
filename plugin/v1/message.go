@@ -28,7 +28,11 @@ const (
 	// the plugin learns why its view is not on screen instead of guessing.
 	// Minor 22 adds view.resize, so a plugin can relayout when the host's
 	// granted panel bounds change after opening.
-	ProtocolMinor = 22
+	// Minor 23 adds the gpp_maybe and remove_moderator icons, the privacy
+	// audit's Review and Risky shields, and paints a bare button's icon in
+	// the button's tone. A plugin that uses those icons declares minor 23 so
+	// an older shell refuses it instead of failing to convert its views.
+	ProtocolMinor = 23
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.

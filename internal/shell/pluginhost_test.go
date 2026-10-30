@@ -2354,7 +2354,7 @@ func TestPluginPanelReceivesResizeOnOutputSizeChanges(t *testing.T) {
 		minor      int
 		wantEvents int
 	}{
-		{name: "minor 22", mode: func(path string) string { return "record-host:" + path }, minor: 22, wantEvents: 4},
+		{name: "current minor", mode: func(path string) string { return "record-host:" + path }, minor: v1.ProtocolMinor, wantEvents: 4},
 		{name: "minor 21", mode: func(path string) string { return "minor21-record-host:" + path }, minor: 21},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

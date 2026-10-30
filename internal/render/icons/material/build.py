@@ -181,6 +181,11 @@ ICONS = [
     "star",
     "note_add",
     "terminal",
+    # Privacy audit grades: a shield marked for Review and slashed for Risky,
+    # beside verified_user for Good and the plain shield for Unrated. gpp_bad
+    # stays the shell's own monitoring warning, so the audit never borrows it.
+    "gpp_maybe",
+    "remove_moderator",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

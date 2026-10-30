@@ -2295,8 +2295,8 @@ func TestPrivacyGradePresentationUsesWordsAndThemeFills(t *testing.T) {
 		icon  string
 	}{
 		{"green", "Good", ui.FillAccent, "verified_user"},
-		{"amber", "Review", ui.FillOutline, "flag"},
-		{"red", "Risky", ui.FillErrorContainer, "gpp_bad"},
+		{"amber", "Review", ui.FillOutline, "gpp_maybe"},
+		{"red", "Risky", ui.FillErrorContainer, "remove_moderator"},
 		{"unknown", "Unrated", ui.FillSoft, "shield"},
 		{"future", "Unrated", ui.FillSoft, "shield"},
 	} {
