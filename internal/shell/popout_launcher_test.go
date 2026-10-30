@@ -1571,7 +1571,7 @@ func TestLauncherRowHeightSurvivesAMissingCommentAndIcon(t *testing.T) {
 
 	measure := h.measureText()
 	height := func(e launcher.Entry) int {
-		body := launcherRowBody(nil, h, e)
+		body := launcherRowBody(nil, h, e, launcherLayoutFor(nil, h))
 		root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{body}}
 		if err := ui.LayoutColumn(root, ui.Rect{W: h.place.Panel.W - 24, H: launcherRowHeight}, measure); err != nil {
 			t.Fatalf("layout %q: %v", e.Name, err)
@@ -1768,7 +1768,7 @@ func TestLauncherHintRowIsMutedUnselectedAndUncounted(t *testing.T) {
 	h := &PanelHost{query: "/calc 2+", launcherResults: []launcher.Result{
 		{Entry: launcher.Entry{Name: "Invalid expression", Comment: "Try 6*7", IconName: "glyph:calculate"}},
 	}}
-	row := launcherRow(r, h, h.launcherResults, 0)
+	row := launcherRow(r, h, h.launcherResults, 0, launcherLayoutFor(r, h))
 	capsule := row.Children[0]
 	if capsule.Fill != ui.FillNone {
 		t.Fatal("hint row highlighted")
@@ -2273,4 +2273,119 @@ func TestLauncherQueuedSnapshotDoesNotClearAwaiting(t *testing.T) {
 	if got := run.waitArgv(t); len(got) == 0 || got[len(got)-1] != "firefox" {
 		t.Fatalf("Enter after B's snapshot ran %v, want firefox", got)
 	}
+}
+
+// setLauncherDisplay changes the saved display mode and rebuilds the open
+// launcher, the way the next open would see it.
+func setLauncherDisplay(t *testing.T, reg *Registry, mode string) {
+	t.Helper()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.cfg.Launcher.Display = mode
+	if h := reg.panelHosts[PanelLauncher]; h != nil {
+		reg.rebuildPanel(h)
+	}
+}
+
+func TestLauncherLayoutFallsBackToListForMixedRows(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	setLauncherDisplay(t, reg, config.LauncherDisplayGrid)
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	if got := launcherLayoutFor(reg, h); got.mode != config.LauncherDisplayGrid {
+		reg.mu.Unlock()
+		t.Fatalf("empty query layout = %q, want grid", got.mode)
+	}
+	reg.mu.Unlock()
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "6*7"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(r launcher.Result) bool {
+			return r.Entry.IconName == "glyph:calculate"
+		})
+	})
+	reg.mu.Lock()
+	got := launcherLayoutFor(reg, h)
+	reg.mu.Unlock()
+	if got.mode != config.LauncherDisplayList || got.slot != launcherSlotHeight || got.columns != 1 {
+		t.Fatalf("calculator query layout = %+v, want the list", got)
+	}
+
+	reg.mu.Lock()
+	h.query = "/emo smile"
+	h.search = ui.NewField(h.query)
+	reg.launcherSendQuery(h, h.query)
+	reg.mu.Unlock()
+	waitForLauncherState(t, reg, func(h *PanelHost) bool { return h != nil && !h.launcherAwaiting })
+	reg.mu.Lock()
+	got = launcherLayoutFor(reg, h)
+	reg.mu.Unlock()
+	if got.mode != config.LauncherDisplayList {
+		t.Fatalf("emoji query layout = %q, want list", got.mode)
+	}
+}
+
+func TestLauncherCompactRowsDropTheComment(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, launcherTestEntries())
+	setLauncherDisplay(t, reg, config.LauncherDisplayCompact)
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	list := launcherListNode(t, h)
+	if list.ItemHeight != 48 {
+		t.Fatalf("compact ItemHeight = %d, want 48", list.ItemHeight)
+	}
+	for i := range h.launcherResults {
+		row := list.Item(i)
+		comment := h.launcherResults[i].Entry.Comment
+		if comment != "" && treeHasText(row, comment) {
+			t.Fatalf("compact row %d shows its comment %q", i, comment)
+		}
+		if !treeHasText(row, h.launcherResults[i].Entry.Name) {
+			t.Fatalf("compact row %d lost its name", i)
+		}
+		icon := launcherRowIcon(row)
+		if icon == nil || icon.Width != launcherCompactIcon || icon.Height != launcherCompactIcon {
+			t.Fatalf("compact row %d icon = %+v, want a %d px slot", i, icon, launcherCompactIcon)
+		}
+	}
+}
+
+func TestLauncherListIsUnchangedByTheSetting(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, launcherTestEntries())
+	setLauncherDisplay(t, reg, config.LauncherDisplayList)
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	list := launcherListNode(t, h)
+	if list.ItemHeight != 76 || launcherSlotHeight != 76 {
+		t.Fatalf("list ItemHeight = %d (slot %d), want 76", list.ItemHeight, launcherSlotHeight)
+	}
+	for i, res := range h.launcherResults {
+		if res.Entry.Comment != "" && !treeHasText(list.Item(i), res.Entry.Comment) {
+			t.Fatalf("list row %d lost its comment %q", i, res.Entry.Comment)
+		}
+	}
+}
+
+// launcherRowIcon is the first square glyph slot or image in a row.
+func launcherRowIcon(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if (n.Kind == ui.KindCapsule && n.Width > 0 && n.Width == n.Height) || n.Kind == ui.KindImage {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := launcherRowIcon(c); got != nil {
+			return got
+		}
+	}
+	return nil
 }

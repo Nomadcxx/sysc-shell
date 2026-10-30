@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -78,7 +79,48 @@ const (
 	// so there is no width to pad to. The rail takes RoleTitle: it is the
 	// panel's title, and 16/600 carries its weight beside the mark.
 	launcherSlashRun = "//////"
+
+	// Compact drops the comment line, so the row needs only a name beside a
+	// smaller icon: 8 + 28 + 8 with a 4 gap is a 48 slot against the list's 76.
+	launcherCompactIcon = 28
+	launcherCompactPad  = 8
+	launcherCompactGap  = 4
 )
+
+// launcherLayout is the geometry one rebuild uses for the result list. Rows,
+// the scroll offset, paging and the wheel all size from it, so a display
+// mode cannot leave one of them on the list's figures.
+type launcherLayout struct {
+	mode                   string
+	iconSize               int
+	padTop, padBottom, gap int
+	slot                   int // height of one virtual-list item
+	columns                int // results per item: 1 outside the grid
+	cellWidth, tileHeight  int // grid only
+}
+
+// launcherLayoutFor applies the saved display only to a result set made
+// entirely of applications. A calculator answer, a provider query or the
+// overview keeps the list, as Noctalia keeps mixed results off its grid.
+func launcherLayoutFor(r *Registry, h *PanelHost) launcherLayout {
+	l := launcherLayout{
+		mode: config.LauncherDisplayList, iconSize: launcherIconSlot,
+		padTop: launcherRowPadTop, padBottom: launcherRowPadBottom, gap: launcherRowGap,
+		slot: launcherSlotHeight, columns: 1,
+	}
+	if r == nil || h == nil || !h.launcherAppsOnly {
+		return l
+	}
+	switch r.cfg.Launcher.Display {
+	case config.LauncherDisplayCompact:
+		l.mode, l.iconSize = config.LauncherDisplayCompact, launcherCompactIcon
+		l.padTop, l.padBottom, l.gap = launcherCompactPad, launcherCompactPad, launcherCompactGap
+		l.slot = l.padTop + l.iconSize + l.padBottom + l.gap
+	case config.LauncherDisplayGrid:
+		l.mode = config.LauncherDisplayGrid
+	}
+	return l
+}
 
 // launcherServiceLocked returns the process-wide launcher service, creating
 // it on first use. Lazy creation keeps registries that never open the
@@ -188,6 +230,9 @@ func launcherHistoryPath(getenv func(string) string) string {
 type launcherSnap struct {
 	gen  uint64
 	rows []launcher.Result
+	// appsOnly is true when every row came from the applications provider,
+	// the one result set the compact and grid displays apply to.
+	appsOnly bool
 }
 
 type launcherKind int
@@ -247,6 +292,7 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 			applied := false
 			if h != nil && h.launcherQueryGen == snap.gen {
 				h.launcherResults = launcherWithHints(h.query, snap.rows)
+				h.launcherAppsOnly = snap.appsOnly
 				h.launcherAwaiting = false
 				r.rebuildPanel(h)
 				output = h.output
@@ -318,6 +364,7 @@ func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
 	h.launcherActions = nil
 	if plan.kind == launcherKindOverview {
 		h.launcherResults = r.launcherOverviewRows(plan.passed)
+		h.launcherAppsOnly = false
 		h.launcherSel = 0
 		h.launcherAwaiting = false
 	}
@@ -427,6 +474,7 @@ func (r *Registry) noteLauncherRowsLocked(provider, query string, rows []launche
 		return
 	}
 	out := b.rows
+	appsOnly := plan.kind == launcherKindApps
 	if plan.kind == launcherKindInline {
 		if len(b.inline) != len(plan.inlineProviders) {
 			return
@@ -435,10 +483,11 @@ func (r *Registry) noteLauncherRowsLocked(provider, query string, rows []launche
 		for _, prefix := range plan.inlineProviders {
 			out = append(out, b.inline[prefix]...)
 		}
+		appsOnly = len(out) == 0
 		out = append(out, b.rows...)
 	}
 	b.emitted = true
-	r.emitLauncherSnapLocked(launcherSnap{gen: r.launcherGen, rows: out})
+	r.emitLauncherSnapLocked(launcherSnap{gen: r.launcherGen, rows: out, appsOnly: appsOnly})
 }
 
 func (r *Registry) emitLauncherSnapLocked(snap launcherSnap) {
@@ -620,28 +669,29 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	h.launcherSel = min(max(h.launcherSel, 0), len(results)-1)
 
+	l := launcherLayoutFor(r, h)
 	listH := h.launcherListHeight()
 	list := &ui.Node{
 		Kind:         ui.KindVirtualList,
 		Height:       listH,
 		ItemCount:    len(results),
-		ItemHeight:   launcherSlotHeight,
-		ScrollOffset: h.launcherVisibleOffset(len(results)),
-		// Each pill sits launcherRowGap/2 inside the list on every side, so
-		// the bar starts the rest of launcherScrollbarClear beyond the list's
-		// right edge, and its ends stop level with the first and last pill
-		// instead of past them.
-		ScrollbarGap:  launcherScrollbarClear - launcherRowGap/2,
-		ScrollbarEnds: launcherRowGap / 2,
+		ItemHeight:   l.slot,
+		ScrollOffset: h.launcherVisibleOffset(len(results), l),
+		// Each pill sits half a gap inside the list on every side, so the bar
+		// starts the rest of launcherScrollbarClear beyond the list's right
+		// edge, and its ends stop level with the first and last pill instead
+		// of past them.
+		ScrollbarGap:  launcherScrollbarClear - l.gap/2,
+		ScrollbarEnds: l.gap / 2,
 		Item: func(i int) *ui.Node {
-			return launcherRow(r, h, results, i)
+			return launcherRow(r, h, results, i, l)
 		},
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL,
 		Children: append(head, list, launcherFooter(h, len(results)))}
 }
 
-func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *ui.Node {
+func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int, l launcherLayout) *ui.Node {
 	if i < 0 || i >= len(results) {
 		return nil
 	}
@@ -665,66 +715,74 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 	// centre its children and split the slack evenly, which is the symmetric
 	// padding this is trying to get away from.
 	return &ui.Node{
-		Kind: ui.KindColumn, Padding: launcherRowGap / 2,
+		Kind: ui.KindColumn, Padding: l.gap / 2,
 		Children: []*ui.Node{{
 			Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeMedium,
-			Padding: launcherRowPadTop, Height: launcherRowHeight,
+			Padding: l.padTop, Height: l.padTop + l.iconSize + l.padBottom,
 			// By index: a desktop-action row shares its application's ID.
 			Action: "launch:" + strconv.Itoa(i),
 			Children: []*ui.Node{{
 				Kind:     ui.KindColumn,
-				Children: []*ui.Node{launcherRowBody(r, h, res.Entry)},
+				Children: []*ui.Node{launcherRowBody(r, h, res.Entry, l)},
 			}},
 		}},
 	}
 }
 
-func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
+func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry, l launcherLayout) *ui.Node {
 	tone := ui.ToneNormal
 	if e.ID == "" {
 		tone = ui.ToneSubtle // a hint, not a result
 	}
-	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, TextRole: theme.RoleLabel, Tone: tone}}
+	// Panel pad 12×2, capsule pad ×2, glyph, gap. The row itself is unpadded:
+	// its vertical inset is the capsule's, and a second one here would put the
+	// text block back off the 12/16 figures.
+	labelW := max(h.place.Panel.W-2*theme.MarginL-2*l.padTop-l.iconSize-theme.MarginL, 80)
+	name := &ui.Node{Kind: ui.KindText, Text: e.Name, TextRole: theme.RoleLabel, Tone: tone}
+	block := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: []*ui.Node{name}}
+	if l.mode == config.LauncherDisplayCompact {
+		// Compact is the name alone, on one line. Left unpinned, the row
+		// centres it on the smaller icon.
+		name.MaxWidth = labelW
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{launcherIconNodeSized(r, h, e, l.iconSize), block}}
+	}
 	if e.Comment != "" {
-		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment, Tone: tone})
+		block.Children = append(block.Children, &ui.Node{Kind: ui.KindText, Text: e.Comment, Tone: tone})
 	}
-	// Panel pad 12×2, capsule pad launcherRowPadTop×2, glyph, gap. The row
-	// itself is unpadded: its vertical inset is the capsule's, and a second
-	// one here would put the text block back off the 12/16 figures.
-	labelW := h.place.Panel.W - 2*theme.MarginL - 2*launcherRowPadTop - launcherIconSlot - theme.MarginL
-	if labelW < 80 {
-		labelW = 80
-	}
+	// Height pins the label block to the icon slot: two labels must not
+	// outgrow the row and eat the capsule's 16 foot on a tall font.
+	block.Height = l.iconSize
 	return &ui.Node{
 		Kind: ui.KindRow, Gap: theme.MarginL,
-		Children: []*ui.Node{
-			launcherIconNode(r, h, e),
-			// Height pins the label block to the icon slot: two labels must not
-			// outgrow the row and eat the capsule's 16 foot on a tall font.
-			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Height: launcherIconSlot, Children: labels},
-		},
+		Children: []*ui.Node{launcherIconNodeSized(r, h, e, l.iconSize), block},
 	}
 }
 
 func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
+	return launcherIconNodeSized(r, h, e, launcherIconSlot)
+}
+
+// launcherIconNodeSized draws the icon slot at size: the list's 40, compact's
+// 28. A provider glyph keeps its 24 until the slot is too small for it.
+func launcherIconNodeSized(r *Registry, h *PanelHost, e launcher.Entry, size int) *ui.Node {
 	// Provider rows have no desktop icon. "glyph:<name>" draws a Material
 	// subset glyph in the slot; "text:<s>" draws s itself (an emoji).
 	if name, ok := strings.CutPrefix(e.IconName, "glyph:"); ok {
 		return &ui.Node{
-			Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+			Kind: ui.KindCapsule, Width: size, Height: size,
 			Fill: ui.FillContainer, Shape: ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: name, IconSize: launcherGlyphSize}},
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: name, IconSize: min(launcherGlyphSize, size-12)}},
 		}
 	}
 	if text, ok := strings.CutPrefix(e.IconName, "text:"); ok {
 		return &ui.Node{
-			Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+			Kind: ui.KindCapsule, Width: size, Height: size,
 			Fill: ui.FillNone, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: text, TextRole: theme.RoleDisplay}},
 		}
 	}
-	if img := launcherLookupIcon(r, h, e.IconName); img != nil {
-		return &ui.Node{Kind: ui.KindImage, ImageSize: launcherIconSlot, Image: img}
+	if img := launcherLookupIcon(r, h, e.IconName, size); img != nil {
+		return &ui.Node{Kind: ui.KindImage, ImageSize: size, Image: img}
 	}
 	// Height as well as width: the slot is a square whichever branch runs.
 	// Without it the capsule sized to its one line of text, and an entry whose
@@ -733,19 +791,18 @@ func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 	// the height of its neighbours. .desktop files with no Comment are common
 	// enough that this was visible as soon as a few were installed.
 	return &ui.Node{
-		Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+		Kind: ui.KindCapsule, Width: size, Height: size,
 		Fill: ui.FillContainer, Shape: ui.ShapeMedium,
 		Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle}},
 	}
 }
 
-func launcherLookupIcon(r *Registry, h *PanelHost, name string) *ui.Image {
+func launcherLookupIcon(r *Registry, h *PanelHost, name string, size int) *ui.Image {
 	if r == nil || r.trayIcons == nil || name == "" {
 		return nil
 	}
-	size := launcherIconSlot
 	if scale := ui.Scale120(h.scale120); scale.Valid() {
-		size = max(scale.Physical(launcherIconSlot), 1)
+		size = max(scale.Physical(size), 1)
 	}
 	key := icons.Square(name, size)
 	if img, ok := r.trayIcons.Lookup(key); ok {
@@ -765,14 +822,16 @@ func launcherGlyph(name string) string {
 // launcherVisibleOffset keeps the selected row inside the viewport across the
 // rebuild every keystroke triggers; the wheel offset survives via
 // h.launcherScroll until selection forces a correction.
-func (h *PanelHost) launcherVisibleOffset(count int) int {
+// The offset is in visual rows, which hold l.columns results each.
+func (h *PanelHost) launcherVisibleOffset(count int, l launcherLayout) int {
 	viewH := h.launcherListHeight()
-	maxOff := max(count*launcherSlotHeight-viewH, 0)
+	rows, sel := (count+l.columns-1)/l.columns, h.launcherSel/l.columns
+	maxOff := max(rows*l.slot-viewH, 0)
 	off := min(max(h.launcherScroll, 0), maxOff)
-	if top := h.launcherSel * launcherSlotHeight; top < off {
+	if top := sel * l.slot; top < off {
 		off = top
 	}
-	if bottom := (h.launcherSel + 1) * launcherSlotHeight; bottom > off+viewH {
+	if bottom := (sel + 1) * l.slot; bottom > off+viewH {
 		off = bottom - viewH
 	}
 	h.launcherScroll = off
@@ -781,7 +840,7 @@ func (h *PanelHost) launcherVisibleOffset(count int) int {
 
 func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 	n := len(h.launcherResults)
-	page := max(h.launcherPageRows(), 1)
+	page := max(h.launcherPageItems(launcherLayoutFor(r, h)), 1)
 	switch key {
 	case keyUp:
 		if h.launcherHistoryMove(r, -1) {
@@ -877,8 +936,10 @@ func (h *PanelHost) launcherMoveSel(r *Registry, delta int) {
 	r.rebuildPanel(h)
 }
 
-func (h *PanelHost) launcherPageRows() int {
-	return max(h.launcherListHeight()/launcherSlotHeight, 1)
+// launcherPageItems is how many results one page step moves: the visual rows
+// that fit, times the results in each row.
+func (h *PanelHost) launcherPageItems(l launcherLayout) int {
+	return max(h.launcherListHeight()/l.slot, 1) * l.columns
 }
 
 // launcherActivateSelected activates the highlighted row. An overview row
