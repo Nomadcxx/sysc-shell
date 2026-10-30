@@ -85,6 +85,14 @@ const (
 	launcherCompactIcon = 28
 	launcherCompactPad  = 8
 	launcherCompactGap  = 4
+
+	// The grid follows Noctalia's app grid: five columns, a 40 icon centred
+	// over a caption of at most two lines, and an 8 gap between tiles.
+	launcherGridColumns = 5
+	launcherGridGap     = 8
+	launcherGridPad     = 10
+	// launcherGridHints is launcherHints with the arrows the grid adds.
+	launcherGridHints = "↑↓←→ Navigate • Enter Select • Esc Close"
 )
 
 // launcherLayout is the geometry one rebuild uses for the result list. Rows,
@@ -117,9 +125,26 @@ func launcherLayoutFor(r *Registry, h *PanelHost) launcherLayout {
 		l.padTop, l.padBottom, l.gap = launcherCompactPad, launcherCompactPad, launcherCompactGap
 		l.slot = l.padTop + l.iconSize + l.padBottom + l.gap
 	case config.LauncherDisplayGrid:
-		l.mode = config.LauncherDisplayGrid
+		l.mode, l.columns, l.gap, l.padTop, l.padBottom = config.LauncherDisplayGrid, launcherGridColumns, launcherGridGap, launcherGridPad, launcherGridPad
+		// Each visual row sits half a gap inside the list on every side, as
+		// a list row does, and the tiles in it are a gap apart.
+		listWidth := h.place.Panel.W - 2*theme.MarginL
+		l.cellWidth = max((listWidth-(l.columns-1)*l.gap)/l.columns, 1)
+		l.tileHeight = 2*l.padTop + l.iconSize + theme.MarginS + 2*launcherCaptionLineHeight(h)
+		l.slot = l.tileHeight + l.gap
 	}
 	return l
+}
+
+// launcherCaptionLineHeight is one line of a grid caption as the painter sets
+// it, measured so a tall font grows the tile instead of clipping its name.
+func launcherCaptionLineHeight(h *PanelHost) int {
+	measure := h.measureText()
+	if measure == nil {
+		return 16
+	}
+	_, lh := measure("Ag", ui.TextAttrs{Role: theme.RoleCaption})
+	return lh
 }
 
 // launcherServiceLocked returns the process-wide launcher service, creating
@@ -596,7 +621,11 @@ func (h *PanelHost) launcherHeaderHeight() int {
 // RoleCaption rather than a muted colour. The palette deliberately has no
 // muted text tone -- it measures 1.47:1 and cannot carry text -- so the
 // footer steps back by size, not by contrast.
-func launcherFooter(h *PanelHost, count int) *ui.Node {
+func launcherFooter(h *PanelHost, count int, l launcherLayout) *ui.Node {
+	hints := launcherHints
+	if l.mode == config.LauncherDisplayGrid {
+		hints = launcherGridHints
+	}
 	// Hint rows (empty ID) explain; they are not results.
 	for _, res := range h.launcherResults {
 		if res.Entry.ID == "" {
@@ -608,9 +637,9 @@ func launcherFooter(h *PanelHost, count int) *ui.Node {
 		nounKey, one, other = "launcher.noun.app", "app", "apps"
 	}
 	// ponytail: launcherHints stays English; sysc-greet prints it verbatim.
-	text := fmt.Sprintf("%d %s \u2022 %s", count, h.trn(nounKey, count, one, other), launcherHints)
+	text := fmt.Sprintf("%d %s \u2022 %s", count, h.trn(nounKey, count, one, other), hints)
 	if count == 0 {
-		text = h.tr("launcher.no_results", "No results") + " \u2022 " + launcherHints
+		text = h.tr("launcher.no_results", "No results") + " \u2022 " + hints
 	}
 	return &ui.Node{Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption, Text: text}
 }
@@ -664,7 +693,7 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 	if len(results) == 0 {
 		head = append(head,
 			&ui.Node{Kind: ui.KindText, Text: "No results"},
-			launcherFooter(h, 0))
+			launcherFooter(h, 0, launcherLayoutFor(r, h)))
 		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: head}
 	}
 	h.launcherSel = min(max(h.launcherSel, 0), len(results)-1)
@@ -674,7 +703,7 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 	list := &ui.Node{
 		Kind:         ui.KindVirtualList,
 		Height:       listH,
-		ItemCount:    len(results),
+		ItemCount:    (len(results) + l.columns - 1) / l.columns,
 		ItemHeight:   l.slot,
 		ScrollOffset: h.launcherVisibleOffset(len(results), l),
 		// Each pill sits half a gap inside the list on every side, so the bar
@@ -684,11 +713,14 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 		ScrollbarGap:  launcherScrollbarClear - l.gap/2,
 		ScrollbarEnds: l.gap / 2,
 		Item: func(i int) *ui.Node {
+			if l.mode == config.LauncherDisplayGrid {
+				return launcherGridRow(r, h, results, i, l)
+			}
 			return launcherRow(r, h, results, i, l)
 		},
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL,
-		Children: append(head, list, launcherFooter(h, len(results)))}
+		Children: append(head, list, launcherFooter(h, len(results), l))}
 }
 
 func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int, l launcherLayout) *ui.Node {
@@ -726,6 +758,62 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int, l 
 				Children: []*ui.Node{launcherRowBody(r, h, res.Entry, l)},
 			}},
 		}},
+	}
+}
+
+// launcherGridRow is one virtual-list item of the grid: up to l.columns
+// tiles. An open actions menu takes the whole row rather than one tile, which
+// is too narrow to hold it.
+func launcherGridRow(r *Registry, h *PanelHost, results []launcher.Result, row int, l launcherLayout) *ui.Node {
+	start := row * l.columns
+	if row < 0 || start >= len(results) {
+		return nil
+	}
+	end := min(start+l.columns, len(results))
+	if h.menu != nil && h.menu.Opened() {
+		for _, res := range results[start:end] {
+			if h.launcherMenuID == res.Entry.ID && res.Action == "" {
+				menu := h.menu.Node()
+				menu.Width = h.place.Panel.W - 2*theme.MarginL
+				return menu
+			}
+		}
+	}
+	tiles := make([]*ui.Node, 0, end-start)
+	for i := start; i < end; i++ {
+		tiles = append(tiles, launcherGridTile(r, h, results[i], i, l))
+	}
+	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{
+		Kind: ui.KindRow, Gap: l.gap, Height: l.tileHeight, CenterY: true, Children: tiles,
+	}}}
+}
+
+// launcherGridTile is one application: the icon centred a pad below the
+// tile's top, and the name centred under it on at most two lines.
+func launcherGridTile(r *Registry, h *PanelHost, res launcher.Result, i int, l launcherLayout) *ui.Node {
+	fill := ui.FillNone
+	if i == h.launcherSel && res.Entry.ID != "" {
+		fill = ui.FillSoft
+	}
+	inner := max(l.cellWidth-2*l.padTop, 1)
+	icon := launcherIconNodeSized(r, h, res.Entry, l.iconSize)
+	icon.CenterX = true
+	content := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Width: inner, Children: []*ui.Node{icon}}
+	if measure := h.measureText(); measure != nil {
+		attrs := ui.TextAttrs{Role: theme.RoleCaption}
+		lines := wrapLines(res.Entry.Name, inner, func(s string) int { w, _ := measure(s, attrs); return w }, 2)
+		for _, line := range lines {
+			content.Children = append(content.Children, &ui.Node{
+				Kind: ui.KindText, Text: line, TextRole: theme.RoleCaption, CenterX: true, MaxWidth: inner,
+			})
+		}
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeMedium,
+		Width: l.cellWidth, Height: l.tileHeight, Padding: l.padTop,
+		// By index, as a list row: launcherRowAt hit-tests the tile unchanged.
+		Action:   "launch:" + strconv.Itoa(i),
+		Children: []*ui.Node{content},
 	}
 }
 
@@ -793,7 +881,10 @@ func launcherIconNodeSized(r *Registry, h *PanelHost, e launcher.Entry, size int
 	return &ui.Node{
 		Kind: ui.KindCapsule, Width: size, Height: size,
 		Fill: ui.FillContainer, Shape: ui.ShapeMedium,
-		Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle}},
+		Children: []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+			Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle,
+			CenterX: true, CenterY: true,
+		}}}},
 	}
 }
 
@@ -840,19 +931,35 @@ func (h *PanelHost) launcherVisibleOffset(count int, l launcherLayout) int {
 
 func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 	n := len(h.launcherResults)
-	page := max(h.launcherPageItems(launcherLayoutFor(r, h)), 1)
+	l := launcherLayoutFor(r, h)
+	grid := l.mode == config.LauncherDisplayGrid
+	page := max(h.launcherPageItems(l), 1)
 	switch key {
 	case keyUp:
-		if h.launcherHistoryMove(r, -1) {
+		// In the grid, Up climbs rows first and reaches query history only
+		// from the top row, where the list always reaches it.
+		if (!grid || h.launcherSel < l.columns) && h.launcherHistoryMove(r, -1) {
 			return true
 		}
-		h.launcherMoveSel(r, -1)
+		h.launcherMoveSel(r, -l.columns)
 		return true
 	case keyDown:
 		if h.launcherHistoryMove(r, 1) {
 			return true
 		}
-		h.launcherMoveSel(r, 1)
+		h.launcherMoveSel(r, l.columns)
+		return true
+	case keyLeft, keyRight:
+		// Only the grid takes the horizontal arrows; elsewhere they move the
+		// field's caret.
+		if !grid {
+			return false
+		}
+		if key == keyLeft {
+			h.launcherMoveSel(r, -1)
+		} else {
+			h.launcherMoveSel(r, 1)
+		}
 		return true
 	case keyPageUp:
 		h.launcherMoveSel(r, -page)

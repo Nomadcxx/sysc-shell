@@ -78,6 +78,11 @@ func (r *recordedSpawn) waitArgv(t *testing.T) []string {
 // lays it out at its target size, and waits for the first result publish.
 func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *recordedSpawn, []wayland.AuxRequest) {
 	t.Helper()
+	return openLauncherPanelWithTrigger(t, entries, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080})
+}
+
+func openLauncherPanelWithTrigger(t *testing.T, entries []launcher.Entry, trigger Trigger) (*Registry, *recordedSpawn, []wayland.AuxRequest) {
+	t.Helper()
 	reg := newPanelRegistry(t)
 	// Production drains invalidations on the owner's bridge without r.mu.
 	// Nothing does here, and a launcher publishes from goroutines that hold
@@ -97,7 +102,7 @@ func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *reco
 	reg.mu.Unlock()
 	go reg.relayLauncher(svc)
 
-	if err := reg.OpenPanel(PanelLauncher, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+	if err := reg.OpenPanel(PanelLauncher, 7, trigger); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
@@ -1773,21 +1778,21 @@ func TestLauncherHintRowIsMutedUnselectedAndUncounted(t *testing.T) {
 	if capsule.Fill != ui.FillNone {
 		t.Fatal("hint row highlighted")
 	}
-	if !treeHasText(launcherFooter(h, 1), "No results • "+launcherHints) {
+	if !treeHasText(launcherFooter(h, 1, launcherLayoutFor(nil, h)), "No results • "+launcherHints) {
 		t.Fatal("footer counted the hint")
 	}
 }
 
 func TestLauncherFooterPluralises(t *testing.T) {
 	one := &PanelHost{query: "6*7", launcherResults: []launcher.Result{{Entry: launcher.Entry{ID: "calc:42"}}}}
-	if !treeHasText(launcherFooter(one, 1), "1 result • "+launcherHints) {
+	if !treeHasText(launcherFooter(one, 1, launcherLayoutFor(nil, one)), "1 result • "+launcherHints) {
 		t.Fatal("singular")
 	}
 	browse := &PanelHost{launcherResults: make([]launcher.Result, 3)}
 	for i := range browse.launcherResults {
 		browse.launcherResults[i].Entry.ID = fmt.Sprintf("app%d", i)
 	}
-	if !treeHasText(launcherFooter(browse, 3), "3 apps • "+launcherHints) {
+	if !treeHasText(launcherFooter(browse, 3, launcherLayoutFor(nil, browse)), "3 apps • "+launcherHints) {
 		t.Fatal("plural browse")
 	}
 }
@@ -2388,4 +2393,291 @@ func launcherRowIcon(n *ui.Node) *ui.Node {
 		}
 	}
 	return nil
+}
+
+// openLauncherGrid opens a grid launcher over n generated entries, A0000
+// first, so result i is entry i.
+func openLauncherGrid(t *testing.T, n int) (*Registry, []wayland.AuxRequest, *PanelHost) {
+	t.Helper()
+	reg, _, reqs := openLauncherPanel(t, alphabetEntries(n))
+	setLauncherDisplay(t, reg, config.LauncherDisplayGrid)
+	return reg, reqs, launcherHost(t, reg)
+}
+
+func TestLauncherGridKeysMoveByTileAndRow(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		from int
+		key  uint32
+		want int
+	}{
+		{"right moves one tile", 0, keyRight, 1},
+		{"left moves one tile", 1, keyLeft, 0},
+		{"right crosses into the next row", 4, keyRight, 5},
+		{"down moves one row", 0, keyDown, 5},
+		{"down into a short row clamps to the last tile", 3, keyDown, 6},
+		{"up moves one row", 6, keyUp, 1},
+		{"left at the first tile stays", 0, keyLeft, 0},
+		{"end goes to the last tile", 2, keyEnd, 6},
+		{"home goes to the first tile", 6, keyHome, 0},
+		{"page down clamps to the last tile", 0, keyPageDown, 6},
+		{"page up clamps to the first tile", 6, keyPageUp, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg, reqs, h := openLauncherGrid(t, 7)
+			reg.mu.Lock()
+			if l := launcherLayoutFor(reg, h); l.columns != launcherGridColumns || launcherGridColumns != 5 {
+				reg.mu.Unlock()
+				t.Fatalf("grid columns = %d, want 5", l.columns)
+			}
+			h.launcherSel = tc.from
+			reg.mu.Unlock()
+			pressLauncherKey(reqs, tc.key)
+			reg.mu.Lock()
+			got := h.launcherSel
+			reg.mu.Unlock()
+			if got != tc.want {
+				t.Fatalf("from %d, key %d: selection = %d, want %d", tc.from, tc.key, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("list keeps left and right on the caret", func(t *testing.T) {
+		reg, _, reqs := openLauncherPanel(t, alphabetEntries(7))
+		reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "en"})
+		waitForLauncherState(t, reg, func(h *PanelHost) bool { return h != nil && !h.launcherAwaiting })
+		h := launcherHost(t, reg)
+		reg.mu.Lock()
+		h.launcherSel = 2
+		reg.mu.Unlock()
+		pressLauncherKey(reqs, keyLeft)
+		reg.mu.Lock()
+		sel, cursor := h.launcherSel, h.search.Node("").Cursor
+		reg.mu.Unlock()
+		if sel != 2 || cursor != 1 {
+			t.Fatalf("list Left: selection %d, caret %d; want 2 and 1", sel, cursor)
+		}
+		pressLauncherKey(reqs, keyRight)
+		reg.mu.Lock()
+		sel, cursor = h.launcherSel, h.search.Node("").Cursor
+		reg.mu.Unlock()
+		if sel != 2 || cursor != 2 {
+			t.Fatalf("list Right: selection %d, caret %d; want 2 and 2", sel, cursor)
+		}
+	})
+}
+
+func TestLauncherGridWheelMovesByVisualRows(t *testing.T) {
+	t.Parallel()
+
+	reg, _, h := openLauncherGrid(t, 15)
+	reg.mu.Lock()
+	h.launcherSel = 0
+	handled := h.scrollAxis(reg, wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 120})
+	got := h.launcherSel
+	reg.mu.Unlock()
+	if !handled || got != launcherGridColumns {
+		t.Fatalf("wheel selection = %d, handled %v; want one visual row (%d apps)", got, handled, launcherGridColumns)
+	}
+}
+
+func TestLauncherGridUpReachesHistoryOnlyFromTheFirstRow(t *testing.T) {
+	t.Parallel()
+
+	reg, reqs, h := openLauncherGrid(t, 7)
+	reg.mu.Lock()
+	reg.launcherQueryHistory = []string{"firefox"}
+	h.launcherSel = 6
+	reg.mu.Unlock()
+	pressLauncherKey(reqs, keyUp)
+	reg.mu.Lock()
+	sel, query := h.launcherSel, h.query
+	reg.mu.Unlock()
+	if sel != 1 || query != "" {
+		t.Fatalf("Up from tile 6: selection %d, query %q; want 1 and empty", sel, query)
+	}
+	pressLauncherKey(reqs, keyUp)
+	reg.mu.Lock()
+	query = h.query
+	reg.mu.Unlock()
+	if query != "firefox" {
+		t.Fatalf("Up from the first row recalled %q, want firefox", query)
+	}
+}
+
+func TestLauncherGridTilesCentreTheIcon(t *testing.T) {
+	t.Parallel()
+
+	reg, _, h := openLauncherGrid(t, 7)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	l := launcherLayoutFor(reg, h)
+	if l.cellWidth <= 0 || l.tileHeight <= 0 {
+		t.Fatalf("grid geometry = %+v", l)
+	}
+	tile := launcherGridTile(reg, h, h.launcherResults[0], 0, l)
+	root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{tile}}
+	if err := ui.LayoutColumn(root, ui.Rect{W: l.cellWidth, H: l.tileHeight}, h.measureText()); err != nil {
+		t.Fatalf("lay out tile: %v", err)
+	}
+	icon := launcherRowIcon(tile)
+	if icon == nil {
+		t.Fatal("tile has no icon slot")
+	}
+	left := icon.Bounds.X - tile.Bounds.X
+	right := tile.Bounds.X + tile.Bounds.W - (icon.Bounds.X + icon.Bounds.W)
+	if d := left - right; d < -1 || d > 1 {
+		t.Fatalf("icon sits %d from the left and %d from the right of its tile", left, right)
+	}
+	if top := icon.Bounds.Y - tile.Bounds.Y; top != launcherGridPad {
+		t.Fatalf("icon sits %d below the tile top, want %d", top, launcherGridPad)
+	}
+	var glyph *ui.Node
+	walkNodes(icon, func(n *ui.Node) {
+		if glyph == nil && n.Kind == ui.KindText {
+			glyph = n
+		}
+	})
+	if glyph == nil {
+		t.Fatal("fallback icon has no text glyph")
+	}
+	if glyph.Bounds.W >= icon.Bounds.W || glyph.Bounds.H >= icon.Bounds.H {
+		t.Fatalf("fallback glyph fills icon bounds: glyph %+v, icon %+v", glyph.Bounds, icon.Bounds)
+	}
+	dx := 2*(glyph.Bounds.X-icon.Bounds.X) + glyph.Bounds.W - icon.Bounds.W
+	dy := 2*(glyph.Bounds.Y-icon.Bounds.Y) + glyph.Bounds.H - icon.Bounds.H
+	if dx < -2 || dx > 2 || dy < -2 || dy > 2 {
+		t.Fatalf("fallback glyph bounds %+v are not centred in icon bounds %+v", glyph.Bounds, icon.Bounds)
+	}
+}
+
+func TestLauncherGridGeometryUsesFiveColumns(t *testing.T) {
+	t.Parallel()
+
+	reg, _, h := openLauncherGrid(t, 7)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	l := launcherLayoutFor(reg, h)
+	listWidth := h.place.Panel.W - 2*theme.MarginL
+	wantCell := (listWidth - (launcherGridColumns-1)*launcherGridGap) / launcherGridColumns
+	lineHeight := launcherCaptionLineHeight(h)
+	wantTileHeight := 2*launcherGridPad + launcherIconSlot + theme.MarginS + 2*lineHeight
+	wantSlot := wantTileHeight + launcherGridGap
+	if l.cellWidth != wantCell || l.tileHeight != wantTileHeight || l.slot != wantSlot {
+		t.Fatalf("grid geometry = cell %d, tile %d, slot %d; want %d, %d, %d",
+			l.cellWidth, l.tileHeight, l.slot, wantCell, wantTileHeight, wantSlot)
+	}
+	list := launcherListNode(t, h)
+	if list.ItemHeight != wantSlot || list.ItemCount != 2 {
+		t.Fatalf("virtual grid = %d px × %d rows, want %d px × 2 rows", list.ItemHeight, list.ItemCount, wantSlot)
+	}
+	var first, last *ui.Node
+	if len(list.Children) == 0 {
+		t.Fatal("grid has no visible first row")
+	}
+	walkNodes(list.Children[0], func(n *ui.Node) {
+		if !strings.HasPrefix(n.Action, "launch:") {
+			return
+		}
+		if first == nil {
+			first = n
+		}
+		last = n
+	})
+	left := 0
+	right := 0
+	if first != nil && last != nil {
+		left = first.Bounds.X - list.Bounds.X
+		right = list.Bounds.X + list.Bounds.W - (last.Bounds.X + last.Bounds.W)
+	}
+	wantRight := list.Bounds.W - (launcherGridColumns*wantCell + (launcherGridColumns-1)*launcherGridGap)
+	if first == nil || last == nil || left != 0 || right != wantRight {
+		t.Fatalf("grid row margins = %d/%d px, want 0/%d px", left, right, wantRight)
+	}
+}
+
+func TestLauncherGridMenuSpansTheRow(t *testing.T) {
+	t.Parallel()
+
+	entries := alphabetEntries(7)
+	entries[6].Actions = []launcher.Action{{ID: "new-window", Name: "New Window", Argv: []string{"true"}}}
+	reg, _, _ := openLauncherPanel(t, entries)
+	setLauncherDisplay(t, reg, config.LauncherDisplayGrid)
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	tile := findAction(h.root, "launch:6")
+	if tile == nil {
+		reg.mu.Unlock()
+		t.Fatal("laid-out grid has no tile for result 6")
+	}
+	x := tile.Bounds.X + tile.Bounds.W/2
+	y := tile.Bounds.Y + tile.Bounds.H/2
+	if i, ok := launcherRowAt(h.root, x, y); !ok || i != 6 {
+		reg.mu.Unlock()
+		t.Fatalf("hit test at second-row tile returned %d, %v; want 6", i, ok)
+	}
+	if !h.launcherPointerPress(reg, wayland.Event{Kind: wayland.EventPointerPress, Button: btnRight, X: float64(x), Y: float64(y)}) {
+		reg.mu.Unlock()
+		t.Fatal("right click on tile was not handled")
+	}
+	list := launcherListNode(t, h)
+	var item *ui.Node
+	for _, child := range list.Children {
+		if child.Kind == ui.KindMenu {
+			item = child
+			break
+		}
+	}
+	width := h.place.Panel.W - 2*theme.MarginL
+	listBounds, listSlot := list.Bounds, list.ItemHeight
+	wantY := tile.Bounds.Y - launcherGridGap/2
+	reg.mu.Unlock()
+	if item == nil || item.Kind != ui.KindMenu || item.Width != width || item.Bounds.W != width ||
+		item.Bounds.X != listBounds.X || item.Bounds.Y != wantY || item.Bounds.H != listSlot {
+		t.Fatalf("grid row 1 with an open menu = %+v, want a %dx%d menu at (%d,%d)",
+			item, width, listSlot, listBounds.X, wantY)
+	}
+}
+
+func TestLauncherGridClickLaunchesTheClickedTile(t *testing.T) {
+	t.Parallel()
+
+	reg, run, _ := openLauncherPanel(t, alphabetEntries(7))
+	setLauncherDisplay(t, reg, config.LauncherDisplayGrid)
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	tile := findAction(h.root, "launch:6")
+	if tile == nil {
+		reg.mu.Unlock()
+		t.Fatal("laid-out grid has no tile for result 6")
+	}
+	want := append([]string{"niri", "msg", "action", "spawn", "--"}, h.launcherResults[6].Entry.Argv...)
+	x := tile.Bounds.X + tile.Bounds.W/2
+	y := tile.Bounds.Y + tile.Bounds.H/2
+	handled := h.launcherPointerPress(reg, wayland.Event{Kind: wayland.EventPointerPress, Button: btnLeft, X: float64(x), Y: float64(y)})
+	reg.mu.Unlock()
+	if !handled {
+		t.Fatal("click on grid tile was not handled")
+	}
+	if got := run.waitArgv(t); !slices.Equal(got, want) {
+		t.Fatalf("clicked tile launched %v, want %v", got, want)
+	}
+}
+
+func TestLauncherGridFooterNamesArrowKeys(t *testing.T) {
+	t.Parallel()
+
+	reg, _, h := openLauncherGrid(t, 7)
+	reg.mu.Lock()
+	grid := launcherFooter(h, 7, launcherLayoutFor(reg, h))
+	list := launcherFooter(h, 7, launcherLayout{mode: config.LauncherDisplayList, columns: 1, slot: launcherSlotHeight})
+	reg.mu.Unlock()
+	if !treeHasText(grid, "7 apps • "+launcherGridHints) {
+		t.Fatal("grid footer does not name the arrow keys")
+	}
+	if !treeHasText(list, "7 apps • "+launcherHints) {
+		t.Fatal("list footer changed")
+	}
 }
