@@ -59,6 +59,8 @@ const (
 	// detached from the list on the desktop.
 	launcherScrollbarClear = 5
 	launcherFieldHeight    = 56
+	// ponytail: keep history session-local and capped at 32; disk storage needs an explicit privacy setting.
+	launcherQueryHistoryLimit = 32
 	// launcherMarkHeight balances the raster against the slashes beside it.
 	// At 23 the mark stood taller than the RoleTitle run and the slashes read
 	// light next to it; the owner picked shrinking the mark over promoting the
@@ -782,9 +784,15 @@ func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 	page := max(h.launcherPageRows(), 1)
 	switch key {
 	case keyUp:
+		if h.launcherHistoryMove(r, -1) {
+			return true
+		}
 		h.launcherMoveSel(r, -1)
 		return true
 	case keyDown:
+		if h.launcherHistoryMove(r, 1) {
+			return true
+		}
 		h.launcherMoveSel(r, 1)
 		return true
 	case keyPageUp:
@@ -808,6 +816,55 @@ func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 		return true
 	}
 	return false
+}
+
+func (h *PanelHost) launcherHistoryMove(r *Registry, direction int) bool {
+	history := r.launcherQueryHistory
+	if !h.launcherHistoryBrowsing {
+		if direction >= 0 || strings.TrimSpace(h.query) != "" || len(history) == 0 {
+			return false
+		}
+		h.launcherHistoryBrowsing = true
+		h.launcherHistoryCursor = len(history)
+		h.launcherHistoryDraft = h.query
+	}
+
+	if direction < 0 {
+		if h.launcherHistoryCursor > 0 {
+			h.launcherHistoryCursor--
+		}
+	} else if h.launcherHistoryCursor >= len(history)-1 {
+		query := h.launcherHistoryDraft
+		h.launcherHistoryBrowsing = false
+		h.launcherHistoryDraft = ""
+		h.launcherSetHistoryQuery(r, query)
+		return true
+	} else {
+		h.launcherHistoryCursor++
+	}
+	h.launcherSetHistoryQuery(r, history[h.launcherHistoryCursor])
+	return true
+}
+
+func (h *PanelHost) launcherSetHistoryQuery(r *Registry, query string) {
+	h.query = query
+	h.search = ui.NewField(query)
+	h.errLabel = ""
+	h.launcherAttempt++
+	h.launcherSel = 0
+	h.launcherScroll = 0
+	r.launcherSendQuery(h, query)
+	r.rebuildPanel(h)
+}
+
+func (r *Registry) rememberLauncherQueryLocked(h *PanelHost) {
+	if h == nil || h.launcherHistoryBrowsing || strings.TrimSpace(h.query) == "" {
+		return
+	}
+	r.launcherQueryHistory = append(r.launcherQueryHistory, h.query)
+	if len(r.launcherQueryHistory) > launcherQueryHistoryLimit {
+		r.launcherQueryHistory = append([]string(nil), r.launcherQueryHistory[len(r.launcherQueryHistory)-launcherQueryHistoryLimit:]...)
+	}
 }
 
 func (h *PanelHost) launcherMoveSel(r *Registry, delta int) {
