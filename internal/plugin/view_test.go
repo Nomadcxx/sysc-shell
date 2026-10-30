@@ -273,8 +273,60 @@ func TestConvertResolvesAButtonIcon(t *testing.T) {
 	if button.Text != string(want) || button.Action != "camera" {
 		t.Fatalf("button = %+v", button)
 	}
-	if button.Fill != ui.FillAccent {
-		t.Fatalf("camera fill = %v, want primary button chrome", button.Fill)
+	if button.Fill != ui.FillNone {
+		t.Fatalf("camera fill = %v, want the bar pill to provide the chrome", button.Fill)
+	}
+}
+
+func TestConvertLeavesBarControlsWithoutHostChrome(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		node      *v1.Node
+		want      ui.Fill
+		wantShape ui.Shape
+	}{
+		{name: "label button", node: &v1.Node{Kind: v1.KindButton, ID: "open", Text: "3", Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillNone, wantShape: ui.ShapeInherit},
+		{name: "error icon", node: &v1.Node{Kind: v1.KindButton, ID: "open", Icon: "shield", Tone: v1.ToneError, Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillNone, wantShape: ui.ShapeInherit},
+		{name: "error label", node: &v1.Node{Kind: v1.KindButton, ID: "open", Text: "Failed", Tone: v1.ToneError, Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillError, wantShape: ui.ShapeInherit},
+		{name: "named fill", node: &v1.Node{Kind: v1.KindButton, ID: "open", Icon: "shield", Fill: "accent", Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillAccent, wantShape: ui.ShapeInherit},
+		{name: "padded row", node: &v1.Node{Kind: v1.KindRow, Padding: 6}, want: ui.FillNone, wantShape: ui.ShapeInherit},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Convert(&v1.Node{Kind: v1.KindRow, Children: []*v1.Node{tc.node}}, v1.ViewBar)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fill := got.Children[0].Fill; fill != tc.want {
+				t.Errorf("bar fill = %v, want %v", fill, tc.want)
+			}
+			if shape := got.Children[0].Shape; shape != tc.wantShape {
+				t.Errorf("bar shape = %v, want %v", shape, tc.wantShape)
+			}
+		})
+	}
+}
+
+func TestConvertKeepsPanelChromeDefaults(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "open", Text: "Open", Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+		{Kind: v1.KindRow, Padding: 6, Children: []*v1.Node{{Kind: v1.KindText, Text: "Status"}}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if button := got.Children[0]; button.Fill != ui.FillAccent {
+		t.Errorf("panel button fill = %v, want %v", button.Fill, ui.FillAccent)
+	}
+	if row := got.Children[1]; row.Kind != ui.KindCapsule || row.Fill != ui.FillContainerHigh {
+		t.Errorf("panel row = kind %q fill %v, want card capsule", row.Kind, row.Fill)
+	} else if row.Children[0].Shape != ui.ShapeCard {
+		t.Errorf("panel row shape = %v, want %v", row.Children[0].Shape, ui.ShapeCard)
 	}
 }
 
@@ -393,7 +445,7 @@ func TestConvertMapsPluginButtonToneToFill(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := convertNode(tc.node, "root")
+			got, err := convertNode(tc.node, "root", v1.ViewPanel)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -423,7 +475,7 @@ func TestConvertPreservesDropZoneHeight(t *testing.T) {
 func TestConvertMarksPaddedPluginRowsAsCards(t *testing.T) {
 	t.Parallel()
 
-	got, err := convertNode(&v1.Node{Kind: v1.KindRow, Padding: 6}, "root")
+	got, err := convertNode(&v1.Node{Kind: v1.KindRow, Padding: 6}, "root", v1.ViewPanel)
 	if err != nil {
 		t.Fatal(err)
 	}
