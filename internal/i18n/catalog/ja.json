@@ -321,7 +321,7 @@
  "onboarding.intro.idle": "セッションがアイドル状態になったときの動作を選ぶか、現在の設定をそのまま使います。",
  "onboarding.intro.plugins": "インストール済みのバー用プラグインから、起動時に有効にしてバーへ配置するものを選びます。選択内容は完了時に保存されます。プラグインは後から設定でインストールできます。",
  "onboarding.intro.ready": "適用された内容を確認します。ここで使った項目とシェルの他の設定は設定画面にあります。",
- "onboarding.intro.region": "天気の場所と単位を設定します。画面の言語はセッションの言語設定に従い、キーボードは OS で管理します。",
+ "onboarding.intro.region": "天気の地域と単位を設定し、画面の言語を選びます。キーボード配列は OS で管理します。",
  "onboarding.intro.welcome": "まずは基本項目を設定しましょう。選んだ内容はすぐに反映され、後から設定で変更できます。",
  "onboarding.region.city_description": "天気を表示する地域の都市名を入力します。",
  "onboarding.region.language_description": "画面の表示言語を選びます。キーボード配列は OS の設定に従います。",

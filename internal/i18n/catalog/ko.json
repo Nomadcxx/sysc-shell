@@ -321,7 +321,7 @@
  "onboarding.intro.idle": "세션이 유휴 상태일 때 할 일을 선택하거나 현재 동작을 유지합니다.",
  "onboarding.intro.plugins": "설치된 바 플러그인 중 시작할 때 활성화해 바에 배치할 항목을 선택하세요. 선택 사항은 설정을 마칠 때 저장되며 플러그인은 나중에 설정에서 설치할 수 있습니다.",
  "onboarding.intro.ready": "적용된 변경 사항을 확인하세요. 이 항목과 셸의 나머지 설정은 설정에서 찾을 수 있습니다.",
- "onboarding.intro.region": "날씨 위치와 단위를 설정합니다. 인터페이스 언어는 세션 언어 설정을 따르고 키보드는 OS에서 관리합니다.",
+ "onboarding.intro.region": "날씨 위치와 단위를 설정하고 인터페이스 언어를 선택하세요. 키보드 배열은 OS에서 관리합니다.",
  "onboarding.intro.welcome": "먼저 기본 항목을 설정하세요. 선택한 내용은 바로 적용되며 나중에 설정에서 바꿀 수 있습니다.",
  "onboarding.region.city_description": "날씨를 표시할 도시나 지역을 입력하세요.",
  "onboarding.region.language_description": "인터페이스 언어를 선택합니다. 키보드 배열은 OS 설정을 따릅니다.",
