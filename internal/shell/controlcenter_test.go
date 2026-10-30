@@ -2200,17 +2200,17 @@ func TestParsePrivacySnapshotRejectsInvalidOrUnboundedStates(t *testing.T) {
 func TestPrivacySnapshotReaderTreatsMissingPluginStateAsUnavailable(t *testing.T) {
 	t.Parallel()
 
-	if got := ccPrivacySnapshotFor(nil); got != nil {
-		t.Fatalf("nil registry produced a snapshot: %+v", got)
+	if got, err := ccPrivacySnapshotFor(nil); got != nil || err != nil {
+		t.Fatalf("nil registry produced a snapshot or error: snapshot=%+v err=%v", got, err)
 	}
-	if got := ccPrivacySnapshotFor(&Registry{}); got != nil {
-		t.Fatalf("registry without plugin state produced a snapshot: %+v", got)
+	if got, err := ccPrivacySnapshotFor(&Registry{}); got != nil || err != nil {
+		t.Fatalf("registry without plugin state produced a snapshot or error: snapshot=%+v err=%v", got, err)
 	}
 
 	r := &Registry{}
 	withPrivacyPlugin(t, r, `{"control_center":`+privacySnapshotFixture+`}`)
-	got := ccPrivacySnapshotFor(r)
-	if got == nil || !got.Available || got.Overall.Grade != "red" {
+	got, err := ccPrivacySnapshotFor(r)
+	if err != nil || got == nil || !got.Available || got.Overall.Grade != "red" {
 		t.Fatalf("valid running-plugin state was not read: %+v", got)
 	}
 }
@@ -2258,6 +2258,30 @@ func TestPrivacyPageKeepsCaptureRowsAndShowsUnavailableAudit(t *testing.T) {
 	}
 	if button := findAction(page, "cc:privacy-open"); button == nil || button.Name == "" {
 		t.Fatalf("full audit button = %+v", button)
+	}
+}
+
+func TestPrivacyPageDistinguishesUnreadableAuditStateFromMissingPluginState(t *testing.T) {
+	t.Parallel()
+
+	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
+	r := &Registry{now: time.Date(2026, time.October, 20, 12, 1, 0, 0, time.UTC)}
+	unsupported := strings.Replace(privacySnapshotFixture, `"schema":1`, `"schema":2`, 1)
+	withPrivacyPlugin(t, r, `{"control_center":`+unsupported+`}`)
+
+	got := renderText(ccPrivacy(r, h))
+	for _, want := range []string{"Unrated", "Audit status could not be read", "Open full audit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("unreadable privacy state lost %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Check that the Privacybit plugin is enabled") {
+		t.Fatalf("unreadable state was diagnosed as a disabled plugin: %q", got)
+	}
+
+	missing := renderText(ccPrivacy(nil, h))
+	if !strings.Contains(missing, "Check that the Privacybit plugin is enabled") {
+		t.Fatalf("missing plugin state lost its enable guidance: %q", missing)
 	}
 }
 
