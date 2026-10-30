@@ -796,7 +796,7 @@ func launcherGridTile(r *Registry, h *PanelHost, res launcher.Result, i int, l l
 		fill = ui.FillSoft
 	}
 	inner := max(l.cellWidth-2*l.padTop, 1)
-	icon := launcherIconNodeSized(r, h, res.Entry, l.iconSize)
+	icon := launcherIconNodeSized(r, h, res.Entry, l.iconSize, true)
 	icon.CenterX = true
 	content := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Width: inner, Children: []*ui.Node{icon}}
 	if measure := h.measureText(); measure != nil {
@@ -832,7 +832,7 @@ func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry, l launcherLayo
 		// Compact is the name alone, on one line. Left unpinned, the row
 		// centres it on the smaller icon.
 		name.MaxWidth = labelW
-		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{launcherIconNodeSized(r, h, e, l.iconSize), block}}
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{launcherIconNodeSized(r, h, e, l.iconSize, false), block}}
 	}
 	if e.Comment != "" {
 		block.Children = append(block.Children, &ui.Node{Kind: ui.KindText, Text: e.Comment, Tone: tone})
@@ -842,17 +842,18 @@ func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry, l launcherLayo
 	block.Height = l.iconSize
 	return &ui.Node{
 		Kind: ui.KindRow, Gap: theme.MarginL,
-		Children: []*ui.Node{launcherIconNodeSized(r, h, e, l.iconSize), block},
+		Children: []*ui.Node{launcherIconNodeSized(r, h, e, l.iconSize, false), block},
 	}
 }
 
 func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
-	return launcherIconNodeSized(r, h, e, launcherIconSlot)
+	return launcherIconNodeSized(r, h, e, launcherIconSlot, false)
 }
 
 // launcherIconNodeSized draws the icon slot at size: the list's 40, compact's
-// 28. A provider glyph keeps its 24 until the slot is too small for it.
-func launcherIconNodeSized(r *Registry, h *PanelHost, e launcher.Entry, size int) *ui.Node {
+// 28. A provider glyph keeps its 24 until the slot is too small for it. Grid
+// centers a fallback glyph in its column; list keeps the legacy capsule child.
+func launcherIconNodeSized(r *Registry, h *PanelHost, e launcher.Entry, size int, centerFallbackGlyph bool) *ui.Node {
 	// Provider rows have no desktop icon. "glyph:<name>" draws a Material
 	// subset glyph in the slot; "text:<s>" draws s itself (an emoji).
 	if name, ok := strings.CutPrefix(e.IconName, "glyph:"); ok {
@@ -878,13 +879,15 @@ func launcherIconNodeSized(r *Registry, h *PanelHost, e launcher.Entry, size int
 	// the row open -- both children were short, so the row drew at about half
 	// the height of its neighbours. .desktop files with no Comment are common
 	// enough that this was visible as soon as a few were installed.
+	glyph := &ui.Node{Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle}
+	if centerFallbackGlyph {
+		glyph.CenterX, glyph.CenterY = true, true
+		glyph = &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{glyph}}
+	}
 	return &ui.Node{
 		Kind: ui.KindCapsule, Width: size, Height: size,
 		Fill: ui.FillContainer, Shape: ui.ShapeMedium,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
-			Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle,
-			CenterX: true, CenterY: true,
-		}}}},
+		Children: []*ui.Node{glyph},
 	}
 }
 

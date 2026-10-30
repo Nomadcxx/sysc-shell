@@ -2377,6 +2377,10 @@ func TestLauncherListIsUnchangedByTheSetting(t *testing.T) {
 			t.Fatalf("list row %d lost its comment %q", i, res.Entry.Comment)
 		}
 	}
+	icon := launcherRowIcon(list.Item(0))
+	if icon == nil || len(icon.Children) != 1 || icon.Children[0].Kind != ui.KindText {
+		t.Fatalf("list fallback icon no longer uses its original capsule text layout: %+v", icon)
+	}
 }
 
 // launcherRowIcon is the first square glyph slot or image in a row.
