@@ -518,6 +518,44 @@ func TestWeatherPlaceIsOneWayOrTheOther(t *testing.T) {
 	}
 }
 
+func TestClearingWeatherCityUnsetsCityLocation(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	cfg := config.Default()
+	city := r.ByPath("weather.city")
+	if err := city.Set(&cfg, "Bristol"); err != nil {
+		t.Fatal(err)
+	}
+	if err := city.Set(&cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Weather.Configured {
+		t.Fatal("cleared city left the weather location configured")
+	}
+	if cfg.Weather.City != "" || cfg.Weather.Latitude != 0 || cfg.Weather.Longitude != 0 {
+		t.Fatalf("cleared city left place data: %+v", cfg.Weather)
+	}
+}
+
+func TestClearingEmptyWeatherCityPreservesCoordinateLocation(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	cfg := config.Default()
+	cfg.Weather.Configured = true
+	cfg.Weather.Latitude = 51.45
+	cfg.Weather.Longitude = -2.58
+
+	if err := r.ByPath("weather.city").Set(&cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Weather.Configured {
+		t.Fatal("clearing an empty city unset the coordinate location")
+	}
+	if cfg.Weather.Latitude != 51.45 || cfg.Weather.Longitude != -2.58 {
+		t.Fatalf("coordinates changed to %v,%v", cfg.Weather.Latitude, cfg.Weather.Longitude)
+	}
+}
+
 func TestWeatherPreferencesPersistBeforeAPlaceIsSet(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
