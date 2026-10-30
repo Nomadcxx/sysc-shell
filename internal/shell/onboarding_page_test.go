@@ -1129,8 +1129,8 @@ func TestOnboardingOpensOnPrimaryAndReusesWallpaperPicker(t *testing.T) {
 		t.Fatal("the wizard did not host")
 	}
 	f := h.focused()
-	if f == nil || f.Name != onbNextLabel {
-		t.Fatalf("initial focus name=%v, want %q", f, onbNextLabel)
+	if f == nil || f.Name != onbStartLabel {
+		t.Fatalf("initial focus = %v, want %q", f, onbStartLabel)
 	}
 	h.onbPage = onbAppearance
 	reg.rebuildPanel(h)

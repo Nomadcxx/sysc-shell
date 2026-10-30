@@ -250,3 +250,42 @@ func TestOnboardingStepperFitsAboveRailFoot(t *testing.T) {
 		}
 	}
 }
+
+func TestOnboardingFooterLabelsAndStatus(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	attachOnboardingTestPlugins(t, reg)
+	want := []string{"Get started", "Continue", "Continue", "Continue", "Continue", "Finish"}
+	for page := onboardingPage(0); page < onbPages; page++ {
+		reg.mu.Lock()
+		h.onbPage = page
+		reg.rebuildPanel(h)
+		reg.mu.Unlock()
+		action := "onb-next"
+		if page == onbReady {
+			action = "onb-finish"
+		}
+		main := byAction(h.root, action)
+		if main == nil || main.Name != want[page] || main.Fill != ui.FillAccent {
+			t.Errorf("page %d primary = %+v, want accent %q", page, main, want[page])
+		}
+		if onbMainLabel(page) != want[page] {
+			t.Errorf("onbMainLabel(%d) = %q, want %q", page, onbMainLabel(page), want[page])
+		}
+		back := byAction(h.root, "onb-back")
+		if disabled := back.State.Has(ui.StateDisabled); disabled != (page == onbWelcome) {
+			t.Errorf("page %d Back disabled = %t", page, disabled)
+		}
+		eyebrow := onboardingNodeByKey(h.root, "onb-eyebrow")
+		if wantText := fmt.Sprintf("STEP %02d OF 06", page+1); eyebrow == nil || eyebrow.Text != wantText {
+			t.Errorf("page %d eyebrow = %+v, want %q", page, eyebrow, wantText)
+		}
+		status := onboardingNodeByKey(h.root, "onb-status")
+		if page == onbPlugins {
+			if status == nil || status.Text != "0 selected" {
+				t.Errorf("Plugins footer status = %+v, want 0 selected", status)
+			}
+		} else if status != nil && status.Text != "" {
+			t.Errorf("page %d footer status = %q, want none", page, status.Text)
+		}
+	}
+}

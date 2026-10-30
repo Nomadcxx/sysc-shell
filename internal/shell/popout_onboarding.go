@@ -80,14 +80,18 @@ const (
 		"the bar."
 
 	onbBackLabel       = "Back"
-	onbNextLabel       = "Next"
+	onbStartLabel      = "Get started"
+	onbNextLabel       = "Continue"
 	onbFinishLabel     = "Finish"
 	onbSkipLabel       = "Not now"
 	onbWallpaperButton = "Choose wallpaper"
 )
 
 func onbMainLabel(p onboardingPage) string {
-	if p == onbReady {
+	switch p {
+	case onbWelcome:
+		return onbStartLabel
+	case onbReady:
 		return onbFinishLabel
 	}
 	return onbNextLabel
@@ -861,19 +865,21 @@ func onbFooter(r *Registry, h *PanelHost) *ui.Node {
 		back.State |= ui.StateDisabled
 		back.AriaDisabled = true
 	}
-	main := h.button("onb-next", onbText(h, "action.next", onbNextLabel), "chevron_right")
+	action := "onb-next"
+	if h.onbPage == onbReady {
+		action = "onb-finish"
+	}
+	main := h.button(action, onbMainLabelFor(h, h.onbPage), "")
 	main.Shape = ui.ShapeStadium
 	main.Fill = ui.FillAccent
-	if h.onbPage == onbReady {
-		main = h.button("onb-finish", onbText(h, "action.finish", onbFinishLabel), "check")
-		main.Shape = ui.ShapeStadium
-		main.Fill = ui.FillAccent
-		if r.idleApplying {
-			main.State |= ui.StateDisabled
-			main.AriaDisabled = true
-		}
+	if h.onbPage == onbReady && r.idleApplying {
+		main.State |= ui.StateDisabled
+		main.AriaDisabled = true
 	}
 	status := &ui.Node{Kind: ui.KindText, Key: "onb-status", Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	if h.onbPage == onbPlugins {
+		status.Text = onbStepSummary(r, h, onbPlugins)
+	}
 	return &ui.Node{Kind: ui.KindRow, Key: "onb-footer", PinEnd: true, Children: []*ui.Node{
 		status,
 		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{back, main}},
@@ -913,10 +919,13 @@ func (h *PanelHost) moveOnboardingTo(r *Registry, x, y int) {
 }
 
 func onbMainLabelFor(h *PanelHost, page onboardingPage) string {
-	if page == onbReady {
+	switch page {
+	case onbWelcome:
+		return onbText(h, "action.start", onbStartLabel)
+	case onbReady:
 		return onbText(h, "action.finish", onbFinishLabel)
 	}
-	return onbText(h, "action.next", onbNextLabel)
+	return onbText(h, "action.continue", onbNextLabel)
 }
 
 func onbIdleMode(h *PanelHost, mode string) string {
