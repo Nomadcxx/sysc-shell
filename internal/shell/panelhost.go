@@ -199,10 +199,11 @@ type PanelHost struct {
 	// barAdding names the lane whose add-a-widget list is open, empty when
 	// none is. The list expands in place the way Menu does, because no
 	// popup-over-panel surface exists.
-	barAdding string
-	// barDropHint names the row the pointer is currently over, so a drag
+	barAdding    string
+	barAddFilter string
+	// barDropHint is the current join target or insertion boundary. A drag
 	// repaints when the answer changes and stays quiet when it does not.
-	barDropHint string
+	barDropHint barDropPreview
 	// settingsScroll retains the settings body's scroll offset across a
 	// rebuild. Every edit in the lane editor rebuilds the tree, and a fresh
 	// tree starts at the top, so without this a drag or a remove threw the
@@ -3601,6 +3602,11 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 // a setting.
 func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 	if h.id == PanelSettings {
+		if lane, ok := strings.CutPrefix(n.Action, "bar-add-filter:"); ok && barLaneLabels[lane] != "" {
+			h.barAddFilter = f.Text
+			r.rebuildPanel(h)
+			return true
+		}
 		if role, ok := strings.CutPrefix(n.Action, "palette-role:"); ok {
 			r.paletteRoleEdited(h, role, f.Text)
 			return true
