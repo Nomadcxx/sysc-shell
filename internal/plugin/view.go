@@ -33,7 +33,7 @@ func Convert(root *v1.Node, view v1.ViewKind) (*ui.Node, error) {
 	if view == v1.ViewBar {
 		want = ui.KindRow
 	}
-	converted, err := convertNode(root, "root")
+	converted, err := convertNode(root, "root", view)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +284,7 @@ var wireShapes = map[string]ui.Shape{
 	"panel":   ui.ShapePanel,
 }
 
-func convertNode(n *v1.Node, path string) (*ui.Node, error) {
+func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 	out := &ui.Node{
 		// The path travels with the node so a rejection downstream can name
 		// it: layout runs long after the converter stopped holding it.
@@ -345,7 +345,7 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		}
 		out.Shape = shape
 	}
-	if n.Kind == v1.KindRow && n.Padding >= 6 {
+	if view != v1.ViewBar && n.Kind == v1.KindRow && n.Padding >= 6 {
 		// ponytail: v1 uses padding as the row-card marker; padded toolbars inherit a card until a second consumer needs a dedicated kind.
 		if out.Fill == ui.FillNone {
 			out.Fill = ui.FillContainerHigh
@@ -440,9 +440,9 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Text = n.Text
 		out.StrokeColor = n.MarkerColor
 		if n.Fill == "" {
-			if n.Tone == v1.ToneError {
+			if n.Tone == v1.ToneError && (view != v1.ViewBar || n.Text != "") {
 				out.Fill = ui.FillError
-			} else if n.Tone != v1.ToneSubtle {
+			} else if view != v1.ViewBar && n.Tone != v1.ToneSubtle {
 				out.Fill = ui.FillAccent
 			}
 		}
@@ -581,7 +581,7 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	if len(n.Children) > 0 {
 		out.Children = make([]*ui.Node, len(n.Children))
 		for i, c := range n.Children {
-			child, err := convertNode(c, fmt.Sprintf("%s.children[%d]", path, i))
+			child, err := convertNode(c, fmt.Sprintf("%s.children[%d]", path, i), view)
 			if err != nil {
 				return nil, err
 			}
