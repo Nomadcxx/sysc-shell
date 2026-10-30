@@ -36,6 +36,30 @@ func TestProposeAddRejectsDuplicates(t *testing.T) {
 	}
 }
 
+func TestProposeAddRejectsWhenZoneLimitIsReached(t *testing.T) {
+	t.Parallel()
+	c := New()
+	c.zones = make([]string, maxZones)
+	if err := c.ProposeAdd("Asia/Tokyo"); err == nil {
+		t.Fatal("zone accepted after reaching the panel list limit")
+	}
+}
+
+func TestRestoreBoundsStoredZoneCount(t *testing.T) {
+	t.Parallel()
+	zones := make([]string, maxZones+1)
+	for i := range zones {
+		zones[i] = "Not/AZone"
+	}
+	zones[maxZones] = "Asia/Tokyo"
+
+	c := New()
+	c.Restore(zones)
+	if got := c.Zones(); len(got) != 1 || got[0] != "UTC" {
+		t.Fatalf("zones after bounded restore = %v, want [UTC]", got)
+	}
+}
+
 func TestZoneNamesAreTrimmedBeforeSaving(t *testing.T) {
 	t.Parallel()
 	c := New()

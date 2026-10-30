@@ -25,8 +25,9 @@ func run(in *os.File, out *os.File) error {
 	}
 	clk := worldclock.New()
 	type view struct {
-		kind v1.ViewKind
-		rev  uint64
+		kind     v1.ViewKind
+		rev      uint64
+		instance string
 	}
 	views := map[string]view{}
 	draft := ""
@@ -101,7 +102,7 @@ func run(in *os.File, out *os.File) error {
 			case *v1.HostShutdown:
 				return nil
 			case *v1.ViewOpen:
-				views[m.ViewID] = view{kind: m.View}
+				views[m.ViewID] = view{kind: m.View, instance: m.Instance}
 				snapshot()
 			case *v1.ViewClose:
 				delete(views, m.ViewID)
@@ -112,8 +113,10 @@ func run(in *os.File, out *os.File) error {
 				}
 				snapshot()
 			case *v1.InputEvent:
-				handle(ctx, c, clk, &draft, m)
-				snapshot()
+				if v, ok := views[m.ViewID]; ok {
+					handle(ctx, c, clk, &draft, m, v.instance)
+					snapshot()
+				}
 			case *v1.SettingsChanged:
 				if raw, ok := m.Values["hour24"]; ok {
 					switch v := raw.(type) {
@@ -129,10 +132,10 @@ func run(in *os.File, out *os.File) error {
 	}
 }
 
-func handle(ctx context.Context, c *v1.Client, clk *worldclock.Clock, draft *string, m *v1.InputEvent) {
+func handle(ctx context.Context, c *v1.Client, clk *worldclock.Clock, draft *string, m *v1.InputEvent, instance string) {
 	switch {
 	case m.Node == "open":
-		_, _ = c.Call(ctx, v1.CallPanelOpen, v1.PanelParams{Entry: "panel", Output: m.Output, Instance: m.ViewID})
+		_, _ = c.Call(ctx, v1.CallPanelOpen, panelOpenParams(instance, m))
 	case m.Node == "zone":
 		*draft = m.Text
 		if m.Event == v1.EventSubmit {
@@ -150,8 +153,11 @@ func handle(ctx context.Context, c *v1.Client, clk *worldclock.Clock, draft *str
 	case strings.HasPrefix(m.Node, "rm:"):
 		clk.ProposeRemove(strings.TrimPrefix(m.Node, "rm:"))
 	case strings.HasPrefix(m.Node, "drop:") && m.Event == v1.EventDrop:
-		insert, _ := strconv.Atoi(strings.TrimPrefix(m.Node, "drop:"))
 		zones := clk.Zones()
+		insert, ok := dropInsertBefore(m.Node, len(zones))
+		if !ok {
+			return
+		}
 		from := -1
 		for i, z := range zones {
 			if z == m.Text {
@@ -164,6 +170,21 @@ func handle(ctx context.Context, c *v1.Client, clk *worldclock.Clock, draft *str
 			save(ctx, c, clk)
 		}
 	}
+}
+
+func panelOpenParams(instance string, m *v1.InputEvent) v1.PanelParams {
+	return v1.PanelParams{Entry: "panel", Output: m.Output, Generation: m.Generation, Instance: instance}
+}
+
+func dropInsertBefore(node string, zoneCount int) (int, bool) {
+	if !strings.HasPrefix(node, "drop:") {
+		return 0, false
+	}
+	gap, err := strconv.Atoi(strings.TrimPrefix(node, "drop:"))
+	if err != nil || gap < 0 || gap > zoneCount {
+		return 0, false
+	}
+	return gap, true
 }
 
 func save(ctx context.Context, c *v1.Client, clk *worldclock.Clock) {

@@ -5,7 +5,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
+
+// maxZones keeps the zone list within v1.MaxChildren: each zone has a row and
+// a gap, followed by one final gap. The resulting tree also stays within v1.MaxNodes.
+const maxZones = (v1.MaxChildren - 1) / 2
 
 // Clock holds an ordered list of IANA zones.
 type Clock struct {
@@ -75,6 +81,9 @@ func (c *Clock) ProposeAdd(name string) error {
 			return fmt.Errorf("duplicate zone %q", name)
 		}
 	}
+	if len(c.zones) >= maxZones {
+		return fmt.Errorf("maximum of %d zones", maxZones)
+	}
 	c.pendingAdd = name
 	c.pendingRemove = ""
 	return nil
@@ -86,7 +95,9 @@ func (c *Clock) ConfirmAdd() {
 	if c.pendingAdd == "" {
 		return
 	}
-	c.zones = append(c.zones, c.pendingAdd)
+	if len(c.zones) < maxZones {
+		c.zones = append(c.zones, c.pendingAdd)
+	}
 	c.pendingAdd = ""
 }
 
@@ -123,6 +134,9 @@ func (c *Clock) CancelPending() {
 }
 
 func (c *Clock) Restore(zones []string) {
+	if len(zones) > maxZones {
+		zones = zones[:maxZones]
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.zones = c.zones[:0]

@@ -1,6 +1,7 @@
 package worldclock
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -27,6 +28,22 @@ func TestPanelTreeHasDragHandlesAndTimeKeys(t *testing.T) {
 	})
 	if !drag || !timeKey || !drop {
 		t.Fatalf("drag=%v time=%v drop=%v", drag, timeKey, drop)
+	}
+}
+
+func TestMaxZoneCountKeepsPanelTreeWithinProtocolLimit(t *testing.T) {
+	t.Parallel()
+	readings := make([]Reading, maxZones)
+	for i := range readings {
+		readings[i] = Reading{Zone: fmt.Sprintf("Zone-%d", i), Clock: "15:04", Offset: "UTC+0"}
+	}
+	for _, state := range []struct{ pendingAdd, pendingRemove string }{
+		{}, {pendingAdd: "Asia/Tokyo"}, {pendingRemove: "Zone-0"},
+	} {
+		root := PanelTree(readings, state.pendingAdd, state.pendingRemove, "")
+		if err := v1.Validate(root, v1.ViewPanel); err != nil {
+			t.Fatalf("panel with add=%q remove=%q: %v", state.pendingAdd, state.pendingRemove, err)
+		}
 	}
 }
 
