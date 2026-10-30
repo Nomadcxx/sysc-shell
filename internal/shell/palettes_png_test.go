@@ -155,7 +155,7 @@ func TestPalettesPageRendersToPNG(t *testing.T) {
 				reg.rebuildPanel(h)
 				reg.mu.Unlock()
 				settleHostAnimation(reg, h)
-				paintPluginStorePNG(t, panel, o.scale, filepath.Join(dir, name+".png"))
+				paintPanelPNG(t, panel, o.scale, filepath.Join(dir, name+".png"))
 			})
 		}
 	}
