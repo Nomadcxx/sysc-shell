@@ -465,18 +465,18 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 	case onbPlugins:
 		children = append(children, onbPluginTiles(r, h)...)
 	case onbReady:
-		children = append(children, onbSummary(r, h)...)
-		children = append(children, onbCaption(h, onbText(h, "hint.ready", onbEntryHint)))
-		children = append(children,
-			&ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
-				onbActionButton(h, "onb-settings", "action.settings", "Open Settings", "settings"),
-				onbActionButton(h, "onb-launcher", "action.launcher", "Open launcher", "apps"),
-			}},
-			&ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
-				onbActionButton(h, "onb-wallpaper", "action.wallpaper", onbWallpaperButton, "wallpaper"),
-				onbDocsButton(h),
-			}},
-		)
+		children = append(children, onbReviewCards(r, h))
+		open := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+			onbActionButton(h, "onb-settings", "action.settings", "Open Settings", "settings"),
+			onbActionButton(h, "onb-launcher", "action.launcher", "Open launcher", "apps"),
+		}}
+		// Three translated pills do not fit one narrow row.
+		if onbWide(h) {
+			open.Children = append(open.Children, onbDocsButton(h))
+			children = append(children, open)
+		} else {
+			children = append(children, open, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{onbDocsButton(h)}})
+		}
 	}
 	return children
 }
@@ -496,6 +496,55 @@ func onbWelcomeCards(h *PanelHost) []*ui.Node {
 			onbText(h, "welcome."+card.key, card.title), onbText(h, "welcome."+card.key+"_line", card.line)))
 	}
 	return out
+}
+
+// onbReviewCards state each choice on a card that opens its step, two to a
+// row.
+func onbReviewCards(r *Registry, h *PanelHost) *ui.Node {
+	plugins := onbText(h, "review.plugins_none", "None selected")
+	if names := onbSelectedPlugins(r, h); len(names) > 0 {
+		plugins = strings.Join(names, ", ")
+	}
+	cards := []struct {
+		key   string
+		page  onboardingPage
+		label string
+		value string
+	}{
+		{"appearance", onbAppearance, onbStepLabel(h, onbAppearance), onbStepSummary(r, h, onbAppearance)},
+		{"language", onbRegion, onbText(h, "review.language", "Interface language"), onboardingLocale(h)},
+		{"weather", onbRegion, onbText(h, "review.weather", "Weather"), onbStepSummary(r, h, onbRegion)},
+		{"idle", onbIdle, onbStepLabel(h, onbIdle), onbStepSummary(r, h, onbIdle)},
+		{"plugins", onbPlugins, onbStepLabel(h, onbPlugins), plugins},
+	}
+	m := h.metrics()
+	width := (onbContentWidth(h) - theme.MarginM) / 2
+	inner := max(width-2*m.CardPadding, 0)
+	grid := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+	var row []*ui.Node
+	for i, card := range cards {
+		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: card.label, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+			h.wrappedText(card.value, theme.RoleLabel, ui.ToneNormal, inner, 2),
+		}}
+		height, err := ui.ContentHeight(body, inner, h.measureText())
+		if err != nil {
+			height = m.StandardControl
+		}
+		row = append(row, &ui.Node{
+			Kind: ui.KindButton, Key: "onb-review:" + card.key, Action: fmt.Sprintf("onb-step:%d", card.page),
+			Name: card.label + ": " + card.value, Role: "button", Focusable: true,
+			Width: width, Height: height + 2*m.CardPadding, Padding: m.CardPadding,
+			Shape: ui.ShapeCard, Fill: ui.FillContainerHigh,
+			Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
+			Children: []*ui.Node{body},
+		})
+		if len(row) == 2 || i == len(cards)-1 {
+			grid.Children = append(grid.Children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: onbEvenCards(row)})
+			row = nil
+		}
+	}
+	return grid
 }
 
 const onbBadge = 28 // token-exempt: the overview's number badge, sized to the prototype
@@ -1046,41 +1095,6 @@ func onbPlaceCard(r *Registry, h *PanelHost) *ui.Node {
 		Fill: ui.FillSoft, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: lines}},
 	}
-}
-
-// onbSummary states the current choices as plain lines; visiting a page
-// writes nothing, so the wizard can always open.
-func onbSummary(r *Registry, h *PanelHost) []*ui.Node {
-	mode := settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin())
-	mode = onbIdleMode(h, mode)
-	weather := strings.TrimSpace(h.draft.Weather.City)
-	if weather == "" {
-		if h.draft.Weather.Configured {
-			weather = onbText(h, "summary.coordinates_set", "coordinates set")
-		} else {
-			weather = onbText(h, "summary.not_set", "not set")
-		}
-	}
-	lines := []string{
-		fmt.Sprintf(onbText(h, "interface_language", "Interface language: %s"), onboardingLocale(h)),
-		fmt.Sprintf(onbText(h, "summary.theme", "Theme: %s, %s"), onbGet(h, "appearance.mode"), onbGet(h, "appearance.source")),
-		fmt.Sprintf(onbText(h, "summary.weather", "Weather location: %s"), weather),
-		fmt.Sprintf(onbText(h, "summary.idle", "Idle: %s"), mode),
-		onbPluginSummary(r, h),
-	}
-	out := make([]*ui.Node, 0, len(lines))
-	for _, l := range lines {
-		out = append(out, h.wrappedText(l, theme.RoleCaption, ui.ToneNormal, onbContentWidth(h), 0))
-	}
-	return out
-}
-
-func onbPluginSummary(r *Registry, h *PanelHost) string {
-	selected := onbText(h, "summary.plugins_none", "none")
-	if names := onbSelectedPlugins(r, h); len(names) > 0 {
-		selected = strings.Join(names, ", ")
-	}
-	return fmt.Sprintf(onbText(h, "summary.plugins", "Startup plugins: %s"), selected)
 }
 
 // onbSelectedPlugins names the candidates the staged selection enables and

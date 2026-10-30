@@ -563,3 +563,51 @@ func TestOnboardingPluginStoreEmptyStateFinishesSetup(t *testing.T) {
 		t.Fatalf("outcome = %q (%v), want completed", state.Outcome, err)
 	}
 }
+
+func TestOnboardingReviewCardsJumpToTheirStep(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.draft.Weather.City = "Melbourne"
+	for _, tc := range []struct {
+		key  string
+		page onboardingPage
+		text string
+	}{
+		{"appearance", onbAppearance, "Dark"},
+		{"language", onbRegion, "Follow system"},
+		{"weather", onbRegion, "Melbourne"},
+		{"idle", onbIdle, "Nothing"},
+		{"plugins", onbPlugins, "None"},
+	} {
+		h.onbPage = onbReady
+		reg.rebuildPanel(h)
+		card := onboardingNodeByKey(h.root, "onb-review:"+tc.key)
+		if card == nil || !card.Focusable || card.Role != "button" {
+			t.Fatalf("Review lacks a focusable %s card", tc.key)
+		}
+		if !strings.Contains(treeText(card), tc.text) {
+			t.Errorf("%s card = %q, want it to show %q", tc.key, treeText(card), tc.text)
+		}
+		h.setFocus(card)
+		if !h.activate(reg) || h.onbPage != tc.page {
+			t.Errorf("%s card opened page %d, want %d", tc.key, h.onbPage, tc.page)
+		}
+	}
+	h.onbPage = onbReady
+	reg.rebuildPanel(h)
+	cards := []*ui.Node{onboardingNodeByKey(h.root, "onb-review:appearance"), onboardingNodeByKey(h.root, "onb-review:language")}
+	if cards[0].Bounds.Y != cards[1].Bounds.Y || cards[0].Bounds.X == cards[1].Bounds.X {
+		t.Errorf("review cards %+v and %+v do not share a row", cards[0].Bounds, cards[1].Bounds)
+	}
+	for _, action := range []string{"onb-settings", "onb-launcher", "onb-docs"} {
+		if n := byAction(h.root, action); n == nil || n.Fill != ui.FillOutline {
+			t.Errorf("Review lacks the outlined %s action", action)
+		}
+	}
+	for _, gone := range []string{"Interface language:", "Theme:", "Startup plugins:"} {
+		if strings.Contains(renderText(h.root), gone) {
+			t.Errorf("Review still renders the summary line %q", gone)
+		}
+	}
+}

@@ -122,7 +122,7 @@ func TestOnboardingHasUniformPillActions(t *testing.T) {
 
 	h.onbPage = onbReady
 	reg.rebuildPanel(h)
-	for _, action := range []string{"onb-settings", "onb-launcher", "onb-wallpaper", "onb-docs"} {
+	for _, action := range []string{"onb-settings", "onb-launcher", "onb-docs"} {
 		n := byAction(h.root, action)
 		if n == nil {
 			t.Fatalf("missing ready-page action %q", action)
@@ -346,28 +346,23 @@ func TestOnboardingPaintsItsCapturedBackdrop(t *testing.T) {
 	}
 }
 
-func TestOnboardingSummaryIncludesLanguageWithReadableText(t *testing.T) {
+func TestOnboardingReviewShowsLanguageWithReadableText(t *testing.T) {
 	reg := newPanelRegistry(t)
 	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
 		t.Fatal(err)
 	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
 	h := reg.panelHosts[PanelOnboarding]
-	for _, page := range []onboardingPage{onbReady} {
-		h.onbPage = page
-		reg.rebuildPanel(h)
-		texts := findAllKind(h.root, ui.KindText)
-		languageFound, themeFound := false, false
-		for _, n := range texts {
-			languageFound = languageFound || strings.Contains(n.Text, "Interface language:")
-			if strings.HasPrefix(n.Text, "Theme:") {
-				themeFound = true
-				if n.Tone == ui.ToneSubtle {
-					t.Errorf("%s theme summary uses low-emphasis text", onbTitles[page])
-				}
-			}
-		}
-		if !languageFound || !themeFound {
-			t.Errorf("%s summary missing interface language or theme: %s", onbTitles[page], renderText(h.root))
+	h.onbPage = onbReady
+	reg.rebuildPanel(h)
+	language := onboardingNodeByKey(h.root, "onb-review:language")
+	if language == nil || !strings.Contains(treeText(language), onboardingLocale(h)) {
+		t.Fatalf("Review language card = %q, want %q", treeText(language), onboardingLocale(h))
+	}
+	for _, n := range findAllKind(language, ui.KindText) {
+		if strings.Contains(n.Text, "Follow system") && n.Tone == ui.ToneSubtle {
+			t.Error("the chosen language uses low-emphasis text")
 		}
 	}
 }
@@ -384,7 +379,7 @@ func TestOnboardingSecondaryActionsStayCompact(t *testing.T) {
 		actions []string
 	}{
 		{onbAppearance, []string{"onb-wallpaper"}},
-		{onbReady, []string{"onb-settings", "onb-launcher", "onb-wallpaper", "onb-docs"}},
+		{onbReady, []string{"onb-settings", "onb-launcher", "onb-docs"}},
 	} {
 		h.onbPage = tc.page
 		reg.rebuildPanel(h)
@@ -1315,7 +1310,7 @@ func TestOnboardingFinishDoesNotCompleteWhenDraftWriteFails(t *testing.T) {
 	}
 }
 
-func TestOnboardingReadyOffersDirectSettingsAndWallpaperActions(t *testing.T) {
+func TestOnboardingReadyOffersDirectSettingsActions(t *testing.T) {
 	reg := newPanelRegistry(t)
 	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
 		t.Fatal(err)
@@ -1325,9 +1320,9 @@ func TestOnboardingReadyOffersDirectSettingsAndWallpaperActions(t *testing.T) {
 	h := reg.panelHosts[PanelOnboarding]
 	h.onbPage = onbReady
 	reg.rebuildPanel(h)
-	if byAction(h.root, "onb-settings") == nil || byAction(h.root, "onb-wallpaper") == nil ||
+	if byAction(h.root, "onb-settings") == nil || onboardingNodeByKey(h.root, "onb-review:appearance") == nil ||
 		byAction(h.root, "onb-launcher") == nil || byAction(h.root, "onb-docs") == nil {
-		t.Fatalf("Ready tree lacks direct Settings/wallpaper actions: %q", treeText(h.root))
+		t.Fatalf("Ready tree lacks direct Settings or appearance actions: %q", treeText(h.root))
 	}
 	if got := byAction(h.root, "onb-settings").Width; got != 0 {
 		t.Fatalf("Ready action width = %d, want a natural-width pill", got)
