@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -426,5 +427,50 @@ func TestOnboardingRegionPlaceCardFollowsWeather(t *testing.T) {
 	reg.rebuildPanel(h)
 	if text := treeText(onboardingNodeByKey(h.root, "onb-place")); strings.Contains(text, "Melbourne") {
 		t.Fatalf("place card for a new city = %q, still shows the old place", text)
+	}
+}
+
+func TestOnboardingIdleOffersCardsWithReasons(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.wallsSnapshot.ServiceAvailable = true
+	h.draft.Session.Locker = ""
+	h.onbPage = onbIdle
+	reg.rebuildPanel(h)
+	for _, mode := range []string{"nothing", "screensaver", "lock"} {
+		card := onboardingNodeByKey(h.root, "onb-idle:"+mode)
+		if card == nil || card.Action != "pick:idle.after="+mode {
+			t.Fatalf("idle %s card = %+v, want one picking idle.after", mode, card)
+		}
+	}
+	lock := onboardingNodeByKey(h.root, "onb-idle:lock")
+	if !lock.State.Has(ui.StateDisabled) || lock.Focusable {
+		t.Error("Lock without a locker is not dimmed and unreachable")
+	}
+	if chip := onboardingNodeByKey(lock, "onb-idle-reason:lock"); chip == nil || treeText(chip) == "" {
+		t.Error("the dimmed Lock card gives no reason")
+	}
+	if onboardingNodeByKey(h.root, "onb-idle-reason:screensaver") != nil {
+		t.Error("an available action shows a reason chip")
+	}
+	if nothing := onboardingNodeByKey(h.root, "onb-idle:nothing"); nothing.Fill != ui.FillSoft {
+		t.Error("the current idle action is not marked")
+	}
+	h.setFocus(lock)
+	h.activate(reg)
+	if settings.WhenIdleMode(h.draft.Idle.Lock, reg.wallsSnapshot.EnabledAtLogin()) == "lock" {
+		t.Fatal("a dimmed card changed the idle action")
+	}
+	reg.idleApplying = true
+	h.onbPage = onbReady
+	reg.rebuildPanel(h)
+	if finish := byAction(h.root, "onb-finish"); finish == nil || !finish.State.Has(ui.StateDisabled) {
+		t.Error("Finish is not held while the idle action applies")
+	}
+	h.onbPage = onbIdle
+	reg.rebuildPanel(h)
+	if screensaver := onboardingNodeByKey(h.root, "onb-idle:screensaver"); !screensaver.State.Has(ui.StateDisabled) {
+		t.Error("idle cards stay live while the idle action applies")
 	}
 }

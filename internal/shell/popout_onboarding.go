@@ -459,10 +459,7 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 	case onbRegion:
 		children = append(children, onbRegionBody(r, h)...)
 	case onbIdle:
-		rows := onbRows(r, h, "idle.after")
-		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: rows}
-		settingsDimIdle(r, h, body)
-		children = append(children, body)
+		children = append(children, onbIdleCards(r, h))
 		children = append(children, onbCaption(h, onbText(h, "hint.idle", onbIdleHint)))
 	case onbPlugins:
 		children = append(children, onbPluginRows(r, h)...)
@@ -543,18 +540,82 @@ func onbModeCards(h *PanelHost) *ui.Node {
 			onbText(h, "mode."+mode.value, mode.title), onbText(h, "mode."+mode.value+"_line", mode.line),
 			mode.value == current, width))
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: cards}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: onbEvenCards(cards)}
+}
+
+// onbIdleCards choose the idle action through idle.after. An action this
+// session cannot run stays visible, dimmed by settingsDimIdle, with a chip
+// saying what it needs.
+func onbIdleCards(r *Registry, h *PanelHost) *ui.Node {
+	current := settings.WhenIdleMode(h.draft.Idle.Lock, r.wallsSnapshot.EnabledAtLogin())
+	// Three across on the wide frame; stacked on the narrow one, where a third
+	// of the column cannot hold a reason chip.
+	width := (onbContentWidth(h) - 2*theme.MarginL) / 3
+	if !onbWide(h) {
+		width = onbContentWidth(h)
+	}
+	modes := []struct{ value, line, reason string }{
+		{"nothing", "Leave the screen as it is.", ""},
+		{"screensaver", "Run sysc-walls over the desktop.", "Needs sysc-walls"},
+		{"lock", "Ask for your password to return.", "Needs a locker in Settings"},
+	}
+	available := map[string]bool{
+		"nothing":     true,
+		"screensaver": r.wallsSnapshot.ServiceAvailable,
+		"lock":        strings.TrimSpace(h.draft.Session.Locker) != "",
+	}
+	cards := make([]*ui.Node, 0, len(modes))
+	for _, mode := range modes {
+		var chip *ui.Node
+		if !available[mode.value] {
+			chip = &ui.Node{
+				Kind: ui.KindCapsule, Key: "onb-idle-reason:" + mode.value, Padding: theme.MarginXS,
+				PaddingX: theme.MarginS, Fill: ui.FillContainerHighest, Shape: ui.ShapeStadium,
+				Children: []*ui.Node{{Kind: ui.KindText, Text: onbText(h, "idle.reason_"+mode.value, mode.reason), TextRole: theme.RoleCaption}},
+			}
+		}
+		cards = append(cards, onbChoiceCardWith(h, "onb-idle:"+mode.value, "pick:idle.after="+mode.value,
+			onbIdleMode(h, mode.value), onbText(h, "idle."+mode.value+"_line", mode.line),
+			mode.value == current, width, chip))
+	}
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: onbEvenCards(cards)}
+	if !onbWide(h) {
+		row = &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: cards}
+	}
+	settingsDimIdle(r, h, row)
+	return row
+}
+
+// onbEvenCards gives cards sharing a row the tallest one's height.
+func onbEvenCards(cards []*ui.Node) []*ui.Node {
+	tallest := 0
+	for _, card := range cards {
+		tallest = max(tallest, card.Height)
+	}
+	for _, card := range cards {
+		card.Height = tallest
+	}
+	return cards
 }
 
 // onbChoiceCard is one option of a choice: a title and a line on a card that
 // is selected with an accent ring and wash.
 func onbChoiceCard(h *PanelHost, key, action, title, line string, selected bool, width int) *ui.Node {
+	return onbChoiceCardWith(h, key, action, title, line, selected, width, nil)
+}
+
+// onbChoiceCardWith is onbChoiceCard with a chip under its line.
+func onbChoiceCardWith(h *PanelHost, key, action, title, line string, selected bool, width int, chip *ui.Node) *ui.Node {
 	m := h.metrics()
 	textWidth := max(width-2*m.CardPadding, 0)
 	body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
 		h.wrappedText(line, theme.RoleCaption, ui.ToneSubtle, textWidth, 0),
 	}}
+	if chip != nil {
+		body.Gap = theme.MarginXS
+		body.Children = append(body.Children, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{chip}})
+	}
 	height, err := ui.ContentHeight(body, textWidth, h.measureText())
 	if err != nil {
 		height = m.StandardControl

@@ -1259,8 +1259,8 @@ func TestOnboardingIdlePageUsesEffectiveWallsValues(t *testing.T) {
 	h.set = reg.settingsForLocked(h.draft)
 	h.onbPage = onbIdle
 	reg.rebuildPanel(h)
-	if got := selectedIdleAfter(h); got != "screensaver" {
-		t.Fatalf("selected idle action = %q, want screensaver from live walls state", got)
+	if card := onboardingNodeByKey(h.root, "onb-idle:screensaver"); card == nil || card.Fill != ui.FillSoft {
+		t.Fatal("the Screensaver card is not marked current from live walls state")
 	}
 }
 
