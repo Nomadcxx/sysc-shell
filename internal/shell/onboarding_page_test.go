@@ -1709,14 +1709,21 @@ func TestOnboardingPluginSelectionIsStagedUntilFinish(t *testing.T) {
 	reg.mu.Unlock()
 }
 
-func TestOnboardingFinishSavesAndDismissalDiscardsPluginSelection(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	for _, finish := range []bool{true, false} {
-		name := "dismiss"
-		if finish {
-			name = "finish"
-		}
-		t.Run(name, func(t *testing.T) {
+func TestOnboardingReadyActionsPersistOrDiscardPluginSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		action   string
+		complete bool
+		opens    bool
+		target   PanelID
+	}{
+		{name: "finish", action: "onb-finish", complete: true},
+		{name: "dismiss", action: "onb-skip"},
+		{name: "settings", action: "onb-settings", complete: true, opens: true, target: PanelSettings},
+		{name: "launcher", action: "onb-launcher", complete: true, opens: true, target: PanelLauncher},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			reg := newPanelRegistry(t)
 			cfg := reg.cfg.Clone()
 			cfg.Plugins.Settings = map[string]map[string]any{"org.example.keep": {"theme": "blue"}}
@@ -1739,19 +1746,27 @@ func TestOnboardingFinishSavesAndDismissalDiscardsPluginSelection(t *testing.T) 
 				reg.mu.Unlock()
 				t.Fatal("plugin selection was not accepted")
 			}
-			if finish {
+			h.draft.Weather.Configured = true
+			h.draft.Weather.City = "Pending city"
+			timer := time.AfterFunc(time.Hour, func() {})
+			h.writeTimer = timer
+			t.Cleanup(func() { timer.Stop() })
+			if tc.action != "onb-skip" {
 				h.onbPage = onbReady
 				reg.rebuildPanel(h)
-				h.setFocus(byAction(h.root, "onb-finish"))
-			} else {
-				h.draft.Weather.Configured = true
-				h.draft.Weather.City = "Pending city"
-				h.writeTimer = time.AfterFunc(time.Hour, func() {})
-				h.setFocus(byAction(h.root, "onb-skip"))
 			}
+			h.setFocus(byAction(h.root, tc.action))
 			if !h.activate(reg) {
 				reg.mu.Unlock()
-				t.Fatalf("%s was not accepted", name)
+				t.Fatalf("%s was not accepted", tc.name)
+			}
+			if tc.opens && !reg.panelOpenLocked(tc.target) {
+				reg.mu.Unlock()
+				t.Fatalf("%s action did not open %s", tc.name, tc.target)
+			}
+			if tc.opens && reg.panelHosts[PanelOnboarding] != nil {
+				reg.mu.Unlock()
+				t.Fatalf("%s action left onboarding open", tc.name)
 			}
 			reg.mu.Unlock()
 
@@ -1759,15 +1774,27 @@ func TestOnboardingFinishSavesAndDismissalDiscardsPluginSelection(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if onboardingContainsString(saved.Plugins.Enabled, "org.example.timer") != finish ||
-				hasPluginPlacement(saved.Bar, "org.example.timer", "clock") != finish {
-				t.Fatalf("finish=%v saved plugin state=%+v bar=%+v", finish, saved.Plugins.Enabled, saved.Bar.Right)
+			gotEnabled := onboardingContainsString(saved.Plugins.Enabled, "org.example.timer")
+			gotPlaced := hasPluginPlacement(saved.Bar, "org.example.timer", "clock")
+			if gotEnabled != tc.complete || gotPlaced != tc.complete {
+				t.Fatalf("%s saved plugin enabled=%v placed=%v, want both %v", tc.name, gotEnabled, gotPlaced, tc.complete)
 			}
 			if saved.Plugins.Settings["org.example.keep"]["theme"] != "blue" {
 				t.Fatal("saving plugin selection changed unrelated plugin settings")
 			}
-			if !finish && saved.Weather.City != "Pending city" {
-				t.Fatalf("dismissal saved weather city %q, want Pending city", saved.Weather.City)
+			if saved.Weather.City != "Pending city" {
+				t.Fatalf("%s saved weather city %q, want Pending city", tc.name, saved.Weather.City)
+			}
+			state, err := onboarding.Load(onboarding.StatePath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantOutcome := onboarding.OutcomeDismissed
+			if tc.complete {
+				wantOutcome = onboarding.OutcomeCompleted
+			}
+			if state.Outcome != wantOutcome {
+				t.Fatalf("%s outcome = %q, want %q", tc.name, state.Outcome, wantOutcome)
 			}
 		})
 	}
