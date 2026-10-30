@@ -776,6 +776,26 @@ func onbContentWidth(h *PanelHost) int {
 	return width
 }
 
+// finishOnboardingLocked persists staged selections and records completion.
+// Callers hold r.mu and keep the panel open when it returns an error.
+func (r *Registry) finishOnboardingLocked(h *PanelHost) error {
+	if r.idleApplying {
+		return fmt.Errorf("%s", onbText(h, "error.idle_applying", "Wait for the idle setting to finish applying."))
+	}
+	if h.writeTimer != nil {
+		h.writeTimer.Stop()
+		h.writeTimer = nil
+	}
+	draft, err := onbPluginSelectionConfig(h.draft, onbPluginCandidates(r), h.onbPluginSelections)
+	if err != nil {
+		return err
+	}
+	if err := r.writeConfig(draft); err != nil {
+		return err
+	}
+	return r.markOnboardingOutcomeLocked(onboarding.OutcomeCompleted)
+}
+
 // onboardingScrollOffset reads the body scroll back out of the built tree so
 // the next rebuild restores the position.
 func onboardingScrollOffset(root *ui.Node) int {
@@ -860,27 +880,7 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		r.closePanelLocked(h.id)
 		return true
 	case "onb-finish":
-		if r.idleApplying {
-			h.errLabel = onbText(h, "error.idle_applying", "Wait for the idle setting to finish applying.")
-			r.rebuildPanel(h)
-			return true
-		}
-		if h.writeTimer != nil {
-			h.writeTimer.Stop()
-			h.writeTimer = nil
-		}
-		draft, err := onbPluginSelectionConfig(h.draft, onbPluginCandidates(r), h.onbPluginSelections)
-		if err != nil {
-			h.errLabel = err.Error()
-			r.rebuildPanel(h)
-			return true
-		}
-		if err := r.writeConfig(draft); err != nil {
-			h.errLabel = err.Error()
-			r.rebuildPanel(h)
-			return true
-		}
-		if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeCompleted); err != nil {
+		if err := r.finishOnboardingLocked(h); err != nil {
 			h.errLabel = err.Error()
 			r.rebuildPanel(h)
 			return true
@@ -888,7 +888,7 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		r.closePanelLocked(h.id)
 		return true
 	case "onb-settings", "onb-launcher":
-		if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeDismissed); err != nil {
+		if err := r.finishOnboardingLocked(h); err != nil {
 			h.errLabel = err.Error()
 			r.rebuildPanel(h)
 			return true
