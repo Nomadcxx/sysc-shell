@@ -309,6 +309,7 @@ type PanelHost struct {
 	editors            map[string]*retainedEditor
 
 	launcherResults         []launcher.Result
+	launcherAppsOnly        bool // launcherResults are all applications
 	launcherSel             int
 	launcherScroll          int
 	launcherMenuID          string
@@ -3334,7 +3335,9 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 		return true
 	}
 	if h.id == PanelLauncher {
-		h.launcherMoveSel(r, wheelRows(delta, launcherSlotHeight))
+		// The wheel moves by visual rows: a grid row is l.columns results.
+		l := launcherLayoutFor(r, h)
+		h.launcherMoveSel(r, wheelRows(delta, l.slot)*l.columns)
 		return true
 	}
 	if !h.scrollBy(delta) {

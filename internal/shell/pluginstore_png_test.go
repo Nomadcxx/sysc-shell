@@ -131,7 +131,7 @@ func TestPluginStoreRendersToPNG(t *testing.T) {
 				reg.rebuildPanel(host)
 				reg.mu.Unlock()
 				settleHostAnimation(reg, host)
-				paintPluginStorePNG(t, panel, o.scale120, filepath.Join(dir, name+".png"))
+				paintPanelPNG(t, panel, o.scale120, filepath.Join(dir, name+".png"))
 			})
 		}
 		manager := []struct {
@@ -180,13 +180,13 @@ func TestPluginStoreRendersToPNG(t *testing.T) {
 				reg.rebuildPanel(host)
 				reg.mu.Unlock()
 				settleHostAnimation(reg, host)
-				paintPluginStorePNG(t, panel, o.scale120, filepath.Join(dir, name+".png"))
+				paintPanelPNG(t, panel, o.scale120, filepath.Join(dir, name+".png"))
 			})
 		}
 	}
 }
 
-func paintPluginStorePNG(t *testing.T, panel *wayland.AuxSpec, scale120 int, path string) {
+func paintPanelPNG(t *testing.T, panel *wayland.AuxSpec, scale120 int, path string) {
 	t.Helper()
 	w, h := int(panel.Width), int(panel.Height)
 	if err := panel.Callbacks.Configure(w, h, scale120); err != nil {
@@ -239,7 +239,7 @@ func TestPluginStoreCatalogDataNeverFailsLayout(t *testing.T) {
 			host.pluginStoreCategoriesOpen = true
 			reg.rebuildPanel(host)
 			reg.mu.Unlock()
-			paintPluginStorePNG(t, panel, o.scale120, filepath.Join(t.TempDir(), "grid.png"))
+			paintPanelPNG(t, panel, o.scale120, filepath.Join(t.TempDir(), "grid.png"))
 		})
 		t.Run("detail "+name, func(t *testing.T) {
 			reg, host, panel := openPluginStoreTestPanel(t, state, o.out)
@@ -247,7 +247,7 @@ func TestPluginStoreCatalogDataNeverFailsLayout(t *testing.T) {
 			host.pluginStoreDetail = pluginStoreKey(heavy)
 			reg.rebuildPanel(host)
 			reg.mu.Unlock()
-			paintPluginStorePNG(t, panel, o.scale120, filepath.Join(t.TempDir(), "detail.png"))
+			paintPanelPNG(t, panel, o.scale120, filepath.Join(t.TempDir(), "detail.png"))
 		})
 		t.Run("settings "+name, func(t *testing.T) {
 			installed := heavy
@@ -259,7 +259,7 @@ func TestPluginStoreCatalogDataNeverFailsLayout(t *testing.T) {
 				host.pluginManagerTab = tab
 				reg.rebuildPanel(host)
 				reg.mu.Unlock()
-				paintPluginStorePNG(t, panel, o.scale120, filepath.Join(t.TempDir(), tab+".png"))
+				paintPanelPNG(t, panel, o.scale120, filepath.Join(t.TempDir(), tab+".png"))
 			}
 		})
 	}
