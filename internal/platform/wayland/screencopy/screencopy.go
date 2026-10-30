@@ -442,6 +442,10 @@ func (i *ZwlrScreencopyFrameV1) SetBufferDoneHandler(f ZwlrScreencopyFrameV1Buff
 	i.bufferDoneHandler = f
 }
 
+func (i *ZwlrScreencopyFrameV1) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *ZwlrScreencopyFrameV1) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:

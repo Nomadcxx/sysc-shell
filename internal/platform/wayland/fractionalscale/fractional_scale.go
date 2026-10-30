@@ -183,6 +183,10 @@ func (i *WpFractionalScaleV1) SetPreferredScaleHandler(f WpFractionalScaleV1Pref
 	i.preferredScaleHandler = f
 }
 
+func (i *WpFractionalScaleV1) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *WpFractionalScaleV1) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:

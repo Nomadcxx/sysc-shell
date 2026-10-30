@@ -11,4 +11,4 @@
 // sends, so callers test flags&1 and never the generated constant.
 package backgroundeffect
 
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg backgroundeffect -o background_effect.go -i ../../../../protocols/ext-background-effect-v1.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.3.3 -pkg backgroundeffect -o background_effect.go -i ../../../../protocols/ext-background-effect-v1.xml

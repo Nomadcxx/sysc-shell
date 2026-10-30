@@ -251,6 +251,10 @@ func (i *WmBase) SetPingHandler(f WmBasePingHandlerFunc) {
 	i.pingHandler = f
 }
 
+func (i *WmBase) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:
@@ -1236,6 +1240,10 @@ type SurfaceConfigureHandlerFunc func(SurfaceConfigureEvent)
 // SetConfigureHandler : sets handler for SurfaceConfigureEvent
 func (i *Surface) SetConfigureHandler(f SurfaceConfigureHandlerFunc) {
 	i.configureHandler = f
+}
+
+func (i *Surface) HasFD(opcode uint32) bool {
+	return false
 }
 
 func (i *Surface) Dispatch(opcode uint32, fd int, data []byte) {
@@ -2244,6 +2252,10 @@ func (i *Toplevel) SetWmCapabilitiesHandler(f ToplevelWmCapabilitiesHandlerFunc)
 	i.wmCapabilitiesHandler = f
 }
 
+func (i *Toplevel) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:
@@ -2256,11 +2268,22 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Height = int32(client.Uint32(data[l : l+4]))
 		l += 4
-		statesLen := int(client.Uint32(data[l : l+4]))
+		if len(data)-l < 4 {
+			panic("client: truncated event array length")
+		}
+		statesWireLen := client.Uint32(data[l : l+4])
 		l += 4
+		if uint64(statesWireLen) > uint64(len(data)-l) {
+			panic("client: truncated event array")
+		}
+		statesLen := int(statesWireLen)
+		statesPaddedLen := client.PaddedLen(statesLen)
+		if statesPaddedLen > len(data)-l {
+			panic("client: truncated event array padding")
+		}
 		e.States = make([]byte, statesLen)
 		copy(e.States, data[l:l+statesLen])
-		l += statesLen
+		l += statesPaddedLen
 
 		i.configureHandler(e)
 	case 1:
@@ -2288,11 +2311,22 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) {
 		}
 		var e ToplevelWmCapabilitiesEvent
 		l := 0
-		capabilitiesLen := int(client.Uint32(data[l : l+4]))
+		if len(data)-l < 4 {
+			panic("client: truncated event array length")
+		}
+		capabilitiesWireLen := client.Uint32(data[l : l+4])
 		l += 4
+		if uint64(capabilitiesWireLen) > uint64(len(data)-l) {
+			panic("client: truncated event array")
+		}
+		capabilitiesLen := int(capabilitiesWireLen)
+		capabilitiesPaddedLen := client.PaddedLen(capabilitiesLen)
+		if capabilitiesPaddedLen > len(data)-l {
+			panic("client: truncated event array padding")
+		}
 		e.Capabilities = make([]byte, capabilitiesLen)
 		copy(e.Capabilities, data[l:l+capabilitiesLen])
-		l += capabilitiesLen
+		l += capabilitiesPaddedLen
 
 		i.wmCapabilitiesHandler(e)
 	default:
@@ -2589,6 +2623,10 @@ type PopupRepositionedHandlerFunc func(PopupRepositionedEvent)
 // SetRepositionedHandler : sets handler for PopupRepositionedEvent
 func (i *Popup) SetRepositionedHandler(f PopupRepositionedHandlerFunc) {
 	i.repositionedHandler = f
+}
+
+func (i *Popup) HasFD(opcode uint32) bool {
+	return false
 }
 
 func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) {

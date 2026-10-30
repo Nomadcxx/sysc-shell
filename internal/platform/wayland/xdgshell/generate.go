@@ -10,4 +10,4 @@
 // xdg_popup references against the trimmed names.
 package xdgshell
 
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg xdgshell -prefix xdg_ -o xdg_shell.go -i ../../../../protocols/xdg-shell.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.3.3 -pkg xdgshell -prefix xdg_ -o xdg_shell.go -i ../../../../protocols/xdg-shell.xml

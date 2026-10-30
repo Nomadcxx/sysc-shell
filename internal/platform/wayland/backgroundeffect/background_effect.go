@@ -192,6 +192,10 @@ func (i *ExtBackgroundEffectManagerV1) SetCapabilitiesHandler(f ExtBackgroundEff
 	i.capabilitiesHandler = f
 }
 
+func (i *ExtBackgroundEffectManagerV1) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *ExtBackgroundEffectManagerV1) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:
