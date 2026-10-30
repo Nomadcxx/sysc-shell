@@ -1223,7 +1223,7 @@ func TestOnboardingRegionLocalizesAndOffersLanguagePreference(t *testing.T) {
 			t.Errorf("region title for %s = %q in tree %q, want translated title", locale, wantTitle, treeText(h.root))
 		}
 		progress := onboardingNodeByKey(h.root, "onb-eyebrow")
-		if progress == nil || progress.Role != "status" || progress.Name != progress.Text || !strings.Contains(progress.Text, "03") {
+		if progress == nil || progress.Role != "status" || progress.Name != progress.Text || !strings.Contains(progress.Text, "03") || progress.Text == "STEP 03 OF 06" {
 			t.Errorf("progress accessibility for %s = %+v; want a status naming step 03", locale, progress)
 		}
 		language := h.set.ByPath("session.language")

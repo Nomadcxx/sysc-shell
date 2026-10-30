@@ -69,24 +69,16 @@ const (
 	onbIntroReady = "Review what applied. Settings holds every control this " +
 		"wizard used, plus the rest of the shell."
 
-	onbWallpaperHint = "Choose an image now; you can change it later in the Wallpaper panel."
-	onbRegionHint    = "The interface language does not change your keyboard layout. " +
-		"Set precise weather coordinates in Settings if needed."
 	onbIdleHint = "Timing and availability are managed in Settings, under Session. " +
 		"Unavailable actions stay disabled."
-	onbIdleModeDescription = "Choose one action to run when the session is idle."
 	onbCityDescription     = "Enter a city or town for local weather."
 	onbLanguageDescription = "Choose the interface language; your keyboard layout stays with the OS."
-	onbEntryHint           = "Settings holds every control used here, beside the rest of " +
-		"the shell: launcher, notifications, clipboard and tray panels sit in " +
-		"the bar."
 
-	onbBackLabel       = "Back"
-	onbStartLabel      = "Get started"
-	onbNextLabel       = "Continue"
-	onbFinishLabel     = "Finish"
-	onbSkipLabel       = "Not now"
-	onbWallpaperButton = "Choose wallpaper"
+	onbBackLabel   = "Back"
+	onbStartLabel  = "Get started"
+	onbNextLabel   = "Continue"
+	onbFinishLabel = "Finish"
+	onbSkipLabel   = "Not now"
 )
 
 func onbMainLabel(p onboardingPage) string {
@@ -485,15 +477,14 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 // settings before any choice was made.
 func onbWelcomeCards(h *PanelHost) []*ui.Node {
 	cards := []struct{ key, title, line string }{
-		{"look", "Look", "Dark or light, and a wallpaper."},
-		{"weather", "Weather", "Your city and units."},
-		{"idle", "Idle", "Screensaver or lock."},
-		{"plugins", "Plugins", "Bar extras from your installed plugins."},
+		{"look", onbText(h, "welcome.look", "Look"), onbText(h, "welcome.look_line", "Dark or light, and a wallpaper.")},
+		{"weather", onbText(h, "welcome.weather", "Weather"), onbText(h, "welcome.weather_line", "Your city and units.")},
+		{"idle", onbText(h, "welcome.idle", "Idle"), onbText(h, "welcome.idle_line", "Screensaver or lock.")},
+		{"plugins", onbText(h, "welcome.plugins", "Plugins"), onbText(h, "welcome.plugins_line", "Bar extras from your installed plugins.")},
 	}
 	out := make([]*ui.Node, 0, len(cards))
 	for i, card := range cards {
-		out = append(out, onbCard(h, "onb-welcome-"+card.key, fmt.Sprint(i+1),
-			onbText(h, "welcome."+card.key, card.title), onbText(h, "welcome."+card.key+"_line", card.line)))
+		out = append(out, onbCard(h, "onb-welcome-"+card.key, fmt.Sprint(i+1), card.title, card.line))
 	}
 	return out
 }
@@ -581,14 +572,13 @@ func onbModeCards(h *PanelHost) *ui.Node {
 	}
 	width := (onbContentWidth(h) - theme.MarginL) / 2
 	modes := []struct{ value, title, line string }{
-		{"dark", "Dark", "Light text on dark surfaces."},
-		{"light", "Light", "Dark text on light surfaces."},
+		{"dark", onbText(h, "mode.dark", "Dark"), onbText(h, "mode.dark_line", "Light text on dark surfaces.")},
+		{"light", onbText(h, "mode.light", "Light"), onbText(h, "mode.light_line", "Dark text on light surfaces.")},
 	}
 	cards := make([]*ui.Node, 0, len(modes))
 	for _, mode := range modes {
 		cards = append(cards, onbChoiceCard(h, "onb-mode:"+mode.value, "pick:appearance.mode="+mode.value,
-			onbText(h, "mode."+mode.value, mode.title), onbText(h, "mode."+mode.value+"_line", mode.line),
-			mode.value == current, width))
+			mode.title, mode.line, mode.value == current, width))
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: onbEvenCards(cards)}
 }
@@ -605,9 +595,9 @@ func onbIdleCards(r *Registry, h *PanelHost) *ui.Node {
 		width = onbContentWidth(h)
 	}
 	modes := []struct{ value, line, reason string }{
-		{"nothing", "Leave the screen as it is.", ""},
-		{"screensaver", "Run sysc-walls over the desktop.", "Needs sysc-walls"},
-		{"lock", "Ask for your password to return.", "Needs a locker in Settings"},
+		{"nothing", onbText(h, "idle.nothing_line", "Leave the screen as it is."), ""},
+		{"screensaver", onbText(h, "idle.screensaver_line", "Run sysc-walls over the desktop."), onbText(h, "idle.reason_screensaver", "Needs sysc-walls")},
+		{"lock", onbText(h, "idle.lock_line", "Ask for your password to return."), onbText(h, "idle.reason_lock", "Needs a locker in Settings")},
 	}
 	available := map[string]bool{
 		"nothing":     true,
@@ -621,11 +611,11 @@ func onbIdleCards(r *Registry, h *PanelHost) *ui.Node {
 			chip = &ui.Node{
 				Kind: ui.KindCapsule, Key: "onb-idle-reason:" + mode.value, Padding: theme.MarginXS,
 				PaddingX: theme.MarginS, Fill: ui.FillContainerHighest, Shape: ui.ShapeStadium,
-				Children: []*ui.Node{{Kind: ui.KindText, Text: onbText(h, "idle.reason_"+mode.value, mode.reason), TextRole: theme.RoleCaption}},
+				Children: []*ui.Node{{Kind: ui.KindText, Text: mode.reason, TextRole: theme.RoleCaption}},
 			}
 		}
 		cards = append(cards, onbChoiceCardWith(h, "onb-idle:"+mode.value, "pick:idle.after="+mode.value,
-			onbIdleMode(h, mode.value), onbText(h, "idle."+mode.value+"_line", mode.line),
+			onbIdleMode(h, mode.value), mode.line,
 			mode.value == current, width, chip))
 	}
 	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: onbEvenCards(cards)}
@@ -976,37 +966,24 @@ func onboardingFontOption(h *PanelHost) []*ui.Node {
 	return out
 }
 
-// onbRows renders the named settings entries as Settings renders them.
-func onbRows(r *Registry, h *PanelHost, paths ...string) []*ui.Node {
-	var out []*ui.Node
-	for _, e := range onbEntries(r, h, paths...) {
-		out = append(out, settingsEntryRow(h, e, onbContentWidth(h)))
-	}
-	return out
-}
-
 // onbEntries looks up the named settings entries with the wizard's own
 // descriptions. An unknown path is a programmer error, not a user one, so it
 // simply drops.
-func onbEntries(r *Registry, h *PanelHost, paths ...string) []settings.Entry {
+func onbEntries(h *PanelHost, paths ...string) []settings.Entry {
 	var entries []settings.Entry
 	for _, p := range paths {
-		if e := h.set.ByPath(p); e != nil {
-			entries = append(entries, *e)
+		e := h.set.ByPath(p)
+		if e == nil {
+			continue
 		}
-	}
-	entries = overlayIdleGets(r, h.draft.Session.Locker, entries)
-	if h.id == PanelOnboarding {
-		for i := range entries {
-			switch entries[i].Path {
-			case "idle.after":
-				entries[i].Describe = onbText(h, "idle.mode_description", onbIdleModeDescription)
-			case "weather.city":
-				entries[i].Describe = onbText(h, "region.city_description", onbCityDescription)
-			case "session.language":
-				entries[i].Describe = onbText(h, "region.language_description", onbLanguageDescription)
-			}
+		entry := *e
+		switch entry.Path {
+		case "weather.city":
+			entry.Describe = onbText(h, "region.city_description", onbCityDescription)
+		case "session.language":
+			entry.Describe = onbText(h, "region.language_description", onbLanguageDescription)
 		}
+		entries = append(entries, entry)
 	}
 	return entries
 }
@@ -1016,7 +993,7 @@ func onbEntries(r *Registry, h *PanelHost, paths ...string) []settings.Entry {
 func onbRegionBody(r *Registry, h *PanelHost) []*ui.Node {
 	width := onbContentWidth(h)
 	half := (width - theme.MarginL) / 2
-	entries := onbEntries(r, h, "session.language", "weather.unit", "weather.city")
+	entries := onbEntries(h, "session.language", "weather.unit", "weather.city")
 	if len(entries) != 3 {
 		return nil
 	}
