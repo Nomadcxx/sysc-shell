@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -356,5 +357,74 @@ func TestOnboardingAppearanceChoosesModeByCard(t *testing.T) {
 	}
 	if !strings.Contains(treeText(row), "Wallpaper") {
 		t.Errorf("wallpaper row text = %q, want it to name the wallpaper", treeText(row))
+	}
+}
+
+func openOnboardingRegion(t *testing.T) (*Registry, *PanelHost) {
+	t.Helper()
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	h.onbPage = onbRegion
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+	return reg, h
+}
+
+func TestOnboardingRegionStacksLabelsOverControls(t *testing.T) {
+	reg, h := openOnboardingRegion(t)
+	for _, path := range []string{"session.language", "weather.unit", "weather.city"} {
+		label := onboardingNodeByKey(h.root, "onb-label:"+path)
+		control := onboardingNodeByKey(h.root, "onb-control:"+path)
+		if label == nil || control == nil {
+			t.Fatalf("%s lacks a stacked label or control", path)
+		}
+		if label.Bounds.Y+label.Bounds.H > control.Bounds.Y {
+			t.Errorf("%s label %+v is not above its control %+v", path, label.Bounds, control.Bounds)
+		}
+	}
+	city := onboardingNodeByKey(h.root, "onb-control:weather.city")
+	if city.Bounds.W != onbContentWidth(h) {
+		t.Errorf("city field width = %d, want the content width %d", city.Bounds.W, onbContentWidth(h))
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	for _, unit := range []string{"celsius", "fahrenheit"} {
+		button := onboardingNodeByKey(h.root, "onb-unit:"+unit)
+		if button == nil || button.Action != "pick:weather.unit="+unit || button.Role != "radio" {
+			t.Fatalf("unit %s = %+v, want a radio picking weather.unit", unit, button)
+		}
+	}
+	h.setFocus(onboardingNodeByKey(h.root, "onb-unit:fahrenheit"))
+	if !h.activate(reg) || h.draft.Weather.Unit != "fahrenheit" {
+		t.Fatalf("draft unit = %q after choosing Fahrenheit", h.draft.Weather.Unit)
+	}
+	if onboardingNodeByKey(h.root, "onb-unit:fahrenheit").Fill != ui.FillSoft {
+		t.Error("the chosen unit is not marked")
+	}
+}
+
+func TestOnboardingRegionPlaceCardFollowsWeather(t *testing.T) {
+	reg, h := openOnboardingRegion(t)
+	reg.mu.Lock()
+	h.draft.Weather.City = "Melbourne"
+	reg.rebuildPanel(h)
+	place := onboardingNodeByKey(h.root, "onb-place")
+	if place == nil || !strings.Contains(treeText(place), "looked up when setup finishes") {
+		reg.mu.Unlock()
+		t.Fatalf("place card before lookup = %q, want the lookup line", treeText(place))
+	}
+	reg.cfg.Weather.City = "melbourne "
+	reg.mu.Unlock()
+	reg.UpdateWeather(services.Reading{Observed: true, Location: "Melbourne, Victoria, Australia", Temperature: 14, Unit: services.UnitCelsius})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	text := treeText(onboardingNodeByKey(h.root, "onb-place"))
+	if !strings.Contains(text, "Melbourne, Victoria, Australia") || !strings.Contains(text, "14") {
+		t.Fatalf("place card after the reading = %q, want the resolved place and reading", text)
+	}
+	h.draft.Weather.City = "Sydney"
+	reg.rebuildPanel(h)
+	if text := treeText(onboardingNodeByKey(h.root, "onb-place")); strings.Contains(text, "Melbourne") {
+		t.Fatalf("place card for a new city = %q, still shows the old place", text)
 	}
 }

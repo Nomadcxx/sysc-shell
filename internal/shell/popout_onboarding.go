@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/onboarding"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -456,10 +457,7 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 	case onbAppearance:
 		children = append(children, onbModeCards(h), onbWallpaperRow(r, h))
 	case onbRegion:
-		children = append(children, onbRows(r, h, "session.language")...)
-		children = append(children, onboardingFontOption(h)...)
-		children = append(children, onbRows(r, h, "weather.city", "weather.unit")...)
-		children = append(children, onbCaption(h, onbText(h, "hint.region", onbRegionHint)))
+		children = append(children, onbRegionBody(r, h)...)
 	case onbIdle:
 		rows := onbRows(r, h, "idle.after")
 		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: rows}
@@ -840,15 +838,22 @@ func onboardingFontOption(h *PanelHost) []*ui.Node {
 	return out
 }
 
-// onbRows renders the named settings entries as Settings renders them. An
-// unknown path is a programmer error, not a user one, so it simply drops.
+// onbRows renders the named settings entries as Settings renders them.
 func onbRows(r *Registry, h *PanelHost, paths ...string) []*ui.Node {
 	var out []*ui.Node
-	width := onbContentWidth(h)
+	for _, e := range onbEntries(r, h, paths...) {
+		out = append(out, settingsEntryRow(h, e, onbContentWidth(h)))
+	}
+	return out
+}
+
+// onbEntries looks up the named settings entries with the wizard's own
+// descriptions. An unknown path is a programmer error, not a user one, so it
+// simply drops.
+func onbEntries(r *Registry, h *PanelHost, paths ...string) []settings.Entry {
 	var entries []settings.Entry
 	for _, p := range paths {
-		e := h.set.ByPath(p)
-		if e != nil {
+		if e := h.set.ByPath(p); e != nil {
 			entries = append(entries, *e)
 		}
 	}
@@ -865,10 +870,93 @@ func onbRows(r *Registry, h *PanelHost, paths ...string) []*ui.Node {
 			}
 		}
 	}
-	for _, e := range entries {
-		out = append(out, settingsEntryRow(h, e, width))
+	return entries
+}
+
+// onbRegionBody stacks each label over its control: language and unit side
+// by side, the city across the column with the place it resolves to.
+func onbRegionBody(r *Registry, h *PanelHost) []*ui.Node {
+	width := onbContentWidth(h)
+	half := (width - theme.MarginL) / 2
+	entries := onbEntries(r, h, "session.language", "weather.unit", "weather.city")
+	if len(entries) != 3 {
+		return nil
+	}
+	language, unit, city := entries[0], entries[1], entries[2]
+	unitW := (half - theme.MarginS) / 2
+	unitValue := unit.Get(h.draft)
+	units := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+		onbChoiceButton(h, "onb-unit:celsius", "pick:weather.unit=celsius", onbText(h, "unit.celsius", "°C Celsius"), unitValue == "celsius", unitW),
+		onbChoiceButton(h, "onb-unit:fahrenheit", "pick:weather.unit=fahrenheit", onbText(h, "unit.fahrenheit", "°F Fahrenheit"), unitValue == "fahrenheit", unitW),
+	}}
+	out := []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
+		onbStackedField(h, language, settingsControl(h, language, half), half),
+		onbStackedField(h, unit, units, half),
+	}}}
+	out = append(out, onboardingFontOption(h)...)
+	out = append(out, onbStackedField(h, city, settingsControl(h, city, width), width))
+	if place := onbPlaceCard(r, h); place != nil {
+		out = append(out, place)
 	}
 	return out
+}
+
+// onbStackedField is a settings entry as a form field: the label above the
+// control and the description below it.
+func onbStackedField(h *PanelHost, e settings.Entry, control *ui.Node, width int) *ui.Node {
+	children := []*ui.Node{
+		{Kind: ui.KindText, Key: "onb-label:" + e.Path, Text: e.Label, TextRole: theme.RoleLabel},
+		{Kind: ui.KindColumn, Key: "onb-control:" + e.Path, Width: width, Children: []*ui.Node{control}},
+	}
+	if e.Describe != "" {
+		children = append(children, h.wrappedText(e.Describe, theme.RoleCaption, ui.ToneSubtle, width, 0))
+	}
+	return &ui.Node{Kind: ui.KindColumn, Width: width, Gap: theme.MarginXS, Children: children}
+}
+
+// onbChoiceButton is a one-line option of a choice, marked like a choice card.
+func onbChoiceButton(h *PanelHost, key, action, label string, selected bool, width int) *ui.Node {
+	button := h.button(action, label, "")
+	button.Key, button.Role, button.Width = key, "radio", width
+	button.Shape = ui.ShapeMedium
+	button.Fill = ui.FillContainerHigh
+	button.Stroke, button.StrokeFill = 1, ui.FillOutlineVariant // token-exempt: a hairline border, not a ladder value
+	button.Children[0].CenterX = true
+	if selected {
+		button.Fill = ui.FillSoft
+		button.Stroke = 2 // token-exempt: the chosen option's ring
+		button.StrokeFill = ui.FillAccent
+	}
+	return button
+}
+
+// onbPlaceCard shows what the typed city resolved to once the weather service
+// has looked it up, and until then says when it will be.
+func onbPlaceCard(r *Registry, h *PanelHost) *ui.Node {
+	city := strings.TrimSpace(h.draft.Weather.City)
+	if city == "" {
+		return nil
+	}
+	m := h.metrics()
+	width := onbContentWidth(h)
+	lines := []*ui.Node{h.wrappedText(onbText(h, "region.place_pending", "The place is looked up when setup finishes."),
+		theme.RoleCaption, ui.ToneSubtle, width-2*m.CardPadding, 0)}
+	reading := r.reading
+	resolved := strings.EqualFold(strings.TrimSpace(r.cfg.Weather.City), city) && reading.Location != "" &&
+		(r.weather == nil || !r.weather.LocationPending())
+	if resolved {
+		condition := render.WeatherCondition(reading.Code)
+		lines = []*ui.Node{
+			{Kind: ui.KindText, Text: reading.Location, TextRole: theme.RoleLabel},
+			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s · %s", reading.Temperature, unitSuffix(reading.Unit),
+				h.tr("wx.cond."+condKey(condition), condition)), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		}
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Key: "onb-place", Role: "status", Width: width, Padding: m.CardPadding,
+		Fill: ui.FillSoft, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: lines}},
+	}
 }
 
 // onbSummary states the current choices as plain lines; visiting a page

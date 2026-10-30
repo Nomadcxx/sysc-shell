@@ -2955,6 +2955,14 @@ func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
 	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	weatherOut, weatherOK := r.rebuildWeatherPanelLocked()
+	// The wizard's Region step shows the place a typed city resolved to.
+	onbHost := r.panelHosts[PanelOnboarding]
+	onbOK := onbHost != nil && onbHost.onbPage == onbRegion
+	var onbOut uint32
+	if onbOK {
+		r.rebuildPanel(onbHost)
+		onbOut = onbHost.output
+	}
 	r.mu.Unlock()
 	if r.nightLight != nil {
 		r.nightLight.Recompute()
@@ -2966,6 +2974,9 @@ func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
 	}
 	if weatherOK {
 		r.publishSurface(weatherOut, panelSurfaceID(PanelWeather))
+	}
+	if onbOK {
+		r.publishSurface(onbOut, panelSurfaceID(PanelOnboarding))
 	}
 	return changed
 }
