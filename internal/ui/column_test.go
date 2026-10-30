@@ -502,3 +502,24 @@ func TestColumnHonoursExplicitHeight(t *testing.T) {
 		t.Fatalf("drop zone reserved box: got %d, want 24", zone)
 	}
 }
+
+// An empty capsule with an explicit height is a bar, not a dot: a column
+// gives it that height, as a row does. Centred, it keeps its explicit width.
+func TestColumnEmptyCapsuleKeepsExplicitBox(t *testing.T) {
+	bar := &Node{Kind: KindCapsule, Width: 2, Height: 22, CenterX: true}
+	root := &Node{Kind: KindColumn, Children: []*Node{bar}}
+	if err := LayoutColumn(root, Rect{W: 26, H: 52}, fixedMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if bar.Bounds.W != 2 || bar.Bounds.H != 22 || bar.Bounds.X != 12 {
+		t.Fatalf("bar bounds = %+v, want a 2x22 bar centred at x=12", bar.Bounds)
+	}
+	dot := &Node{Kind: KindCapsule, Width: 6}
+	root = &Node{Kind: KindColumn, Children: []*Node{dot}}
+	if err := LayoutColumn(root, Rect{W: 26, H: 52}, fixedMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if dot.Bounds.H != 6 {
+		t.Fatalf("dot height = %d, want its width 6", dot.Bounds.H)
+	}
+}
