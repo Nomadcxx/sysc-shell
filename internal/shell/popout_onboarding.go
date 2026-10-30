@@ -454,11 +454,7 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 	case onbWelcome:
 		children = append(children, onbWelcomeCards(h)...)
 	case onbAppearance:
-		children = append(children, onbRows(r, h, "appearance.mode")...)
-		children = append(children, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
-			onbActionButton(h, "onb-wallpaper", "action.wallpaper", onbWallpaperButton, "wallpaper"),
-		}})
-		children = append(children, onbCaption(h, onbText(h, "hint.wallpaper", onbWallpaperHint)))
+		children = append(children, onbModeCards(h), onbWallpaperRow(r, h))
 	case onbRegion:
 		children = append(children, onbRows(r, h, "session.language")...)
 		children = append(children, onboardingFontOption(h)...)
@@ -527,6 +523,78 @@ func onbCard(h *PanelHost, key, badge, title, line string) *ui.Node {
 				{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
 				h.wrappedText(line, theme.RoleCaption, ui.ToneSubtle, textWidth, 0),
 			}},
+		}}},
+	}
+}
+
+// onbModeCards choose the colour mode through the appearance.mode entry,
+// the way the Settings row does.
+func onbModeCards(h *PanelHost) *ui.Node {
+	current := ""
+	if e := h.set.ByPath("appearance.mode"); e != nil {
+		current = e.Get(h.draft)
+	}
+	width := (onbContentWidth(h) - theme.MarginL) / 2
+	modes := []struct{ value, title, line string }{
+		{"dark", "Dark", "Light text on dark surfaces."},
+		{"light", "Light", "Dark text on light surfaces."},
+	}
+	cards := make([]*ui.Node, 0, len(modes))
+	for _, mode := range modes {
+		cards = append(cards, onbChoiceCard(h, "onb-mode:"+mode.value, "pick:appearance.mode="+mode.value,
+			onbText(h, "mode."+mode.value, mode.title), onbText(h, "mode."+mode.value+"_line", mode.line),
+			mode.value == current, width))
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: cards}
+}
+
+// onbChoiceCard is one option of a choice: a title and a line on a card that
+// is selected with an accent ring and wash.
+func onbChoiceCard(h *PanelHost, key, action, title, line string, selected bool, width int) *ui.Node {
+	m := h.metrics()
+	textWidth := max(width-2*m.CardPadding, 0)
+	body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
+		h.wrappedText(line, theme.RoleCaption, ui.ToneSubtle, textWidth, 0),
+	}}
+	height, err := ui.ContentHeight(body, textWidth, h.measureText())
+	if err != nil {
+		height = m.StandardControl
+	}
+	card := &ui.Node{
+		Kind: ui.KindButton, Key: key, Action: action, Name: title, Role: "radio", Focusable: true,
+		Shape: ui.ShapeCard, Fill: ui.FillContainerHigh, Padding: m.CardPadding,
+		Width: width, Height: height + 2*m.CardPadding,
+		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
+		Children: []*ui.Node{body},
+	}
+	// A wash and a ring rather than StateSelected, which paints a solid
+	// accent chip the caption cannot be read on.
+	if selected {
+		card.Fill = ui.FillSoft
+		card.Stroke = 2 // token-exempt: the chosen option's ring
+		card.StrokeFill = ui.FillAccent
+	}
+	return card
+}
+
+// onbWallpaperRow names what the output shows and opens the shared picker.
+func onbWallpaperRow(r *Registry, h *PanelHost) *ui.Node {
+	m := h.metrics()
+	name := onbWallpaperName(r, h)
+	if name == "" {
+		name = onbText(h, "wallpaper.none", "None assigned")
+	}
+	change := onbActionButton(h, "onb-wallpaper", "action.change", "Change", "wallpaper")
+	return &ui.Node{
+		Kind: ui.KindCapsule, Key: "onb-wallpaper-row", Width: onbContentWidth(h), Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: onbText(h, "wallpaper.label", "Wallpaper"), TextRole: theme.RoleLabel},
+				{Kind: ui.KindText, Text: name, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+			}},
+			change,
 		}}},
 	}
 }

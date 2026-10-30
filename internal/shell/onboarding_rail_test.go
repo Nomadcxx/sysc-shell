@@ -318,3 +318,43 @@ func TestOnboardingWelcomeIsAnOverview(t *testing.T) {
 		t.Error("Welcome still offers the documentation action")
 	}
 }
+
+func TestOnboardingAppearanceChoosesModeByCard(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.draft.ThemeGen.Mode = "dark"
+	h.onbPage = onbAppearance
+	reg.rebuildPanel(h)
+	dark, light := onboardingNodeByKey(h.root, "onb-mode:dark"), onboardingNodeByKey(h.root, "onb-mode:light")
+	if dark == nil || light == nil {
+		t.Fatal("Appearance lacks the Dark and Light cards")
+	}
+	if dark.Fill != ui.FillSoft || dark.StrokeFill != ui.FillAccent || dark.State.Has(ui.StateSelected) {
+		t.Errorf("current mode card = state %v fill %d stroke %d, want FillSoft with an accent ring", dark.State, dark.Fill, dark.StrokeFill)
+	}
+	if light.Fill == ui.FillSoft || light.StrokeFill == ui.FillAccent {
+		t.Error("the other mode card is marked selected")
+	}
+	if dark.Role != "radio" || !dark.Focusable || dark.Bounds.H <= 0 {
+		t.Errorf("mode card = role %q focusable %t bounds %+v, want a laid-out radio", dark.Role, dark.Focusable, dark.Bounds)
+	}
+	h.setFocus(light)
+	if !h.activate(reg) {
+		t.Fatal("Light card rejected activation")
+	}
+	if h.draft.ThemeGen.Mode != "light" {
+		t.Fatalf("draft mode = %q, want light written through the setting", h.draft.ThemeGen.Mode)
+	}
+	if light = onboardingNodeByKey(h.root, "onb-mode:light"); light.Fill != ui.FillSoft {
+		t.Error("Light card is not selected after choosing it")
+	}
+	row := onboardingNodeByKey(h.root, "onb-wallpaper-row")
+	change := byAction(h.root, "onb-wallpaper")
+	if row == nil || change == nil || change.Name != "Change" || onboardingNodeByKey(row, "") == nil {
+		t.Fatalf("wallpaper row = %v, change = %+v, want a row holding a Change action", row != nil, change)
+	}
+	if !strings.Contains(treeText(row), "Wallpaper") {
+		t.Errorf("wallpaper row text = %q, want it to name the wallpaper", treeText(row))
+	}
+}

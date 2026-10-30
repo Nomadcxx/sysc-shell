@@ -174,7 +174,7 @@ func TestOnboardingKeepsAdvancedSettingsOutOfSetup(t *testing.T) {
 			t.Errorf("Appearance exposes advanced Settings control %q: %s", advanced, appearance)
 		}
 	}
-	if !strings.Contains(appearance, "Colour mode") || !strings.Contains(appearance, "Choose wallpaper") {
+	if !strings.Contains(appearance, "Dark") || !strings.Contains(appearance, "Light") || !strings.Contains(appearance, "Change") {
 		t.Fatalf("Appearance is missing its basic setup controls: %s", appearance)
 	}
 
