@@ -167,10 +167,10 @@ func overWordmarkColor(dst []byte, color render.Color, coverage float64) {
 	sourceAlpha := float64(color.A) * coverage
 	inverseAlpha := 1 - sourceAlpha/255
 	blend := func(source, destination uint8) byte {
-		return byte(math.Round(float64(source)*sourceAlpha/255 + float64(destination)*inverseAlpha))
+		return byte(math.RoundToEven(float64(source)*sourceAlpha/255 + float64(destination)*inverseAlpha))
 	}
 	dst[0] = blend(color.B, dst[0])
 	dst[1] = blend(color.G, dst[1])
 	dst[2] = blend(color.R, dst[2])
-	dst[3] = byte(math.Round(sourceAlpha + float64(dst[3])*inverseAlpha))
+	dst[3] = byte(math.RoundToEven(sourceAlpha + float64(dst[3])*inverseAlpha))
 }
