@@ -75,7 +75,7 @@ internal/config/               JSON configuration
 internal/ipc/                  local IPC
 internal/plugin/               plugin discovery, supervision and store
 plugin/v1/                     public plugin wire protocol
-plugins/reference/             in-tree reference plugin (weather)
+plugins/reference/             in-tree reference plugins (timer and world clock)
 tests/integration/             Niri and Wayland integration checks
 docs/                          architecture, roadmap, designs and plans
 ```

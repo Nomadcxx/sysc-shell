@@ -714,8 +714,8 @@ func pluginEnvironment() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		key := strings.SplitN(kv, "=", 2)[0]
-		// SYSC_* is our own config namespace (e.g. the weather plugin's
-		// endpoint override); everything else must be on the allowlist.
+		// SYSC_* is reserved for shell integration settings such as endpoint
+		// overrides; everything else must be on the allowlist.
 		if strings.HasPrefix(key, "SYSC_") {
 			env = append(env, kv)
 			continue

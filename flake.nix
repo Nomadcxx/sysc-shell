@@ -1,5 +1,5 @@
 {
-  description = "sysc-shell for Nix: two binaries, one overlay, a home-manager module and a NixOS module";
+  description = "sysc-shell for Nix: one binary, one overlay, a home-manager module and a NixOS module";
 
   # One input, pinned by revision in flake.lock. The pin is what makes a build
   # reproducible; moving it is its own commit with its own reason.
@@ -27,7 +27,6 @@
         in
         {
           default = pkgs.callPackage ./nix/sysc-shell.nix { inherit commit; };
-          sysc-shell-plugin-weather = pkgs.callPackage ./nix/plugin-weather.nix { };
         }
       );
 
@@ -59,12 +58,11 @@
         // harness "nixos-module-harness" ./nix/tests/nixos-module.nix "all NixOS module harness assertions hold"
       );
 
-      # The same two derivations, reachable from a plain nixpkgs without the
-      # flake. Both delegate to callPackage, so an overlay user gets the same
-      # store paths as `nix build`.
+      # The shell derivation is reachable from a plain nixpkgs without the
+      # flake. The overlay delegates to callPackage, so it gets the same store
+      # path as `nix build`.
       overlays.default = final: _prev: {
         sysc-shell = final.callPackage ./nix/sysc-shell.nix { inherit commit; };
-        sysc-shell-plugin-weather = final.callPackage ./nix/plugin-weather.nix { };
       };
 
       # The user-level module, and one module rather than one per system. It

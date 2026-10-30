@@ -21,7 +21,7 @@ func pluginStorePNGListings() []store.Listing {
 	rows := []struct{ id, name, category, version string }{
 		{"org.sysc.timer", "Timer", "productivity", "1.4.0"},
 		{"org.sysc.calendar", "Calendar", "productivity", "1.2.0"},
-		{"org.sysc.weather", "Weather", "utilities", "2.1.0"},
+		{"org.sysc.world-clock", "World Clock", "productivity", "1.0.0"},
 		{"org.sysc.screen-recorder", "Screen Recorder", "utilities", "1.0.3"},
 		{"org.sysc.github-notifications", "GitHub Notifications", "development", "0.9.0"},
 		{"org.sysc.protonvpn", "ProtonVPN", "system", "1.1.0"},
@@ -43,7 +43,7 @@ func pluginStorePNGListings() []store.Listing {
 	listings[1].Installed = &store.Record{Source: "sysc", Version: "1.1.0", Previous: &store.Record{Version: "1.0.0"}}
 	listings[1].Status = store.StatusUpdateAvailable
 	listings[1].UpdateAvailable = true
-	listings[2].LocalDir = "/home/user/.config/sysc-shell/plugins/weather"
+	listings[2].LocalDir = "/home/user/.config/sysc-shell/plugins/world-clock"
 	listings[2].Installed = &store.Record{Source: "sysc", Version: "2.0.0"}
 	listings[2].Status = store.StatusShadowed
 	listings[2].UpdateAvailable = true

@@ -53,7 +53,7 @@ var itemFixtures = map[string]Item{
 	"theme_mode":      {ID: "theme_mode"},
 	"clipboard":       {ID: "clipboard"},
 	"keyboard-layout": {ID: "keyboard-layout"},
-	"plugin":          {ID: "plugin", Plugin: "org.sysc.weather", Entry: "bar", Instance: "weather-1"},
+	"plugin":          {ID: "plugin", Plugin: "org.example.plugin", Entry: "bar", Instance: "plugin-1"},
 	"group":           {ID: "group", Items: []Item{{ID: "cpu", Display: "radial", Interval: 2 * time.Second}}},
 }
 
