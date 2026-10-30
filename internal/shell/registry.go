@@ -440,6 +440,9 @@ type Registry struct {
 	launcherPlan               launcherPlan
 	launcherBatch              launcherBatch
 	launcherSnaps              chan launcherSnap
+	// launcherQueryHistory stays in memory for this shell session. Registry.mu
+	// protects it, and the launcher panel records entries when it closes.
+	launcherQueryHistory []string
 	// launcherRankWait, when set, runs on the service goroutine after a rank
 	// and before that rank is stamped. Tests hold a publish there.
 	launcherRankWait func(query string)

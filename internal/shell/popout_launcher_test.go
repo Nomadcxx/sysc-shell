@@ -655,6 +655,67 @@ func TestLauncherArrowsClampSelection(t *testing.T) {
 	}
 }
 
+func TestLauncherQueryHistorySurvivesReopen(t *testing.T) {
+	t.Parallel()
+
+	entries := launcherTestEntries()
+	reg, _, reqs := openLauncherPanel(t, entries)
+	query := func(reqs []wayland.AuxRequest, text string) {
+		reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: text})
+		waitForLauncherState(t, reg, func(h *PanelHost) bool {
+			return h != nil && h.query == text && !h.launcherAwaiting
+		})
+	}
+	closePanel := func() {
+		reg.ClosePanel(PanelLauncher)
+		_ = drainAux(t, reg, 2)
+	}
+	reopen := func() []wayland.AuxRequest {
+		if err := reg.OpenPanel(PanelLauncher, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+			t.Fatal(err)
+		}
+		reqs := drainAux(t, reg, 2)
+		if err := reqs[1].Open.Callbacks.Configure(560, 500, 120); err != nil {
+			t.Fatal(err)
+		}
+		waitForLauncherResults(t, reg, len(entries))
+		return reqs
+	}
+	expectQuery := func(want string) {
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelLauncher]
+		got := ""
+		if h != nil {
+			got = h.query
+		}
+		reg.mu.Unlock()
+		if got != want {
+			t.Fatalf("launcher query = %q, want %q", got, want)
+		}
+		waitForLauncherState(t, reg, func(h *PanelHost) bool {
+			return h != nil && h.query == want && !h.launcherAwaiting
+		})
+	}
+
+	query(reqs, "firefox")
+	closePanel()
+	reqs = reopen()
+	query(reqs, "foot")
+	closePanel()
+	reqs = reopen()
+
+	pressLauncherKey(reqs, keyUp)
+	expectQuery("foot")
+	pressLauncherKey(reqs, keyUp)
+	expectQuery("firefox")
+	pressLauncherKey(reqs, keyUp)
+	expectQuery("firefox")
+	pressLauncherKey(reqs, keyDown)
+	expectQuery("foot")
+	pressLauncherKey(reqs, keyDown)
+	expectQuery("")
+}
+
 func TestLauncherEnterActivatesSelectedEntry(t *testing.T) {
 	t.Parallel()
 

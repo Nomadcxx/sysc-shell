@@ -307,11 +307,14 @@ type PanelHost struct {
 	fields             map[string]*ui.Field
 	editors            map[string]*retainedEditor
 
-	launcherResults []launcher.Result
-	launcherSel     int
-	launcherScroll  int
-	launcherMenuID  string
-	launcherActions []launcher.Action
+	launcherResults         []launcher.Result
+	launcherSel             int
+	launcherScroll          int
+	launcherMenuID          string
+	launcherActions         []launcher.Action
+	launcherHistoryBrowsing bool
+	launcherHistoryCursor   int
+	launcherHistoryDraft    string
 	// launcherAttempt stamps the user's current launcher interaction; an
 	// activation completion applies only while its stamp is still current.
 	// launcherPendingAttempt is handed to the serialized service activation,
@@ -3639,6 +3642,9 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 			h.pluginStoreScroll = 0
 		}
 		if h.id == PanelLauncher {
+			h.launcherHistoryBrowsing = false
+			h.launcherHistoryCursor = 0
+			h.launcherHistoryDraft = ""
 			// A failed activation's error answers that attempt, not the
 			// search the user has moved on to.
 			h.errLabel = ""
@@ -5130,6 +5136,9 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	}
 	if h == nil {
 		return
+	}
+	if id == PanelLauncher {
+		r.rememberLauncherQueryLocked(h)
 	}
 	h.flushDraft(r)
 	if id == PanelSettings && h.palettes.preview {
