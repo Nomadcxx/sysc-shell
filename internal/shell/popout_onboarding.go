@@ -452,8 +452,7 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 	var children []*ui.Node
 	switch h.onbPage {
 	case onbWelcome:
-		children = append(children, onbSummary(r, h)...)
-		children = append(children, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{onbDocsButton(h)}})
+		children = append(children, onbWelcomeCards(h)...)
 	case onbAppearance:
 		children = append(children, onbRows(r, h, "appearance.mode")...)
 		children = append(children, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
@@ -488,6 +487,48 @@ func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
 		)
 	}
 	return children
+}
+
+// onbWelcomeCards say what the steps ahead cover, rather than reviewing
+// settings before any choice was made.
+func onbWelcomeCards(h *PanelHost) []*ui.Node {
+	cards := []struct{ key, title, line string }{
+		{"look", "Look", "Dark or light, and a wallpaper."},
+		{"weather", "Weather", "Your city and units."},
+		{"idle", "Idle", "Screensaver or lock."},
+		{"plugins", "Plugins", "Bar extras from your installed plugins."},
+	}
+	out := make([]*ui.Node, 0, len(cards))
+	for i, card := range cards {
+		out = append(out, onbCard(h, "onb-welcome-"+card.key, fmt.Sprint(i+1),
+			onbText(h, "welcome."+card.key, card.title), onbText(h, "welcome."+card.key+"_line", card.line)))
+	}
+	return out
+}
+
+const onbBadge = 28 // token-exempt: the overview's number badge, sized to the prototype
+
+// onbCard is a content-width card: a mono badge, a title and one line.
+func onbCard(h *PanelHost, key, badge, title, line string) *ui.Node {
+	m := h.metrics()
+	width := onbContentWidth(h)
+	textWidth := max(width-2*m.CardPadding-onbBadge-theme.MarginL, 0)
+	return &ui.Node{
+		Kind: ui.KindCapsule, Key: key, Width: width, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
+			{
+				Kind: ui.KindCapsule, Width: onbBadge, Height: onbBadge, Fill: ui.FillSoft, Shape: ui.ShapeMedium,
+				Children: []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+					Kind: ui.KindText, Text: badge, TextRole: theme.RoleMono, Tone: ui.ToneAccent, CenterX: true, CenterY: true,
+				}}}},
+			},
+			{Kind: ui.KindColumn, Width: textWidth, Gap: theme.MarginXXS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
+				h.wrappedText(line, theme.RoleCaption, ui.ToneSubtle, textWidth, 0),
+			}},
+		}}},
+	}
 }
 
 func onbPluginRows(r *Registry, h *PanelHost) []*ui.Node {

@@ -352,7 +352,7 @@ func TestOnboardingSummaryIncludesLanguageWithReadableText(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := reg.panelHosts[PanelOnboarding]
-	for _, page := range []onboardingPage{onbWelcome, onbReady} {
+	for _, page := range []onboardingPage{onbReady} {
 		h.onbPage = page
 		reg.rebuildPanel(h)
 		texts := findAllKind(h.root, ui.KindText)
@@ -647,7 +647,7 @@ func TestOnboardingPagesRender(t *testing.T) {
 				reg.mu.Unlock()
 				t.Fatalf("footer bottom = %d, want pinned content end %d", got, want)
 			}
-			if page == onbWelcome || page == onbReady {
+			if page == onbReady {
 				docs := byAction(root, "onb-docs")
 				if docs == nil || docs.Bounds.W == 0 || docs.Bounds.H == 0 {
 					reg.mu.Unlock()

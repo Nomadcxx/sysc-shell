@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -287,5 +288,33 @@ func TestOnboardingFooterLabelsAndStatus(t *testing.T) {
 		} else if status != nil && status.Text != "" {
 			t.Errorf("page %d footer status = %q, want none", page, status.Text)
 		}
+	}
+}
+
+func TestOnboardingWelcomeIsAnOverview(t *testing.T) {
+	_, h := openOnboardingAt(t, 3440, 1440, 120)
+	for i, part := range []string{"look", "weather", "idle", "plugins"} {
+		card := onboardingNodeByKey(h.root, "onb-welcome-"+part)
+		if card == nil {
+			t.Fatalf("Welcome lacks the %s card", part)
+		}
+		badge := findNode(card, func(n *ui.Node) bool {
+			return n.Kind == ui.KindText && n.TextRole == theme.RoleMono && n.Text == fmt.Sprint(i+1)
+		})
+		if badge == nil {
+			t.Errorf("%s card has no mono number badge %d", part, i+1)
+		}
+		if lines := findAllKind(card, ui.KindText); len(lines) < 3 {
+			t.Errorf("%s card holds %d text nodes, want number, title and one line", part, len(lines))
+		}
+	}
+	text := renderText(h.root)
+	for _, summary := range []string{"Interface language:", "Theme:", "Weather location:", "Startup plugins:"} {
+		if strings.Contains(text, summary) {
+			t.Errorf("Welcome still renders the settings summary %q", summary)
+		}
+	}
+	if byAction(h.root, "onb-docs") != nil {
+		t.Error("Welcome still offers the documentation action")
 	}
 }
