@@ -7,4 +7,4 @@
 // SHA-256:  87e0b9c837aecd6977f76f3c47d73088b7159871f5d979dc1840f6cadb5e2ed8
 package layershell
 
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg layershell -xdg-shell-import github.com/Nomadcxx/sysc-shell/internal/platform/wayland/xdgshell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.3.3 -pkg layershell -xdg-shell-import github.com/Nomadcxx/sysc-shell/internal/platform/wayland/xdgshell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml

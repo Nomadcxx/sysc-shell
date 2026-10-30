@@ -329,6 +329,10 @@ func (i *XdgActivationTokenV1) SetDoneHandler(f XdgActivationTokenV1DoneHandlerF
 	i.doneHandler = f
 }
 
+func (i *XdgActivationTokenV1) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *XdgActivationTokenV1) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:
@@ -337,10 +341,21 @@ func (i *XdgActivationTokenV1) Dispatch(opcode uint32, fd int, data []byte) {
 		}
 		var e XdgActivationTokenV1DoneEvent
 		l := 0
-		tokenLen := client.PaddedLen(int(client.Uint32(data[l : l+4])))
+		if len(data)-l < 4 {
+			panic("client: truncated event string length")
+		}
+		tokenWireLen := client.Uint32(data[l : l+4])
 		l += 4
+		if uint64(tokenWireLen) > uint64(len(data)-l) {
+			panic("client: truncated event string")
+		}
+		tokenLen := int(tokenWireLen)
+		tokenPaddedLen := client.PaddedLen(tokenLen)
+		if tokenPaddedLen > len(data)-l {
+			panic("client: truncated event string padding")
+		}
 		e.Token = client.String(data[l : l+tokenLen])
-		l += tokenLen
+		l += tokenPaddedLen
 
 		i.doneHandler(e)
 	default:

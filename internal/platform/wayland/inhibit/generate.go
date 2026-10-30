@@ -10,4 +10,4 @@
 // SHA-256:  9117d9e8ec02e9a3c3c55803b41e1227e76986f555f7c12eeb29f796fa63e69b
 package inhibit
 
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg inhibit -o inhibit.go -i ../../../../protocols/keyboard-shortcuts-inhibit-unstable-v1.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.3.3 -pkg inhibit -o inhibit.go -i ../../../../protocols/keyboard-shortcuts-inhibit-unstable-v1.xml

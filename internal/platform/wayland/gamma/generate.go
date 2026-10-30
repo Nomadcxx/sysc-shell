@@ -10,4 +10,4 @@
 // SHA-256: 4065cbc291a80348b7ef311168fbfb5cf245efe977a6dc32211291ef1a9529a1
 package gamma
 
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg gamma -o gamma.go -i ../../../../protocols/wlr-gamma-control-unstable-v1.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.3.3 -pkg gamma -o gamma.go -i ../../../../protocols/wlr-gamma-control-unstable-v1.xml

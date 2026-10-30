@@ -765,6 +765,10 @@ func (i *ZwlrLayerSurfaceV1) SetClosedHandler(f ZwlrLayerSurfaceV1ClosedHandlerF
 	i.closedHandler = f
 }
 
+func (i *ZwlrLayerSurfaceV1) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *ZwlrLayerSurfaceV1) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:

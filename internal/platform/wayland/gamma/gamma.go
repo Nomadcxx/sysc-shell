@@ -245,6 +245,10 @@ func (i *ZwlrGammaControlV1) SetFailedHandler(f ZwlrGammaControlV1FailedHandlerF
 	i.failedHandler = f
 }
 
+func (i *ZwlrGammaControlV1) HasFD(opcode uint32) bool {
+	return false
+}
+
 func (i *ZwlrGammaControlV1) Dispatch(opcode uint32, fd int, data []byte) {
 	switch opcode {
 	case 0:
