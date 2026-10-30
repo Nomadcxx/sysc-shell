@@ -598,7 +598,7 @@ func parseCCPrivacySnapshot(raw []byte) (*ccPrivacySnapshot, error) {
 		return nil, fmt.Errorf("invalid VPN defect totals")
 	}
 	if !snapshot.Available {
-		if snapshot.Overall.Grade != "unknown" || snapshot.Reason == "" || snapshot.Hint == "" ||
+		if snapshot.Overall.Grade != "unknown" || snapshot.Reason == "" ||
 			snapshot.CategoriesTotal != 0 || snapshot.FindingsTotal != 0 || snapshot.ReducedTotal != 0 ||
 			snapshot.Network.VPN.DefectsTotal != 0 {
 			return nil, fmt.Errorf("unavailable privacy snapshot is incomplete")
