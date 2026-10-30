@@ -1344,9 +1344,11 @@ func (h *PanelHost) activateLauncher(r *Registry, n *ui.Node) bool {
 }
 
 // launcherRowAt finds the index of the laid-out row under a point by its
-// launch action.
+// launch action. A row scrolled partly out of the list keeps its full bounds
+// but is clipped to the list, so a point outside the list is never a row: the
+// field above it would otherwise launch whatever is scrolled under it.
 func launcherRowAt(n *ui.Node, x, y int) (int, bool) {
-	if n == nil {
+	if n == nil || n.Kind == ui.KindVirtualList && !n.Bounds.Contains(x, y) {
 		return 0, false
 	}
 	if v, ok := strings.CutPrefix(n.Action, "launch:"); ok && n.Bounds.Contains(x, y) {
