@@ -286,9 +286,10 @@ func TestConvertLeavesBarControlsWithoutHostChrome(t *testing.T) {
 		node      *v1.Node
 		want      ui.Fill
 		wantShape ui.Shape
+		wantBare  bool
 	}{
-		{name: "label button", node: &v1.Node{Kind: v1.KindButton, ID: "open", Text: "3", Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillNone, wantShape: ui.ShapeInherit},
-		{name: "error icon", node: &v1.Node{Kind: v1.KindButton, ID: "open", Icon: "shield", Tone: v1.ToneError, Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillNone, wantShape: ui.ShapeInherit},
+		{name: "label button", node: &v1.Node{Kind: v1.KindButton, ID: "open", Text: "3", Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillNone, wantShape: ui.ShapeInherit, wantBare: true},
+		{name: "error icon", node: &v1.Node{Kind: v1.KindButton, ID: "open", Icon: "shield", Tone: v1.ToneError, Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillNone, wantShape: ui.ShapeInherit, wantBare: true},
 		{name: "error label", node: &v1.Node{Kind: v1.KindButton, ID: "open", Text: "Failed", Tone: v1.ToneError, Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillError, wantShape: ui.ShapeInherit},
 		{name: "named fill", node: &v1.Node{Kind: v1.KindButton, ID: "open", Icon: "shield", Fill: "accent", Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}, want: ui.FillAccent, wantShape: ui.ShapeInherit},
 		{name: "padded row", node: &v1.Node{Kind: v1.KindRow, Padding: 6}, want: ui.FillNone, wantShape: ui.ShapeInherit},
@@ -304,6 +305,9 @@ func TestConvertLeavesBarControlsWithoutHostChrome(t *testing.T) {
 			}
 			if shape := got.Children[0].Shape; shape != tc.wantShape {
 				t.Errorf("bar shape = %v, want %v", shape, tc.wantShape)
+			}
+			if bare := got.Children[0].Bare; bare != tc.wantBare {
+				t.Errorf("bar bare = %t, want %t", bare, tc.wantBare)
 			}
 		})
 	}
@@ -1274,5 +1278,20 @@ func TestConvertTonesTheGlyphOfABareButton(t *testing.T) {
 				t.Errorf("glyph tone = %v, want %v", tone, tc.want)
 			}
 		})
+	}
+}
+
+// Only a bar button goes bare: a panel's unfilled control keeps its resting
+// base, which is how a surface-filled panel button stays visible.
+func TestConvertKeepsPanelButtonsBased(t *testing.T) {
+	t.Parallel()
+
+	button := &v1.Node{Kind: v1.KindButton, ID: "close", Text: "Close", Fill: "surface", Name: "Close", Role: "button", Events: []v1.EventKind{v1.EventActivate}}
+	got, err := Convert(&v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{button}}, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted := got.Children[0]; converted.Fill != ui.FillNone || converted.Bare {
+		t.Errorf("panel surface button = fill %v bare %t, want an unfilled button with its base", converted.Fill, converted.Bare)
 	}
 }
