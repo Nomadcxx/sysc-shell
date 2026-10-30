@@ -98,12 +98,6 @@ guided installer does not touch a Nix store. home-manager users import the modul
   #   modules = [ inputs.sysc-shell.homeModules.default ];
   #   programs.sysc-shell.enable = true;
   #
-  #   # Optional: the weather plugin, linked into the user plugin root
-  #   # under its manifest id.
-  #   programs.sysc-shell.plugins = [
-  #     inputs.sysc-shell.packages.${pkgs.system}.sysc-shell-plugin-weather
-  #   ];
-  #
   # Without home-manager, on NixOS, where the package goes into
   # environment.systemPackages and the unit into /etc/systemd/user:
   #   imports = [ inputs.sysc-shell.nixosModules.default ];

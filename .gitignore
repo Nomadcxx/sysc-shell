@@ -2,7 +2,6 @@
 
 # Binaries
 /sysc-shell
-/sysc-plugin-weather
 *.test
 *.out
 

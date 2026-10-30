@@ -118,7 +118,6 @@ jobs:
           mkdir -p dist
           short="$(git rev-parse --short=8 "$COMMIT")"
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Version=$VERSION -X github.com/Nomadcxx/sysc-shell/internal/buildinfo.Commit=$short" -o dist/sysc-shell ./cmd/sysc-shell
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/sysc-plugin-weather ./cmd/sysc-plugin-weather
           (cd dist && sha256sum * > SHA256SUMS)
       - name: Verify the binaries carry the tagged commit
         env:
