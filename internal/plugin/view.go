@@ -461,6 +461,12 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 				// as its own label rather than as a child.
 				out.Text = icon.Text
 			case n.Text == "":
+				// A bare button has no fill for a tone to colour, so the
+				// tone colours its glyph. A filled button keeps the fill's
+				// own foreground, which the tone would fight.
+				if out.Fill == ui.FillNone {
+					icon.Tone = out.Tone
+				}
 				out.Children = []*ui.Node{icon}
 			default:
 				// An icon beside a label is the noctalia bar-widget shape:

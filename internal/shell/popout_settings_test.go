@@ -203,6 +203,68 @@ func TestSettingsApplicationsChangesPersistAndReachLauncherService(t *testing.T)
 	}
 }
 
+func TestSettingsApplicationsLauncherDisplaySavesMode(t *testing.T) {
+	reg, h := newApplicationSettingsHost(t, config.Default(), []launcher.Entry{
+		{ID: "photo-editor", Name: "Photo Editor"},
+	})
+	reg.configPath = filepath.Join(t.TempDir(), "config.json")
+
+	selected := func() []string {
+		t.Helper()
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		var control *ui.Node
+		for _, n := range walk(h.root) {
+			if n.Kind == ui.KindSegmented && n.Key == "applications-launcher-display" {
+				control = n
+			}
+		}
+		if control == nil {
+			t.Fatal("no launcher display control on the Applications page")
+		}
+		var names, picked []string
+		for _, seg := range control.Children {
+			if seg.Role != "tab" || !seg.Focusable {
+				t.Fatalf("segment %+v is not a focusable tab", seg)
+			}
+			names = append(names, seg.Name)
+			if seg.State&ui.StateSelected != 0 {
+				picked = append(picked, seg.Name)
+			}
+		}
+		if !slices.Equal(names, []string{"List", "Compact", "Grid"}) {
+			t.Fatalf("segments = %v, want List, Compact, Grid", names)
+		}
+		return picked
+	}
+	if got := selected(); !slices.Equal(got, []string{"List"}) {
+		t.Fatalf("default selection = %v, want List", got)
+	}
+
+	activateSettingsAction(t, reg, h, "applications:display:grid")
+	if reg.cfg.Launcher.Display != config.LauncherDisplayGrid {
+		t.Fatalf("live display = %q, want grid", reg.cfg.Launcher.Display)
+	}
+	if got := selected(); !slices.Equal(got, []string{"Grid"}) {
+		t.Fatalf("selection after saving = %v, want Grid", got)
+	}
+	loaded, err := config.Load(reg.configPath)
+	if err != nil {
+		t.Fatalf("Load saved config: %v", err)
+	}
+	if loaded.Launcher.Display != config.LauncherDisplayGrid {
+		t.Fatalf("persisted display = %q, want grid", loaded.Launcher.Display)
+	}
+
+	reg.mu.Lock()
+	handled := h.applicationSettingsAction(reg, &ui.Node{Kind: ui.KindButton, Action: "applications:display:tiles"})
+	display := reg.cfg.Launcher.Display
+	reg.mu.Unlock()
+	if handled || display != config.LauncherDisplayGrid {
+		t.Fatalf("unknown display: handled = %v, display = %q; want unhandled and grid kept", handled, display)
+	}
+}
+
 func TestSettingsApplicationsSearchFiltersInstalledEntries(t *testing.T) {
 	reg, h := newApplicationSettingsHost(t, config.Default(), []launcher.Entry{
 		{ID: "photo-editor", Name: "Photo Editor"},

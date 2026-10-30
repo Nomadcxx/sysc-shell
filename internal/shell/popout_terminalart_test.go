@@ -1029,13 +1029,13 @@ func TestTerminalArtLongNamesNeverFailLayout(t *testing.T) {
 				t.Fatal(err)
 			}
 			panel := drainAux(t, reg, 2)[1].Open
-			paintPluginStorePNG(t, panel, scale, filepath.Join(t.TempDir(), "art.png"))
+			paintPanelPNG(t, panel, scale, filepath.Join(t.TempDir(), "art.png"))
 			reg.mu.Lock()
 			h := reg.panelHosts[PanelTerminalArt]
 			h.setFocus(findAction(h.root, artPaletteMenu))
 			h.activate(reg)
 			reg.mu.Unlock()
-			paintPluginStorePNG(t, panel, scale, filepath.Join(t.TempDir(), "art-menu.png"))
+			paintPanelPNG(t, panel, scale, filepath.Join(t.TempDir(), "art-menu.png"))
 		})
 	}
 }

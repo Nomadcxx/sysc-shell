@@ -685,9 +685,9 @@ func ccPrivacyGradeChip(grade string) *ui.Node {
 	case "green":
 		word, icon, fill = "Good", "verified_user", ui.FillAccent
 	case "amber":
-		word, icon, fill = "Review", "flag", ui.FillOutline
+		word, icon, fill = "Review", "gpp_maybe", ui.FillOutline
 	case "red":
-		word, icon, fill = "Risky", "gpp_bad", ui.FillErrorContainer
+		word, icon, fill = "Risky", "remove_moderator", ui.FillErrorContainer
 	}
 	return &ui.Node{Kind: ui.KindCapsule, Key: "privacy-grade", Fill: fill, Shape: ui.ShapeStadium,
 		Gap: theme.MarginXS, Padding: theme.MarginS, Children: []*ui.Node{{

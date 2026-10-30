@@ -69,6 +69,8 @@ var materialIcons = map[string]struct{}{
 	"sticky_note_2": {}, "push_pin": {}, "star": {}, "note_add": {},
 	// The Terminal Art Control Centre button and Settings rail entry.
 	"terminal": {},
+	// The privacy audit's Review and Risky grades.
+	"gpp_maybe": {}, "remove_moderator": {},
 }
 
 // The pinned Material Symbols source no longer carries the older

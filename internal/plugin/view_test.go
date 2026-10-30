@@ -1237,3 +1237,42 @@ func TestConvertCarriesAMaskedTextInput(t *testing.T) {
 		t.Fatalf("field = %+v, want a masked text field", f)
 	}
 }
+
+// A bar button has no fill, so its tone has to reach the glyph or the state
+// it names never paints. A filled panel button keeps the fill's foreground.
+func TestConvertTonesTheGlyphOfABareButton(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		view v1.ViewKind
+		tone v1.Tone
+		want ui.Tone
+	}{
+		{name: "bar warning", view: v1.ViewBar, tone: v1.ToneWarning, want: ui.ToneActivity},
+		{name: "bar error", view: v1.ViewBar, tone: v1.ToneError, want: ui.ToneError},
+		{name: "bar subtle", view: v1.ViewBar, tone: v1.ToneSubtle, want: ui.ToneSubtle},
+		{name: "panel error is filled", view: v1.ViewPanel, tone: v1.ToneError, want: ui.ToneNormal},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			button := &v1.Node{Kind: v1.KindButton, ID: "open", Icon: "gpp_maybe", Tone: tc.tone,
+				Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}}
+			root := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{button}}
+			if tc.view != v1.ViewBar {
+				root.Kind = v1.KindColumn
+			}
+			got, err := Convert(root, tc.view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			converted := got.Children[0]
+			if len(converted.Children) != 1 || converted.Children[0].Kind != ui.KindIcon {
+				t.Fatalf("button children = %+v, want one icon", converted.Children)
+			}
+			if tone := converted.Children[0].Tone; tone != tc.want {
+				t.Errorf("glyph tone = %v, want %v", tone, tc.want)
+			}
+		})
+	}
+}

@@ -536,6 +536,7 @@ func applicationsSettingsTree(r *Registry, h *PanelHost) *ui.Node {
 		Kind: ui.KindText, Text: h.tr("applications.hint", "Choose launcher favourites, hidden apps, and a supported terminal. These choices do not edit desktop files."),
 		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 	}}
+	children = append(children, launcherDisplayCard(h))
 	defaultStatus := h.tr("applications.default_detected", "Using the detected terminal.")
 	if selectedTerminal != "" {
 		defaultStatus = fmt.Sprintf(h.tr("applications.default_selected", "%s is the default terminal."), selectedTerminal)
@@ -643,6 +644,35 @@ func applicationPreferenceToggle(h *PanelHost, label, name string, active bool, 
 	}}
 }
 
+// launcherDisplayCard picks how the launcher lays out application results.
+// It is a setting rather than a control inside the launcher, so the launcher
+// keeps the same chrome whatever is installed.
+func launcherDisplayCard(h *PanelHost) *ui.Node {
+	current := h.draft.Launcher.Display
+	if !slices.Contains(config.LauncherDisplays, current) {
+		current = config.LauncherDisplayList
+	}
+	labels := map[string]string{
+		config.LauncherDisplayList:    h.tr("applications.display.list", "List"),
+		config.LauncherDisplayCompact: h.tr("applications.display.compact", "Compact"),
+		config.LauncherDisplayGrid:    h.tr("applications.display.grid", "Grid"),
+	}
+	control := &ui.Node{Kind: ui.KindSegmented, Key: "applications-launcher-display", Gap: theme.MarginXXS,
+		Height: h.metrics().CompactControl}
+	for _, mode := range config.LauncherDisplays {
+		segment := &ui.Node{
+			Kind: ui.KindButton, Action: "applications:display:" + mode, Name: labels[mode], Role: "tab",
+			Focusable: true, Height: h.metrics().CompactControl,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: labels[mode]}},
+		}
+		if mode == current {
+			segment.State |= ui.StateSelected
+		}
+		control.Children = append(control.Children, segment)
+	}
+	return settingsGroupCard(h, h.tr("applications.launcher_display", "Launcher display"), []*ui.Node{control})
+}
+
 func applicationPreferenceButton(h *PanelHost, text, name, action string) *ui.Node {
 	return &ui.Node{Kind: ui.KindButton, Text: text, Action: action, Name: name, Role: "button", Focusable: true,
 		Height: h.metrics().CompactControl, Padding: h.metrics().ButtonPadding, Shape: ui.ShapeMedium, Fill: ui.FillOutline}
@@ -659,7 +689,13 @@ func (h *PanelHost) applicationSettingsAction(r *Registry, n *ui.Node) bool {
 	prefs := h.draft.Applications
 	prefs.Favourites = slices.Clone(prefs.Favourites)
 	prefs.Hidden = slices.Clone(prefs.Hidden)
+	display := h.draft.Launcher.Display
 	switch action {
+	case "display":
+		if !slices.Contains(config.LauncherDisplays, value) {
+			return false
+		}
+		display = value
 	case "favourite", "hidden":
 		if n.Kind != ui.KindToggle {
 			return false
@@ -713,7 +749,7 @@ func (h *PanelHost) applicationSettingsAction(r *Registry, n *ui.Node) bool {
 	default:
 		return false
 	}
-	return h.saveApplicationPreferences(r, prefs)
+	return h.saveApplicationPreferences(r, prefs, display)
 }
 
 func applicationFromSnapshot(r *Registry, id string) (launcher.Entry, bool) {
@@ -739,14 +775,16 @@ func keepInstalledIDs(ids []string, installed map[string]launcher.Entry) []strin
 	return out
 }
 
-func (h *PanelHost) saveApplicationPreferences(r *Registry, prefs config.ApplicationPreferences) bool {
+func (h *PanelHost) saveApplicationPreferences(r *Registry, prefs config.ApplicationPreferences, display string) bool {
 	h.draft.Applications = prefs
+	h.draft.Launcher.Display = display
 	saved := false
 	if err := r.writeConfig(h.draft); err != nil {
 		h.errLabel = err.Error()
 	} else {
 		saved = true
 		h.errLabel = ""
+		r.cfg.Launcher.Display = display
 		r.cfg.Applications = config.ApplicationPreferences{
 			Favourites:      slices.Clone(prefs.Favourites),
 			Hidden:          slices.Clone(prefs.Hidden),

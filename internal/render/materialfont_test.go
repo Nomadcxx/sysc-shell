@@ -35,6 +35,7 @@ var materialInventory = []string{
 	"battery_full", "coffee", "wallpaper", "person",
 	"sunny", "partly_cloudy_day", "rainy", "thunderstorm",
 	"weather_snowy", "foggy", "terminal",
+	"gpp_maybe", "remove_moderator",
 	"signal_wifi_0_bar", "network_wifi_1_bar", "network_wifi_2_bar",
 	"network_wifi_3_bar", "signal_wifi_4_bar", "wifi_off",
 	"lan", "visibility", "visibility_off",
