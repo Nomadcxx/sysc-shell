@@ -43,6 +43,10 @@ func Convert(root *v1.Node, view v1.ViewKind) (*ui.Node, error) {
 	return converted, nil
 }
 
+func hasPanelChrome(view v1.ViewKind) bool {
+	return view == v1.ViewPanel || view == v1.ViewFloating
+}
+
 // ViewTree is one view's current immutable wire tree and revision.
 //
 // Patches apply only against a matching base. Any rejected patch leaves this
@@ -345,7 +349,7 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		}
 		out.Shape = shape
 	}
-	if view != v1.ViewBar && n.Kind == v1.KindRow && n.Padding >= 6 {
+	if hasPanelChrome(view) && n.Kind == v1.KindRow && n.Padding >= 6 {
 		// ponytail: v1 uses padding as the row-card marker; padded toolbars inherit a card until a second consumer needs a dedicated kind.
 		if out.Fill == ui.FillNone {
 			out.Fill = ui.FillContainerHigh
@@ -440,9 +444,9 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		out.Text = n.Text
 		out.StrokeColor = n.MarkerColor
 		if n.Fill == "" {
-			if n.Tone == v1.ToneError && (view != v1.ViewBar || n.Text != "") {
+			if n.Tone == v1.ToneError && (hasPanelChrome(view) || view == v1.ViewBar && n.Text != "") {
 				out.Fill = ui.FillError
-			} else if view != v1.ViewBar && n.Tone != v1.ToneSubtle {
+			} else if hasPanelChrome(view) && n.Tone != v1.ToneSubtle {
 				out.Fill = ui.FillAccent
 			}
 		}

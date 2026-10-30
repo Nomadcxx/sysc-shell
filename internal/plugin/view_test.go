@@ -330,6 +330,42 @@ func TestConvertKeepsPanelChromeDefaults(t *testing.T) {
 	}
 }
 
+func TestConvertKeepsPanelChromeOutOfTooltipRows(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindRow, Padding: 6, Children: []*v1.Node{{Kind: v1.KindText, Text: "Status"}}},
+	}}
+	got, err := Convert(root, v1.ViewTooltip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row := got.Children[0]; row.Kind != ui.KindRow || row.Fill != ui.FillNone || row.Shape != ui.ShapeInherit {
+		t.Errorf("tooltip row = kind %q fill %v shape %v, want row without panel chrome", row.Kind, row.Fill, row.Shape)
+	}
+}
+
+func TestConvertKeepsPanelChromeDefaultsInFloatingViews(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "open", Text: "Open", Name: "Open", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+		{Kind: v1.KindRow, Padding: 6, Children: []*v1.Node{{Kind: v1.KindText, Text: "Status"}}},
+	}}
+	got, err := Convert(root, v1.ViewFloating)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if button := got.Children[0]; button.Fill != ui.FillAccent {
+		t.Errorf("floating button fill = %v, want %v", button.Fill, ui.FillAccent)
+	}
+	if row := got.Children[1]; row.Kind != ui.KindCapsule || row.Fill != ui.FillContainerHigh {
+		t.Errorf("floating row = kind %q fill %v, want card capsule", row.Kind, row.Fill)
+	} else if row.Children[0].Shape != ui.ShapeCard {
+		t.Errorf("floating row child shape = %v, want %v", row.Children[0].Shape, ui.ShapeCard)
+	}
+}
+
 func TestConvertButtonWithIconAndLabelCarriesBoth(t *testing.T) {
 	t.Parallel()
 	// The noctalia bar-widget shape: one control, glyph and text together.
