@@ -85,45 +85,20 @@ func TestOnboardingPanelHeightIsCompactOnLargeOutputs(t *testing.T) {
 	}
 }
 
-func TestOnboardingHasBrandedHeaderAndUniformPillActions(t *testing.T) {
+func TestOnboardingHasUniformPillActions(t *testing.T) {
 	reg := newPanelRegistry(t)
 	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
 		t.Fatal(err)
 	}
 	h := reg.panelHosts[PanelOnboarding]
-	brandPill := onboardingNodeByKey(h.root, "onb-brand-pill")
-	if brandPill == nil || brandPill.Stroke == 0 || brandPill.Shape != ui.ShapeStadium {
-		t.Fatalf("wordmark header pill = %+v, want a visibly stroked stadium capsule", brandPill)
-	}
-	if brandPill.Padding < h.metrics().PanelPadding {
-		t.Errorf("wordmark pill padding = %d, want at least panel padding %d", brandPill.Padding, h.metrics().PanelPadding)
-	}
-	if brandPill.PaddingX < brandPill.Padding+theme.MarginS {
-		t.Errorf("wordmark pill horizontal padding = %d, want at least %d for a little more room at the sides", brandPill.PaddingX, brandPill.Padding+theme.MarginS)
-	}
-	mark := onboardingNodeByKey(h.root, "onb-wordmark")
-	if len(brandPill.Children) != 1 || brandPill.Children[0] != mark {
-		t.Fatalf("wordmark pill contents = %+v, want only the painted wordmark", brandPill.Children)
-	}
-	if strings.Contains(renderText(h.root), "SEE YOU IN SPACE COWBOY") {
-		t.Fatal("the wordmark kept its tagline")
-	}
 	if strings.Contains(strings.ToLower(onbIntroWelcome), "sysc-shell provides") {
 		t.Fatalf("welcome copy still explains shell architecture: %q", onbIntroWelcome)
 	}
-	setup := onboardingNodeByKey(h.root, "onb-setup-label")
-	if setup == nil || setup.Text != "SETUP" || setup.Role != "heading" || setup.TextRole != theme.RoleTitle || !setup.CenterX {
-		t.Fatalf("setup heading = %+v, want a centred heading beneath the wordmark", setup)
-	}
 	if onboardingNodeByKey(h.root, "onb-move-hint") == nil {
-		t.Fatal("the footer does not explain how to move the setup window")
+		t.Fatal("the rail does not explain how to move the setup window")
 	}
 	if h.rootStyle(h.theme, reg.cfg.Theme.BlurBehind).Rim != h.theme.Outline {
 		t.Fatalf("floating onboarding rim = %+v, want the shell's neutral outline %+v", h.rootStyle(h.theme, reg.cfg.Theme.BlurBehind).Rim, h.theme.Outline)
-	}
-	card := onboardingNodeByKey(h.root, "onb-content-card")
-	if card == nil || card.Stroke == 0 {
-		t.Fatalf("content card has no visible outline: %+v", card)
 	}
 	var actions []*ui.Node
 	for _, action := range []string{"onb-skip", "onb-back", "onb-next"} {
@@ -138,8 +113,8 @@ func TestOnboardingHasBrandedHeaderAndUniformPillActions(t *testing.T) {
 			t.Errorf("%s geometry = shape %d padding %d height %d; want shared stadium/button metrics", n.Action, n.Shape, n.Padding, n.Height)
 		}
 	}
-	if actions[0].Fill != ui.FillOutlineVariant || actions[0].Stroke != 1 || actions[0].StrokeFill != ui.FillAccent {
-		t.Errorf("Not now accent = fill %d stroke %d/%d; want existing quiet fill with a one-pixel accent outline", actions[0].Fill, actions[0].Stroke, actions[0].StrokeFill)
+	if actions[0].Fill != ui.FillOutline || actions[1].Fill != ui.FillOutline {
+		t.Errorf("Not now/Back fills = %d/%d, want the outlined secondary style", actions[0].Fill, actions[1].Fill)
 	}
 	if actions[2].Fill != ui.FillAccent {
 		t.Fatalf("Next fill = %d, want the accented primary action", actions[2].Fill)
@@ -161,57 +136,27 @@ func TestOnboardingHasBrandedHeaderAndUniformPillActions(t *testing.T) {
 	}
 }
 
-func TestOnboardingBrandAndMoveHintComposition(t *testing.T) {
-	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
-		t.Fatal(err)
-	}
-	panel := drainAux(t, reg, 2)[1].Open
-	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
-		t.Fatal(err)
-	}
-	h := reg.panelHosts[PanelOnboarding]
-	header := onboardingNodeByKey(h.root, "onb-header")
-	pill := onboardingNodeByKey(h.root, "onb-brand-pill")
-	mark := onboardingNodeByKey(h.root, "onb-wordmark")
-	setup := onboardingNodeByKey(h.root, "onb-setup-label")
-	footer := onboardingNodeByKey(h.root, "onb-footer")
+func TestOnboardingRailFootHoldsMoveControls(t *testing.T) {
+	_, h := openOnboardingAt(t, 1536, 864, 120)
+	rail := onboardingNodeByKey(h.root, "onb-rail")
+	foot := onboardingNodeByKey(h.root, "onb-rail-foot")
 	hint := onboardingNodeByKey(h.root, "onb-move-hint")
 	move := byAction(h.root, "onb-move")
-	card := onboardingNodeByKey(h.root, "onb-content-card")
-	if header == nil || pill == nil || mark == nil || setup == nil || footer == nil || hint == nil || move == nil || card == nil {
-		t.Fatalf("missing composition nodes: header=%+v pill=%+v mark=%+v setup=%+v footer=%+v hint=%+v move=%+v card=%+v",
-			header, pill, mark, setup, footer, hint, move, card)
+	skip := byAction(h.root, "onb-skip")
+	if rail == nil || foot == nil || hint == nil || move == nil || skip == nil {
+		t.Fatal("rail is missing its foot, move hint, move action or Not now")
 	}
-	center := h.root.Bounds.X + h.root.Bounds.W/2
-	for name, node := range map[string]*ui.Node{"pill": pill, "setup": setup} {
-		if got := node.Bounds.X + node.Bounds.W/2; abs(got-center) > 1 {
-			t.Errorf("%s center = %d, want panel center %d", name, got, center)
+	if move.Name != "Move window" || len(move.Children) != 1 || move.Children[0].Kind != ui.KindIcon {
+		t.Fatalf("move control = name %q with %d children, want an icon button named Move window", move.Name, len(move.Children))
+	}
+	if got, want := foot.Bounds.Y+foot.Bounds.H, rail.Bounds.Y+rail.Bounds.H-rail.Padding; got != want {
+		t.Errorf("rail foot ends at %d, want the rail's inner foot %d", got, want)
+	}
+	for name, n := range map[string]*ui.Node{"hint": hint, "move": move, "not now": skip} {
+		if n.Bounds.Y < foot.Bounds.Y || n.Bounds.Y+n.Bounds.H > foot.Bounds.Y+foot.Bounds.H ||
+			n.Bounds.X < rail.Bounds.X || n.Bounds.X+n.Bounds.W > rail.Bounds.X+rail.Bounds.W {
+			t.Errorf("%s bounds %+v are outside the rail foot %+v", name, n.Bounds, foot.Bounds)
 		}
-	}
-	if got := mark.Bounds.X + mark.Bounds.W/2; abs(got-(pill.Bounds.X+pill.Bounds.W/2)) > 1 {
-		t.Errorf("wordmark center = %d, want pill center %d", got, pill.Bounds.X+pill.Bounds.W/2)
-	}
-	if got := pill.Bounds.Y - (h.root.Bounds.Y + h.root.Padding); got < h.metrics().PanelPadding {
-		t.Errorf("brand top inset = %d, want at least %d", got, h.metrics().PanelPadding)
-	}
-	if setup.Bounds.Y < pill.Bounds.Y+pill.Bounds.H {
-		t.Errorf("setup heading bounds %+v overlap the wordmark pill %+v", setup.Bounds, pill.Bounds)
-	}
-	if hint.Bounds.Y < footer.Bounds.Y || hint.Bounds.Y+hint.Bounds.H > footer.Bounds.Y+footer.Bounds.H {
-		t.Errorf("move hint bounds %+v are outside the bottom footer %+v", hint.Bounds, footer.Bounds)
-	}
-	if move.Bounds.Y < footer.Bounds.Y || move.Bounds.Y+move.Bounds.H > footer.Bounds.Y+footer.Bounds.H {
-		t.Errorf("move action bounds %+v are outside the bottom footer %+v", move.Bounds, footer.Bounds)
-	}
-	if got, want := footer.Bounds.Y+footer.Bounds.H, h.root.Bounds.Y+h.root.Bounds.H-h.root.Padding; got != want {
-		t.Errorf("footer ends at %d, want panel content bottom %d", got, want)
-	}
-	if card.Bounds.Y < setup.Bounds.Y+setup.Bounds.H {
-		t.Errorf("main content bounds %+v overlap the brand block ending at %d", card.Bounds, setup.Bounds.Y+setup.Bounds.H)
-	}
-	if gap := card.Bounds.Y - (setup.Bounds.Y + setup.Bounds.H); gap > h.metrics().PanelPadding+theme.MarginM {
-		t.Errorf("brand-to-content gap = %d, want at most header bottom inset plus panel gap (%d)", gap, h.metrics().PanelPadding+theme.MarginM)
 	}
 }
 
@@ -260,7 +205,7 @@ func TestOnboardingKeepsAdvancedSettingsOutOfSetup(t *testing.T) {
 	}
 }
 
-func TestOnboardingBrandPillFitsResponsivePanel(t *testing.T) {
+func TestOnboardingBrandFitsResponsivePanel(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		w, h int
@@ -270,43 +215,30 @@ func TestOnboardingBrandPillFitsResponsivePanel(t *testing.T) {
 		{"wide", 2560, 1440},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reg := newPanelRegistry(t)
-			if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: tc.w, OutH: tc.h}); err != nil {
-				t.Fatal(err)
-			}
-			panel := drainAux(t, reg, 2)[1].Open
-			if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
-				t.Fatal(err)
-			}
-			root := reg.panelHosts[PanelOnboarding].root
+			_, h := openOnboardingAt(t, tc.w, tc.h, 120)
+			root := h.root
 			mark := onboardingNodeByKey(root, "onb-wordmark")
+			container := onboardingNodeByKey(root, "onb-rail")
 			wantW := onbWordmarkW
 			if tc.name == "compact" {
+				container = onboardingNodeByKey(root, "onb-header")
 				wantW = (onbWordmarkW + 1) / 2
 			}
-			if mark == nil || mark.ImageW != wantW {
-				t.Fatalf("%s wordmark is missing or not %d wide", tc.name, wantW)
+			if mark == nil || container == nil || mark.ImageW != wantW {
+				t.Fatalf("%s frame lacks a %d-wide wordmark in its rail or header", tc.name, wantW)
 			}
-			pill := onboardingNodeByKey(root, "onb-brand-pill")
-			left := root.Bounds.X + root.Padding
-			right := root.Bounds.X + root.Bounds.W - root.Padding
-			if pill.Bounds.X < left || pill.Bounds.X+pill.Bounds.W > right {
-				t.Fatalf("brand pill bounds %+v exceed panel content [%d,%d]", pill.Bounds, left, right)
+			if mark.Bounds.X < container.Bounds.X || mark.Bounds.X+mark.Bounds.W > container.Bounds.X+container.Bounds.W {
+				t.Fatalf("wordmark bounds %+v exceed %s %+v", mark.Bounds, container.Key, container.Bounds)
 			}
-			footer := onboardingNodeByKey(root, "onb-footer")
 			hint := onboardingNodeByKey(root, "onb-move-hint")
-			if footer == nil || hint == nil {
-				t.Fatalf("missing responsive footer: footer=%+v hint=%+v", footer, hint)
+			if tc.name == "compact" {
+				if hint != nil {
+					t.Fatal("compact frame shows the Super-drag hint outside move mode")
+				}
+				return
 			}
-			if hint.Bounds.X < left || hint.Bounds.X+hint.Bounds.W > right || hint.Bounds.Y < footer.Bounds.Y || hint.Bounds.Y+hint.Bounds.H > footer.Bounds.Y+footer.Bounds.H {
-				t.Errorf("move hint bounds %+v exceed panel content or footer %+v", hint.Bounds, footer.Bounds)
-			}
-			wantHintWidth, _ := reg.panelHosts[PanelOnboarding].measureText()(hint.Text, ui.TextAttrsOf(hint))
-			if hint.Bounds.W < wantHintWidth {
-				t.Errorf("move hint width = %d, want at least %d for %q", hint.Bounds.W, wantHintWidth, hint.Text)
-			}
-			if pill.Bounds.W < mark.ImageW+2*pill.Padding {
-				t.Errorf("brand pill width = %d, want full wordmark width %d plus %d padding on both sides", pill.Bounds.W, mark.ImageW, pill.Padding)
+			if hint == nil || hint.Bounds.X+hint.Bounds.W > container.Bounds.X+container.Bounds.W {
+				t.Fatalf("move hint %+v escapes the rail %+v", hint, container.Bounds)
 			}
 		})
 	}
@@ -348,53 +280,12 @@ func TestOnboardingWrapsJapaneseCopyWithConfiguredShaper(t *testing.T) {
 	}
 }
 
-func TestOnboardingStepRailAndStageLayout(t *testing.T) {
-	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 2560, OutH: 1440}); err != nil {
-		t.Fatal(err)
-	}
-	panel := drainAux(t, reg, 2)[1].Open
-	h := reg.panelHosts[PanelOnboarding]
-	assertPinnedActions := func() {
-		t.Helper()
-		if len(h.root.Children) != 3 {
-			t.Fatalf("onboarding root has %d children, want header, body and action row", len(h.root.Children))
-		}
-		body, actions := h.root.Children[1], h.root.Children[2]
-		if body.Bounds.H <= 0 {
-			t.Fatalf("scroll viewport height = %d, want positive height", body.Bounds.H)
-		}
-		wantBottom := h.root.Bounds.Y + h.root.Bounds.H - h.root.Padding
-		if got := actions.Bounds.Y + actions.Bounds.H; got != wantBottom {
-			t.Fatalf("action row ends at %d, want panel interior bottom %d", got, wantBottom)
-		}
-	}
-	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
-		t.Fatal(err)
-	}
-	assertPinnedActions()
-	h.onbPage = onbAppearance
-	reg.rebuildPanel(h)
-	assertPinnedActions()
-	active := onboardingNodeByKey(h.root, "onb-step-appearance")
-	if active == nil || active.Fill != ui.FillAccent {
-		t.Fatalf("active step = %+v, want the Appearance step selected", active)
-	}
-	if got := len(onboardingStepNodes(h.root)); got != int(onbPages) {
-		t.Fatalf("step rail has %d items, want %d", got, onbPages)
-	}
-	for i, item := range onboardingStepNodes(h.root) {
-		want := ui.FillOutline
-		if onboardingPage(i) == h.onbPage {
-			want = ui.FillAccent
-		}
-		if item.Fill != want || item.Stroke == 0 {
-			t.Errorf("step %d fill/stroke = %d/%d, want fill %d with a visible outline", i+1, item.Fill, item.Stroke, want)
-		}
-	}
+func TestOnboardingIntroWrapsToContentWidth(t *testing.T) {
+	reg, h := openOnboardingAt(t, 2560, 1440, 120)
+	reg.mu.Lock()
 	h.onbPage = onbRegion
 	reg.rebuildPanel(h)
-	assertPinnedActions()
+	reg.mu.Unlock()
 	intro := onboardingNodeByKey(h.root, "onb-intro")
 	if intro == nil || intro.Kind != ui.KindColumn || intro.Width != onbContentWidth(h) || len(intro.Children) == 0 {
 		t.Fatalf("page intro = %+v, want measured text within the content width", intro)
@@ -404,44 +295,9 @@ func TestOnboardingStepRailAndStageLayout(t *testing.T) {
 			t.Errorf("intro line = %+v, want a text line bounded by the content width", line)
 		}
 	}
-	card := onboardingNodeByKey(h.root, "onb-content-card")
-	body := onboardingNodeByKey(h.root, onbBodyKey)
-	frame := onboardingNodeByKey(h.root, "onb-content-frame")
-	main := onboardingNodeByKey(h.root, "onb-content-main")
-	stage := onboardingNodeByKey(h.root, "onb-stage")
-	if card == nil || body == nil || frame == nil || main == nil || stage == nil {
-		t.Fatalf("missing card/body/frame/main/stage geometry: card=%+v body=%+v frame=%+v main=%+v stage=%+v", card, body, frame, main, stage)
-	}
-	if card.Bounds.H >= body.Bounds.H {
-		t.Fatalf("content card fills the whole body (%d >= %d); sparse setup pages need breathing room", card.Bounds.H, body.Bounds.H)
-	}
-	if topGap := card.Bounds.Y - body.Bounds.Y; topGap > 1 {
-		t.Fatalf("content card starts %d below its scroll viewport; want it top-aligned to tighten the header gap", topGap)
-	}
-	upper := stage.Bounds.Y - main.Bounds.Y
-	lower := main.Bounds.Y + main.Bounds.H - stage.Bounds.Y - stage.Bounds.H
-	if abs(upper-lower) > 2 {
-		t.Fatalf("page stage is not balanced in the body: upper=%d lower=%d main=%+v stage=%+v", upper, lower, main.Bounds, stage.Bounds)
-	}
-	if card.Bounds.H < main.Bounds.H {
-		t.Fatalf("content card height %d is shorter than its main pane %d", card.Bounds.H, main.Bounds.H)
-	}
-	rail := onboardingStepNodes(h.root)
-	if len(rail) != int(onbPages) {
-		t.Fatal("missing step rail")
-	}
-	railCenter := (rail[0].Bounds.Y + rail[len(rail)-1].Bounds.Y + rail[len(rail)-1].Bounds.H) / 2
-	mainCenter := main.Bounds.Y + main.Bounds.H/2
-	if abs(railCenter-mainCenter) > 2 {
-		t.Fatalf("step rail center %d is not aligned with page center %d", railCenter, mainCenter)
-	}
-
-	narrow := newPanelRegistry(t)
-	if err := narrow.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 800, OutH: 500}); err != nil {
-		t.Fatal(err)
-	}
-	if len(onboardingStepNodes(narrow.panelHosts[PanelOnboarding].root)) != 0 {
-		t.Fatal("narrow onboarding layout kept the desktop step rail")
+	content := onboardingNodeByKey(h.root, "onb-content")
+	if got, want := onbContentWidth(h), content.Bounds.W-2*content.Padding; got != want {
+		t.Fatalf("onbContentWidth = %d, want the laid-out content column's inner width %d", got, want)
 	}
 }
 
@@ -478,12 +334,10 @@ func TestOnboardingPaintsItsCapturedBackdrop(t *testing.T) {
 	panel.Callbacks.Backdrop(nil, shot)
 	withBackdrop := paint()
 	root := reg.panelHosts[PanelOnboarding].root
-	card := onboardingNodeByKey(root, "onb-content-card")
-	if card == nil {
-		t.Fatal("onboarding render has no content card")
+	if onboardingNodeByKey(root, "onb-content") == nil {
+		t.Fatal("onboarding render has no content column")
 	}
-	// Sample the top interior gutter. The taller ASCII wordmark occupies the
-	// old card.Bounds.Y/2 point, where the opaque brand pill correctly hides blur.
+	// Sample the top interior gutter, above the rail card and the content.
 	sampleX, sampleY := width/2, max(root.Padding/2, 1)
 	index := (sampleY*width + sampleX) * 4
 	if plain[index] == withBackdrop[index] && plain[index+1] == withBackdrop[index+1] &&
@@ -603,13 +457,13 @@ func TestOnboardingErrorStaysBesidePinnedActions(t *testing.T) {
 	if got := strings.Count(treeText(root), h.errLabel); got != 1 {
 		t.Fatalf("save error appears %d times; want one message beside the pinned actions", got)
 	}
-	if err.Bounds.Y+err.Bounds.H > finish.Bounds.Y {
-		t.Fatalf("error at %+v is not above Finish at %+v", err.Bounds, finish.Bounds)
+	footer := onboardingNodeByKey(root, "onb-footer")
+	if err.Bounds.Y+err.Bounds.H > footer.Bounds.Y {
+		t.Fatalf("error at %+v is not above the footer at %+v", err.Bounds, footer.Bounds)
 	}
-	footer := root.Children[2]
-	footerBottom := root.Bounds.Y + root.Bounds.H - root.Padding
-	if footer.Bounds.Y+footer.Bounds.H != footerBottom {
-		t.Fatalf("error footer ends at %d, want pinned bottom %d", footer.Bounds.Y+footer.Bounds.H, footerBottom)
+	content := onboardingNodeByKey(root, "onb-content")
+	if got, want := footer.Bounds.Y+footer.Bounds.H, content.Bounds.Y+content.Bounds.H-content.Padding; got != want {
+		t.Fatalf("error footer ends at %d, want pinned content end %d", got, want)
 	}
 }
 
@@ -631,13 +485,15 @@ func TestOnboardingNarrowPagesRender(t *testing.T) {
 			if err := panel.Callbacks.Render(pixels, int(panel.Width), int(panel.Height), int(panel.Width*4)); err != nil {
 				t.Fatalf("render narrow page %d: %v", page, err)
 			}
-			if got := len(onboardingStepNodes(h.root)); got != 0 {
-				t.Fatalf("narrow page retained %d desktop rail items", got)
+			if onboardingNodeByKey(h.root, "onb-rail") != nil {
+				t.Fatal("narrow page retained the desktop rail")
 			}
-			footerBottom := h.root.Bounds.Y + h.root.Bounds.H - h.root.Padding
-			footer := h.root.Children[2]
-			if footer.Bounds.Y+footer.Bounds.H != footerBottom {
-				t.Fatalf("narrow page footer ends at %d, want pinned bottom %d", footer.Bounds.Y+footer.Bounds.H, footerBottom)
+			content, footer := onboardingNodeByKey(h.root, "onb-content"), onboardingNodeByKey(h.root, "onb-footer")
+			if got, want := footer.Bounds.Y+footer.Bounds.H, content.Bounds.Y+content.Bounds.H-content.Padding; got != want {
+				t.Fatalf("narrow page footer ends at %d, want pinned content end %d", got, want)
+			}
+			if got, want := content.Bounds.Y+content.Bounds.H, h.root.Bounds.Y+h.root.Bounds.H-h.root.Padding; got != want {
+				t.Fatalf("narrow content ends at %d, want the frame's inner end %d", got, want)
 			}
 		})
 	}
@@ -665,9 +521,9 @@ func TestOnboardingLocalizedNarrowPagesFit(t *testing.T) {
 			if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
 				t.Fatalf("configure %s page %d: %v", locale, page, err)
 			}
-			card := onboardingNodeByKey(h.root, "onb-content-card")
+			card := onboardingNodeByKey(h.root, "onb-content")
 			if card == nil {
-				t.Fatal("narrow localized page has no content card")
+				t.Fatal("narrow localized page has no content column")
 			}
 			for _, n := range findAllKind(card, ui.KindText) {
 				if n.Text == "" || n.Bounds.W == 0 {
@@ -778,25 +634,18 @@ func TestOnboardingPagesRender(t *testing.T) {
 			}
 			reg.mu.Lock()
 			root := h.root
-			if len(root.Children) != 3 {
+			content, scroll, footer := onboardingNodeByKey(root, "onb-content"), onboardingNodeByKey(root, onbBodyKey), onboardingNodeByKey(root, "onb-footer")
+			if content == nil || scroll == nil || footer == nil {
 				reg.mu.Unlock()
-				t.Fatalf("onboarding root has %d children, want header, body, actions", len(root.Children))
+				t.Fatal("onboarding page lacks its content column, body or footer")
 			}
-			header, scroll, actions := root.Children[0], root.Children[1], root.Children[2]
-			// The body fills the frame between header and footer. The header
-			// carries the ASCII wordmark, so its height follows the mono face
-			// the runner has; a hardcoded floor flips red on a machine that
-			// lacks Fira Code without any layout having changed.
-			wantBody := root.Bounds.H - 2*root.Padding - 2*root.Gap - header.Bounds.H - actions.Bounds.H
-			if scroll.Bounds.H != wantBody {
+			if scroll.Bounds.H <= 0 || scroll.Bounds.Y+scroll.Bounds.H > footer.Bounds.Y {
 				reg.mu.Unlock()
-				t.Fatalf("page body height = %d, want the remaining frame space %d (header %d, footer %d)",
-					scroll.Bounds.H, wantBody, header.Bounds.H, actions.Bounds.H)
+				t.Fatalf("page body %+v is empty or runs under the footer %+v", scroll.Bounds, footer.Bounds)
 			}
-			footerBottom := root.Bounds.Y + root.Bounds.H - root.Padding
-			if actions.Bounds.Y+actions.Bounds.H != footerBottom {
+			if got, want := footer.Bounds.Y+footer.Bounds.H, content.Bounds.Y+content.Bounds.H-content.Padding; got != want {
 				reg.mu.Unlock()
-				t.Fatalf("action row bottom = %d, want pinned frame bottom %d", actions.Bounds.Y+actions.Bounds.H, footerBottom)
+				t.Fatalf("footer bottom = %d, want pinned content end %d", got, want)
 			}
 			if page == onbWelcome || page == onbReady {
 				docs := byAction(root, "onb-docs")
@@ -1315,7 +1164,7 @@ func TestOnboardingActionRowHierarchyAndKeptFocus(t *testing.T) {
 	if skip == nil || back == nil || next == nil {
 		t.Fatal("the action row lost a control")
 	}
-	if skip.Fill != ui.FillOutlineVariant || skip.Stroke != 1 || skip.StrokeFill != ui.FillAccent || back.Fill != ui.FillOutline {
+	if skip.Fill != ui.FillOutline || back.Fill != ui.FillOutline {
 		t.Fatal("secondary actions are not visually subordinate")
 	}
 	if next.Fill != ui.FillAccent {
@@ -1347,9 +1196,9 @@ func TestOnboardingProgressAndDismissalStayClear(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	h := reg.panelHosts[PanelOnboarding]
-	progress := findText(h.root, "// 01 / 06")
-	if progress == nil || progress.TextRole != theme.RoleMono {
-		t.Fatalf("progress = %+v, want compact mono // label", progress)
+	progress := onboardingNodeByKey(h.root, "onb-eyebrow")
+	if progress == nil || progress.Text != "STEP 01 OF 06" || progress.TextRole != theme.RoleMono || progress.Tone != ui.ToneAccent {
+		t.Fatalf("progress = %+v, want the mono accent STEP 01 OF 06 eyebrow", progress)
 	}
 	for p := onboardingPage(0); p < onbPages; p++ {
 		h.onbPage = p
@@ -1378,9 +1227,9 @@ func TestOnboardingRegionLocalizesAndOffersLanguagePreference(t *testing.T) {
 		if wantTitle == onbTitleRegion || findText(h.root, wantTitle) == nil {
 			t.Errorf("region title for %s = %q in tree %q, want translated title", locale, wantTitle, treeText(h.root))
 		}
-		progress := findNode(h.root, func(n *ui.Node) bool { return n.Name == "Setup progress" || n.Text == "// 03 / 06" })
-		if progress == nil || progress.Role != "status" || progress.Name == "Setup progress" {
-			t.Errorf("progress accessibility for %s = %+v; want localized status", locale, progress)
+		progress := onboardingNodeByKey(h.root, "onb-eyebrow")
+		if progress == nil || progress.Role != "status" || progress.Name != progress.Text || !strings.Contains(progress.Text, "03") {
+			t.Errorf("progress accessibility for %s = %+v; want a status naming step 03", locale, progress)
 		}
 		language := h.set.ByPath("session.language")
 		if language == nil || !strings.Contains(treeText(h.root), language.Label) {

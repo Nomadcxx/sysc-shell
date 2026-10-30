@@ -110,148 +110,215 @@ var onbIntroKeys = [onbPages]string{
 	"onboarding.intro.idle", "onboarding.intro.plugins", "onboarding.intro.ready",
 }
 
-func onboardingSyscWordmark(h *PanelHost) *ui.Node {
-	if onbBodyWidth(h) < onbStepRailMinWidth {
-		return onboardingWordmark(h, (onbWordmarkW+1)/2, onbWordmarkH/2)
-	}
-	return onboardingWordmark(h, onbWordmarkW, onbWordmarkH)
-}
-
 // onbBodyKey names the wizard's one scroll so its offset can be restored
 // across rebuilds, the way the Settings body does.
 const onbBodyKey = "onboarding-body"
 
+// onbStepRailMinWidth is the frame width below which the rail folds into a
+// header row.
 const onbStepRailMinWidth = 900
-const onbStepRailWidth = 240
-const onbCardViewportFillPercent = 75
 
-var onbStepKeys = [onbPages]string{
-	"onb-step-welcome", "onb-step-appearance", "onb-step-region", "onb-step-idle", "onb-step-plugins", "onb-step-ready",
-}
+// onbRailWidth is the brand rail's logical width beside the step content.
+const onbRailWidth = 280
 
+func onbWide(h *PanelHost) bool { return onbBodyWidth(h) >= onbStepRailMinWidth }
+
+// onboardingTree is the wizard frame: the brand rail beside the step content,
+// or below onbStepRailMinWidth a header row above it. onbFitFrame sizes the
+// stretchy tracks once the frame height is known.
 func onboardingTree(r *Registry, h *PanelHost) *ui.Node {
 	h.onboardingTreeScale = h.scale120
 	m := h.theme.Metrics
-	step := &ui.Node{
-		Key:      "onb-progress-label",
-		Kind:     ui.KindText,
-		Text:     fmt.Sprintf("// %02d / %02d", int(h.onbPage)+1, int(onbPages)),
-		Name:     onbText(h, "progress_name", "Setup progress"),
-		Role:     "status",
-		TextRole: theme.RoleMono,
-		Tone:     ui.ToneAccent,
-		CenterX:  true,
+	content := onbContent(r, h)
+	if !onbWide(h) {
+		children := []*ui.Node{onbHeader(h)}
+		if h.onbMoveMode {
+			children = append(children, onbMoveHint(h, onbBodyWidth(h)))
+		}
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: m.PanelPadding, Children: append(children, content)}
 	}
-	brand := onboardingSyscWordmark(h)
-	brandPill := &ui.Node{
-		Kind: ui.KindCapsule, Key: "onb-brand-pill", Padding: m.PanelPadding,
-		PaddingX: m.PanelPadding + theme.MarginS, CenterX: true,
-		Fill: ui.FillContainerHigh, Shape: ui.ShapeStadium, Stroke: 1, // token-exempt: a hairline border, not a ladder value
-		StrokeFill: ui.FillOutline,
-		Children:   []*ui.Node{brand},
-	}
-	setupLabel := &ui.Node{
-		Kind: ui.KindText, Key: "onb-setup-label", Text: onbText(h, "label", "SETUP"),
-		Name: "Setup", Role: "heading", TextRole: theme.RoleTitle,
-		Tone: ui.ToneAccent, CenterX: true,
-	}
-	head := &ui.Node{
-		Kind: ui.KindColumn, Key: "onb-header", Gap: theme.MarginS, Padding: m.PanelPadding,
-		Children: []*ui.Node{step, brandPill, setupLabel},
-	}
-	moveButton := h.button("onb-move", onbText(h, "action.move", "Move window"), "drag_indicator")
-	moveButton.Fill = ui.FillOutline
-	moveButton.Shape = ui.ShapeStadium
-	moveHintText := onbText(h, "move_hint", "SUPER + LEFT-DRAG TO MOVE")
-	if h.onbMoveMode {
-		moveHintText = onbText(h, "move_mode_hint", "Use arrows or click a position. Enter or Escape exits move mode.")
-	}
-	moveHint := &ui.Node{
-		Kind: ui.KindText, Key: "onb-move-hint", Text: moveHintText, Role: "status",
-		TextRole: theme.RoleMono, Tone: ui.ToneSubtle,
-	}
-	moveControls := &ui.Node{Kind: ui.KindRow, Key: "onb-move-controls", Gap: theme.MarginS, Children: []*ui.Node{moveButton, moveHint}}
-	navigation := onbActions(r, h)
-	footer := &ui.Node{Kind: ui.KindRow, Key: "onb-footer", Gap: theme.MarginXL, PinEnd: true, Children: []*ui.Node{
-		moveControls, navigation,
-	}}
-	if onbBodyWidth(h) < onbStepRailMinWidth {
-		footer = &ui.Node{Kind: ui.KindColumn, Key: "onb-footer", Gap: theme.MarginXS, Children: []*ui.Node{
-			moveControls, navigation,
-		}}
-	}
-	stageChildren := append([]*ui.Node{{
-		Kind: ui.KindText, Text: onbTitle(h, h.onbPage), Name: onbTitle(h, h.onbPage),
-		Role: "heading", TextRole: theme.RoleTitle,
-	}}, onboardingBody(r, h)...)
-	stage := &ui.Node{
-		Kind: ui.KindColumn, Key: "onb-stage", Width: onbContentWidth(h),
-		Gap: theme.MarginM, CenterY: true, Children: stageChildren,
-	}
-	main := &ui.Node{
-		Kind: ui.KindColumn, Key: "onb-content-main", Width: onbContentWidth(h),
-		Children: []*ui.Node{stage},
-	}
-	rowChildren := []*ui.Node{main}
-	withRail := onbBodyWidth(h) >= onbStepRailMinWidth
-	if withRail {
-		rowChildren = []*ui.Node{onbStepRail(h), main}
-	}
-	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: withRail, Children: rowChildren}
-	card := &ui.Node{
-		Kind: ui.KindCapsule, Key: "onb-content-card", Width: onbBodyWidth(h),
-		Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
-		Children: []*ui.Node{row},
-	}
-	frame := &ui.Node{
-		Kind: ui.KindColumn, Key: "onb-content-frame", Width: onbBodyWidth(h),
-		Children: []*ui.Node{card},
-	}
-	body := &ui.Node{
-		Kind:         ui.KindScroll,
-		Key:          onbBodyKey,
-		Width:        onbBodyWidth(h),
-		ScrollOffset: h.onbScroll,
-		Children:     []*ui.Node{frame},
-	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: m.PanelPadding, Children: []*ui.Node{
-		head, body, footer,
+	return &ui.Node{Kind: ui.KindRow, Gap: m.PanelPadding, Padding: m.PanelPadding, Children: []*ui.Node{
+		onbRail(h), content,
 	}}
 }
 
-func onbStepRail(h *PanelHost) *ui.Node {
-	m := h.metrics()
+func onbRail(h *PanelHost) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindCapsule, Key: "onb-rail", Width: onbRailWidth, Padding: theme.MarginXL,
+		Fill: ui.FillContainer, Shape: ui.ShapeCard,
+		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXL, Children: []*ui.Node{
+			onboardingWordmark(h, onbWordmarkW, onbWordmarkH),
+			onbStepper(h),
+			onbRailFoot(h),
+		}}},
+	}
+}
+
+func onbRailWidthInner() int { return onbRailWidth - 2*theme.MarginXL }
+
+func onbStepper(h *PanelHost) *ui.Node {
 	items := make([]*ui.Node, 0, onbPages)
 	for page := onboardingPage(0); page < onbPages; page++ {
-		number := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%02d", int(page)+1), TextRole: theme.RoleMono}
-		item := &ui.Node{
-			Kind: ui.KindCapsule, Key: onbStepKeys[page], Width: onbStepRailWidth,
-			Height: m.StandardControl, Padding: m.ButtonPadding,
-			Fill: ui.FillOutline, Shape: ui.ShapeMedium,
-			Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
-			Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{
-				number,
-				{Kind: ui.KindText, Text: onbTitle(h, page), Name: onbTitle(h, page)},
-			}}},
-		}
-		if page == h.onbPage {
-			item.Fill = ui.FillAccent
-		}
-		items = append(items, item)
+		items = append(items, &ui.Node{Kind: ui.KindText, Text: onbTitle(h, page)})
 	}
-	return &ui.Node{Kind: ui.KindColumn, Width: onbStepRailWidth, Children: []*ui.Node{{
-		Kind: ui.KindColumn, CenterY: true, Gap: theme.MarginS, Children: items,
-	}}}
+	return &ui.Node{Kind: ui.KindColumn, Key: "onb-stepper", Gap: theme.MarginS, Children: items}
+}
+
+// onbRailFoot holds Not now and the move control under the stepper.
+func onbRailFoot(h *PanelHost) *ui.Node {
+	return &ui.Node{Kind: ui.KindColumn, Key: "onb-rail-foot", Gap: theme.MarginS, Children: []*ui.Node{
+		{Kind: ui.KindRow, Key: "onb-move-controls", Gap: theme.MarginS, PinEnd: true, Children: []*ui.Node{
+			onbSkipButton(h), onbMoveButton(h),
+		}},
+		onbMoveHint(h, onbRailWidthInner()),
+	}}
+}
+
+// onbHeader is the narrow frame's rail: the half-size wordmark and the
+// progress eyebrow, with the move control and Not now at the end.
+func onbHeader(h *PanelHost) *ui.Node {
+	return &ui.Node{Kind: ui.KindRow, Key: "onb-header", PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
+			onboardingWordmark(h, (onbWordmarkW+1)/2, onbWordmarkH/2), onbEyebrow(h),
+		}},
+		{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{onbMoveButton(h), onbSkipButton(h)}},
+	}}
+}
+
+func onbEyebrow(h *PanelHost) *ui.Node {
+	text := fmt.Sprintf(onbText(h, "progress", "STEP %02d OF %02d"), int(h.onbPage)+1, int(onbPages))
+	return &ui.Node{
+		Kind: ui.KindText, Key: "onb-eyebrow", Text: text, Name: text, Role: "status",
+		TextRole: theme.RoleMono, Tone: ui.ToneAccent,
+	}
+}
+
+func onbSkipButton(h *PanelHost) *ui.Node {
+	skip := h.button("onb-skip", onbText(h, "action.not_now", onbSkipLabel), "")
+	skip.Fill = ui.FillOutline
+	skip.Shape = ui.ShapeStadium
+	return skip
+}
+
+// onbMoveButton is the keyboard route to move mode, an icon beside Super-drag.
+func onbMoveButton(h *PanelHost) *ui.Node {
+	button := h.button("onb-move", onbText(h, "action.move", "Move window"), "drag_indicator")
+	button.Children = button.Children[:1]
+	button.Fill = ui.FillOutline
+	button.Shape = ui.ShapeStadium
+	return button
+}
+
+func onbMoveHint(h *PanelHost, width int) *ui.Node {
+	text := onbText(h, "move_hint", "SUPER + DRAG TO MOVE")
+	if h.onbMoveMode {
+		text = onbText(h, "move_mode_hint", "Use arrows or click a position. Enter or Escape exits move mode.")
+	}
+	hint := h.wrappedText(text, theme.RoleMono, ui.ToneSubtle, width, 0)
+	hint.Key, hint.Role = "onb-move-hint", "status"
+	return hint
+}
+
+// onbContent is the step column: a top-anchored head, the scrolling step
+// body, and the footer pinned under it.
+func onbContent(r *Registry, h *PanelHost) *ui.Node {
+	var head []*ui.Node
+	if onbWide(h) {
+		head = append(head, onbEyebrow(h))
+	}
+	title := onbTitle(h, h.onbPage)
+	intro := h.wrappedText(onbIntro(h, h.onbPage), theme.RoleBody, ui.ToneSubtle, onbContentWidth(h), 0)
+	intro.Key = "onb-intro"
+	head = append(head,
+		&ui.Node{Kind: ui.KindText, Key: "onb-title", Text: title, Name: title, Role: "heading", TextRole: theme.RoleHeadline},
+		intro,
+	)
+	children := []*ui.Node{
+		{Kind: ui.KindColumn, Key: "onb-head", Gap: theme.MarginS, Children: head},
+		{Kind: ui.KindScroll, Key: onbBodyKey, ScrollOffset: h.onbScroll, Children: []*ui.Node{{
+			Kind: ui.KindColumn, Gap: theme.MarginM, Children: onboardingBody(r, h),
+		}}},
+	}
+	if h.errLabel != "" {
+		children = append(children, &ui.Node{Kind: ui.KindText, Key: "onb-error", Text: h.errLabel, Tone: ui.ToneError})
+	}
+	children = append(children, onbFooter(r, h))
+	return &ui.Node{Kind: ui.KindColumn, Key: "onb-content", Padding: onbContentPadding(h), Gap: theme.MarginL, Children: children}
+}
+
+func onbContentPadding(h *PanelHost) int {
+	if onbWide(h) {
+		return theme.MarginXL
+	}
+	return h.metrics().CardPadding
+}
+
+// onbFitFrame gives the scroll body, and the rail's stepper, the height the
+// frame has left, so the footer and the rail foot sit at the foot of the
+// frame on every step. Layout has no flex track; this sizes the wizard's.
+func onbFitFrame(h *PanelHost, box ui.Rect) error {
+	root := h.root
+	content := onbNodeByKey(root, "onb-content")
+	if content == nil {
+		return nil
+	}
+	measure := h.measureText()
+	innerW, innerH := max(box.W-2*root.Padding, 0), max(box.H-2*root.Padding, 0)
+	contentW := innerW
+	if root.Kind == ui.KindRow {
+		rail := root.Children[0]
+		railInnerH := max(innerH-2*rail.Padding, 0)
+		if err := onbFillColumn(rail.Children[0], "onb-stepper", rail.Width-2*ui.CapsulePadX(rail), railInnerH, measure); err != nil {
+			return err
+		}
+		content.Height = innerH
+		contentW = max(innerW-rail.Width-root.Gap, 0)
+	} else if err := onbFillColumn(root, "onb-content", box.W, box.H, measure); err != nil {
+		return err
+	}
+	return onbFillColumn(content, onbBodyKey, contentW, content.Height, measure)
+}
+
+// onbFillColumn sets the height of col's child keyed key to whatever the
+// other children leave of height.
+func onbFillColumn(col *ui.Node, key string, width, height int, measure ui.MeasureText) error {
+	var flex *ui.Node
+	used := 2*col.Padding + col.Gap*max(len(col.Children)-1, 0)
+	for _, child := range col.Children {
+		if child.Key == key {
+			flex = child
+			continue
+		}
+		childH, err := ui.ContentHeight(child, max(width-2*col.Padding, 0), measure)
+		if err != nil {
+			return err
+		}
+		used += childH
+	}
+	if flex != nil {
+		flex.Height = max(height-used, 0)
+	}
+	return nil
+}
+
+func onbNodeByKey(n *ui.Node, key string) *ui.Node {
+	if n == nil || n.Key == key {
+		return n
+	}
+	for _, child := range n.Children {
+		if found := onbNodeByKey(child, key); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 // onboardingBody holds the page content. Every control is the Settings
 // panel's own entry row, so the wizard writes through the same validated
 // setters and never grows a second settings model.
 func onboardingBody(r *Registry, h *PanelHost) []*ui.Node {
-	intro := h.wrappedText(onbIntro(h, h.onbPage), theme.RoleBody, ui.ToneNormal, onbContentWidth(h), 0)
-	intro.Key = "onb-intro"
-	children := []*ui.Node{intro}
+	var children []*ui.Node
 	switch h.onbPage {
 	case onbWelcome:
 		children = append(children, onbSummary(r, h)...)
@@ -651,9 +718,9 @@ func onboardingLocale(h *PanelHost) string {
 	return name
 }
 
-// onbActions keeps one primary action per step (Next/Finish, default fill);
-// Back and Not now use the existing outlined button style.
-func onbActions(r *Registry, h *PanelHost) *ui.Node {
+// onbFooter keeps one primary action per step (Next/Finish, accent fill)
+// beside an outlined Back, with the step's status line at the start.
+func onbFooter(r *Registry, h *PanelHost) *ui.Node {
 	back := h.button("onb-back", onbText(h, "action.back", onbBackLabel), "")
 	back.Fill = ui.FillOutline
 	back.Shape = ui.ShapeStadium
@@ -673,21 +740,10 @@ func onbActions(r *Registry, h *PanelHost) *ui.Node {
 			main.AriaDisabled = true
 		}
 	}
-	skip := h.button("onb-skip", onbText(h, "action.not_now", onbSkipLabel), "")
-	skip.Fill = ui.FillOutlineVariant
-	skip.Shape = ui.ShapeStadium
-	skip.Stroke = 1
-	skip.StrokeFill = ui.FillAccent
-	navigation := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-		skip,
+	status := &ui.Node{Kind: ui.KindText, Key: "onb-status", Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	return &ui.Node{Kind: ui.KindRow, Key: "onb-footer", PinEnd: true, Children: []*ui.Node{
+		status,
 		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{back, main}},
-	}}
-	if h.errLabel == "" {
-		return navigation
-	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-		{Kind: ui.KindText, Key: "onb-error", Text: h.errLabel, Tone: ui.ToneError},
-		navigation,
 	}}
 }
 
@@ -767,11 +823,11 @@ func onbBodyWidth(h *PanelHost) int {
 }
 
 func onbContentWidth(h *PanelHost) int {
-	width := max(onbBodyWidth(h)-2*h.metrics().CardPadding, 0)
-	if onbBodyWidth(h) >= onbStepRailMinWidth {
-		width = max(width-onbStepRailWidth-theme.MarginL, 0)
+	width := onbBodyWidth(h) - 2*onbContentPadding(h)
+	if onbWide(h) {
+		width -= onbRailWidth + h.metrics().PanelPadding
 	}
-	return width
+	return max(width, 0)
 }
 
 // finishOnboardingLocked persists staged selections and records completion.

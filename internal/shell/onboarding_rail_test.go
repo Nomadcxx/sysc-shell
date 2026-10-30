@@ -77,3 +77,78 @@ func TestOnboardingWordmarkFollowsThemeColours(t *testing.T) {
 		t.Fatal("wordmark raster was not repainted after the palette changed")
 	}
 }
+
+func TestOnboardingFrameIsRailBesideContent(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	if h.root.Kind != ui.KindRow || len(h.root.Children) != 2 {
+		t.Fatalf("root is kind %s with %d children, want a row of rail and content", h.root.Kind, len(h.root.Children))
+	}
+	rail, content := h.root.Children[0], h.root.Children[1]
+	if rail.Key != "onb-rail" || rail.Width != onbRailWidth || onbRailWidth != 280 || rail.Fill != ui.FillContainer {
+		t.Fatalf("rail = key %q width %d fill %d, want onb-rail 280 FillContainer", rail.Key, rail.Width, rail.Fill)
+	}
+	if content.Key != "onb-content" {
+		t.Fatalf("second column key = %q, want onb-content", content.Key)
+	}
+	titleY := -1
+	for page := onboardingPage(0); page < onbPages; page++ {
+		reg.mu.Lock()
+		h.onbPage = page
+		reg.rebuildPanel(h)
+		reg.mu.Unlock()
+		content := onboardingNodeByKey(h.root, "onb-content")
+		title := onboardingNodeByKey(h.root, "onb-title")
+		footer := onboardingNodeByKey(h.root, "onb-footer")
+		if content == nil || title == nil || footer == nil {
+			t.Fatalf("page %d is missing content, title or footer", page)
+		}
+		if title.CenterY {
+			t.Fatalf("page %d centres its title", page)
+		}
+		if titleY < 0 {
+			titleY = title.Bounds.Y
+		} else if title.Bounds.Y != titleY {
+			t.Errorf("page %d title at y=%d, want %d as on the first page", page, title.Bounds.Y, titleY)
+		}
+		if got, want := footer.Bounds.Y+footer.Bounds.H, content.Bounds.Y+content.Bounds.H-content.Padding; got != want {
+			t.Errorf("page %d footer ends at %d, want content end %d", page, got, want)
+		}
+		if got, want := rail.Bounds.H, h.root.Bounds.H-2*h.root.Padding; got != want {
+			t.Errorf("rail height = %d, want the frame's inner height %d", got, want)
+		}
+	}
+	for _, gone := range []string{"onb-brand-pill", "onb-setup-label", "onb-progress-label", "onb-stage"} {
+		if onboardingNodeByKey(h.root, gone) != nil {
+			t.Errorf("old frame node %q is still in the tree", gone)
+		}
+	}
+}
+
+func TestOnboardingNarrowFrameFoldsRailIntoHeader(t *testing.T) {
+	_, h := openOnboardingAt(t, 800, 500, 120)
+	if onboardingNodeByKey(h.root, "onb-rail") != nil {
+		t.Fatal("narrow frame kept the rail")
+	}
+	header := onboardingNodeByKey(h.root, "onb-header")
+	if header == nil || header.Kind != ui.KindRow {
+		t.Fatal("narrow frame has no header row")
+	}
+	mark := onboardingNodeByKey(header, "onb-wordmark")
+	if mark == nil || mark.ImageW != (onbWordmarkW+1)/2 {
+		t.Fatal("narrow header lacks the half-size wordmark")
+	}
+	if eyebrow := onboardingNodeByKey(header, "onb-eyebrow"); eyebrow == nil || eyebrow.Text != "STEP 01 OF 06" {
+		t.Fatalf("narrow header eyebrow = %+v, want STEP 01 OF 06", eyebrow)
+	}
+	if byAction(header, "onb-skip") == nil {
+		t.Fatal("narrow header lacks Not now")
+	}
+	content := onboardingNodeByKey(h.root, "onb-content")
+	footer := onboardingNodeByKey(h.root, "onb-footer")
+	if content == nil || footer == nil {
+		t.Fatal("narrow frame lacks content or footer")
+	}
+	if got, want := footer.Bounds.Y+footer.Bounds.H, content.Bounds.Y+content.Bounds.H-content.Padding; got != want {
+		t.Errorf("narrow footer ends at %d, want content end %d", got, want)
+	}
+}

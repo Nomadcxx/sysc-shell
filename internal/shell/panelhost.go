@@ -2562,30 +2562,9 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 		return err
 	}
 	box := h.surfaceBody(w, height)
-	if h.id == PanelOnboarding && h.root != nil && len(h.root.Children) == 3 {
-		measure := h.measureText()
-		contentWidth := max(box.W-2*h.root.Padding, 0)
-		headHeight, err := ui.ContentHeight(h.root.Children[0], contentWidth, measure)
-		if err != nil {
+	if h.id == PanelOnboarding && h.root != nil {
+		if err := onbFitFrame(h, box); err != nil {
 			return err
-		}
-		actionsHeight, err := ui.ContentHeight(h.root.Children[2], contentWidth, measure)
-		if err != nil {
-			return err
-		}
-		body := h.root.Children[1]
-		body.Height = max(box.H-2*h.root.Padding-headHeight-actionsHeight-2*h.root.Gap, 0)
-		if len(body.Children) == 1 {
-			frame := body.Children[0]
-			if len(frame.Children) == 1 {
-				card := frame.Children[0]
-				cardHeight, err := ui.ContentHeight(card, onbBodyWidth(h), measure)
-				if err != nil {
-					return err
-				}
-				card.Height = max(cardHeight, body.Height*onbCardViewportFillPercent/100)
-				frame.Height = max(body.Height, card.Height)
-			}
 		}
 	}
 	var err error
