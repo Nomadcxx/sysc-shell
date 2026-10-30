@@ -555,13 +555,22 @@ func (h *pluginHost) stateValue(id, key string) (json.RawMessage, bool) {
 }
 
 func (h *pluginHost) stateChanged(id, key string) {
-	if h == nil || h.r == nil || id != ccCalendarPluginID || key != ccCalendarStateKey {
+	if h == nil || h.r == nil {
+		return
+	}
+	section := ""
+	switch {
+	case id == ccCalendarPluginID && key == ccCalendarStateKey:
+		section = "calendar"
+	case id == ccPrivacyPluginID && key == ccPrivacyStateKey:
+		section = "privacy"
+	default:
 		return
 	}
 	r := h.r
 	r.mu.Lock()
 	panel := r.panelHosts[PanelControlCenter]
-	if r.plugins != h || panel == nil || panel.section != "calendar" {
+	if r.plugins != h || panel == nil || panel.section != section {
 		r.mu.Unlock()
 		return
 	}
