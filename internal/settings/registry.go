@@ -592,6 +592,7 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Describe: "Place name the forecast service geocodes. Setting it clears the coordinates.",
 			Get:      func(c config.Config) string { return c.Weather.City },
 			Set: setPlaceLabel("weather.city", func(c *config.Config, v string) {
+				hadCity := c.Weather.City != ""
 				c.Weather.City = v
 				if v != "" {
 					// The writer emits a city or coordinates, never both, and
@@ -600,6 +601,9 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 					// lose to them on the next write.
 					c.Weather.Latitude, c.Weather.Longitude = 0, 0
 					c.Weather.Configured = true
+				} else if hadCity {
+					c.Weather.Latitude, c.Weather.Longitude = 0, 0
+					c.Weather.Configured = false
 				}
 			}),
 		},
