@@ -88,6 +88,27 @@ func TestDropOnAnEmptyLaneInsertsAtTheStart(t *testing.T) {
 	}
 }
 
+func TestResolveMemberInsertUsesMemberMidpoints(t *testing.T) {
+	t.Parallel()
+	rows := []ui.Rect{{Y: 10, H: 40}, {Y: 60, H: 40}, {Y: 110, H: 40}}
+	for _, tc := range []struct {
+		name string
+		y    int
+		want int
+	}{
+		{"before the first", 0, 0},
+		{"upper half of the first", 29, 0},
+		{"lower half of the first", 30, 1},
+		{"gap between rows", 55, 1},
+		{"lower half of the second", 90, 2},
+		{"after the last", 200, 3},
+	} {
+		if got := resolveMemberInsert(rows, tc.y); got != tc.want {
+			t.Errorf("%s: boundary = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
 // A lane holding one row still has to offer above and below, or a widget could
 // never be placed before the one already there.
 func TestASingleChipOffersBothSides(t *testing.T) {
@@ -803,6 +824,38 @@ func TestDroppingNearAnEdgeReorders(t *testing.T) {
 	}
 }
 
+func TestInsertionDragShowsItsBoundary(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
+	var zone, target, marker *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		switch n.Action {
+		case "bar-lane:left":
+			zone = n
+		case "bar-select:left:0:-1":
+			target = n
+		case "":
+			if n.Key == "bar-insert-marker:left" {
+				marker = n
+			}
+		}
+	})
+	if zone == nil || target == nil || marker == nil {
+		t.Fatalf("lane, target, or insertion marker missing: zone=%t target=%t marker=%t", zone != nil, target != nil, marker != nil)
+	}
+	reg.mu.Lock()
+	h.drag.Begin(&ui.Node{Kind: ui.KindDragSource, DragType: barChipDragType, Payload: "left:1:-1"}, 0, 0)
+	h.drag.Move(float64(target.Bounds.X+target.Bounds.W/2), float64(target.Bounds.Y+1))
+	changed := h.barDragHover()
+	reg.mu.Unlock()
+	if !changed {
+		t.Fatal("moving over an insertion point did not invalidate the preview")
+	}
+	if marker.Kind != ui.KindRow || marker.Fill != ui.FillAccent || marker.Bounds.H != 2 || marker.Bounds.Y != target.Bounds.Y {
+		t.Errorf("insertion marker = kind %v, fill %v, bounds %+v; want an accent line at the row's leading edge", marker.Kind, marker.Fill, marker.Bounds)
+	}
+}
+
 func TestDroppingOntoAnotherLaneCarriesTheWidget(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{
@@ -1119,6 +1172,116 @@ func TestOpeningAnotherLanesAddListMovesIt(t *testing.T) {
 	}
 }
 
+func TestBarAddListProvidesAFilterField(t *testing.T) {
+	t.Parallel()
+	h := barHost(t, config.Bar{})
+	tree := barAddList(nil, h, "left", 240)
+	var field *ui.Node
+	walkNodes(tree, func(n *ui.Node) {
+		if n.Kind == ui.KindTextField && n.Action == "bar-add-filter:left" {
+			field = n
+		}
+	})
+	if field == nil {
+		t.Fatal("the add list has no widget filter field")
+	}
+	if field.Name != "Filter widgets" || !field.Focusable || field.Height < h.metrics().StandardControl {
+		t.Errorf("filter field = %+v; want an accessible field at standard control height", field)
+	}
+}
+
+func TestBarAddListFiltersWidgetsByNameAndID(t *testing.T) {
+	t.Parallel()
+	h := barHost(t, config.Bar{})
+	for _, query := range []string{"CPU", "processor"} {
+		h.barAddFilter = query
+		tree := barAddList(nil, h, "left", 240)
+		var actions []string
+		walkNodes(tree, func(n *ui.Node) {
+			if strings.HasPrefix(n.Action, "bar-add-item:") {
+				actions = append(actions, n.Action)
+			}
+		})
+		if len(actions) != 1 || actions[0] != "bar-add-item:left:cpu" {
+			t.Errorf("query %q matched %v, want only Processor", query, actions)
+		}
+	}
+}
+
+func TestBarAddListExplainsAnEmptyFilterResult(t *testing.T) {
+	t.Parallel()
+	h := barHost(t, config.Bar{})
+	h.barAddFilter = "no matching widget"
+	tree := barAddList(nil, h, "left", 240)
+	var message bool
+	walkNodes(tree, func(n *ui.Node) {
+		message = message || n.Text == "No widgets match."
+	})
+	if !message {
+		t.Fatal("an empty filter result has no explanation")
+	}
+}
+
+func TestTypingInTheBarAddFilterUpdatesTheList(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{})
+	if !barActivateMu(reg, h, "bar-add:left") {
+		t.Fatal("the add list did not open")
+	}
+	var field *ui.Node
+	for i, n := range h.focus {
+		if n.Action == "bar-add-filter:left" {
+			reg.mu.Lock()
+			h.roving.Set(i)
+			reg.mu.Unlock()
+			field = n
+			break
+		}
+	}
+	if field == nil {
+		t.Fatal("the add list has no focused filter field")
+	}
+	reg.mu.Lock()
+	f := h.fieldFor(field)
+	f.Text, f.Cursor = "CPU", 3
+	f.SyncTo(field)
+	handled := h.fieldChanged(reg, field, f)
+	var actions []string
+	walkNodes(h.root, func(n *ui.Node) {
+		if strings.HasPrefix(n.Action, "bar-add-item:") {
+			actions = append(actions, n.Action)
+		}
+	})
+	focused := h.focused()
+	query := h.barAddFilter
+	reg.mu.Unlock()
+	if !handled || query != "CPU" || len(actions) != 1 || actions[0] != "bar-add-item:left:cpu" {
+		t.Errorf("handled=%t query=%q choices=%v; want the CPU widget only", handled, query, actions)
+	}
+	if focused == nil || focused.Action != "bar-add-filter:left" {
+		t.Errorf("filter focus after typing = %+v, want to stay in the field", focused)
+	}
+}
+
+func TestBarAddListFiltersPluginWidgets(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{})
+	bindWidgetPlugin(t, reg, writeWidgetPlugin(t))
+	h.barAddFilter = "faith"
+	reg.mu.Lock()
+	tree := barAddList(reg, h, "left", 240)
+	reg.mu.Unlock()
+	var actions []string
+	walkNodes(tree, func(n *ui.Node) {
+		if strings.HasPrefix(n.Action, "bar-add-plugin:") {
+			actions = append(actions, n.Action)
+		}
+	})
+	if len(actions) != 1 || actions[0] != "bar-add-plugin:left:org.sysc.faith:bar" {
+		t.Errorf("plugin filter matched %v, want Faith's bar widget", actions)
+	}
+}
+
 // The inspector belongs beside what it inspects. It used to render after all
 // three lanes, so selecting a widget in the Left lane put its options below the
 // Right lane, a long way from the chip.
@@ -1180,6 +1343,58 @@ func TestDroppingOntoAGroupJoinsIt(t *testing.T) {
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu,memory,clock)" {
 		t.Errorf("after dropping onto the group: %q", got)
+	}
+}
+
+func TestDraggingAGroupMemberReordersWithinItsGroup(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{
+		ID: "group", Items: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}},
+	}}})
+	var zone, target *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-lane:left" {
+			zone = n
+		}
+		if n.Action == "bar-select:left:0:1" {
+			target = n
+		}
+	})
+	if zone == nil || target == nil {
+		t.Fatalf("lane or second group member missing: zone=%t target=%t", zone != nil, target != nil)
+	}
+	if !barDropMu(reg, h, zone, "left:0:0", target.Bounds.X+target.Bounds.W/2, target.Bounds.Y+target.Bounds.H-1) {
+		t.Fatal("the member drag was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu,clock,memory)" {
+		t.Errorf("after dragging the first member after the second: %q", got)
+	}
+}
+
+func TestDraggingAGroupMemberShowsItsInsertionBoundary(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{
+		ID: "group", Items: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}},
+	}}})
+	var target, marker *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-select:left:0:1" {
+			target = n
+		}
+		if n.Key == "bar-insert-marker:left" {
+			marker = n
+		}
+	})
+	if target == nil || marker == nil {
+		t.Fatalf("target or insertion marker missing: target=%t marker=%t", target != nil, marker != nil)
+	}
+	reg.mu.Lock()
+	h.drag.Begin(&ui.Node{Kind: ui.KindDragSource, DragType: barChipDragType, Payload: "left:0:0"}, 0, 0)
+	h.drag.Move(float64(target.Bounds.X+target.Bounds.W/2), float64(target.Bounds.Y+1))
+	h.barDragHover()
+	reg.mu.Unlock()
+	if marker.Kind != ui.KindRow || marker.Fill != ui.FillAccent || marker.Bounds.H != 2 || marker.Bounds.Y != target.Bounds.Y {
+		t.Errorf("member insertion marker = kind %v, fill %v, bounds %+v; want an accent line at the member's leading edge", marker.Kind, marker.Fill, marker.Bounds)
 	}
 }
 

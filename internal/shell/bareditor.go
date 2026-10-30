@@ -20,6 +20,12 @@ type dropOutcome struct {
 	Join   int
 }
 
+type barDropPreview struct {
+	lane   string
+	path   config.ItemPath
+	insert bool
+}
+
 // dropEdgeShare is how much of a row, at each end, reads as "put it beside
 // this one" rather than "put it with this one". A quarter at each end leaves
 // the middle half joining, which is the rule the design states.
@@ -65,6 +71,29 @@ func resolveDrop(rows []ui.Rect, _, y int) dropOutcome {
 	}
 	// Below the last row, or an empty lane.
 	return dropOutcome{Insert: len(rows), Join: -1}
+}
+
+// resolveMemberInsert chooses the nearest boundary between members. Members
+// already belong to a group, so their whole row is an ordering target rather
+// than a second opportunity to create a group.
+// ponytail: split each row at its midpoint; explicit gap targets are only
+// needed if live use shows that boundary is hard to hit.
+func resolveMemberInsert(rows []ui.Rect, y int) int {
+	for i, row := range rows {
+		if row.H <= 0 {
+			continue
+		}
+		if y < row.Y {
+			return i
+		}
+		if y < row.Y+row.H {
+			if y < row.Y+row.H/2 {
+				return i
+			}
+			return i + 1
+		}
+	}
+	return len(rows)
 }
 
 // The lane strip. This is the Layout group at the top of the Bar section, and
@@ -260,7 +289,7 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 	// A bare plus is a guess. The control says what it adds and where, which
 	// also makes the three lanes' controls tell each other apart.
 	add := "Add a widget to the " + barLaneLabels[name] + " lane"
-	zone.Children = append(zone.Children, &ui.Node{
+	addControl := &ui.Node{
 		Kind: ui.KindButton, Action: "bar-add:" + name,
 		Name: add, Role: "button", Focusable: true, Tooltip: add,
 		Width: inner, Height: m.StandardControl, Shape: ui.ShapeMedium,
@@ -269,6 +298,15 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 			{Kind: ui.KindIcon, Icon: "add", IconSize: m.IconSmall},
 			{Kind: ui.KindText, Text: "Add widget", TextRole: theme.RoleCaption},
 		}}},
+	}
+	// The empty text node is an insertion-line placeholder. Its overlay shares
+	// the add row's box, so the drag indicator needs neither a new layout slot
+	// nor a repaint on every pointer motion.
+	zone.Children = append(zone.Children, &ui.Node{
+		Kind: ui.KindStack, Width: inner, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Width: inner, Children: []*ui.Node{addControl}},
+			{Kind: ui.KindText, Key: "bar-insert-marker:" + name},
+		},
 	})
 
 	return zone
@@ -631,6 +669,7 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 		} else {
 			h.barAdding = lane
 		}
+		h.barAddFilter = ""
 		r.rebuildPanel(h)
 		return true
 
@@ -646,6 +685,7 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 			return true
 		}
 		h.barAdding = ""
+		h.barAddFilter = ""
 		return h.barApply(r, laneName, next)
 
 	case strings.HasPrefix(action, "bar-add-plugin:"):
@@ -678,6 +718,7 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 			}
 		}
 		h.barAdding = ""
+		h.barAddFilter = ""
 		return h.barApply(r, laneName, next)
 
 	case strings.HasPrefix(action, "bar-output:"):
@@ -722,6 +763,10 @@ func barAddList(r *Registry, h *PanelHost, laneName string, width int) *ui.Node 
 	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: "Add to " + barLaneLabels[laneName],
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		{Kind: ui.KindTextField, Action: "bar-add-filter:" + laneName,
+			Name: "Filter widgets", Role: "textbox", Focusable: true,
+			Width: width, Height: m.StandardControl, Padding: m.ButtonPadding,
+			Text: h.barAddFilter},
 	}}
 	row := func(action, text string) *ui.Node {
 		return &ui.Node{
@@ -731,39 +776,58 @@ func barAddList(r *Registry, h *PanelHost, laneName string, width int) *ui.Node 
 			Children: []*ui.Node{{Kind: ui.KindText, Text: text}},
 		}
 	}
+	query := strings.ToLower(strings.TrimSpace(h.barAddFilter))
+	// ponytail: exact case-insensitive substrings cover labels and config ids;
+	// add tokenization or fuzzy ranking only if this proves too narrow.
+	matches := func(parts ...string) bool {
+		return query == "" || strings.Contains(strings.ToLower(strings.Join(parts, " ")), query)
+	}
+	shown := 0
 	for _, id := range config.WidgetIDs() {
 		text := h.widgetName(config.Item{ID: id})
-		col.Children = append(col.Children, row("bar-add-item:"+laneName+":"+id, text))
-	}
-	if r == nil || r.plugins == nil {
-		return col
-	}
-	var pluginRows []*ui.Node
-	for _, c := range r.plugins.discovered().Plugins {
-		if !c.Startable() || len(c.Manifest.Widgets) == 0 {
+		if !matches(text, id) {
 			continue
 		}
-		name := c.Manifest.Name
-		if name == "" {
-			name = c.Manifest.ID
-		}
-		for _, w := range c.Manifest.Widgets {
-			text := name
-			if w.Label != "" && w.Label != name {
-				text = name + " — " + w.Label
+		col.Children = append(col.Children, row("bar-add-item:"+laneName+":"+id, text))
+		shown++
+	}
+	var pluginRows []*ui.Node
+	if r != nil && r.plugins != nil {
+		for _, c := range r.plugins.discovered().Plugins {
+			if !c.Startable() || len(c.Manifest.Widgets) == 0 {
+				continue
 			}
-			action := "bar-add-plugin:" + laneName + ":" + c.Manifest.ID + ":" + w.ID
-			pluginRows = append(pluginRows, row(action, text))
+			name := c.Manifest.Name
+			if name == "" {
+				name = c.Manifest.ID
+			}
+			for _, w := range c.Manifest.Widgets {
+				text := name
+				if w.Label != "" && w.Label != name {
+					text = name + " — " + w.Label
+				}
+				if !matches(text, c.Manifest.ID, w.ID, w.Label) {
+					continue
+				}
+				action := "bar-add-plugin:" + laneName + ":" + c.Manifest.ID + ":" + w.ID
+				pluginRows = append(pluginRows, row(action, text))
+			}
 		}
 	}
-	if len(pluginRows) == 0 {
-		return col
+	if len(pluginRows) > 0 {
+		col.Children = append(col.Children, &ui.Node{
+			Kind: ui.KindText, Text: "Plugins",
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+		col.Children = append(col.Children, pluginRows...)
+		shown += len(pluginRows)
 	}
-	col.Children = append(col.Children, &ui.Node{
-		Kind: ui.KindText, Text: "Plugins",
-		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
-	})
-	col.Children = append(col.Children, pluginRows...)
+	if shown == 0 {
+		col.Children = append(col.Children, &ui.Node{
+			Kind: ui.KindText, Text: "No widgets match.",
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
 	return col
 }
 
@@ -925,15 +989,17 @@ func (h *PanelHost) barDrop(r *Registry, zone *ui.Node, payload string, x, y int
 	if !ok {
 		return false
 	}
+	if boundary, ok := h.barGroupDropBoundary(zone, laneName, from, x, y); ok {
+		h.barDropHint = barDropPreview{}
+		h.applyBarDropHint()
+		return h.barMoveGroupMember(r, from, boundary)
+	}
 
-	// Only the top-level chips are drop targets within a lane. A group's
-	// members are drawn inside it and reached by dragging the group, which
-	// keeps the one-level cap a property of what can be dropped rather than a
-	// refusal after the fact.
 	lane := barLaneItems(h.barEditedBar(), laneName)
 	bounds, targets := h.barDropRows(zone, laneName)
 	outcome := resolveDrop(bounds, x, y)
-	h.barDropHint = ""
+	h.barDropHint = barDropPreview{}
+	h.applyBarDropHint()
 
 	// A chip dragged out of a group leaves it first, which is what prunes an
 	// emptied group and its placement.
@@ -1048,16 +1114,20 @@ func walkLaneNodes(n *ui.Node, fn func(*ui.Node)) {
 // repaint per motion event otherwise redraws the surface identically.
 func (h *PanelHost) barDragHover() bool {
 	zone := ui.FindDropZone(h.root, &h.drag)
-	hint := ""
+	var hint barDropPreview
 	if zone != nil && h.drag.Accepts(zone) {
 		if laneName, ok := strings.CutPrefix(zone.Action, "bar-lane:"); ok {
-			rows, targets := h.barDropRows(zone, laneName)
-			outcome := resolveDrop(rows, int(h.drag.X), int(h.drag.Y))
-			if outcome.Join >= 0 && outcome.Join < len(targets) {
-				hint = barRefAction(config.ItemRef{
-					Lane: laneName,
-					Path: config.ItemPath{Index: targets[outcome.Join], Member: -1},
-				})
+			from, _ := barParseRef(h.drag.Payload)
+			if boundary, ok := h.barGroupDropBoundary(zone, laneName, from, int(h.drag.X), int(h.drag.Y)); ok {
+				hint = barDropPreview{lane: laneName, path: config.ItemPath{Index: from.Path.Index, Member: boundary}, insert: true}
+			} else {
+				rows, targets := h.barDropRows(zone, laneName)
+				outcome := resolveDrop(rows, int(h.drag.X), int(h.drag.Y))
+				if outcome.Join >= 0 && outcome.Join < len(targets) {
+					hint = barDropPreview{lane: laneName, path: config.ItemPath{Index: targets[outcome.Join], Member: -1}}
+				} else {
+					hint = barDropPreview{lane: laneName, path: config.ItemPath{Index: outcome.Insert, Member: -1}, insert: true}
+				}
 			}
 		}
 	}
@@ -1074,20 +1144,152 @@ func (h *PanelHost) barDragHover() bool {
 func (h *PanelHost) applyBarDropHint() {
 	join := ""
 	body := ""
-	if h.barDropHint != "" {
-		join = "bar-select:" + h.barDropHint
-		body = "bar-groupbody:" + h.barDropHint
+	if h.barDropHint.lane != "" && !h.barDropHint.insert {
+		addr := barRefAction(config.ItemRef{Lane: h.barDropHint.lane, Path: h.barDropHint.path})
+		join = "bar-select:" + addr
+		body = "bar-groupbody:" + addr
 	}
 	walkLaneNodes(h.root, func(n *ui.Node) {
-		switch {
-		case strings.HasPrefix(n.Action, "bar-select:"), strings.HasPrefix(n.Action, "bar-groupbody:"):
+		if strings.HasPrefix(n.Action, "bar-select:") || strings.HasPrefix(n.Action, "bar-groupbody:") {
 			if n.Action == join || n.Action == body {
 				n.State |= ui.StateHovered
+			} else {
+				n.State &^= ui.StateHovered
+			}
+		}
+		if n.Key == "" || !strings.HasPrefix(n.Key, "bar-insert-marker:") {
+			return
+		}
+		n.Kind, n.Text, n.Fill, n.Shape = ui.KindText, "", ui.FillNone, ui.ShapeInherit
+		n.Bounds = ui.Rect{}
+		if h.barDropHint.insert && n.Key == "bar-insert-marker:"+h.barDropHint.lane {
+			zone := findBarLane(h.root, h.barDropHint.lane)
+			if zone == nil {
 				return
 			}
-			n.State &^= ui.StateHovered
+			n.Kind, n.Fill, n.Shape = ui.KindRow, ui.FillAccent, ui.ShapeStadium
+			n.Bounds = h.barInsertBounds(zone, h.barDropHint.lane, h.barDropHint.path)
 		}
 	})
+}
+
+func findBarLane(root *ui.Node, laneName string) *ui.Node {
+	var zone *ui.Node
+	walkLaneNodes(root, func(n *ui.Node) {
+		if n.Kind == ui.KindDropZone && n.Action == "bar-lane:"+laneName {
+			zone = n
+		}
+	})
+	return zone
+}
+
+func (h *PanelHost) barInsertBounds(zone *ui.Node, laneName string, path config.ItemPath) ui.Rect {
+	if path.Member >= 0 {
+		rows := h.barGroupMemberRows(zone, laneName, path.Index)
+		if len(rows) > 0 {
+			index := min(max(path.Member, 0), len(rows))
+			y := rows[len(rows)-1].Y + rows[len(rows)-1].H
+			if index < len(rows) {
+				y = rows[index].Y
+			}
+			return ui.Rect{X: rows[0].X, Y: y, W: rows[0].W, H: 2}
+		}
+	}
+	rows, _ := h.barDropRows(zone, laneName)
+	y := 0
+	if len(rows) == 0 {
+		walkLaneNodes(zone, func(n *ui.Node) {
+			if n.Action == "bar-add:"+laneName {
+				y = n.Bounds.Y
+			}
+		})
+	} else {
+		index := min(max(path.Index, 0), len(rows))
+		if index == len(rows) {
+			last := rows[len(rows)-1]
+			y = last.Y + last.H
+		} else {
+			y = rows[index].Y
+		}
+	}
+	return ui.Rect{
+		X: zone.Bounds.X + zone.Padding,
+		Y: y,
+		W: max(zone.Bounds.W-2*zone.Padding, 0),
+		H: 2,
+	}
+}
+
+func (h *PanelHost) barGroupDropBoundary(zone *ui.Node, laneName string, from config.ItemRef, x, y int) (int, bool) {
+	if from.Lane != laneName || from.Path.Member < 0 {
+		return 0, false
+	}
+	lane := barLaneItems(h.barEditedBar(), laneName)
+	if from.Path.Index < 0 || from.Path.Index >= len(lane) || lane[from.Path.Index].ID != "group" {
+		return 0, false
+	}
+	var body ui.Rect
+	want := "bar-groupbody:" + barRefAction(config.ItemRef{
+		Lane: laneName, Path: config.ItemPath{Index: from.Path.Index, Member: -1},
+	})
+	walkLaneNodes(zone, func(n *ui.Node) {
+		if n.Action == want {
+			body = n.Bounds
+		}
+	})
+	if !body.Contains(x, y) {
+		return 0, false
+	}
+	return resolveMemberInsert(h.barGroupMemberRows(zone, laneName, from.Path.Index), y), true
+}
+
+func (h *PanelHost) barGroupMemberRows(zone *ui.Node, laneName string, groupIndex int) []ui.Rect {
+	lane := barLaneItems(h.barEditedBar(), laneName)
+	if groupIndex < 0 || groupIndex >= len(lane) || lane[groupIndex].ID != "group" {
+		return nil
+	}
+	// ponytail: scan the small lane tree once per member; build a bounds index
+	// only if drag profiling shows this walk is material.
+	var rows []ui.Rect
+	for member := range lane[groupIndex].Items {
+		want := "bar-select:" + barRefAction(config.ItemRef{
+			Lane: laneName, Path: config.ItemPath{Index: groupIndex, Member: member},
+		})
+		walkLaneNodes(zone, func(n *ui.Node) {
+			if n.Action == want && n.Bounds.H > 0 {
+				rows = append(rows, n.Bounds)
+			}
+		})
+	}
+	return rows
+}
+
+func (h *PanelHost) barMoveGroupMember(r *Registry, from config.ItemRef, boundary int) bool {
+	lane := barLaneItems(h.barEditedBar(), from.Lane)
+	if from.Path.Index < 0 || from.Path.Index >= len(lane) || lane[from.Path.Index].ID != "group" {
+		return false
+	}
+	members := lane[from.Path.Index].Items
+	if from.Path.Member < 0 || from.Path.Member >= len(members) {
+		return false
+	}
+	to := boundary
+	if to > from.Path.Member {
+		to--
+	}
+	if to == from.Path.Member {
+		return true
+	}
+	moved, err := config.MoveItem(members, from.Path.Member, to)
+	if err != nil {
+		return true
+	}
+	next := slices.Clone(lane)
+	next[from.Path.Index].Items = moved
+	h.barSelected = barRefAction(config.ItemRef{
+		Lane: from.Lane, Path: config.ItemPath{Index: from.Path.Index, Member: to},
+	})
+	return h.barApply(r, from.Lane, next)
 }
 
 // barDropRows lists the lane's top-level rows and which item each one is. A
