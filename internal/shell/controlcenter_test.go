@@ -2138,7 +2138,7 @@ func TestCalendarPageRebuildsWhenPluginPublishes(t *testing.T) {
 }
 
 const privacySnapshotFixture = `{"schema":1,"available":true,"generated_at":"2026-10-20T12:00:00Z","catalog_rev":"r1","overall":{"grade":"red","findings":1,"high":1},"network":{"vpn":{"state":"unknown","default_route_via_tunnel":false,"dns_contained":false,"ipv6_contained":true,"defects":[]},"telemetry_connections_unknown":true},"categories":[{"id":"browser","name":"Browser","grade":"red","installed":[{"id":"chrome","name":"Google Chrome","grade":"red"}],"installed_shown":1,"installed_total":1,"installed_truncated":false,"worst":{"id":"chrome","name":"Google Chrome","grade":"red"}}],"categories_shown":1,"categories_total":1,"categories_truncated":false,"findings":[{"id":"browser.chrome","severity":"high","grade":"red","category":"browser","title":"Google Chrome","summary":"Catalogue risk","actions":[]}],"findings_shown":1,"findings_total":1,"findings_truncated":false,"reduced":[{"fact":"network.telemetry","effect":"Live endpoint attribution is unavailable."}],"reduced_shown":1,"reduced_total":1,"reduced_truncated":false}`
-const privacyUnavailableSnapshotFixture = `{"schema":1,"available":false,"reason":"privacybit was not found","hint":"Install privacybit and make sure it is available on PATH.","generated_at":"2026-10-20T12:00:00Z","overall":{"grade":"unknown"},"network":{"vpn":{"state":"unknown","defects":[]},"telemetry_connections_unknown":true},"categories":[],"categories_shown":0,"categories_total":0,"categories_truncated":false,"findings":[],"findings_shown":0,"findings_total":0,"findings_truncated":false,"reduced":[],"reduced_shown":0,"reduced_total":0,"reduced_truncated":false}`
+const privacyUnavailableSnapshotFixture = `{"schema":1,"available":false,"reason":"privacybit was not found","generated_at":"2026-10-20T12:00:00Z","overall":{"grade":"unknown"},"network":{"vpn":{"state":"unknown","defects":[]},"telemetry_connections_unknown":true},"categories":[],"categories_shown":0,"categories_total":0,"categories_truncated":false,"findings":[],"findings_shown":0,"findings_total":0,"findings_truncated":false,"reduced":[],"reduced_shown":0,"reduced_total":0,"reduced_truncated":false}`
 
 func TestParsePrivacySnapshotAcceptsBoundedAvailableAndUnavailableStates(t *testing.T) {
 	t.Parallel()
@@ -2155,7 +2155,7 @@ func TestParsePrivacySnapshotAcceptsBoundedAvailableAndUnavailableStates(t *test
 	if err != nil {
 		t.Fatalf("parse unavailable snapshot: %v", err)
 	}
-	if got.Available || got.Overall.Grade != "unknown" || got.Reason == "" || got.Hint == "" {
+	if got.Available || got.Overall.Grade != "unknown" || got.Reason == "" || got.Hint != "" {
 		t.Fatalf("unavailable state was not explicit and unknown: %+v", got)
 	}
 }
@@ -2345,16 +2345,19 @@ func TestPrivacyPageRendersSnapshotTotalsAndCoverageLimits(t *testing.T) {
 	}
 }
 
-func TestPrivacyPageShowsPluginUnavailableReasonAndHint(t *testing.T) {
+func TestPrivacyPageShowsPluginUnavailableReasonWithoutHint(t *testing.T) {
 	t.Parallel()
 	r := &Registry{}
 	withPrivacyPlugin(t, r, `{"control_center":`+privacyUnavailableSnapshotFixture+`}`)
 	h := &PanelHost{id: PanelControlCenter, section: "privacy", theme: DefaultTheme()}
 	got := renderText(ccPrivacy(r, h))
-	for _, want := range []string{"Unrated", "privacybit was not found", "Install privacybit"} {
+	for _, want := range []string{"Unrated", "privacybit was not found"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("unavailable privacy card lost %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "Install privacybit") {
+		t.Fatalf("unavailable privacy card showed the obsolete install hint: %q", got)
 	}
 }
 
