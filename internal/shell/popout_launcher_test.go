@@ -2685,3 +2685,46 @@ func TestLauncherGridFooterNamesArrowKeys(t *testing.T) {
 		t.Fatal("list footer changed")
 	}
 }
+
+// A row scrolled up under the search field keeps bounds that overlap the
+// field, but the virtual list clips it there. A click in the field is a click
+// in the field: it must not launch the row painted underneath (sysc-2111).
+func TestLauncherClickInFieldDoesNotLaunchAScrolledRow(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{config.LauncherDisplayList, config.LauncherDisplayGrid} {
+		t.Run(mode, func(t *testing.T) {
+			reg, run, reqs := openLauncherPanel(t, alphabetEntries(130))
+			setLauncherDisplay(t, reg, mode)
+			pressLauncherKey(reqs, keyEnd)
+
+			h := launcherHost(t, reg)
+			reg.mu.Lock()
+			field := launcherSearchField(t, h).Bounds
+			var hidden ui.Rect
+			for i := range h.launcherResults {
+				b, ok := walkActionBounds(h.root, fmt.Sprintf("launch:%d", i))
+				if ok && b.Y < field.Y+field.H && b.Y+b.H > field.Y {
+					hidden = b
+					break
+				}
+			}
+			reg.mu.Unlock()
+			if hidden.H == 0 {
+				t.Fatalf("no row overlaps the field %+v after End; the fixture no longer scrolls one under it", field)
+			}
+			x := max(field.X, hidden.X) + 4
+			y := max(field.Y, hidden.Y) + 2
+			reqs[1].Open.Callbacks.Handle(wayland.Event{
+				Kind: wayland.EventPointerPress, Button: btnLeft, X: float64(x), Y: float64(y),
+			})
+			time.Sleep(150 * time.Millisecond)
+			run.mu.Lock()
+			argv := run.argv
+			run.mu.Unlock()
+			if argv != nil {
+				t.Fatalf("a click in the field at (%d,%d) launched %v", x, y, argv)
+			}
+		})
+	}
+}
