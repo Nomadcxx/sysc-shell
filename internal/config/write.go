@@ -30,6 +30,7 @@ func Write(path string, c Config) error {
 	if _, err := applyLauncher(wireLauncher{
 		Providers: launcherCommandProvidersWire(c.Launcher.Providers),
 		Actions:   launcherActionsWire(c.Launcher.Actions),
+		Display:   launcherDisplayWire(c.Launcher.Display),
 	}, "launcher"); err != nil {
 		return err
 	}
@@ -130,10 +131,11 @@ func toWire(c Config) wireConfig {
 		locker, language := c.Session.Locker, c.Session.Language
 		w.Session = &wireSession{Locker: &locker, Language: &language}
 	}
-	if len(c.Launcher.Providers) > 0 || len(c.Launcher.Actions) > 0 {
+	if display := launcherDisplayWire(c.Launcher.Display); len(c.Launcher.Providers) > 0 || len(c.Launcher.Actions) > 0 || display != nil {
 		w.Launcher = &wireLauncher{
 			Providers: launcherCommandProvidersWire(c.Launcher.Providers),
 			Actions:   launcherActionsWire(c.Launcher.Actions),
+			Display:   display,
 		}
 	}
 	if c.Session.PolkitAgent != "" && c.Session.PolkitAgent != d.Session.PolkitAgent {
@@ -213,6 +215,15 @@ func toWire(c Config) wireConfig {
 	}
 	w.Plugins = pluginsDiff(c.Plugins)
 	return w
+}
+
+// launcherDisplayWire omits the default: an empty Display (a Config built
+// without Default) and "list" both mean the list, and neither is written.
+func launcherDisplayWire(display string) *string {
+	if display == "" || display == LauncherDisplayList {
+		return nil
+	}
+	return &display
 }
 
 func launcherActionsWire(actions []LauncherAction) []wireLauncherAction {

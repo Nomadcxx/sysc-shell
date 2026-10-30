@@ -1794,6 +1794,61 @@ func TestLauncherActionConfigRoundTripsExactArgvAndDangerousOptIn(t *testing.T) 
 	}
 }
 
+func TestLauncherDisplayLoadsDefaultsAndRejectsUnknown(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, document, want string
+	}{
+		{"absent", `{}`, "list"},
+		{"empty launcher", `{"launcher":{}}`, "list"},
+		{"grid", `{"launcher":{"display":"grid"}}`, "grid"},
+	} {
+		cfg, err := Parse([]byte(tc.document))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", tc.name, err)
+		}
+		if cfg.Launcher.Display != tc.want {
+			t.Errorf("%s: Display = %q, want %q", tc.name, cfg.Launcher.Display, tc.want)
+		}
+	}
+
+	_, err := Parse([]byte(`{"launcher":{"display":"tiles"}}`))
+	// Config errors redact the offending value, so the error names the path
+	// and the values that are accepted.
+	if err == nil || !strings.Contains(err.Error(), "launcher.display") || !strings.Contains(err.Error(), "list, compact, grid") {
+		t.Fatalf("unknown display error = %v, want one naming launcher.display and the accepted values", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, Default()); err != nil {
+		t.Fatalf("write default: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written map[string]json.RawMessage
+	if err := json.Unmarshal(data, &written); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := written["launcher"]; ok {
+		t.Fatalf("default config wrote a launcher object: %s", written["launcher"])
+	}
+
+	compact := Default()
+	compact.Launcher.Display = LauncherDisplayCompact
+	if err := Write(path, compact); err != nil {
+		t.Fatalf("write compact: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load compact: %v", err)
+	}
+	if got.Launcher.Display != LauncherDisplayCompact {
+		t.Fatalf("round-tripped Display = %q, want compact", got.Launcher.Display)
+	}
+}
+
 func TestLauncherActionRejectsEmptyOrDuplicateIDs(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

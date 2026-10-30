@@ -142,6 +142,7 @@ type wireSession struct {
 type wireLauncher struct {
 	Providers []wireLauncherCommandProvider `json:"providers,omitempty"`
 	Actions   []wireLauncherAction          `json:"actions,omitempty"`
+	Display   *string                       `json:"display,omitempty"`
 }
 
 type wireLauncherCommandProvider struct {
@@ -628,6 +629,13 @@ func applyLauncher(w wireLauncher, path string) (Launcher, error) {
 	out := Launcher{
 		Providers: make([]LauncherCommandProvider, 0, len(w.Providers)),
 		Actions:   make([]LauncherAction, 0, len(w.Actions)),
+		Display:   LauncherDisplayList,
+	}
+	if w.Display != nil {
+		if !slices.Contains(LauncherDisplays, *w.Display) {
+			return Launcher{}, pathErr(path+".display", "%q is not one of list, compact, grid", *w.Display)
+		}
+		out.Display = *w.Display
 	}
 	reservedPrefixes := map[string]struct{}{
 		LauncherAppsPrefix: {}, LauncherCalcPrefix: {}, LauncherEmojiPrefix: {},

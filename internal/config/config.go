@@ -400,11 +400,23 @@ const (
 	LauncherActionsPrefix = "/action"
 )
 
-// Launcher holds user-defined launcher providers and fixed actions.
+// Launcher holds user-defined launcher providers and fixed actions, and how
+// the launcher lays out application results: one of LauncherDisplays.
 type Launcher struct {
 	Providers []LauncherCommandProvider
 	Actions   []LauncherAction
+	Display   string
 }
+
+// LauncherDisplays are the values launcher.display accepts, in the order the
+// Applications settings page offers them. List is the default.
+const (
+	LauncherDisplayList    = "list"
+	LauncherDisplayCompact = "compact"
+	LauncherDisplayGrid    = "grid"
+)
+
+var LauncherDisplays = []string{LauncherDisplayList, LauncherDisplayCompact, LauncherDisplayGrid}
 
 // LauncherCommandProvider runs an argv listing command and activates a row
 // through a second argv command. Templates are replaced within argv tokens.
@@ -790,6 +802,7 @@ var supportedEdges = map[string]bool{
 // Default is the built-in configuration, used when no file exists.
 func Default() Config {
 	c := Config{
+		Launcher: Launcher{Display: LauncherDisplayList},
 		Bar: Bar{
 			Enabled: true, Edge: "top", Gap: 4,
 			Style: "frosted", Shape: "attached", FrostOpacity: 65, PillOpacity: 70,
