@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
@@ -66,6 +67,7 @@ func (g Git) Catalog(ctx context.Context, dir, url string) ([]byte, string, erro
 }
 
 func (g Git) run(ctx context.Context, bin, dir string, max int, args ...string) ([]byte, error) {
+	operation := args[0]
 	timeout := g.Timeout
 	if timeout == 0 {
 		timeout = 60 * time.Second
@@ -80,6 +82,22 @@ func (g Git) run(ctx context.Context, bin, dir string, max int, args ...string) 
 		env = append(env, "GIT_CEILING_DIRECTORIES="+filepath.Dir(dir))
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			if errors.Is(err, syscall.ESRCH) {
+				return cmd.Process.Signal(syscall.SIGKILL)
+			}
+			return err
+		}
+		return nil
+	}
+	// Git's remote helper inherits the command pipes. Bound os/exec's wait if
+	// the helper survives cancellation or exits without closing those pipes.
+	cmd.WaitDelay = 250 * time.Millisecond
 	cmd.Env = env
 	stdout := &capped{max: max}
 	stderr := &capped{max: 512, truncate: true}
@@ -87,7 +105,7 @@ func (g Git) run(ctx context.Context, bin, dir string, max int, args ...string) 
 	err := cmd.Run()
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return nil, fail(KindGitTimeout, nil, "git %s", args[len(args)-1])
+		return nil, fail(KindGitTimeout, nil, "git %s", operation)
 	case stdout.over:
 		return nil, fail(KindCatalog, nil, "%s is larger than %d bytes", CatalogFile, max)
 	case err != nil:
