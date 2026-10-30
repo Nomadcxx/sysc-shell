@@ -445,16 +445,49 @@ func onbConfigHasPluginPlacement(cfg config.Config, pluginID string) bool {
 }
 
 func onbBarHasPluginPlacement(bar config.Bar, pluginID string) bool {
+	return onbBarContains(bar, func(item config.Item) bool {
+		return item.ID == "plugin" && item.Plugin == pluginID
+	})
+}
+
+func onbBarHasWeatherPlacement(bar config.Bar) bool {
+	return onbBarContains(bar, func(item config.Item) bool { return item.ID == "weather" })
+}
+
+func onbBarContains(bar config.Bar, match func(config.Item) bool) bool {
 	var has func([]config.Item) bool
 	has = func(items []config.Item) bool {
 		for _, item := range items {
-			if item.ID == "plugin" && item.Plugin == pluginID || has(item.Items) {
+			if match(item) || has(item.Items) {
 				return true
 			}
 		}
 		return false
 	}
 	return has(bar.Left) || has(bar.Center) || has(bar.Right)
+}
+
+func onbEnsureWeatherPlacement(cfg *config.Config) error {
+	ensure := func(bar *config.Bar) error {
+		if onbBarHasWeatherPlacement(*bar) {
+			return nil
+		}
+		items, err := config.InsertItem(bar.Right, len(bar.Right), config.Item{ID: "weather"})
+		if err != nil {
+			return err
+		}
+		bar.Right = items
+		return nil
+	}
+	if err := ensure(&cfg.Bar); err != nil {
+		return err
+	}
+	for i := range cfg.Outputs {
+		if err := ensure(&cfg.Outputs[i].Bar); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func onbSetPluginSelected(cfg config.Config, manifest plugin.Manifest, selected bool) (config.Config, error) {
@@ -790,6 +823,11 @@ func (r *Registry) finishOnboardingLocked(h *PanelHost) error {
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(draft.Weather.City) != "" {
+		if err := onbEnsureWeatherPlacement(&draft); err != nil {
+			return err
+		}
+	}
 	if err := r.writeConfig(draft); err != nil {
 		return err
 	}
@@ -874,6 +912,13 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		}
 		return true
 	case "onb-skip":
+		if strings.TrimSpace(h.draft.Weather.City) != "" {
+			if err := onbEnsureWeatherPlacement(&h.draft); err != nil {
+				h.errLabel = err.Error()
+				r.rebuildPanel(h)
+				return true
+			}
+		}
 		if err := r.markOnboardingOutcomeLocked(onboarding.OutcomeDismissed); err != nil {
 			log.Printf("shell: dismiss onboarding: %v", err)
 		}

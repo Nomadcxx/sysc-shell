@@ -1785,6 +1785,10 @@ func TestOnboardingReadyActionsPersistOrDiscardPluginSelection(t *testing.T) {
 			if saved.Weather.City != "Pending city" {
 				t.Fatalf("%s saved weather city %q, want Pending city", tc.name, saved.Weather.City)
 			}
+			weatherCount := onboardingWeatherItemCount(saved.Bar)
+			if weatherCount != 1 {
+				t.Fatalf("%s saved weather placements = %d, want 1", tc.name, weatherCount)
+			}
 			state, err := onboarding.Load(onboarding.StatePath())
 			if err != nil {
 				t.Fatal(err)
@@ -1798,6 +1802,125 @@ func TestOnboardingReadyActionsPersistOrDiscardPluginSelection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOnboardingWeatherCityAddsBarPlacement(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	reg := newPanelRegistry(t)
+	cfg := reg.cfg.Clone()
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: cfg.Bar.Clone()}}
+	configPath := setOnboardingTestConfig(t, reg, cfg)
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelOnboarding]
+	if h == nil || h.set == nil {
+		reg.mu.Unlock()
+		t.Fatal("onboarding settings were not initialized")
+	}
+	city := h.set.ByPath("weather.city")
+	if city == nil {
+		reg.mu.Unlock()
+		t.Fatal("weather city setting is missing")
+	}
+	h.commitSetting(reg, city, "Melbourne")
+	h.commitSetting(reg, city, "Brisbane")
+	if err := reg.finishOnboardingLocked(h); err != nil {
+		reg.mu.Unlock()
+		t.Fatal(err)
+	}
+	reg.mu.Unlock()
+
+	saved, err := config.LoadRequired(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Weather.City != "Brisbane" {
+		t.Fatalf("saved weather city = %q, want Brisbane", saved.Weather.City)
+	}
+	if len(saved.Outputs) != 1 {
+		t.Fatalf("saved output overrides = %d, want 1", len(saved.Outputs))
+	}
+	for _, tc := range []struct {
+		name string
+		bar  config.Bar
+	}{{name: "base", bar: saved.Bar}, {name: "output", bar: saved.Outputs[0].Bar}} {
+		count := onboardingWeatherItemCount(tc.bar)
+		if count != 1 {
+			t.Errorf("%s bar weather placements = %d, want 1", tc.name, count)
+		}
+	}
+}
+
+func TestOnboardingWeatherPlacementKeepsNestedOutputItem(t *testing.T) {
+	cfg := config.Default()
+	cfg.Outputs = []config.OutputOverride{{
+		Connector: "DP-2",
+		Bar:       config.Bar{Center: []config.Item{{ID: "group", Items: []config.Item{{ID: "weather"}}}}},
+	}}
+
+	for range 2 {
+		if err := onbEnsureWeatherPlacement(&cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := onboardingWeatherItemCount(cfg.Bar); got != 1 {
+		t.Fatalf("base bar weather placements = %d, want 1", got)
+	}
+	if got := onboardingWeatherItemCount(cfg.Outputs[0].Bar); got != 1 {
+		t.Fatalf("output bar weather placements = %d, want 1", got)
+	}
+}
+
+func TestOnboardingClearedWeatherCityDoesNotAddBarPlacement(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	reg := newPanelRegistry(t)
+	configPath := setOnboardingTestConfig(t, reg, reg.cfg.Clone())
+	if err := reg.OpenPanel(PanelOnboarding, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelOnboarding]
+	if h == nil || h.set == nil {
+		reg.mu.Unlock()
+		t.Fatal("onboarding settings were not initialized")
+	}
+	city := h.set.ByPath("weather.city")
+	if city == nil {
+		reg.mu.Unlock()
+		t.Fatal("weather city setting is missing")
+	}
+	h.commitSetting(reg, city, "Melbourne")
+	h.commitSetting(reg, h.set.ByPath("weather.city"), "")
+	if err := reg.finishOnboardingLocked(h); err != nil {
+		reg.mu.Unlock()
+		t.Fatal(err)
+	}
+	reg.mu.Unlock()
+
+	saved, err := config.LoadRequired(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Weather.City != "" {
+		t.Fatalf("saved weather city = %q, want empty", saved.Weather.City)
+	}
+	if count := onboardingWeatherItemCount(saved.Bar); count != 0 {
+		t.Fatalf("cleared city saved %d weather placements, want 0", count)
+	}
+}
+
+func onboardingWeatherItemCount(bar config.Bar) int {
+	count := 0
+	for _, ref := range config.BarItemRefs(bar) {
+		if item := bar.ItemAt(ref); item != nil && item.ID == "weather" {
+			count++
+		}
+	}
+	return count
 }
 
 func TestOnboardingPluginSelectionIsIdempotentAndRemovesNestedItems(t *testing.T) {
