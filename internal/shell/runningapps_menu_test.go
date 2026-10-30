@@ -693,14 +693,7 @@ func TestRunningAppsMenuForceQuitRunsOffLockAndReportsFailure(t *testing.T) {
 	})
 	started := make(chan string, 1)
 	release := make(chan struct{})
-	lockAvailable := make(chan bool, 1)
 	installRunningAppScopeTestCommands(reg, func(unit string) error {
-		if reg.mu.TryLock() {
-			reg.mu.Unlock()
-			lockAvailable <- true
-		} else {
-			lockAvailable <- false
-		}
 		started <- unit
 		<-release
 		return errors.New("stop denied")
@@ -741,9 +734,17 @@ func TestRunningAppsMenuForceQuitRunsOffLockAndReportsFailure(t *testing.T) {
 		close(release)
 		t.Fatal("systemd stop was not started")
 	}
-	if !<-lockAvailable {
+	lockAvailable := make(chan struct{})
+	go func() {
+		reg.mu.Lock()
+		reg.mu.Unlock()
+		close(lockAvailable)
+	}()
+	select {
+	case <-lockAvailable:
+	case <-time.After(time.Second):
 		close(release)
-		t.Fatal("systemd stop ran while Registry.mu was held")
+		t.Fatal("Registry.mu stayed held while systemd stop was blocked")
 	}
 	reg.mu.Lock()
 	pending := host.forceQuitState == runningAppForceQuitPending
