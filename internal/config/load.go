@@ -292,6 +292,9 @@ type wirePlugins struct {
 	Sources   []wirePluginSource        `json:"sources,omitempty"`
 }
 
+// This id remains only so the loader can migrate old configurations.
+const legacyWeatherPluginID = "org.sysc.weather"
+
 type wirePluginSource struct {
 	Name    string `json:"name"`
 	URL     string `json:"url,omitempty"`
@@ -588,6 +591,14 @@ func parseCandidate(data []byte) (Config, error) {
 		}
 		cfg.Outputs = append(cfg.Outputs, OutputOverride{Connector: *o.Connector, Bar: bar})
 	}
+	if wire.Plugins != nil {
+		plugins, err := applyPlugins(*wire.Plugins, "plugins")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Plugins = plugins
+	}
+	migrateLegacyWeather(&cfg, wire.Weather)
 	if err := requireWeatherWhenUsed(cfg); err != nil {
 		return Config{}, err
 	}
@@ -599,13 +610,6 @@ func parseCandidate(data []byte) (Config, error) {
 			return Config{}, pathErr("terminal-opacity", "%d is outside %d..%d", *v, TerminalOpacityMin, TerminalOpacityMax)
 		}
 		cfg.TerminalOpacity = *v
-	}
-	if wire.Plugins != nil {
-		plugins, err := applyPlugins(*wire.Plugins, "plugins")
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Plugins = plugins
 	}
 	if err := consistentInstances(cfg); err != nil {
 		return Config{}, err
@@ -764,6 +768,98 @@ func applyPlugins(w wirePlugins, path string) (Plugins, error) {
 		out.Sources = append(out.Sources, PluginSource{Name: ws.Name, URL: ws.URL, Enabled: ws.Enabled == nil || *ws.Enabled})
 	}
 	return out, nil
+}
+
+// migrateLegacyWeather keeps configurations using the retired reference
+// widget loadable after its placement and saved location move to native weather.
+func migrateLegacyWeather(cfg *Config, native *wireWeather) {
+	if hasLegacyWeatherPlacement(*cfg) {
+		settings := cfg.Plugins.Settings[legacyWeatherPluginID]
+		showCondition, _ := settings["bar_condition"].(bool)
+		if !cfg.Weather.Configured {
+			lat, latOK := settings["latitude"].(float64)
+			lon, lonOK := settings["longitude"].(float64)
+			if latOK && lonOK && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 {
+				cfg.Weather.Latitude = lat
+				cfg.Weather.Longitude = lon
+				cfg.Weather.Configured = true
+			}
+		}
+		if cfg.Weather.Configured && (native == nil || native.Unit == nil) {
+			if unit, ok := settings["unit"].(string); ok && weatherUnits[unit] {
+				cfg.Weather.Unit = unit
+			} else if cfg.Weather.Unit == "" {
+				cfg.Weather.Unit = defaultWeatherUnit
+			}
+		}
+		if cfg.Weather.Configured && (native == nil || native.Interval == nil) {
+			if value, ok := settings["interval"].(string); ok {
+				if interval, err := time.ParseDuration(value); err == nil && interval > 0 {
+					cfg.Weather.Interval = interval
+				}
+			}
+			if cfg.Weather.Interval <= 0 {
+				cfg.Weather.Interval = defaultWeatherInterval
+			}
+		}
+
+		configured := cfg.Weather.Configured
+		// The native widget cannot load without a place; keep its opaque legacy
+		// settings, but remove the unusable placement if none can be recovered.
+		cfg.Bar.Left = migrateLegacyWeatherItems(cfg.Bar.Left, configured, showCondition)
+		cfg.Bar.Center = migrateLegacyWeatherItems(cfg.Bar.Center, configured, showCondition)
+		cfg.Bar.Right = migrateLegacyWeatherItems(cfg.Bar.Right, configured, showCondition)
+		for i := range cfg.Outputs {
+			cfg.Outputs[i].Bar.Left = migrateLegacyWeatherItems(cfg.Outputs[i].Bar.Left, configured, showCondition)
+			cfg.Outputs[i].Bar.Center = migrateLegacyWeatherItems(cfg.Outputs[i].Bar.Center, configured, showCondition)
+			cfg.Outputs[i].Bar.Right = migrateLegacyWeatherItems(cfg.Outputs[i].Bar.Right, configured, showCondition)
+		}
+	}
+
+	cfg.Plugins.Enabled = slices.DeleteFunc(cfg.Plugins.Enabled, func(id string) bool {
+		return id == legacyWeatherPluginID
+	})
+}
+
+func hasLegacyWeatherPlacement(cfg Config) bool {
+	if containsLegacyWeather(cfg.Bar.Left) || containsLegacyWeather(cfg.Bar.Center) || containsLegacyWeather(cfg.Bar.Right) {
+		return true
+	}
+	for _, output := range cfg.Outputs {
+		if containsLegacyWeather(output.Bar.Left) || containsLegacyWeather(output.Bar.Center) || containsLegacyWeather(output.Bar.Right) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsLegacyWeather(items []Item) bool {
+	for _, item := range items {
+		if (item.ID == "plugin" && item.Plugin == legacyWeatherPluginID) || containsLegacyWeather(item.Items) {
+			return true
+		}
+	}
+	return false
+}
+
+func migrateLegacyWeatherItems(items []Item, configured, showCondition bool) []Item {
+	out := make([]Item, 0, len(items))
+	for _, item := range items {
+		if item.ID == "plugin" && item.Plugin == legacyWeatherPluginID {
+			if configured {
+				out = append(out, Item{ID: "weather", ShowCondition: showCondition})
+			}
+			continue
+		}
+		if item.ID == "group" {
+			item.Items = migrateLegacyWeatherItems(item.Items, configured, showCondition)
+			if len(item.Items) == 0 {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // settingValues validates one scope's map of owner to values. Values
