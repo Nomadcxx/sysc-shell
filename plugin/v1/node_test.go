@@ -1143,3 +1143,131 @@ func TestValidateMaskedOnlyOnASingleLineTextInput(t *testing.T) {
 		t.Fatal("masked was accepted on a text node")
 	}
 }
+
+func makeBands(n int) []GaugeBand {
+	bands := make([]GaugeBand, n)
+	for i := range bands {
+		bands[i] = GaugeBand{
+			Until:    float64(i+1) / float64(n),
+			Severity: SeverityGood,
+		}
+	}
+	return bands
+}
+
+func TestValidateAcceptsMinorTwentyFourGauges(t *testing.T) {
+	t.Parallel()
+
+	cases := []*Node{
+		{Kind: KindGauge, Value: 0.4, Form: GaugeHalf},
+		{Kind: KindGauge, Value: 0.4, Bands: makeBands(3)},
+		{Kind: KindGauge, Value: 0.4, Form: GaugeHalf, Bands: makeBands(MaxGaugeBands)},
+		{Kind: KindGauge, Value: 0, ValueText: "—", Bands: []GaugeBand{{Until: 1, Severity: SeverityHigh}}},
+	}
+	for i, n := range cases {
+		if err := Validate(n, ViewPanel); err != nil {
+			t.Errorf("case %d: %v", i, err)
+		}
+	}
+}
+
+func TestValidateRejectsBadMinorTwentyFourValues(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]*Node{
+		"form on text":       {Kind: KindText, Text: "x", Form: GaugeHalf},
+		"bands on meter":     {Kind: KindProgress, Value: 0.5, Bands: makeBands(2)},
+		"unknown form":       {Kind: KindGauge, Value: 0.5, Form: "quarter"},
+		"empty bands":        {Kind: KindGauge, Value: 0.5, Bands: []GaugeBand{}},
+		"too many bands":     {Kind: KindGauge, Value: 0.5, Bands: makeBands(MaxGaugeBands + 1)},
+		"band past one":      {Kind: KindGauge, Value: 0.5, Bands: []GaugeBand{{Until: 1.5, Severity: SeverityGood}}},
+		"band at zero":       {Kind: KindGauge, Value: 0.5, Bands: []GaugeBand{{Until: 0, Severity: SeverityGood}}},
+		"bands out of order": {Kind: KindGauge, Value: 0.5, Bands: []GaugeBand{{Until: 0.6, Severity: SeverityGood}, {Until: 0.4, Severity: SeverityHigh}}},
+		"repeated ceiling":   {Kind: KindGauge, Value: 0.5, Bands: []GaugeBand{{Until: 0.5, Severity: SeverityGood}, {Until: 0.5, Severity: SeverityHigh}}},
+		"unknown severity":   {Kind: KindGauge, Value: 0.5, Bands: []GaugeBand{{Until: 1, Severity: "critical"}}},
+	}
+	for name, n := range cases {
+		if err := Validate(n, ViewPanel); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestValidateRejectsNonFiniteGaugeBand(t *testing.T) {
+	t.Parallel()
+
+	n := &Node{Kind: KindGauge, Value: 0.5, Bands: []GaugeBand{{Until: math.NaN(), Severity: SeverityGood}}}
+	if err := Validate(n, ViewPanel); err == nil {
+		t.Fatal("accepted a NaN ceiling")
+	}
+}
+
+func TestMinorTwentyFourGaugeFieldsRoundTripOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	n := &Node{
+		Kind:  KindGauge,
+		Value: 0.42,
+		Form:  GaugeHalf,
+		Bands: []GaugeBand{{Until: 0.33, Severity: SeverityGood}, {Until: 1, Severity: SeverityHigh}},
+	}
+	raw, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Node
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Form != GaugeHalf {
+		t.Fatalf("form round-tripped as %q", decoded.Form)
+	}
+	if len(decoded.Bands) != 2 || decoded.Bands[1].Severity != SeverityHigh {
+		t.Fatalf("bands round-tripped as %+v", decoded.Bands)
+	}
+	for _, want := range []string{`"form":"half"`, `"severity":"high"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("wire JSON %s lacks %s", raw, want)
+		}
+	}
+	// A plain gauge must emit neither key, or every existing plugin's wire
+	// format would change.
+	plain, err := json.Marshal(&Node{Kind: KindGauge, Value: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"form", "bands"} {
+		if strings.Contains(string(plain), unwanted) {
+			t.Fatalf("plain gauge emitted %s: %s", unwanted, plain)
+		}
+	}
+}
+
+func TestMinorTwentyFiveGaugeBandLabelRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	var n Node
+	if err := json.Unmarshal([]byte(`{"kind":"gauge","value":0.5,"bands":[{"until":1,"severity":"good","label":"Moderate"}]}`), &n); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(&n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"label":"Moderate"`) {
+		t.Fatalf("band label was lost on the wire: %s", raw)
+	}
+}
+
+func TestMinorTwentyFiveRejectsOversizedGaugeBandLabel(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{"kind":"gauge","value":0.5,"bands":[{"until":1,"severity":"good","label":"` + strings.Repeat("x", 65) + `"}]}`)
+	var n Node
+	if err := json.Unmarshal(raw, &n); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(&n, ViewPanel); err == nil {
+		t.Fatal("accepted a 65-byte gauge band label")
+	}
+}

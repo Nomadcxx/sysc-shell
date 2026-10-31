@@ -427,6 +427,16 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		out.ValueText = n.ValueText
 		out.Icon = n.Icon
 		out.Key, out.Animate = n.Key, n.Animate
+		if n.Form == v1.GaugeHalf {
+			out.Form = ui.GaugeHalf
+		}
+		for _, band := range n.Bands {
+			out.Bands = append(out.Bands, ui.GaugeBand{
+				Until:    band.Until,
+				Severity: gaugeSeverity(band.Severity),
+				Label:    band.Label,
+			})
+		}
 	case v1.KindGraph:
 		out.Kind = ui.KindGraph
 		out.Values = n.Values
@@ -602,6 +612,19 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		}
 	}
 	return out, nil
+}
+
+// gaugeSeverity maps the wire's severity names onto the internal axis. An
+// unknown name has already been rejected by validation, so the default only
+// covers a malformed tree that reached conversion some other way.
+func gaugeSeverity(s v1.Severity) ui.Severity {
+	switch s {
+	case v1.SeverityModerate:
+		return ui.SeverityModerate
+	case v1.SeverityHigh:
+		return ui.SeverityHigh
+	}
+	return ui.SeverityGood
 }
 
 func scheduleMarkerFill(marker string) ui.Fill {

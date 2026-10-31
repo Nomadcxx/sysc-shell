@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1293,5 +1295,75 @@ func TestConvertKeepsPanelButtonsBased(t *testing.T) {
 	}
 	if converted := got.Children[0]; converted.Fill != ui.FillNone || converted.Bare {
 		t.Errorf("panel surface button = fill %v bare %t, want an unfilled button with its base", converted.Fill, converted.Bare)
+	}
+}
+
+func TestConvertGaugeFormAndBands(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{
+		Kind: v1.KindColumn,
+		Children: []*v1.Node{{
+			Kind:  v1.KindGauge,
+			Value: 0.4,
+			Form:  v1.GaugeHalf,
+			Bands: []v1.GaugeBand{
+				{Until: 0.5, Severity: v1.SeverityGood},
+				{Until: 1, Severity: v1.SeverityHigh},
+			},
+		}},
+	}
+	tree, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gauge := tree.Children[0]
+	if gauge.Form != ui.GaugeHalf {
+		t.Fatalf("form = %v, want half", gauge.Form)
+	}
+	if len(gauge.Bands) != 2 {
+		t.Fatalf("bands = %+v", gauge.Bands)
+	}
+	if gauge.Bands[0].Severity != ui.SeverityGood || gauge.Bands[1].Severity != ui.SeverityHigh {
+		t.Fatalf("severity did not convert: %+v", gauge.Bands)
+	}
+}
+
+func TestConvertGaugeBandLabels(t *testing.T) {
+	t.Parallel()
+
+	var root v1.Node
+	if err := json.Unmarshal([]byte(`{"kind":"column","children":[{"kind":"gauge","form":"half","value":0.5,"bands":[{"until":1,"severity":"good","label":"Low"}]}]}`), &root); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := Convert(&root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := reflect.ValueOf(tree.Children[0].Bands[0]).FieldByName("Label")
+	if !label.IsValid() || label.String() != "Low" {
+		t.Fatalf("converted gauge band label = %v, want Low", label)
+	}
+}
+
+func TestConvertPlainGaugeStaysFull(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{
+		Kind: v1.KindColumn,
+		Children: []*v1.Node{{
+			Kind: v1.KindGauge, Value: 0.5,
+		}},
+	}
+	tree, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gauge := tree.Children[0]
+	if gauge.Form != ui.GaugeFull {
+		t.Fatalf("an unadorned gauge converted to form %v", gauge.Form)
+	}
+	if gauge.Bands != nil {
+		t.Fatalf("an unadorned gauge gained bands: %+v", gauge.Bands)
 	}
 }
