@@ -1628,8 +1628,23 @@ func visibleRoundedMask(c *Canvas, radius int, box ui.Rect) (*image.Alpha, int, 
 	return RoundedMaskIn(radius, box.W, box.H, in), x0, y0
 }
 
+// ChromeBounds keeps an explicitly sized shape centred in a larger pointer
+// slot. Layout and hit testing keep Bounds; painting and blur use this box.
+func ChromeBounds(n *ui.Node) ui.Rect {
+	box := n.Bounds
+	if n.Width > 0 && n.MinWidth > n.Width {
+		w := min(box.W, n.Width)
+		box.X, box.W = box.X+(box.W-w)/2, w
+	}
+	if n.Height > 0 && n.MinHeight > n.Height {
+		h := min(box.H, n.Height)
+		box.Y, box.H = box.Y+(box.H-h)/2, h
+	}
+	return box
+}
+
 func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, base Color, radiusLogical int) error {
-	box := style.Scale120.PhysicalRect(n.Bounds)
+	box := style.Scale120.PhysicalRect(ChromeBounds(n))
 	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
 	radius = ui.MorphRadius(radius, n.PressProgress)
 	fill, fg := chromeFill(style, n, base)
@@ -2042,6 +2057,8 @@ func paintCentredMask(c *Canvas, mask Mask, box ui.Rect, fg Color) (ui.Rect, boo
 // normal tone keeps the caller's colour.
 func toneColor(style Style, tone ui.Tone, normal Color) Color {
 	switch tone {
+	case ui.ToneWarning:
+		return style.Warning
 	case ui.ToneError:
 		return style.Error
 	case ui.ToneActivity:
@@ -2052,6 +2069,8 @@ func toneColor(style Style, tone ui.Tone, normal Color) Color {
 
 func textColor(style Style, tone ui.Tone) Color {
 	switch tone {
+	case ui.ToneWarning:
+		return style.Warning
 	case ui.ToneActivity:
 		return style.Tertiary
 	case ui.ToneError:

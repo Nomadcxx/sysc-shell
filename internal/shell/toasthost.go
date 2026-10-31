@@ -330,7 +330,8 @@ func (h *toastHost) blurShape(connector string) []ui.Rect {
 	}
 	var out []ui.Rect
 	for _, card := range h.cards[connector] {
-		out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: h.drawnRect(connector, card), Radius: h.style.Radius})...)
+		out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: h.drawnRect(connector, card), Radius: h.style.Radius,
+			Scale: ui.Scale120(max(h.scale120[connector], int(ui.ScaleUnit)))})...)
 	}
 	return out
 }

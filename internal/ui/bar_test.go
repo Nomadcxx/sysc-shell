@@ -372,3 +372,16 @@ func TestCapsuleCentresAMemberTallerThanItsBand(t *testing.T) {
 			memCentre, capCentre, member.Bounds, group.Bounds)
 	}
 }
+
+func TestElasticBarItemsDoNotShrinkBelowPointerSlots(t *testing.T) {
+	items := []*Node{
+		{Kind: KindText, Text: "one", MaxWidth: 100, MinWidth: 24},
+		{Kind: KindText, Text: "two", MaxWidth: 100, MinWidth: 24},
+	}
+	granted, _ := grantsWithin(items, []int{60, 60}, 40, 0)
+	for i, width := range granted {
+		if width >= 0 && width < items[i].MinWidth {
+			t.Errorf("item %d granted %d, want dropped or at least %d", i, width, items[i].MinWidth)
+		}
+	}
+}

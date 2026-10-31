@@ -237,7 +237,7 @@ func (h *tooltipHost) spec(st *tooltipCardState) *wayland.AuxSpec {
 				if !st.glass || h.open != st {
 					return nil
 				}
-				return ui.BlurStrips(ui.SurfaceShape{Body: ui.Rect{W: st.place.W, H: st.place.H}, Radius: h.cardStyle().Radius})
+				return ui.BlurStrips(ui.SurfaceShape{Body: ui.Rect{W: st.place.W, H: st.place.H}, Radius: h.cardStyle().Radius, Scale: st.scale120})
 			},
 		},
 	}

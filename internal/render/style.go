@@ -54,7 +54,9 @@ type Style struct {
 	Accent      Color
 	Secondary   Color
 	Tertiary    Color
-	AccentOn    Color
+	// Warning is an amber foreground for conditions needing attention.
+	Warning  Color
+	AccentOn Color
 	// Error paints text that reports a failure. It is a distinct field rather
 	// than reusing AccentOn, which the bar already uses for a toggled control.
 	Error Color

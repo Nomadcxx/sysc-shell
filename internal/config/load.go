@@ -1374,6 +1374,11 @@ func applyBar(base Bar, w wireBar, path string) (Bar, error) {
 		out.Height = *w.Height
 	}
 	if w.Gap != nil {
+		// A gap with no height moves the bar rather than shrinking it: the
+		// body the base drew stays, and the height grows by the new gap.
+		if w.Height == nil {
+			out.Height = base.Height - 2*base.Gap + 2**w.Gap
+		}
 		out.Gap = *w.Gap
 	}
 	if w.Reserve != nil {

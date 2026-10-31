@@ -268,8 +268,9 @@ func TestAttachedPanelJoinsTheBarAsOneGround(t *testing.T) {
 	}
 	w, hgt = session.surfaceSize()
 	body := session.surfaceBody(w, hgt)
+	session.scale120 = 150
 	want := ui.BlurStrips(ui.SurfaceShape{
-		Body: body, Radius: session.theme.Radius, AttachEdge: "top",
+		Body: body, Radius: session.theme.Radius, AttachEdge: "top", Scale: 150,
 		JointLeft: j.Left, EdgeFillet: session.place.Fillet, EdgeRight: true,
 	})
 	got := session.blurShape(reg)

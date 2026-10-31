@@ -76,6 +76,24 @@ func TestLayoutPreservesMeterWidth(t *testing.T) {
 	}
 }
 
+func TestMinimumSlotKeepsIntrinsicContentAndOtherSurfaces(t *testing.T) {
+	for _, text := range []string{"x", "a longer label"} {
+		plain := &Node{Kind: KindText, Text: text}
+		w, h, err := Measure(plain, fakeMeasure)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slot := &Node{Kind: KindText, Text: text, MinWidth: 24, MinHeight: 24}
+		sw, sh, err := Measure(slot, fakeMeasure)
+		if err != nil || sw != max(w, 24) || sh != max(h, 24) {
+			t.Fatalf("slot %q = %dx%d/%v, intrinsic %dx%d", text, sw, sh, err, w, h)
+		}
+		if ch, err := ContentHeight(slot, sw, fakeMeasure); err != nil || ch != sh {
+			t.Fatalf("column height = %d/%v, want %d", ch, err, sh)
+		}
+	}
+}
+
 func TestLayoutSizesButtonWithHorizontalPadding(t *testing.T) {
 	t.Parallel()
 

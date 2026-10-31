@@ -79,8 +79,8 @@ func TestStateLayerPolicyGatesHoverOnly(t *testing.T) {
 		want  ui.Interaction
 		notWn ui.Interaction
 	}{
-		{"bar paints clickables at rest", interaction{stateLayer: false}, ui.StatePressed, ui.StateHovered},
-		{"panels tint hover and press", interaction{stateLayer: true}, ui.StatePressed | ui.StateHovered, 0},
+		{"hover disabled", interaction{stateLayer: false}, ui.StatePressed, ui.StateHovered},
+		{"interactive surfaces tint hover and press", interaction{stateLayer: true}, ui.StatePressed | ui.StateHovered, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := tree()

@@ -893,7 +893,10 @@ func standardComposition() theme.Composition {
 // untouched, because those are not theme axes.
 func deriveBar(b Bar, t Theme) Bar {
 	m := t.Metrics()
-	b.Height = m.BarHeight
+	// A density row gives the visible band; the gap sits outside it, and Body
+	// takes it off again. Without the gap here a 21 px mini band kept 13 px
+	// of body under a 19 px capsule.
+	b.Height = m.BarHeight + 2*b.Gap
 	b.Padding = m.BarPadding
 	b.Spacing = m.BarSpacing
 	b.Radius = t.Radius
@@ -903,13 +906,13 @@ func deriveBar(b Bar, t Theme) Bar {
 }
 
 // RebaseDerivedBar updates only bar fields that still followed the previous
-// theme. Explicit bar overrides remain untouched when a settings edit changes
-// the theme axes that own those fields.
-func RebaseDerivedBar(c *Config, from Theme) {
+// theme and bar. Explicit bar overrides remain untouched when a settings edit
+// changes the theme axes or the gap that own those fields.
+func RebaseDerivedBar(c *Config, from Theme, fromBar Bar) {
 	if c == nil {
 		return
 	}
-	before := deriveBar(c.Bar, from)
+	before := deriveBar(fromBar, from)
 	after := deriveBar(c.Bar, c.Theme)
 	if c.Bar.Height == before.Height {
 		c.Bar.Height = after.Height

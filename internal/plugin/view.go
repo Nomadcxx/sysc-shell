@@ -316,7 +316,7 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 	case v1.ToneAccent:
 		out.Tone = ui.ToneAccent
 	case v1.ToneWarning:
-		out.Tone = ui.ToneActivity
+		out.Tone = ui.ToneWarning
 	}
 
 	if n.Fill != "" {

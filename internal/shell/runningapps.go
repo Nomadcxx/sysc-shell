@@ -19,6 +19,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -785,7 +786,13 @@ const (
 	runningAppPrefix   = "running-app:"
 )
 
-func refreshRunningApps(cap, row *ui.Node, v barView, pad int) bool {
+// runningAppTileFor is a running-app tile's square at one density: the 24 px
+// tile, but never taller than the capsule the row fits inside its bar.
+func runningAppTileFor(m theme.Metrics) int {
+	return min(runningAppTile, m.CapsuleHeight)
+}
+
+func refreshRunningApps(cap, row *ui.Node, v barView, pad, tile int) bool {
 	if len(v.Running) == 0 {
 		if len(cap.Children) == 0 && cap.Padding == 0 {
 			return false
@@ -795,25 +802,25 @@ func refreshRunningApps(cap, row *ui.Node, v barView, pad int) bool {
 		row.Children = nil
 		return true
 	}
-	if runningAppsMatch(row, v.Running) && len(cap.Children) == 1 {
+	if runningAppsMatch(row, v.Running, tile) && len(cap.Children) == 1 {
 		return false
 	}
 	cap.Padding = pad
 	cap.Children = []*ui.Node{row}
 	row.Children = row.Children[:0]
 	for _, s := range v.Running {
-		row.Children = append(row.Children, runningAppTileNode(s))
+		row.Children = append(row.Children, runningAppTileNode(s, tile))
 	}
 	return true
 }
 
-func runningAppsMatch(row *ui.Node, slots []runningAppSlot) bool {
+func runningAppsMatch(row *ui.Node, slots []runningAppSlot, tile int) bool {
 	if len(row.Children) != len(slots) {
 		return false
 	}
 	for i, s := range slots {
 		c := row.Children[i]
-		if c == nil || c.Action != runningAppPrefix+s.Key || c.Width != runningAppTile {
+		if c == nil || c.Action != runningAppPrefix+s.Key || c.Width != tile {
 			return false
 		}
 		child := (*ui.Node)(nil)
@@ -833,13 +840,13 @@ func runningAppsMatch(row *ui.Node, slots []runningAppSlot) bool {
 	return true
 }
 
-func runningAppTileNode(s runningAppSlot) *ui.Node {
+func runningAppTileNode(s runningAppSlot, tile int) *ui.Node {
 	child := &ui.Node{Kind: ui.KindText, Text: runningAppLetter(s.Key)}
 	if s.Image != nil {
-		child = &ui.Node{Kind: ui.KindImage, Image: s.Image, ImageSize: runningAppIconSize}
+		child = &ui.Node{Kind: ui.KindImage, Image: s.Image, ImageSize: tile - 2*runningAppIconPad}
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Width: runningAppTile, Height: runningAppTile,
+		Kind: ui.KindCapsule, Width: tile, Height: tile,
 		Padding: runningAppIconPad, Fill: ui.FillNone,
 		Action: runningAppPrefix + s.Key, Children: []*ui.Node{child},
 	}

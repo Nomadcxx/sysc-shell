@@ -2352,7 +2352,7 @@ func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
 	if w <= 0 || hgt <= 0 {
 		w, hgt = h.surfaceSize()
 	}
-	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.theme.Radius}
+	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.theme.Radius, Scale: ui.Scale120(h.scale120)}
 	if h.place.Attached() {
 		opacity, _, _ := h.panelReveal()
 		j := h.place.Joints()

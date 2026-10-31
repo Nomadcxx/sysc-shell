@@ -1112,8 +1112,7 @@ func publishDue(last, now time.Time, interval time.Duration) (bool, time.Time) {
 type interaction struct {
 	hover string
 	press string
-	// stateLayer is this surface's hover-tint policy. The bar keeps its
-	// furniture ruling; interactive panels opt in.
+	// stateLayer opts an interactive surface into the shared hover tint.
 	stateLayer bool
 }
 

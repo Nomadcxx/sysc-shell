@@ -213,7 +213,7 @@ func TestSideBarComposition(t *testing.T) {
 				t.Fatalf("workspace stack = %+v", workspace.inner)
 			}
 			focused := workspace.inner.Children[0]
-			if focused.Width != bar.theme.Metrics.IconLarge || focused.Height != 2*bar.theme.Metrics.IconLarge || focused.Action != "workspace:11" {
+			if focused.Width != workspacePillSize(bar.theme.Metrics) || focused.Height != 2*workspacePillSize(bar.theme.Metrics) || focused.Action != "workspace:11" {
 				t.Fatalf("focused side workspace = %+v", focused)
 			}
 			if tc.wide && (bar.left[2].inner == nil || bar.left[2].inner.Kind != ui.KindColumn || len(bar.left[2].inner.Children) != 2 || bar.left[2].inner.Children[0].Kind != ui.KindRadialGauge) {
@@ -270,7 +270,7 @@ func TestSideBarComposition(t *testing.T) {
 			if err := bar.Configure(policy.SurfaceExtent(), 864, 150); err != nil {
 				t.Fatal(err)
 			}
-			if workspace.inner.Kind != ui.KindColumn || workspace.inner.Children[1].Height != 2*bar.theme.Metrics.IconLarge || bar.center[0].inner.Kind != ui.KindColumn || apps.inner.Kind != ui.KindColumn || apps.inner.Children[0].Action != "running-app:terminal" {
+			if workspace.inner.Kind != ui.KindColumn || workspace.inner.Children[1].Height != 2*workspacePillSize(bar.theme.Metrics) || bar.center[0].inner.Kind != ui.KindColumn || apps.inner.Kind != ui.KindColumn || apps.inner.Children[0].Action != "running-app:terminal" {
 				t.Fatal("a refresh or scale change lost side composition")
 			}
 		})
@@ -768,6 +768,7 @@ func TestBarHoverInvalidatesOnlyOnTargetChange(t *testing.T) {
 	t.Parallel()
 	p := newTestBar(t)
 	bounds := withSyntheticAction(t, p, 1920)
+	p.anim.Configure(p.theme.Motion, true)
 	cx, cy := bounds.X+bounds.W/2, bounds.Y+bounds.H/2
 
 	if !p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(cx), Y: float64(cy)}) {
@@ -791,8 +792,8 @@ func TestBarHoverInvalidatesOnlyOnTargetChange(t *testing.T) {
 		}
 	}
 	walk(root)
-	if hovered {
-		t.Error("the bar resolved hover onto its render copy; the furniture ruling holds no more")
+	if !hovered {
+		t.Error("the bar did not resolve the shared hover layer onto its render copy")
 	}
 	// Sliding within the same pill resolves to the same action, so it costs no
 	// frame.
@@ -898,5 +899,176 @@ func TestBarRethemeAppliesMotion(t *testing.T) {
 	}
 	if got := p.anim.Value("synthetic-action", animHover); got != 1 {
 		t.Fatalf("hover did not settle under reduced motion: %g", got)
+	}
+}
+
+func TestBarPointerTargetsExcludeGapAndHiddenControls(t *testing.T) {
+	body := ui.Rect{X: 4, Y: 4, W: 100, H: 24}
+	node := &ui.Node{Kind: ui.KindButton, Bounds: ui.Rect{X: 10, Y: 6, W: 24, H: 19}, Action: "open"}
+	for _, side := range []bool{false, true} {
+		t.Run(strconv.FormatBool(side), func(t *testing.T) {
+			axis := ui.Horizontal
+			band, button := body, *node
+			x, inside, gap := 20, 4, 3
+			if side {
+				axis = ui.Vertical
+				band = ui.Rect{X: body.Y, Y: body.X, W: body.H, H: body.W}
+				button.Bounds = ui.Rect{X: node.Bounds.Y, Y: node.Bounds.X, W: node.Bounds.H, H: node.Bounds.W}
+			}
+			hit := func(cross int) bool {
+				px, py := x, cross
+				if side {
+					px, py = cross, x
+				}
+				_, ok := hitBarNode(&button, px, py, band, axis)
+				return ok
+			}
+			if !hit(inside) || hit(gap) {
+				t.Fatal("target must cover the band and exclude its outer gap")
+			}
+			button.State = ui.StateDisabled
+			if hit(inside) {
+				t.Fatal("disabled control remains clickable")
+			}
+			button.State, button.Bounds = 0, ui.Rect{}
+			if hit(inside) {
+				t.Fatal("dropped control remains clickable")
+			}
+		})
+	}
+}
+
+func TestBarPointerTargetsPreserveCrossAxisControls(t *testing.T) {
+	for _, axis := range []ui.Axis{ui.Horizontal, ui.Vertical} {
+		root := &ui.Node{Kind: ui.KindColumn, Bounds: ui.Rect{W: 30, H: 40}, Children: []*ui.Node{
+			{Kind: ui.KindButton, Bounds: ui.Rect{W: 30, H: 20}, Action: "first"},
+			{Kind: ui.KindButton, Bounds: ui.Rect{Y: 20, W: 30, H: 20}, Action: "second"},
+		}}
+		body := ui.Rect{W: 100, H: 40}
+		if axis == ui.Vertical {
+			root.Kind, root.Bounds.W, root.Bounds.H = ui.KindRow, 40, 30
+			body.W, body.H = 40, 100
+			for _, c := range root.Children {
+				c.Bounds = ui.Rect{X: c.Bounds.Y, W: c.Bounds.H, H: c.Bounds.W}
+			}
+		}
+		for i, want := range []string{"first", "second"} {
+			x, y := 15, 5+20*i
+			if axis == ui.Vertical {
+				x, y = y, x
+			}
+			if got, ok := hitBarNode(root, x, y, body, axis); !ok || got != want {
+				t.Errorf("axis %d point %d,%d hits %q/%v, want %q", axis, x, y, got, ok, want)
+			}
+		}
+	}
+}
+
+func TestTrayOverflowUsesItsPointerSlots(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	bar.setTray([]tray.Item{preferenceItem("a", "Active", 1), preferenceItem("b", "Active", 1)}, config.TrayPreferences{Enabled: true}, nil)
+	for _, width := range []int{132, 140} {
+		if err := bar.Configure(width, 40, 120); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range bar.trayNodes {
+			if n.Bounds.W <= 0 || n.Bounds.H <= 0 {
+				t.Errorf("width %d: tray node %q was selected for the bar but dropped", width, n.Action)
+			}
+		}
+		if bar.overflow.Right != 0 {
+			t.Errorf("width %d: tray nodes overflowed after the tray split: %+v", width, bar.overflow)
+		}
+		if len(bar.trayArrangement().Overflow) != len(bar.trayArranged.Overflow) {
+			t.Error("drawer and bar disagree about overflow")
+		}
+	}
+}
+
+func TestBarPointerSlotsReserveNestedControls(t *testing.T) {
+	root := &ui.Node{Kind: ui.KindCapsule, Padding: 2, Children: []*ui.Node{
+		{Kind: ui.KindRow, Gap: 2, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "first", MaxWidth: 80, Action: "first"},
+			{Kind: ui.KindText, Text: "second", MaxWidth: 80, Action: "second"},
+		}},
+	}}
+	if _, err := barPointerSlots(root, ui.Horizontal, 24); err != nil {
+		t.Fatal(err)
+	}
+	if root.MinWidth != 54 {
+		t.Fatalf("group minimum = %d, want two 24 px slots, 2 px gap and 4 px padding", root.MinWidth)
+	}
+}
+
+// A pill around one control is that control's target, so its padding counts
+// toward the slot instead of widening an already-wide pill.
+func TestBarPointerSlotsCountSingleControlCapsulePadding(t *testing.T) {
+	for _, axis := range []ui.Axis{ui.Horizontal, ui.Vertical} {
+		// Plugin buttons leave the pill bare; built-in widgets repeat the
+		// action on the pill and its glyph.
+		for _, pillAction := range []string{"", "open"} {
+			button := &ui.Node{Kind: ui.KindButton, Action: "open"}
+			root := &ui.Node{Kind: ui.KindCapsule, Padding: 6, Action: pillAction, Children: []*ui.Node{button}}
+			got, err := barPointerSlots(root, axis, 30)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != 30 {
+				t.Errorf("axis %d, pill action %q: slot = %d, want 30 including its 6 px padding", axis, pillAction, got)
+			}
+		}
+	}
+}
+
+func TestBarPointerTargetsCoverSingleControlCapsule(t *testing.T) {
+	button := &ui.Node{Kind: ui.KindButton, Bounds: ui.Rect{X: 6, Y: 6, W: 18, H: 18}, Action: "open"}
+	root := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{W: 30, H: 30}, Children: []*ui.Node{button}}
+	body := ui.Rect{W: 100, H: 30}
+	if got, ok := hitBarNode(root, 2, 15, body, ui.Horizontal); !ok || got != "open" {
+		t.Fatalf("pill padding hits %q/%v, want open", got, ok)
+	}
+	button.State = ui.StateDisabled
+	if _, ok := hitBarNode(root, 2, 15, body, ui.Horizontal); ok {
+		t.Fatal("pill padding activates a disabled control")
+	}
+	group := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{W: 60, H: 30}, Children: []*ui.Node{
+		{Kind: ui.KindButton, Bounds: ui.Rect{X: 6, W: 24, H: 30}, Action: "first"},
+		{Kind: ui.KindButton, Bounds: ui.Rect{X: 30, W: 24, H: 30}, Action: "second"},
+	}}
+	if _, ok := hitBarNode(group, 2, 15, body, ui.Horizontal); ok {
+		t.Fatal("padding of a multi-control pill picked one of its controls")
+	}
+}
+
+func TestBarPointerBandSharesTooltipAndWheelTargets(t *testing.T) {
+	bar := newTestBar(t)
+	t.Cleanup(bar.stopAnimation)
+	bar.left, bar.center = nil, nil
+	bar.right = []textWidget{{
+		node:    &ui.Node{Kind: ui.KindButton, Text: "Open", Action: "open"},
+		tooltip: "Open", scrollAction: config.ScrollActionVolume,
+	}}
+	if err := bar.Configure(600, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar.mu.Lock()
+	defer bar.mu.Unlock()
+	bounds := bar.right[0].node.Bounds
+	body := bar.bodyLocked(bar.configured.width, bar.configured.height)
+	x, y := bounds.X+bounds.W/2, body.Y
+	if action, hit := bar.hitLocked(x, y); !hit || action != "open" {
+		t.Fatal("button target misses the edge of the band")
+	}
+	if tip, _, _, ok := bar.tooltipAtLocked(x, y); !ok || tip != "Open" {
+		t.Fatal("tooltip target differs from the button target")
+	}
+	if action, _, ok := bar.scrollActionAtLocked(x, y); !ok || action != config.ScrollActionVolume {
+		t.Fatal("wheel target differs from the button target")
 	}
 }

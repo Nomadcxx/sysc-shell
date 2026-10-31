@@ -118,6 +118,8 @@ type Metrics struct {
 	CapsuleHeight int
 	BarPadding    int
 	BarSpacing    int
+	// BarItemMin reserves a pointer slot along the bar, independently of glyph size.
+	BarItemMin int
 	// BaseWidget is the one master control dimension. Every control below is a
 	// ratio of it rather than an absolute, because a table of absolutes cannot
 	// stay in proportion when the base moves. It is 33 on the default row --
@@ -160,11 +162,17 @@ type Metrics struct {
 	// between the small and normal icons; the shell derived it as IconSmall+2,
 	// a fixed offset that was only ever checked at standard density.
 	IconProfile int
+	// BarText is the type role the bar's labels use. Zero is body. A band
+	// whose capsule cannot hold a body line names a smaller rung: the mini
+	// row's 19 px capsule held a 20 px body line, so its labels spilled past
+	// the bar.
+	BarText TextRole
 }
 
 // metrics is the density table, re-based onto the reference's five rows.
 //
-// Bar heights are the reference's own toOdd() results: 21, 25, 31, 37, 47. The
+// Bar heights follow the reference's toOdd() results, except mini grows from
+// 21 to 24 for its pointer targets. The
 // capsule column is toOdd(round(bar * r)) with r of 0.90, 0.85, 0.82, 0.75 and
 // 0.65, which puts the default row's pill at 25 -- the height measured off the
 // reference capture.
@@ -179,7 +187,7 @@ type Metrics struct {
 // row.
 var metrics = map[Density]Metrics{
 	DensityMini: {
-		BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
+		BarHeight: 24, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1, BarItemMin: 24,
 		BaseWidget: 22,
 		IconButton: 23, Checkbox: 15, ToggleBase: 18, SliderKnob: 14,
 		InputHeight: 24, TabHeight: 22,
@@ -189,9 +197,10 @@ var metrics = map[Density]Metrics{
 		IconSmall: 14, IconNormal: 16, IconLarge: 20,
 		IconHero:    56,
 		IconProfile: 16,
+		BarText:     RoleCaption,
 	},
 	DensityCompact: {
-		BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2,
+		BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2, BarItemMin: 26,
 		BaseWidget: 27,
 		IconButton: 27, Checkbox: 19, ToggleBase: 22, SliderKnob: 18,
 		InputHeight: 30, TabHeight: 26,
@@ -203,7 +212,7 @@ var metrics = map[Density]Metrics{
 		IconProfile: 18,
 	},
 	DensityDefault: {
-		BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4,
+		BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4, BarItemMin: 30,
 		BaseWidget: 33,
 		IconButton: 33, Checkbox: 23, ToggleBase: 26, SliderKnob: 22,
 		InputHeight: 36, TabHeight: 32,
@@ -215,7 +224,7 @@ var metrics = map[Density]Metrics{
 		IconProfile: 18,
 	},
 	DensityComfortable: {
-		BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6,
+		BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6, BarItemMin: 32,
 		BaseWidget: 39,
 		IconButton: 39, Checkbox: 27, ToggleBase: 30, SliderKnob: 26,
 		InputHeight: 42, TabHeight: 38,
@@ -227,7 +236,7 @@ var metrics = map[Density]Metrics{
 		IconProfile: 20,
 	},
 	DensitySpacious: {
-		BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9,
+		BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9, BarItemMin: 34,
 		BaseWidget: 50,
 		IconButton: 51, Checkbox: 35, ToggleBase: 40, SliderKnob: 34,
 		InputHeight: 54, TabHeight: 50,
@@ -255,7 +264,9 @@ func ToEven(n int) int { return n / 2 * 2 }
 func MetricsFor(d Density) (Metrics, bool) {
 	if d == DensityStandard {
 		m := metrics[DensityDefault]
-		m.BarHeight = 48
+		// The band: with the default 4 px gap on each side the bar is the
+		// shipped 48.
+		m.BarHeight = 40
 		m.BarPadding = 6
 		m.BarSpacing = 4
 		return m, true

@@ -1215,13 +1215,14 @@ func TestThemeExplicitAxisOverridesThePreset(t *testing.T) {
 
 func TestThemeDerivesTheBarThenBarOverridesIt(t *testing.T) {
 	t.Parallel()
-	// The comfortable row derives a 37 px bar with 4 px padding.
+	// The comfortable row derives a 37 px band, which the default 4 px gap on
+	// each side brings to a 45 px bar, with 4 px padding.
 	cfg, err := Parse([]byte(`{"theme":{"density":"comfortable"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Bar.Height != 37 || cfg.Bar.Padding != 4 || cfg.Bar.Spacing != 6 {
-		t.Errorf("derived bar = %d/%d/%d, want 37/4/6",
+	if cfg.Bar.Height != 45 || cfg.Bar.Padding != 4 || cfg.Bar.Spacing != 6 {
+		t.Errorf("derived bar = %d/%d/%d, want 45/4/6",
 			cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing)
 	}
 	// An explicit bar value wins over the derived one.

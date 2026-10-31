@@ -147,6 +147,11 @@ type Theme struct {
 	Spacing    int
 	Radius     int
 	TextSize   int
+	// BarTextSize is the size the bar paints its labels at: the density
+	// row's bar role while the bar's font size still follows the derived
+	// body size, and the explicit size otherwise. Panels keep body text
+	// whatever the band, so only the bar's painter style reads it.
+	BarTextSize int
 
 	IconSize   int
 	CardRadius int
@@ -211,12 +216,13 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 
 	radius := bar.Radius
 	t := Theme{
-		Palette:   pal,
-		Metrics:   m,
-		Shapes:    resolveShapes(radius, comp.InputRadius),
-		Type:      resolveType(comp, bar),
-		Surfaces:  resolveSurfaces(comp, hc),
-		Elevation: comp.Elevation,
+		Palette:     pal,
+		Metrics:     m,
+		Shapes:      resolveShapes(radius, comp.InputRadius),
+		Type:        resolveType(comp, bar),
+		BarTextSize: barTextSize(comp, m, bar),
+		Surfaces:    resolveSurfaces(comp, hc),
+		Elevation:   comp.Elevation,
 		Motion: render.MotionSet{
 			Durations: comp.Durations(),
 			Spatial:   comp.Motion.SpatialCurve(),
@@ -312,6 +318,29 @@ func resolveType(comp theme.Composition, bar config.Bar) render.TypeSet {
 	// The bar carries an explicit size for its own body text.
 	applyBarFontSize(&set, bar.FontSize)
 	return set
+}
+
+// barTextSize resolves Theme.BarTextSize. A bar font size equal to the derived
+// body size still follows the composition, the rule RebaseDerivedBar uses, so
+// the density row's smaller bar role may replace it.
+func barTextSize(comp theme.Composition, m theme.Metrics, bar config.Bar) int {
+	if m.BarText != theme.RoleBody && bar.FontSize == comp.TextSize(theme.RoleBody) {
+		return comp.TextSize(m.BarText)
+	}
+	return bar.FontSize
+}
+
+// applyBarLabelSize puts the bar's label size on every role a bar label paints
+// with: body, figure, and the label role plugin buttons use.
+func applyBarLabelSize(set *render.TypeSet, size int) {
+	if size <= 0 {
+		return
+	}
+	for _, role := range []theme.TextRole{theme.RoleBody, theme.RoleFigure, theme.RoleLabel} {
+		spec := set.Roles[role]
+		spec.Size = size
+		set.Roles[role] = spec
+	}
 }
 
 // applyBarFontSize sets the bar's explicit text size on body text and on the
@@ -669,6 +698,8 @@ func (t Theme) Style() render.Style {
 		Accent:     p.Primary,
 		Secondary:  p.Secondary,
 		Tertiary:   p.Tertiary,
+		Warning: Color(theme.EnsureContrast(theme.Color{R: 0xff, G: 0xb3, A: 0xff},
+			theme.Color(p.SurfaceContainerHighest), 4.5)),
 		// AccentOn is the toggled accent, which the bar spends on a failure
 		// state rather than a second brand colour.
 		AccentOn:         p.Error,

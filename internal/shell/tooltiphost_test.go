@@ -61,7 +61,7 @@ func TestATooltipUnderCompositorBlurIsAPanelGlassCard(t *testing.T) {
 		t.Fatalf("ground alpha = %d, want the panel alpha %d", style.SurfaceOpacity, panel)
 	}
 	shape := spec.Callbacks.BlurShape()
-	want := ui.BlurStrips(ui.SurfaceShape{Body: ui.Rect{W: int(spec.Width), H: int(spec.Height)}, Radius: style.Radius})
+	want := ui.BlurStrips(ui.SurfaceShape{Body: ui.Rect{W: int(spec.Width), H: int(spec.Height)}, Radius: style.Radius, Scale: 150})
 	if len(shape) == 0 || len(shape) != len(want) {
 		t.Fatalf("blur shape = %+v, want the card's rounded strips %+v", shape, want)
 	}

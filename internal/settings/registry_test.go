@@ -290,7 +290,8 @@ func TestDensitySettingDoesNotPersistAStaleDerivedBar(t *testing.T) {
 		explicit   bool
 		wantHeight int
 	}{
-		{name: "derived", wantHeight: 31},
+		// The default row's 31 px band and the 4 px gap on each side.
+		{name: "derived", wantHeight: 39},
 		{name: "explicit bar override", explicit: true, wantHeight: 52},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1468,5 +1469,37 @@ func TestIdentifierGroupsAreMarkedLiteral(t *testing.T) {
 		if e.GroupLiteral {
 			t.Errorf("%s prose group %q is marked literal", path, e.Group)
 		}
+	}
+}
+
+// Editing the gap carries a derived height with it, so the band the density
+// row names survives and the writer does not pin a stale height.
+func TestGapSettingKeepsTheDerivedBand(t *testing.T) {
+	cfg := config.Default()
+	if err := Default().ByPath("appearance.density").Set(&cfg, string(theme.DensityMini)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Default().ByPath("bar.gap").Set(&cfg, "10"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bar.Body() != 24 {
+		t.Fatalf("body after a gap edit = %d, want the 24 px mini band", cfg.Bar.Body())
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	back, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Bar.Height != cfg.Bar.Height || back.Bar.Body() != 24 {
+		t.Fatalf("reloaded bar = height %d body %d, want %d with the 24 px band", back.Bar.Height, back.Bar.Body(), cfg.Bar.Height)
+	}
+	if err := Default().ByPath("appearance.density").Set(&back, string(theme.DensitySpacious)); err != nil {
+		t.Fatal(err)
+	}
+	if back.Bar.Body() != 47 {
+		t.Fatalf("body after a later density change = %d, want the 47 px spacious band", back.Bar.Body())
 	}
 }

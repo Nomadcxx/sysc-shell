@@ -438,10 +438,12 @@ func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int)
 	}
 	spacingTotal := spacing * (len(items) - 1)
 	fixedTotal, elasticNatural, elasticCount := 0, 0, 0
+	minShare := 1
 	for i, n := range items {
 		if elastic(n) {
 			elasticNatural += widths[i]
 			elasticCount++
+			minShare = max(minShare, n.MinWidth)
 			continue
 		}
 		fixedTotal += widths[i]
@@ -458,7 +460,7 @@ func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int)
 	// way a dropped one is not.
 	if elasticCount > 0 && fixedTotal+spacingTotal < budget {
 		share := (budget - fixedTotal - spacingTotal) / elasticCount
-		if share > 0 {
+		if share >= minShare {
 			for i, n := range items {
 				if elastic(n) {
 					granted[i] = min(widths[i], share)

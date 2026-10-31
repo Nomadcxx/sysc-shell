@@ -544,12 +544,12 @@ func TestWorkspacePillsPaintAsShapes(t *testing.T) {
 		if c.Shape != ui.ShapeStadium {
 			t.Errorf("pill %d shape = %v, want ShapeStadium", i, c.Shape)
 		}
-		if c.Height != m.IconLarge {
-			t.Errorf("pill %d height = %d, want %d", i, c.Height, m.IconLarge)
+		if c.Height != workspacePillSize(m) {
+			t.Errorf("pill %d height = %d, want %d", i, c.Height, workspacePillSize(m))
 		}
-		wantW := m.IconLarge
+		wantW := workspacePillSize(m)
 		if i == 1 {
-			wantW = 2 * m.IconLarge
+			wantW = 2 * workspacePillSize(m)
 		}
 		if c.Width != wantW {
 			t.Errorf("pill %d width = %d, want %d", i, c.Width, wantW)
