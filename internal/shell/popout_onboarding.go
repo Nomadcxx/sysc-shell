@@ -788,6 +788,9 @@ func onbPluginTiles(r *Registry, h *PanelHost) []*ui.Node {
 		row := rows[len(rows)-1]
 		row.Children = append(row.Children, tile)
 	}
+	for _, row := range rows {
+		onbEvenCards(row.Children)
+	}
 	return []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: rows}}
 }
 

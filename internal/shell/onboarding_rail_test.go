@@ -721,4 +721,8 @@ func TestOnboardingPluginTileOmitsUnlabelledWidget(t *testing.T) {
 	if text := treeText(byAction(h.root, "onb-plugin:org.example.named")); !strings.Contains(text, "Bar widget: Clock") {
 		t.Errorf("labelled tile = %q, want its widget label", text)
 	}
+	bare, named := byAction(h.root, "onb-plugin:org.example.bare"), byAction(h.root, "onb-plugin:org.example.named")
+	if bare.Bounds.H != named.Bounds.H {
+		t.Errorf("tiles sharing a row are %d and %d tall, want one height", bare.Bounds.H, named.Bounds.H)
+	}
 }
