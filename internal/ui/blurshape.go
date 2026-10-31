@@ -24,6 +24,13 @@ type SurfaceShape struct {
 	// corner on a side that carries one is square.
 	EdgeFillet          int
 	EdgeLeft, EdgeRight bool
+	// Scale is the scale the surface paints at; zero or unit keeps logical
+	// corner rows. At a fractional scale one logical row spans more than one
+	// physical row, and a corner row rounded in logical pixels reaches past
+	// the arc the painter fills. A scaled shape measures each corner row where
+	// the painter fills it and rounds inward, so a strip never blurs a pixel
+	// the surface leaves bare.
+	Scale Scale120
 }
 
 // BlurStrips returns the shape as rectangles in the body's coordinate space:
@@ -80,13 +87,20 @@ func BlurStrips(s SurfaceShape) []Rect {
 			rows[y] = append(rows[y], [2]int{x0, x1})
 		}
 	}
+	edges := func(y, rl, rr int) (int, int) {
+		return b.X + RoundedInset(y, b.H, rl), b.X + b.W - RoundedInset(y, b.H, rr)
+	}
+	if s.Scale.Valid() && s.Scale != ScaleUnit {
+		edges = scaledRowEdges(b, s.Scale)
+	}
 	for y := 0; y < b.H; y++ {
 		upper := y <= b.H-1-y
 		rl, rr := rBL, rBR
 		if upper {
 			rl, rr = rTL, rTR
 		}
-		add(b.Y+y, b.X+RoundedInset(y, b.H, rl), b.X+b.W-RoundedInset(y, b.H, rr))
+		x0, x1 := edges(y, rl, rr)
+		add(b.Y+y, x0, x1)
 	}
 	// Rows beside the attached edge, counted away from it into the body's
 	// height, and rows beyond the far edge, counted away from the body.
@@ -163,4 +177,46 @@ func unionSpans(spans [][2]int) [][2]int {
 		out = append(out, sp)
 	}
 	return out
+}
+
+// scaledRowEdges returns the logical span of each body row whose physical
+// pixels the painter fills. It insets every corner row by the deepest
+// physical corner inset among the physical rows it covers, using the same
+// RoundedInset and radius clamp the canvas paints with, then keeps the
+// innermost logical edges whose physical edges sit inside that fill.
+func scaledRowEdges(b Rect, scale Scale120) func(y, rl, rr int) (int, int) {
+	p := scale.PhysicalRect(b)
+	half := min(p.W, p.H) / 2
+	// The painter scales the radius before clamping it to half the physical
+	// box. A radius clamped here in logical pixels therefore paints as the
+	// physical half, and a larger radius only ever narrows a strip.
+	physicalRadius := func(r int) int {
+		if r <= 0 {
+			return 0
+		}
+		if r >= min(b.W, b.H)/2 {
+			return half
+		}
+		return min(scale.Physical(r), half)
+	}
+	return func(y, rl, rr int) (int, int) {
+		x0, x1 := b.X, b.X+b.W
+		prl, prr := physicalRadius(rl), physicalRadius(rr)
+		if prl == 0 && prr == 0 {
+			return x0, x1
+		}
+		top, bottom := scale.Physical(b.Y+y)-p.Y, scale.Physical(b.Y+y+1)-p.Y
+		left, right := 0, 0
+		for py := max(top, 0); py < min(bottom, p.H); py++ {
+			left = max(left, RoundedInset(py, p.H, prl))
+			right = max(right, RoundedInset(py, p.H, prr))
+		}
+		for x0 < x1 && scale.Physical(x0) < p.X+left {
+			x0++
+		}
+		for x1 > x0 && scale.Physical(x1) > p.X+p.W-right {
+			x1--
+		}
+		return x0, x1
+	}
 }

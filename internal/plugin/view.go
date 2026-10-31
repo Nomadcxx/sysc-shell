@@ -450,6 +450,9 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 				out.Fill = ui.FillAccent
 			}
 		}
+		// The bar pill is a bar button's chrome; an unnamed fill must not
+		// paint the control's own lighter level inside it.
+		out.Bare = view == v1.ViewBar && out.Fill == ui.FillNone
 		if n.Icon != "" {
 			icon, err := iconNode(n.Icon, path)
 			if err != nil {

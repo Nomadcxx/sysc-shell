@@ -3308,3 +3308,34 @@ func TestScrimFadeDarkensOneEdgeAndLeavesTheOtherClear(t *testing.T) {
 		})
 	}
 }
+
+// A bare button leaves the surface under it as its chrome: at rest it paints
+// no base, so a bar pill shows through, while hover still answers the pointer.
+func TestBareButtonPaintsNoRestingBase(t *testing.T) {
+	t.Parallel()
+	for _, mode := range compositionModes() {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Parallel()
+			style := mode.style
+			xOf := func(n *ui.Node) int { x, _ := fillPointOf(n); return x }
+			yOf := func(n *ui.Node) int { _, y := fillPointOf(n); return y }
+			based := &ui.Node{Kind: ui.KindButton, Text: "Open", Height: 40, Width: 120, Padding: 12}
+			c := paintChromeNode(t, based, style)
+			if got := pixelAt(t, c, xOf(based), yOf(based)); got != style.containerHighest() {
+				t.Errorf("unbared fill = %+v, want the resting base %+v", got, style.containerHighest())
+			}
+
+			bare := &ui.Node{Kind: ui.KindButton, Text: "Open", Height: 40, Width: 120, Padding: 12, Bare: true}
+			c = paintChromeNode(t, bare, style)
+			if got := pixelAt(t, c, xOf(bare), yOf(bare)); got != style.Background {
+				t.Errorf("bare fill = %+v, want the surface %+v", got, style.Background)
+			}
+
+			hovered := &ui.Node{Kind: ui.KindButton, Text: "Open", Height: 40, Width: 120, Padding: 12, Bare: true, State: ui.StateHovered}
+			c = paintChromeNode(t, hovered, style)
+			if got := pixelAt(t, c, xOf(hovered), yOf(hovered)); got == style.Background {
+				t.Error("hovered bare button painted no state layer")
+			}
+		})
+	}
+}

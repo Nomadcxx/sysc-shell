@@ -483,7 +483,7 @@ func (b *Bar) blurShape() []ui.Rect {
 				if radius <= 0 {
 					radius = min(n.Bounds.W, n.Bounds.H)
 				}
-				out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: n.Bounds, Radius: radius})...)
+				out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: n.Bounds, Radius: radius, Scale: b.style.Scale120})...)
 			}
 		}
 		return out
@@ -491,6 +491,7 @@ func (b *Bar) blurShape() []ui.Rect {
 	shape := ui.SurfaceShape{
 		Body:   b.bodyLocked(b.configured.width, b.configured.height),
 		Radius: b.theme.Radius,
+		Scale:  b.style.Scale120,
 	}
 	if b.theme.barGeometry().Attached() {
 		// An attached bar meets the screen along its edge and curves into the
