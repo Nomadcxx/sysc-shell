@@ -677,3 +677,48 @@ func TestOnboardingReviewCardsJumpToTheirStep(t *testing.T) {
 		}
 	}
 }
+
+func TestOnboardingCardsInsetTheirContent(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	pad := h.metrics().CardPadding
+	for _, tc := range []struct {
+		page onboardingPage
+		key  string
+	}{
+		{onbAppearance, "onb-mode:dark"},
+		{onbIdle, "onb-idle:nothing"},
+		{onbReady, "onb-review:appearance"},
+	} {
+		h.onbPage = tc.page
+		reg.rebuildPanel(h)
+		card := onboardingNodeByKey(h.root, tc.key)
+		if card == nil || len(card.Children) != 1 {
+			t.Fatalf("%s card is missing", tc.key)
+		}
+		if got := card.Children[0].Bounds.Y - card.Bounds.Y; got != pad {
+			t.Errorf("%s content starts %d below the card's top, want the card padding %d", tc.key, got, pad)
+		}
+	}
+}
+
+func TestOnboardingPluginTileOmitsUnlabelledWidget(t *testing.T) {
+	reg, h := openOnboardingAt(t, 3440, 1440, 120)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	previous := reg.plugins
+	reg.plugins = &pluginHost{r: reg, catalog: plugin.Catalog{Plugins: []plugin.Candidate{
+		{Manifest: plugin.Manifest{ID: "org.example.bare", Name: "Bare", Widgets: []plugin.Widget{{ID: "bar"}}}},
+		{Manifest: plugin.Manifest{ID: "org.example.named", Name: "Named", Widgets: []plugin.Widget{{ID: "bar", Label: "Clock"}}}},
+	}}}
+	t.Cleanup(func() { reg.plugins = previous })
+	h.onbPage = onbPlugins
+	reg.rebuildPanel(h)
+	if text := treeText(byAction(h.root, "onb-plugin:org.example.bare")); strings.Contains(text, "Bar widget") {
+		t.Errorf("unlabelled tile = %q, want no widget line", text)
+	}
+	if text := treeText(byAction(h.root, "onb-plugin:org.example.named")); !strings.Contains(text, "Bar widget: Clock") {
+		t.Errorf("labelled tile = %q, want its widget label", text)
+	}
+}
