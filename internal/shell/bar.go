@@ -1068,31 +1068,34 @@ func hitBarNode(n *ui.Node, x, y int, body ui.Rect, axis ui.Axis) (string, bool)
 	return "", false
 }
 
-// soleCapsuleAction returns the one control inside a pill that has no action
-// of its own, or nil when the pill is not a capsule or holds zero or several.
+// soleCapsuleAction returns the outermost node carrying a pill's only action,
+// or nil when n is not a capsule or its subtree holds no or several distinct
+// actions. Built-in widgets repeat one action on the pill and its glyph.
 func soleCapsuleAction(n *ui.Node) *ui.Node {
-	if n == nil || n.Kind != ui.KindCapsule || n.Action != "" {
+	if n == nil || n.Kind != ui.KindCapsule {
 		return nil
 	}
 	var found *ui.Node
-	count := 0
+	several := false
 	var walk func(*ui.Node)
 	walk = func(c *ui.Node) {
-		if c == nil || c.Absent || count > 1 {
+		if c == nil || c.Absent || several {
 			return
 		}
 		if c.Action != "" {
-			found = c
-			count++
+			if found == nil {
+				found = c
+			} else if c.Action != found.Action {
+				several = true
+				return
+			}
 		}
 		for _, child := range c.Children {
 			walk(child)
 		}
 	}
-	for _, child := range n.Children {
-		walk(child)
-	}
-	if count != 1 {
+	walk(n)
+	if several {
 		return nil
 	}
 	return found

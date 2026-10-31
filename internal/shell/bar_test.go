@@ -1010,14 +1010,18 @@ func TestBarPointerSlotsReserveNestedControls(t *testing.T) {
 // toward the slot instead of widening an already-wide pill.
 func TestBarPointerSlotsCountSingleControlCapsulePadding(t *testing.T) {
 	for _, axis := range []ui.Axis{ui.Horizontal, ui.Vertical} {
-		button := &ui.Node{Kind: ui.KindButton, Action: "open"}
-		root := &ui.Node{Kind: ui.KindCapsule, Padding: 6, Children: []*ui.Node{button}}
-		got, err := barPointerSlots(root, axis, 30)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != 30 {
-			t.Errorf("axis %d: pill slot = %d, want 30 including its 6 px padding", axis, got)
+		// Plugin buttons leave the pill bare; built-in widgets repeat the
+		// action on the pill and its glyph.
+		for _, pillAction := range []string{"", "open"} {
+			button := &ui.Node{Kind: ui.KindButton, Action: "open"}
+			root := &ui.Node{Kind: ui.KindCapsule, Padding: 6, Action: pillAction, Children: []*ui.Node{button}}
+			got, err := barPointerSlots(root, axis, 30)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != 30 {
+				t.Errorf("axis %d, pill action %q: slot = %d, want 30 including its 6 px padding", axis, pillAction, got)
+			}
 		}
 	}
 }
