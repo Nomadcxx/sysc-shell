@@ -747,37 +747,230 @@ func TestLauncherEnterOnOverviewRowNavigates(t *testing.T) {
 	})
 }
 
-func TestLauncherRightClickOpensActionsMenu(t *testing.T) {
+// rightClickLauncherResult presses the secondary button inside result i's
+// laid-out row or tile, through the panel's own pointer path.
+func rightClickLauncherResult(t *testing.T, reg *Registry, reqs []wayland.AuxRequest, i int) {
+	t.Helper()
+	reg.mu.Lock()
+	bounds, ok := walkActionBounds(reg.panelHosts[PanelLauncher].root, fmt.Sprintf("launch:%d", i))
+	reg.mu.Unlock()
+	if !ok {
+		t.Fatalf("result %d has no laid-out bounds", i)
+	}
+	reqs[1].Open.Callbacks.Handle(wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnRight,
+		X: float64(bounds.X + bounds.W/2), Y: float64(bounds.Y + bounds.H/2),
+	})
+}
+
+// openFirefoxActions right-clicks the Firefox row of launcherTestEntries and
+// fails unless that opened its actions view.
+func openFirefoxActions(t *testing.T, reg *Registry, reqs []wayland.AuxRequest) {
+	t.Helper()
+	reg.mu.Lock()
+	row := slices.IndexFunc(reg.panelHosts[PanelLauncher].launcherResults, func(r launcher.Result) bool {
+		return r.Entry.ID == "firefox.desktop" && r.Action == ""
+	})
+	reg.mu.Unlock()
+	rightClickLauncherResult(t, reg, reqs, row)
+	reg.mu.Lock()
+	open := reg.panelHosts[PanelLauncher].launcherActionsBack != nil
+	reg.mu.Unlock()
+	if !open {
+		t.Fatal("right-click on Firefox did not open its actions view")
+	}
+}
+
+func TestLauncherRightClickOpensActionsView(t *testing.T) {
 	t.Parallel()
 
 	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
 	h := launcherHost(t, reg)
 	reg.mu.Lock()
+	reg.launcherQueryHistory = []string{"foot"}
 	row := slices.IndexFunc(h.launcherResults, func(r launcher.Result) bool { return r.Entry.ID == "firefox.desktop" })
-	bounds, ok := walkActionBounds(h.root, fmt.Sprintf("launch:%d", row))
 	reg.mu.Unlock()
-	if !ok {
-		t.Fatal("firefox row has no laid-out bounds")
-	}
 
-	reqs[1].Open.Callbacks.Handle(wayland.Event{
-		Kind:   wayland.EventPointerPress,
-		Button: btnRight,
-		X:      float64(bounds.X + 4),
-		Y:      float64(bounds.Y + 4),
-	})
+	rightClickLauncherResult(t, reg, reqs, row)
 	reg.mu.Lock()
-	menuOpen := reg.panelHosts[PanelLauncher].menu.Opened()
+	results, sel := h.launcherResults, h.launcherSel
+	footer := launcherFooter(h, len(results), launcherLayoutFor(reg, h))
+	open := h.launcherActionsBack != nil
 	reg.mu.Unlock()
-	if !menuOpen {
-		t.Fatal("right-click did not open the actions menu")
+	if !open {
+		t.Fatal("right-click did not open the actions view")
+	}
+	if len(results) != 2 || results[0].Entry.ID != "firefox.desktop" || results[0].Action != "" ||
+		results[0].Entry.Name != "Firefox" || results[0].Entry.Comment != "Browse the Web" {
+		t.Fatalf("first row = %+v, want the application's own row", results)
+	}
+	if a := results[1]; a.Entry.ID != "firefox.desktop" || a.Action != "new-window" ||
+		a.Entry.Name != "New Window" || a.Entry.Comment != "Firefox · desktop action" {
+		t.Fatalf("action row = %+v", a)
+	}
+	if sel != 1 {
+		t.Fatalf("selection = %d, want the first action", sel)
+	}
+	if !treeHasText(footer, "Firefox actions • ↑↓ Navigate • Enter Select • Esc Back") {
+		t.Fatal("footer does not name the application's actions")
 	}
 
+	// A second right-click inside the view does not open a view of the view.
+	rightClickLauncherResult(t, reg, reqs, 0)
+	reg.mu.Lock()
+	again := len(h.launcherResults)
+	reg.mu.Unlock()
+	if again != 2 {
+		t.Fatalf("right-click inside the view changed it to %d rows", again)
+	}
+
+	// Up moves the selection; it does not step into query history.
+	pressLauncherKey(reqs, keyUp)
+	reg.mu.Lock()
+	query, sel := h.query, h.launcherSel
+	reg.mu.Unlock()
+	if query != "" || sel != 0 {
+		t.Fatalf("Up in the view: query %q, selection %d; want \"\", 0", query, sel)
+	}
+	pressLauncherKey(reqs, keyDown)
 	pressLauncherKey(reqs, keyEnter)
 	if got := run.waitArgv(t); !slices.Equal(got, []string{"niri", "msg", "action", "spawn", "--", "firefox", "--new-window"}) {
 		t.Fatalf("action argv = %v", got)
 	}
 	waitForLauncherState(t, reg, func(h *PanelHost) bool { return h == nil })
+}
+
+func TestLauncherActionsViewClickRunsTheAction(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	openFirefoxActions(t, reg, reqs)
+	reg.mu.Lock()
+	bounds, ok := walkActionBounds(reg.panelHosts[PanelLauncher].root, "launch:1")
+	reg.mu.Unlock()
+	if !ok {
+		t.Fatal("the action row has no laid-out bounds")
+	}
+	reqs[1].Open.Callbacks.Handle(wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnLeft, X: float64(bounds.X + 4), Y: float64(bounds.Y + 4),
+	})
+	if got := run.waitArgv(t); !slices.Equal(got, []string{"niri", "msg", "action", "spawn", "--", "firefox", "--new-window"}) {
+		t.Fatalf("clicked action argv = %v", got)
+	}
+}
+
+func TestLauncherRightClickWithoutActionsDoesNothing(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	before := slices.Clone(h.launcherResults)
+	row := slices.IndexFunc(before, func(r launcher.Result) bool { return r.Entry.ID == "foot.desktop" })
+	reg.mu.Unlock()
+	rightClickLauncherResult(t, reg, reqs, row)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.launcherActionsBack != nil || len(h.launcherResults) != len(before) {
+		t.Fatal("right-click on an application without actions changed the list")
+	}
+}
+
+// The view is a list in every display mode, and Esc puts back the grid it
+// replaced exactly as it was: rows, selection, scroll. It does not close.
+func TestLauncherActionsViewEscRestoresTheResults(t *testing.T) {
+	t.Parallel()
+
+	entries := alphabetEntries(130)
+	entries[127].Actions = []launcher.Action{
+		{ID: "new-window", Name: "New Window", Argv: []string{"true"}},
+		{ID: "private", Name: "New Private Window", Argv: []string{"true"}, IconName: "private-browsing"},
+	}
+	reg, _, reqs := openLauncherPanel(t, entries)
+	setLauncherDisplay(t, reg, config.LauncherDisplayGrid)
+	pressLauncherKey(reqs, keyEnd)
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	row := slices.IndexFunc(h.launcherResults, func(r launcher.Result) bool { return r.Entry.ID == entries[127].ID })
+	before := slices.Clone(h.launcherResults)
+	sel, scroll := h.launcherSel, h.launcherScroll
+	reg.mu.Unlock()
+	if scroll == 0 {
+		t.Fatal("the fixture does not scroll the grid")
+	}
+
+	rightClickLauncherResult(t, reg, reqs, row)
+	reg.mu.Lock()
+	mode := launcherLayoutFor(reg, h).mode
+	n := len(h.launcherResults)
+	icon := ""
+	if n == 3 {
+		icon = h.launcherResults[2].Entry.IconName
+	}
+	reg.mu.Unlock()
+	if n != 3 || mode != config.LauncherDisplayList {
+		t.Fatalf("actions view: %d rows in %s layout, want 3 in list", n, mode)
+	}
+	if icon != "private-browsing" {
+		t.Fatalf("action row icon = %q, want the action's own", icon)
+	}
+
+	pressLauncherKey(reqs, keyEsc)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.panelHosts[PanelLauncher] == nil {
+		t.Fatal("Esc in the actions view closed the launcher")
+	}
+	if h.launcherActionsBack != nil || !slices.EqualFunc(h.launcherResults, before, func(a, b launcher.Result) bool {
+		return a.Entry.ID == b.Entry.ID && a.Action == b.Action
+	}) {
+		t.Fatal("Esc did not restore the previous results")
+	}
+	if h.launcherSel != sel || h.launcherScroll != scroll || launcherLayoutFor(reg, h).mode != config.LauncherDisplayGrid {
+		t.Fatalf("Esc restored selection %d scroll %d mode %s; want %d %d grid",
+			h.launcherSel, h.launcherScroll, launcherLayoutFor(reg, h).mode, sel, scroll)
+	}
+}
+
+func TestLauncherTypingLeavesTheActionsView(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	openFirefoxActions(t, reg, reqs)
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "foo"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.launcherActionsBack == nil && !h.launcherAwaiting && h.query == "foo" &&
+			len(h.launcherResults) > 0 && h.launcherResults[0].Entry.ID == "foot.desktop"
+	})
+}
+
+// A snapshot for the current query that lands while the view shows belongs
+// to the results behind it: the view stays, and Esc shows the new rows.
+func TestLauncherSnapshotDuringActionsViewUpdatesTheSavedResults(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	openFirefoxActions(t, reg, reqs)
+	reg.mu.Lock()
+	gen := reg.panelHosts[PanelLauncher].launcherQueryGen
+	reg.mu.Unlock()
+	fresh := []launcher.Result{{Entry: launcher.Entry{ID: "foot.desktop", Name: "Foot", Argv: []string{"foot"}}}}
+	reg.launcherSnaps <- launcherSnap{gen: gen, rows: fresh, appsOnly: true}
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.launcherActionsBack != nil && len(h.launcherActionsBack.results) == 1
+	})
+	reg.mu.Lock()
+	viewRows := len(reg.panelHosts[PanelLauncher].launcherResults)
+	reg.mu.Unlock()
+	if viewRows != 2 {
+		t.Fatalf("the snapshot replaced the actions view (%d rows)", viewRows)
+	}
+	pressLauncherKey(reqs, keyEsc)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := reg.panelHosts[PanelLauncher].launcherResults; len(got) != 1 || got[0].Entry.ID != "foot.desktop" {
+		t.Fatalf("Esc restored %+v, want the snapshot's rows", got)
+	}
 }
 
 func TestLauncherEscapeCloses(t *testing.T) {
@@ -1968,9 +2161,9 @@ func TestApplicationPreferenceRefreshInvalidatesOpenLauncherActions(t *testing.T
 		reg.mu.Unlock()
 		t.Fatal("Firefox row has no laid-out bounds")
 	}
-	if !launcherHost.openLauncherActions(reg, "firefox.desktop") || launcherHost.menu == nil {
+	if !launcherHost.openLauncherActions(reg, row) || launcherHost.launcherActionsBack == nil {
 		reg.mu.Unlock()
-		t.Fatal("Firefox actions menu did not open")
+		t.Fatal("Firefox actions view did not open")
 	}
 	reg.mu.Unlock()
 	waitFor(t, func() bool {
@@ -2010,9 +2203,10 @@ func TestApplicationPreferenceRefreshInvalidatesOpenLauncherActions(t *testing.T
 		reg.mu.Unlock()
 		t.Fatal("Launcher did not mark its stale rows as awaiting refreshed results")
 	}
-	if launcherHost.menu != nil || launcherHost.launcherMenuID != "" || len(launcherHost.launcherActions) != 0 {
+	if launcherHost.launcherActionsBack != nil || row >= len(launcherHost.launcherResults) ||
+		launcherHost.launcherResults[row].Entry.ID != "firefox.desktop" || launcherHost.launcherResults[row].Action != "" {
 		reg.mu.Unlock()
-		t.Fatal("preference update left a stale actions menu open")
+		t.Fatal("preference update left a stale actions view open")
 	}
 	if !launcherHost.launcherPointerPress(reg, wayland.Event{
 		Kind: wayland.EventPointerPress, Button: btnRight,
@@ -2021,9 +2215,9 @@ func TestApplicationPreferenceRefreshInvalidatesOpenLauncherActions(t *testing.T
 		reg.mu.Unlock()
 		t.Fatal("right click on a stale launcher row was not consumed")
 	}
-	if launcherHost.menu != nil {
+	if launcherHost.launcherActionsBack != nil {
 		reg.mu.Unlock()
-		t.Fatal("right click reopened the stale Firefox actions menu")
+		t.Fatal("right click reopened the stale Firefox actions view")
 	}
 	launcherHost.launcherActivateSelected(reg)
 	reg.mu.Unlock()
@@ -2602,46 +2796,26 @@ func TestLauncherGridGeometryUsesFiveColumns(t *testing.T) {
 	}
 }
 
-func TestLauncherGridMenuSpansTheRow(t *testing.T) {
+// Right-click on a grid tile shows the actions as list rows: one per slot,
+// each spanning the list, as the List display draws them.
+func TestLauncherGridActionsViewDrawsListRows(t *testing.T) {
 	t.Parallel()
 
 	entries := alphabetEntries(7)
 	entries[6].Actions = []launcher.Action{{ID: "new-window", Name: "New Window", Argv: []string{"true"}}}
-	reg, _, _ := openLauncherPanel(t, entries)
+	reg, _, reqs := openLauncherPanel(t, entries)
 	setLauncherDisplay(t, reg, config.LauncherDisplayGrid)
+	rightClickLauncherResult(t, reg, reqs, 6)
 	h := launcherHost(t, reg)
 	reg.mu.Lock()
-	tile := findAction(h.root, "launch:6")
-	if tile == nil {
-		reg.mu.Unlock()
-		t.Fatal("laid-out grid has no tile for result 6")
-	}
-	x := tile.Bounds.X + tile.Bounds.W/2
-	y := tile.Bounds.Y + tile.Bounds.H/2
-	if i, ok := launcherRowAt(h.root, x, y); !ok || i != 6 {
-		reg.mu.Unlock()
-		t.Fatalf("hit test at second-row tile returned %d, %v; want 6", i, ok)
-	}
-	if !h.launcherPointerPress(reg, wayland.Event{Kind: wayland.EventPointerPress, Button: btnRight, X: float64(x), Y: float64(y)}) {
-		reg.mu.Unlock()
-		t.Fatal("right click on tile was not handled")
-	}
+	defer reg.mu.Unlock()
 	list := launcherListNode(t, h)
-	var item *ui.Node
-	for _, child := range list.Children {
-		if child.Kind == ui.KindMenu {
-			item = child
-			break
-		}
+	if list.ItemCount != 2 || list.ItemHeight != launcherSlotHeight {
+		t.Fatalf("actions view list = %d items of %d px, want 2 of %d", list.ItemCount, list.ItemHeight, launcherSlotHeight)
 	}
-	width := h.place.Panel.W - 2*theme.MarginL
-	listBounds, listSlot := list.Bounds, list.ItemHeight
-	wantY := tile.Bounds.Y - launcherGridGap/2
-	reg.mu.Unlock()
-	if item == nil || item.Kind != ui.KindMenu || item.Width != width || item.Bounds.W != width ||
-		item.Bounds.X != listBounds.X || item.Bounds.Y != wantY || item.Bounds.H != listSlot {
-		t.Fatalf("grid row 1 with an open menu = %+v, want a %dx%d menu at (%d,%d)",
-			item, width, listSlot, listBounds.X, wantY)
+	row := findAction(h.root, "launch:1")
+	if want := list.Bounds.W - launcherRowGap; row == nil || row.Bounds.W != want {
+		t.Fatalf("action row = %+v, want a %d px list row", row, want)
 	}
 }
 
