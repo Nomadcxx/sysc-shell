@@ -11,9 +11,15 @@ import (
 // fillInvalidations leaves the cap-8 invalidation channel full and undrained,
 // which is what an owner whose bridge has stopped looks like to a caller
 // holding Registry.mu. The next publishSurface then parks (issue #119).
+// Background relays (a panel's resting frame, the first media snapshot) may
+// publish at the same time, so it tops the channel up rather than counting
+// sends: a counted send would park behind theirs.
 func fillInvalidations(r *Registry) {
-	for i := 0; i < cap(r.invalidations); i++ {
-		r.invalidations <- wayland.Invalidation{}
+	for len(r.invalidations) < cap(r.invalidations) {
+		select {
+		case r.invalidations <- wayland.Invalidation{}:
+		default:
+		}
 	}
 }
 
