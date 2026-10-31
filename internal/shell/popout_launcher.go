@@ -131,8 +131,8 @@ func launcherLayoutFor(r *Registry, h *PanelHost) launcherLayout {
 		l.mode, l.columns, l.gap, l.padTop, l.padBottom = config.LauncherDisplayGrid, launcherGridColumns, launcherGridGap, launcherGridPad, launcherGridPad
 		// Each visual row sits half a gap inside the list on every side, as
 		// a list row does, and the tiles in it are a gap apart.
-		listWidth := h.place.Panel.W - 2*theme.MarginL
-		l.cellWidth = max((listWidth-(l.columns-1)*l.gap)/l.columns, 1)
+		rowWidth := h.place.Panel.W - 2*theme.MarginL - l.gap
+		l.cellWidth = max((rowWidth-(l.columns-1)*l.gap)/l.columns, 1)
 		l.tileHeight = 2*l.padTop + l.iconSize + theme.MarginS + 2*launcherCaptionLineHeight(h)
 		l.slot = l.tileHeight + l.gap
 	}
@@ -647,7 +647,7 @@ func launcherFooter(h *PanelHost, count int, l launcherLayout) *ui.Node {
 		}
 	}
 	hints := launcherHints
-	if l.mode == config.LauncherDisplayGrid {
+	if l.mode == config.LauncherDisplayGrid && count > 0 {
 		hints = launcherGridHints
 	}
 	nounKey, one, other := "launcher.noun.result", "result", "results"
@@ -788,7 +788,7 @@ func launcherGridRow(r *Registry, h *PanelHost, results []launcher.Result, row i
 	for i := start; i < end; i++ {
 		tiles = append(tiles, launcherGridTile(r, h, results[i], i, l))
 	}
-	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{
+	return &ui.Node{Kind: ui.KindColumn, Padding: l.gap / 2, Children: []*ui.Node{{
 		Kind: ui.KindRow, Gap: l.gap, Height: l.tileHeight, CenterY: true, Children: tiles,
 	}}}
 }
@@ -940,7 +940,7 @@ func (h *PanelHost) launcherVisibleOffset(count int, l launcherLayout) int {
 func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 	n := len(h.launcherResults)
 	l := launcherLayoutFor(r, h)
-	grid := l.mode == config.LauncherDisplayGrid
+	grid := l.mode == config.LauncherDisplayGrid && n > 0
 	page := max(h.launcherPageItems(l), 1)
 	// The actions view is a list of one application's rows: the arrows stay
 	// in it rather than stepping into query history.

@@ -657,11 +657,12 @@ func launcherDisplayCard(h *PanelHost) *ui.Node {
 		config.LauncherDisplayCompact: h.tr("applications.display.compact", "Compact"),
 		config.LauncherDisplayGrid:    h.tr("applications.display.grid", "Grid"),
 	}
+	title := h.tr("applications.launcher_display", "Launcher display")
 	control := &ui.Node{Kind: ui.KindSegmented, Key: "applications-launcher-display", Gap: theme.MarginXXS,
-		Height: h.metrics().CompactControl}
+		Height: h.metrics().CompactControl, Name: title, Role: "radiogroup"}
 	for _, mode := range config.LauncherDisplays {
 		segment := &ui.Node{
-			Kind: ui.KindButton, Action: "applications:display:" + mode, Name: labels[mode], Role: "tab",
+			Kind: ui.KindButton, Action: "applications:display:" + mode, Name: labels[mode], Role: "radio",
 			Focusable: true, Height: h.metrics().CompactControl,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: labels[mode]}},
 		}
@@ -670,7 +671,7 @@ func launcherDisplayCard(h *PanelHost) *ui.Node {
 		}
 		control.Children = append(control.Children, segment)
 	}
-	return settingsGroupCard(h, h.tr("applications.launcher_display", "Launcher display"), []*ui.Node{control})
+	return settingsGroupCard(h, title, []*ui.Node{control})
 }
 
 func applicationPreferenceButton(h *PanelHost, text, name, action string) *ui.Node {

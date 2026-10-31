@@ -2759,7 +2759,8 @@ func TestLauncherGridGeometryUsesFiveColumns(t *testing.T) {
 	defer reg.mu.Unlock()
 	l := launcherLayoutFor(reg, h)
 	listWidth := h.place.Panel.W - 2*theme.MarginL
-	wantCell := (listWidth - (launcherGridColumns-1)*launcherGridGap) / launcherGridColumns
+	// The row sits half a gap inside the list on each side, as a list row does.
+	wantCell := (listWidth - launcherGridGap - (launcherGridColumns-1)*launcherGridGap) / launcherGridColumns
 	lineHeight := launcherCaptionLineHeight(h)
 	wantTileHeight := 2*launcherGridPad + launcherIconSlot + theme.MarginS + 2*lineHeight
 	wantSlot := wantTileHeight + launcherGridGap
@@ -2790,9 +2791,30 @@ func TestLauncherGridGeometryUsesFiveColumns(t *testing.T) {
 		left = first.Bounds.X - list.Bounds.X
 		right = list.Bounds.X + list.Bounds.W - (last.Bounds.X + last.Bounds.W)
 	}
-	wantRight := list.Bounds.W - (launcherGridColumns*wantCell + (launcherGridColumns-1)*launcherGridGap)
-	if first == nil || last == nil || left != 0 || right != wantRight {
-		t.Fatalf("grid row margins = %d/%d px, want 0/%d px", left, right, wantRight)
+	wantLeft := launcherGridGap / 2
+	wantRight := list.Bounds.W - wantLeft - (launcherGridColumns*wantCell + (launcherGridColumns-1)*launcherGridGap)
+	if first == nil || last == nil || left != wantLeft || right != wantRight || right-wantLeft >= launcherGridColumns {
+		t.Fatalf("grid row margins = %d/%d px, want %d/%d px", left, right, wantLeft, wantRight)
+	}
+}
+
+// With nothing to move between, the grid leaves Left and Right to the field's
+// caret and its footer shows the list's arrows.
+func TestLauncherEmptyGridLeavesTheHorizontalArrows(t *testing.T) {
+	t.Parallel()
+
+	reg, _, h := openLauncherGrid(t, 7)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.launcherResults, h.launcherAppsOnly = nil, true
+	if launcherLayoutFor(reg, h).mode != config.LauncherDisplayGrid {
+		t.Fatal("fixture is not in the grid layout")
+	}
+	if h.launcherKeyPress(reg, keyLeft) || h.launcherKeyPress(reg, keyRight) {
+		t.Fatal("an empty grid took the horizontal arrows")
+	}
+	if footer := launcherFooter(h, 0, launcherLayoutFor(reg, h)); !treeHasText(footer, "No results • "+launcherHints) {
+		t.Fatal("an empty grid's footer does not show the list hints")
 	}
 }
 
