@@ -75,9 +75,9 @@ func TestRasterizeWordmarkGeometryAndAlpha(t *testing.T) {
 		{glyph: '▐', fg: 97},
 	}}
 
-	img := rasterizeWordmark(cells, 4, 4, colors)
+	img := rasterizeWordmark(cells, 32, 4, colors)
 	if img == nil || img.Width != 32 || img.Height != 4 || img.Stride != 128 {
-		t.Fatalf("image dimensions/stride = %+v, want 32x4 stride 128", img)
+		t.Fatalf("image is not 32x4 stride 128")
 	}
 	pixel := func(x, y int) []byte {
 		offset := y*img.Stride + x*4
@@ -109,8 +109,27 @@ func TestRasterizeWordmarkGeometryAndAlpha(t *testing.T) {
 
 func TestRasterizeWordmarkUsesParsedDimensions(t *testing.T) {
 	rows := parseANSIWordmark(onboardingWordmarkANSI)
-	img := rasterizeWordmark(rows, 5, 10, wordmarkColors{})
+	img := rasterizeWordmark(rows, 47*5, 8*10, wordmarkColors{})
 	if img == nil || img.Width != 47*5 || img.Height != 8*10 {
-		t.Fatalf("image dimensions = %+v, want %dx%d", img, 47*5, 8*10)
+		t.Fatalf("image is not %dx%d", 47*5, 8*10)
+	}
+}
+
+// A fractional scale gives cells of uneven pixel width; the cells still tile
+// the box with no gap or overlap.
+func TestRasterizeWordmarkTilesFractionalCells(t *testing.T) {
+	bright := render.Color{R: 10, G: 20, B: 30, A: 255}
+	cells := [][]wordmarkCell{{{glyph: '█', fg: 97}, {glyph: '█', fg: 97}, {glyph: '█', fg: 97}}}
+	img := rasterizeWordmark(cells, 8, 3, wordmarkColors{bright: bright})
+	if img == nil || img.Width != 8 || img.Height != 3 {
+		t.Fatal("image is not 8x3")
+	}
+	for y := 0; y < img.Height; y++ {
+		for x := 0; x < img.Width; x++ {
+			offset := y*img.Stride + x*4
+			if got := img.Pix[offset : offset+4]; got[0] != 30 || got[3] != 255 {
+				t.Fatalf("pixel (%d,%d) = %v, want opaque bright fill", x, y, got)
+			}
+		}
 	}
 }

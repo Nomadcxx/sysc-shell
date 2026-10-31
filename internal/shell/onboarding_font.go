@@ -151,24 +151,24 @@ func onboardingFontCopy(h *PanelHost, locale string, state onboardingFontState) 
 	key, fallback := "", ""
 	switch state {
 	case onboardingFontChecking:
-		key, fallback = "checking", "Checking installed fonts for %s…"
+		key, fallback = "font.checking", "Checking installed fonts for %s…"
 	case onboardingFontCovered:
-		key, fallback = "covered", "Installed fonts already cover %s. No extra package is needed."
+		key, fallback = "font.covered", "Installed fonts already cover %s. No extra package is needed."
 	case onboardingFontMissing:
-		key, fallback = "missing", "No installed fonts cover %s. Noto CJK can add the missing glyphs system-wide."
+		key, fallback = "font.missing", "No installed fonts cover %s. Noto CJK can add the missing glyphs system-wide."
 	case onboardingFontUnavailable:
-		key, fallback = "unavailable", "No installed fonts cover %s. Automatic installation is unavailable on this system; use its package manager to add a CJK font."
+		key, fallback = "font.unavailable", "No installed fonts cover %s. Automatic installation is unavailable on this system; use its package manager to add a CJK font."
 	case onboardingFontInstalling:
-		key, fallback = "installing", "Installing Noto CJK. Approve the request in the system authorization prompt."
+		key, fallback = "font.installing", "Installing Noto CJK. Approve the request in the system authorization prompt."
 	case onboardingFontInstalled:
-		key, fallback = "installed", "Noto CJK is installed. Restart sysc-shell to use the new fonts."
+		key, fallback = "font.installed", "Noto CJK is installed. Restart sysc-shell to use the new fonts."
 	case onboardingFontFailed:
-		key, fallback = "failed", "The font install did not complete. Check the authorization prompt or package manager, then retry."
+		key, fallback = "font.failed", "The font install did not complete. Check the authorization prompt or package manager, then retry."
 	}
 	if key == "" {
 		return ""
 	}
-	copy := onbText(h, "font."+key, fallback)
+	copy := onbText(h, key, fallback)
 	if strings.Contains(copy, "%s") {
 		return fmt.Sprintf(copy, language)
 	}

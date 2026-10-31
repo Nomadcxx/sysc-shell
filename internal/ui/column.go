@@ -112,16 +112,17 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (height int, err
 		// A capsule in a column is its child plus padding. The design does not
 		// use one here yet; the case exists so placing one cannot crash a
 		// surface the way an unmeasurable kind did.
-		if len(n.Children) == 0 {
-			return n.Width, nil
-		}
 		// An explicit height is a reserved box, the way it is for a text field
 		// and in measureNode's own capsule case. Measuring the child instead
 		// let the two paths disagree: a capsule standing in for a fixed-size
 		// icon measured as one line of text here and as its full square there,
-		// and the row it sat in was then laid out too short to hold it.
+		// and the row it sat in was then laid out too short to hold it. An
+		// empty capsule with one is a bar rather than a dot, as in a row.
 		if n.Height > 0 {
 			return n.Height, nil
+		}
+		if len(n.Children) == 0 {
+			return n.Width, nil
 		}
 		if n.Width > 0 {
 			width = n.Width
@@ -496,7 +497,11 @@ func centeredTrack(child *Node, box Rect, measure MeasureText) (Rect, error) {
 	// fractional scale -- 1-3px on a caption at 1.25. A track narrowed to the
 	// exact logical width therefore truncates text that layout believed fit,
 	// so the centred track carries a proportional allowance for that rounding.
-	w += max(2, w/32)
+	// A node that names its width is that wide; only measured text needs
+	// the allowance.
+	if child.Width <= 0 {
+		w += max(2, w/32)
+	}
 	if w >= box.W {
 		return box, nil
 	}
