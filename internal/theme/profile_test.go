@@ -77,9 +77,11 @@ func TestStandardPresetKeepsLegacyBarGeometry(t *testing.T) {
 	if !ok {
 		t.Fatal("standard preset is missing")
 	}
+	// The row states the band. The shipped 48 px bar is this 40 px band and
+	// the default 4 px gap on each side; config pins that end to end.
 	m := standard.Metrics()
-	if m.BarHeight != 48 || m.BarPadding != 6 || m.BarSpacing != 4 {
-		t.Fatalf("standard bar metrics = %d/%d/%d, want 48/6/4", m.BarHeight, m.BarPadding, m.BarSpacing)
+	if m.BarHeight != 40 || m.BarPadding != 6 || m.BarSpacing != 4 {
+		t.Fatalf("standard bar metrics = %d/%d/%d, want 40/6/4", m.BarHeight, m.BarPadding, m.BarSpacing)
 	}
 }
 
@@ -90,7 +92,7 @@ func TestProfileDensityTable(t *testing.T) {
 		want    Metrics
 	}{
 		{DensityMini, Metrics{
-			BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
+			BarHeight: 24, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1, BarItemMin: 24,
 			BaseWidget: 22,
 			IconButton: 23, Checkbox: 15, ToggleBase: 18, SliderKnob: 14,
 			InputHeight: 24, TabHeight: 22,
@@ -100,9 +102,10 @@ func TestProfileDensityTable(t *testing.T) {
 			IconSmall: 14, IconNormal: 16, IconLarge: 20,
 			IconHero:    56,
 			IconProfile: 16,
+			BarText:     RoleCaption,
 		}},
 		{DensityCompact, Metrics{
-			BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2,
+			BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2, BarItemMin: 26,
 			BaseWidget: 27,
 			IconButton: 27, Checkbox: 19, ToggleBase: 22, SliderKnob: 18,
 			InputHeight: 30, TabHeight: 26,
@@ -114,7 +117,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconProfile: 18,
 		}},
 		{DensityDefault, Metrics{
-			BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4,
+			BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4, BarItemMin: 30,
 			BaseWidget: 33,
 			IconButton: 33, Checkbox: 23, ToggleBase: 26, SliderKnob: 22,
 			InputHeight: 36, TabHeight: 32,
@@ -126,7 +129,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconProfile: 18,
 		}},
 		{DensityComfortable, Metrics{
-			BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6,
+			BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6, BarItemMin: 32,
 			BaseWidget: 39,
 			IconButton: 39, Checkbox: 27, ToggleBase: 30, SliderKnob: 26,
 			InputHeight: 42, TabHeight: 38,
@@ -138,7 +141,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconProfile: 20,
 		}},
 		{DensitySpacious, Metrics{
-			BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9,
+			BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9, BarItemMin: 34,
 			BaseWidget: 50,
 			IconButton: 51, Checkbox: 35, ToggleBase: 40, SliderKnob: 34,
 			InputHeight: 54, TabHeight: 50,
@@ -470,16 +473,19 @@ func TestSpacingLadderMatchesTheReference(t *testing.T) {
 	}
 }
 
-func TestBarHeightsAreOddAtEveryDensity(t *testing.T) {
+func TestBarBandsFitTheirCapsulesAndPointerTargets(t *testing.T) {
 	t.Parallel()
-	// An odd band has a true centre row, so a centred glyph lands on a pixel
-	// instead of straddling two.
+	// Keep odd capsules for a pixel-centred glyph. The mini band grows to
+	// 24 px so the full-band pointer target has the approved minimum thickness.
 	for _, d := range Densities() {
 		m, ok := MetricsFor(d)
 		if !ok {
 			t.Fatalf("no row for %v", d)
 		}
-		if m.BarHeight%2 == 0 {
+		if m.BarHeight < 24 || m.BarItemMin < 24 {
+			t.Errorf("%v band/slot %d/%d is below 24 px", d, m.BarHeight, m.BarItemMin)
+		}
+		if d != DensityMini && m.BarHeight%2 == 0 {
 			t.Errorf("%v bar height %d is even", d, m.BarHeight)
 		}
 		if m.CapsuleHeight >= m.BarHeight {
@@ -500,7 +506,7 @@ func TestBarHeightsAreOddAtEveryDensity(t *testing.T) {
 func TestDensityRowsMatchTheReference(t *testing.T) {
 	t.Parallel()
 	want := map[Density]int{
-		DensityMini: 21, DensityCompact: 25, DensityDefault: 31,
+		DensityMini: 24, DensityCompact: 25, DensityDefault: 31,
 		DensityComfortable: 37, DensitySpacious: 47,
 	}
 	for d, h := range want {
@@ -529,8 +535,8 @@ func TestLegacyDensityNameStillResolves(t *testing.T) {
 		t.Fatal("the legacy density name no longer resolves; existing files would be rejected")
 	}
 	current, _ := MetricsFor(DensityDefault)
-	if legacy.BarHeight != 48 || legacy.BarPadding != 6 || legacy.BarSpacing != 4 {
-		t.Errorf("legacy bar = %d/%d/%d, want 48/6/4",
+	if legacy.BarHeight != 40 || legacy.BarPadding != 6 || legacy.BarSpacing != 4 {
+		t.Errorf("legacy bar = %d/%d/%d, want the 40/6/4 band of the shipped 48 px bar",
 			legacy.BarHeight, legacy.BarPadding, legacy.BarSpacing)
 	}
 	legacy.BarHeight = current.BarHeight

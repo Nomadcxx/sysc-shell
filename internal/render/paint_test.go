@@ -28,6 +28,7 @@ var testStyle = Style{
 	Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
 	Secondary:  Color{R: 0xb0, G: 0x50, B: 0xd0, A: 0xff},
 	Tertiary:   Color{R: 0x30, G: 0xc0, B: 0xb0, A: 0xff},
+	Warning:    Color{R: 0xff, G: 0xb3, B: 0x00, A: 0xff},
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
 	OnPrimary:  Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
 	Error:      Color{R: 0xcc, G: 0x22, B: 0x22, A: 0xff},
@@ -2841,6 +2842,7 @@ func TestToneColorSelectsThresholdRoles(t *testing.T) {
 	}{
 		{ui.ToneNormal, testStyle.Accent},
 		{ui.ToneActivity, testStyle.Tertiary},
+		{ui.ToneWarning, testStyle.Warning},
 		{ui.ToneError, testStyle.Error},
 	} {
 		if got := toneColor(testStyle, tc.tone, testStyle.Accent); got != tc.want {
@@ -2849,6 +2851,9 @@ func TestToneColorSelectsThresholdRoles(t *testing.T) {
 	}
 	if got := textColor(testStyle, ui.ToneActivity); got != testStyle.Tertiary {
 		t.Errorf("activity text = %v, want Tertiary", got)
+	}
+	if got := textColor(testStyle, ui.ToneWarning); got != testStyle.Warning {
+		t.Errorf("warning text = %v, want Warning", got)
 	}
 }
 
@@ -3337,5 +3342,38 @@ func TestBareButtonPaintsNoRestingBase(t *testing.T) {
 				t.Error("hovered bare button painted no state layer")
 			}
 		})
+	}
+}
+
+func TestPointerSlotsKeepFixedChromeDimensions(t *testing.T) {
+	for _, size := range []int{19, 24} {
+		for _, side := range []bool{false, true} {
+			n := &ui.Node{Kind: ui.KindCapsule, Width: size, Height: size,
+				Shape: ui.ShapeStadium, Fill: ui.FillAccent}
+			if side {
+				n.MinHeight = size + 10
+			} else {
+				n.MinWidth = size + 10
+			}
+			c := paintChromeNode(t, n, testStyle)
+			cx, cy := centreOf(n)
+			start, end := n.Bounds.X, n.Bounds.X+n.Bounds.W
+			if side {
+				start, end = n.Bounds.Y, n.Bounds.Y+n.Bounds.H
+			}
+			painted := 0
+			for p := start; p < end; p++ {
+				x, y := p, cy
+				if side {
+					x, y = cx, p
+				}
+				if pixelAt(t, c, x, y) != testStyle.Background {
+					painted++
+				}
+			}
+			if painted != size {
+				t.Errorf("size %d side %v: slot painted %d px, want fixed chrome size", size, side, painted)
+			}
+		}
 	}
 }

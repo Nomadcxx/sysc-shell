@@ -264,6 +264,9 @@ type Node struct {
 	Editing bool
 	Width   int
 	Height  int
+	// MinWidth and MinHeight reserve space without replacing intrinsic size.
+	// The bar uses them for pointer slots; zero leaves other surfaces unchanged.
+	MinWidth, MinHeight int
 	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
 	IconSize int
 	// IconProjectFirst resolves Icon in the project catalogue before the
@@ -597,6 +600,8 @@ const (
 	// critical. It paints the theme's Tertiary role: the theme has no warning
 	// token, and Tertiary exists on every palette.
 	ToneActivity
+	// ToneWarning reports a condition needing attention, separately from activity.
+	ToneWarning
 )
 
 // Shape names the corner treatment a node asks for.

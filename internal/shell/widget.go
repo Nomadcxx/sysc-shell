@@ -328,11 +328,12 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 			stack := &ui.Node{Kind: kind, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}
 			w := textWidget{node: cap, inner: stack}
+			tile := runningAppTileFor(m)
 			appPad := runningAppPad
 			if side {
-				appPad = min(appPad, max(0, (contentWidth-runningAppTile)/2))
+				appPad = min(appPad, max(0, (contentWidth-tile)/2))
 			}
-			w.refresh = func(v barView) bool { return refreshRunningApps(cap, stack, v, appPad) }
+			w.refresh = func(v barView) bool { return refreshRunningApps(cap, stack, v, appPad, tile) }
 			out = append(out, w)
 		case "plugin":
 			w := buildPluginWidget(item)

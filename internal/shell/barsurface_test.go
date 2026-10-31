@@ -553,6 +553,86 @@ func matrixPluginFrame(t *testing.T) pluginFrame {
 	return pluginFrame{Root: root, Revision: 1, ViewID: "matrix-view"}
 }
 
+// TestBarDensityRenderMatrix runs the render matrix at every density row. The
+// side matrix above runs only at the standard density, so a layout that holds
+// at 48 px but not on a 21 px mini bar or a 47 px spacious one went unseen.
+func TestBarDensityRenderMatrix(t *testing.T) {
+	plugin := matrixPluginFrame(t)
+	for _, density := range theme.Densities() {
+		for _, edge := range []string{"top", "bottom", "left", "right"} {
+			for _, style := range config.BarStyles {
+				for _, shape := range config.BarShapes {
+					t.Run(fmt.Sprintf("%s/%s/%s/%s", density, edge, style, shape), func(t *testing.T) {
+						cfg, policy := renderMatrixPolicy(edge, style, shape, "compact")
+						cfg, policy = withMatrixDensity(cfg, policy, density)
+						bar := newRenderMatrixBar(t, cfg, policy, plugin, false)
+						for _, output := range []struct {
+							name string
+							w, h int
+						}{{"desktop", 3440, 1440}, {"laptop", 1536, 864}} {
+							for _, scale := range []int{120, 150} {
+								t.Run(fmt.Sprintf("%s/%d", output.name, scale), func(t *testing.T) {
+									w, h := barSurfaceSize(policy, output.w, output.h)
+									renderMatrixSurface(t, bar, policy, w, h, scale, true, true)
+									assertBarPointerTargets(t, bar)
+								})
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func assertBarPointerTargets(t *testing.T, bar *Bar) {
+	t.Helper()
+	bar.mu.Lock()
+	defer bar.mu.Unlock()
+	body := bar.bodyLocked(bar.configured.width, bar.configured.height)
+	side := bar.barAxis() == ui.Vertical
+	band := body.H
+	if side {
+		band = body.W
+	}
+	if band < 24 {
+		t.Errorf("bar band = %d, want at least 24 logical px", band)
+	}
+	for _, action := range []string{"workspace:11", panelControlCenterAction, "running-app:firefox", "plugin:matrix-view:run", "tray-item:0"} {
+		bounds, ok := matrixActionBounds(bar, action)
+		if !ok {
+			t.Errorf("no target for %q", action)
+			continue
+		}
+		main := bounds.W
+		points := [][2]int{{bounds.X + bounds.W/2, body.Y}, {bounds.X + bounds.W/2, body.Y + body.H - 1}}
+		if side {
+			main = bounds.H
+			points = [][2]int{{body.X, bounds.Y + bounds.H/2}, {body.X + body.W - 1, bounds.Y + bounds.H/2}}
+		}
+		if main < 24 {
+			t.Errorf("%q slot = %d, want at least 24 logical px", action, main)
+		}
+		for _, p := range points {
+			if got, hit := bar.hitLocked(p[0], p[1]); !hit || got != action {
+				t.Errorf("%q at band edge %v hits %q/%v", action, p, got, hit)
+			}
+		}
+	}
+}
+
+// withMatrixDensity moves a matrix configuration to another density row the
+// way a settings edit does: the bar geometry that followed the old row
+// follows the new one.
+func withMatrixDensity(cfg config.Config, policy config.Bar, density theme.Density) (config.Config, config.Bar) {
+	from, fromBar := cfg.Theme, cfg.Bar
+	cfg.Theme.Density = density
+	config.RebaseDerivedBar(&cfg, from, fromBar)
+	policy.Height, policy.Padding, policy.Spacing = cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing
+	policy.FontSize = cfg.Bar.FontSize
+	return cfg, policy
+}
+
 func renderMatrixPolicy(edge, style, shape, profile string) (config.Config, config.Bar) {
 	cfg := config.Default()
 	policy := cfg.Bar

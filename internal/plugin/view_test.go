@@ -443,8 +443,8 @@ func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 	if got.Children[2].Tone != ui.ToneSubtle {
 		t.Errorf("subtle tone = %v", got.Children[2].Tone)
 	}
-	if got.Children[3].Tone != ui.ToneActivity {
-		t.Errorf("warning tone = %v, want activity tone %v", got.Children[3].Tone, ui.ToneActivity)
+	if got.Children[3].Tone != ui.ToneWarning {
+		t.Errorf("warning tone = %v, want warning tone %v", got.Children[3].Tone, ui.ToneWarning)
 	}
 }
 
@@ -1253,7 +1253,7 @@ func TestConvertTonesTheGlyphOfABareButton(t *testing.T) {
 		tone v1.Tone
 		want ui.Tone
 	}{
-		{name: "bar warning", view: v1.ViewBar, tone: v1.ToneWarning, want: ui.ToneActivity},
+		{name: "bar warning", view: v1.ViewBar, tone: v1.ToneWarning, want: ui.ToneWarning},
 		{name: "bar error", view: v1.ViewBar, tone: v1.ToneError, want: ui.ToneError},
 		{name: "bar subtle", view: v1.ViewBar, tone: v1.ToneSubtle, want: ui.ToneSubtle},
 		{name: "panel error is filled", view: v1.ViewPanel, tone: v1.ToneError, want: ui.ToneNormal},

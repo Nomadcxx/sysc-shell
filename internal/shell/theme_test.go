@@ -667,8 +667,8 @@ func TestDensityMovesEveryMetricItOwns(t *testing.T) {
 	compact, standard, comfortable := got[theme.DensityCompact],
 		got[theme.DensityDefault], got[theme.DensityComfortable]
 
-	if compact.BarHeight != 25 || standard.BarHeight != 31 || comfortable.BarHeight != 37 {
-		t.Errorf("bar heights = %d/%d/%d, want 25/31/37",
+	if compact.BarHeight != 33 || standard.BarHeight != 39 || comfortable.BarHeight != 45 {
+		t.Errorf("bar heights including two 4 px gaps = %d/%d/%d, want 33/39/45",
 			compact.BarHeight, standard.BarHeight, comfortable.BarHeight)
 	}
 	// Each metric must be monotonic across the rows: a denser theme that made
@@ -690,6 +690,32 @@ func TestDensityMovesEveryMetricItOwns(t *testing.T) {
 		}
 		if m.c <= 0 {
 			t.Errorf("%s is %d at compact", m.name, m.c)
+		}
+	}
+}
+
+func TestWarningAmberContrastsAcrossPalettes(t *testing.T) {
+	for _, name := range theme.PaletteNames() {
+		for _, mode := range []string{"light", "dark"} {
+			for _, highContrast := range []bool{false, true} {
+				tok, _ := theme.NamedPalette(name, mode, highContrast)
+				cfg := config.Default()
+				cfg.Accessibility.HighContrast = highContrast
+				resolved, err := ResolveTheme(cfg, cfg.Bar, tok)
+				if err != nil {
+					t.Fatal(err)
+				}
+				style := resolved.Style()
+				amber := theme.Color(style.Warning)
+				if amber.A != 255 || amber.R <= amber.G || amber.G <= amber.B {
+					t.Errorf("%s/%s high contrast %v: warning %+v is not opaque amber", name, mode, highContrast, amber)
+				}
+				for _, bg := range []Color{style.Background, style.Capsule, style.ContainerHighest} {
+					if ratio := theme.ContrastRatio(amber, theme.Color(bg)); ratio < 4.5 {
+						t.Errorf("%s/%s high contrast %v: warning contrast %.2f against %+v, want 4.5", name, mode, highContrast, ratio, bg)
+					}
+				}
+			}
 		}
 	}
 }

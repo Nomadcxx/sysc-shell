@@ -481,7 +481,12 @@ func Measure(n *Node, measure MeasureText) (int, int, error) {
 
 // measureNode reports the logical size of one leaf node. A meter fills the row
 // content height; a button pads its text on every side.
-func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, error) {
+func measureNode(n *Node, contentHeight int, measure MeasureText) (w, h int, err error) {
+	defer func() {
+		if err == nil {
+			w, h = max(w, n.MinWidth), max(h, n.MinHeight)
+		}
+	}()
 	switch n.Kind {
 	case KindEffect:
 		if err := n.Effect.Validate(); err != nil {

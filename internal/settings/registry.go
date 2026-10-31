@@ -1332,11 +1332,11 @@ func write(assign func(*config.Config, string) error) Setter {
 		if c == nil {
 			return fmt.Errorf("settings: nil config")
 		}
-		from := c.Theme
+		from, fromBar := c.Theme, c.Bar
 		if err := assign(c, v); err != nil {
 			return err
 		}
-		config.RebaseDerivedBar(c, from)
+		config.RebaseDerivedBar(c, from, fromBar)
 		return nil
 	}
 }

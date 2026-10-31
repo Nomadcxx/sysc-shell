@@ -36,6 +36,14 @@ func workspaceID(action string) (uint64, bool) {
 	return id, true
 }
 
+// workspacePillSize is a pill's square: the large icon, but never taller than
+// the capsule the density row fits inside its bar. On the mini and compact
+// rows the large icon is taller than the band's content, and the pills spilled
+// past the bar's edge.
+func workspacePillSize(m theme.Metrics) int {
+	return min(m.IconLarge, m.CapsuleHeight)
+}
+
 // pillNode builds one pill from its state and the theme's density roles.
 //
 // The row is one shape family: every pill carries an explicit stadium, which
@@ -65,7 +73,8 @@ func pillNode(p workspacePill, m theme.Metrics, side bool) *ui.Node {
 	case p.Occupied:
 		fill = ui.FillContainer
 	}
-	width, height := m.IconLarge, m.IconLarge
+	width := workspacePillSize(m)
+	height := width
 	if p.Focused {
 		if side {
 			height *= 2

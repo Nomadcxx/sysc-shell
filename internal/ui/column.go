@@ -70,7 +70,12 @@ func ContentHeight(n *Node, width int, measure MeasureText) (int, error) {
 	return columnChildHeight(n, width, measure)
 }
 
-func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
+func columnChildHeight(n *Node, width int, measure MeasureText) (height int, err error) {
+	defer func() {
+		if err == nil {
+			height = max(height, n.MinHeight)
+		}
+	}()
 	switch n.Kind {
 	case KindEffect:
 		if err := n.Effect.Validate(); err != nil {

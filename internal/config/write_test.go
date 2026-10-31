@@ -404,15 +404,16 @@ func TestThemeSelectorFreeRoundTripKeepsLegacyDensity(t *testing.T) {
 
 func TestThemePresetChangeDoesNotPinTheDerivedBar(t *testing.T) {
 	t.Parallel()
-	// Switching to compact moves the derived bar to 25 px. That derived value
-	// must not be recorded as an explicit override, or a later preset change
-	// would leave the bar stuck at the old height.
+	// Switching to compact moves the derived bar to its 25 px band plus the
+	// 4 px gap on each side. That derived value must not be recorded as an
+	// explicit override, or a later preset change would leave the bar stuck at
+	// the old height.
 	c, err := Parse([]byte(`{"theme":{"preset":"compact"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Bar.Height != 25 {
-		t.Fatalf("derived height = %d, want compact's 25", c.Bar.Height)
+	if c.Bar.Height != 33 {
+		t.Fatalf("derived height = %d, want compact's 25 px band and two 4 px gaps", c.Bar.Height)
 	}
 	if w := toWire(c); w.Bar != nil {
 		t.Errorf("bar block = %+v, want nothing: the height is derived", w.Bar)
@@ -482,6 +483,50 @@ func TestFrameCapWriteRoundTrip(t *testing.T) {
 			if has := strings.Contains(string(data), "frame-cap"); has != (cap != theme.RepaintDisplay) {
 				t.Fatalf("%s/%s: frame-cap written = %v in %s", p, cap, has, data)
 			}
+		}
+	}
+}
+
+// A gap with no height moves the bar rather than shrinking it, and the height
+// that follows the gap is read back as derived, not written as an override.
+func TestBarGapMovesTheBodyAndStaysDerived(t *testing.T) {
+	t.Parallel()
+	c, err := Parse([]byte(`{"theme":{"density":"mini"},"bar":{"gap":8}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Bar.Body() != 24 || c.Bar.Height != 40 {
+		t.Fatalf("mini bar with an 8 px gap = height %d body %d, want the 24 px band in a 40 px bar", c.Bar.Height, c.Bar.Body())
+	}
+	w := toWire(c)
+	if w.Bar == nil || w.Bar.Gap == nil || *w.Bar.Gap != 8 {
+		t.Fatalf("bar block = %+v, want the explicit gap", w.Bar)
+	}
+	if w.Bar.Height != nil {
+		t.Errorf("height written as %d, want it left to follow the gap", *w.Bar.Height)
+	}
+}
+
+func TestExplicitDefaultHeightSurvivesGapRoundTrip(t *testing.T) {
+	for _, doc := range []string{
+		`{"bar":{"height":48,"gap":8}}`,
+		`{"outputs":[{"connector":"DP-1","bar":{"height":48,"gap":8}}]}`,
+	} {
+		cfg, err := Parse([]byte(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := Write(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		back, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bar := back.ForConnector("DP-1")
+		if bar.Height != 48 || bar.Gap != 8 {
+			t.Fatalf("%s: reloaded bar height/gap = %d/%d, want explicit 48/8", doc, bar.Height, bar.Gap)
 		}
 	}
 }

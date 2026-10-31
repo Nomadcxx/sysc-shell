@@ -1370,10 +1370,18 @@ func TestToastCriticalCardStrokesTheErrorRim(t *testing.T) {
 
 func TestToastBlurShapeCoversEachCard(t *testing.T) {
 	r, h, _, _ := glassToasts(t, true, note(1, "first"), note(2, "second"))
-	shape := h.harness().opens[0].Callbacks.BlurShape()
 	r.mu.Lock()
+	h.scale120["eDP-1"] = 150
+	shape := h.blurShape("eDP-1")
 	cards := append([]toastCard(nil), h.cards["eDP-1"]...)
+	var want []ui.Rect
+	for _, card := range cards {
+		want = append(want, ui.BlurStrips(ui.SurfaceShape{Body: h.drawnRect("eDP-1", card), Radius: h.style.Radius, Scale: 150})...)
+	}
 	r.mu.Unlock()
+	if !slices.Equal(shape, want) {
+		t.Fatalf("blur strips = %+v, want output-scaled strips %+v", shape, want)
+	}
 	if len(cards) != 2 || len(shape) == 0 {
 		t.Fatalf("cards %d, strips %d", len(cards), len(shape))
 	}

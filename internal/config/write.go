@@ -323,7 +323,9 @@ func barDiff(got, base Bar) *wireBar {
 		w.Edge = &v
 		set = true
 	}
-	if got.Height != base.Height {
+	// A height that differs only because the gap moved follows the gap, the
+	// rule applyBar reads it back with, so it is not an override.
+	if got.Height != base.Height-2*base.Gap+2*got.Gap {
 		v := got.Height
 		w.Height = &v
 		set = true

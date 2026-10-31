@@ -160,6 +160,7 @@ func newBarWithText(theme Theme, policy config.Bar, connector string, text *rend
 		text:               text,
 		invalidations:      make(chan struct{}, 1),
 		style:              barStyle(theme),
+		pointer:            interaction{stateLayer: true},
 		anim:               newAnimator(nil, false, theme.Motion),
 		stopAnim:           make(chan struct{}),
 	}
@@ -288,7 +289,7 @@ func (b *Bar) setAxisHandler(fn func(action string, delta int) bool) {
 func (b *Bar) trayArrangement() trayArrangement {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return arrangeTray(b.trayItems, b.trayPrefs, b.trayAvailable, trayItemSize, b.theme.Metrics.BarSpacing)
+	return arrangeTray(b.trayItems, b.trayPrefs, b.trayAvailable, max(trayItemSize, b.theme.Metrics.BarItemMin), b.theme.Metrics.BarSpacing)
 }
 
 // setOutputSize records the screen's logical size. The Wayland owner calls it
@@ -483,7 +484,7 @@ func (b *Bar) blurShape() []ui.Rect {
 				if radius <= 0 {
 					radius = min(n.Bounds.W, n.Bounds.H)
 				}
-				out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: n.Bounds, Radius: radius, Scale: b.style.Scale120})...)
+				out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: render.ChromeBounds(n), Radius: radius, Scale: b.style.Scale120})...)
 			}
 		}
 		return out
@@ -520,6 +521,13 @@ func (b *Bar) layoutLocked(width, height int) error {
 	sections := b.sections()
 	content := b.contentLocked(width, height)
 	axis := b.barAxis()
+	for _, section := range sections {
+		for _, n := range section {
+			if _, err := barPointerSlots(n, axis, b.theme.Metrics.BarItemMin); err != nil {
+				return err
+			}
+		}
+	}
 	// The first pass only sizes the tray's available width; the authoritative
 	// overflow is the second, after the tray nodes are rebuilt.
 	if _, err := ui.ArrangeBar(content, axis,
@@ -527,17 +535,33 @@ func (b *Bar) layoutLocked(width, height int) error {
 		return err
 	}
 	available := b.trayAvailableLocked(content, sections[1], sections[2])
-	arranged := arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Metrics.BarSpacing)
+	slot := max(trayItemSize, b.theme.Metrics.BarItemMin)
+	arranged := arrangeTray(b.trayItems, b.trayPrefs, available, slot, b.theme.Metrics.BarSpacing)
 	if len(arranged.Overflow) > 0 || len(arranged.Hidden) > 0 {
-		reserve := trayItemSize
-		if len(sections[2]) > 0 || available > trayItemSize {
+		drawer := b.trayDrawerNode()
+		if _, err := barPointerSlots(drawer, axis, b.theme.Metrics.BarItemMin); err != nil {
+			return err
+		}
+		reserve, _, err := ui.Measure(drawer, measure)
+		if axis == ui.Vertical {
+			reserve, err = ui.ContentHeight(drawer, content.W, measure)
+		}
+		if err != nil {
+			return err
+		}
+		if len(sections[2]) > 0 || available > reserve {
 			reserve += b.theme.Metrics.BarSpacing
 		}
 		available = max(0, available-reserve)
-		arranged = arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Metrics.BarSpacing)
+		arranged = arrangeTray(b.trayItems, b.trayPrefs, available, slot, b.theme.Metrics.BarSpacing)
 	}
 	b.trayArranged, b.trayAvailable = arranged, available
 	b.rebuildTrayNodesLocked()
+	for _, n := range b.trayNodes {
+		if _, err := barPointerSlots(n, axis, b.theme.Metrics.BarItemMin); err != nil {
+			return err
+		}
+	}
 	sections = b.sections()
 	over, err := ui.ArrangeBar(content, axis, sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
 	if err != nil {
@@ -576,9 +600,8 @@ func (b *Bar) trayAvailableLocked(content ui.Rect, center, right []*ui.Node) int
 		p, extent := position(last)
 		start = p + extent
 	}
-	if len(center) > 0 || len(right) > 0 {
-		start += b.theme.Metrics.BarSpacing
-	}
+	// ArrangeBar reserves this separation even for an empty centre lane.
+	start += b.theme.Metrics.BarSpacing
 	used := 0
 	if len(right) > 0 {
 		p, _ := position(right[0].Bounds)
@@ -599,11 +622,13 @@ func (b *Bar) rebuildTrayNodesLocked() {
 		})
 	}
 	if len(b.trayArranged.Overflow) > 0 || len(b.trayArranged.Hidden) > 0 {
-		b.trayNodes = append(b.trayNodes, &ui.Node{
-			Kind: ui.KindButton, Text: "…", Padding: b.theme.Metrics.CapsulePadding, Action: trayDrawerAction,
-			Tooltip: "Tray items", Focusable: true, Name: "Tray items", Role: "button",
-		})
+		b.trayNodes = append(b.trayNodes, b.trayDrawerNode())
 	}
+}
+
+func (b *Bar) trayDrawerNode() *ui.Node {
+	return &ui.Node{Kind: ui.KindButton, Text: "…", Padding: b.theme.Metrics.CapsulePadding, Action: trayDrawerAction,
+		Tooltip: "Tray items", Focusable: true, Name: "Tray items", Role: "button"}
 }
 
 func (b *Bar) trayTooltip(item tray.Item) string {
@@ -681,8 +706,7 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
-	// The bar's interaction policy leaves hover tinting off; press still marks
-	// a real activation.
+	// Hover and press use the same state layers as the other surfaces.
 	b.resolveGradientMotionLocked(root)
 	b.resolveMediaMotionLocked(root)
 	resolveProgressMotion(b.anim, root)
@@ -942,11 +966,12 @@ func nodeActionBounds(n *ui.Node, action string) (ui.Rect, bool) {
 }
 
 func (b *Bar) hitLocked(x, y int) (string, bool) {
+	body := b.bodyLocked(b.configured.width, b.configured.height)
 	sections := b.sections()
 	for i := len(sections) - 1; i >= 0; i-- {
 		section := sections[i]
 		for j := len(section) - 1; j >= 0; j-- {
-			if action, ok := ui.Hit(section[j], x, y); ok {
+			if action, ok := hitBarNode(section[j], x, y, body, b.barAxis()); ok {
 				return action, true
 			}
 		}
@@ -954,13 +979,105 @@ func (b *Bar) hitLocked(x, y int) (string, bool) {
 	return "", false
 }
 
+// barPointerSlots reserves nonoverlapping main-axis space for each control.
+// Glyphs and labels keep their intrinsic cross-axis size inside the capsule.
+func barPointerSlots(n *ui.Node, axis ui.Axis, size int) (int, error) {
+	if n == nil {
+		return 0, nil
+	}
+	n.MinWidth, n.MinHeight = 0, 0
+	floor, count := 0, 0
+	inline := axis == ui.Horizontal && (n.Kind == ui.KindRow || n.Kind == ui.KindButton) || axis == ui.Vertical && n.Kind == ui.KindColumn
+	for _, child := range n.Children {
+		childMin, err := barPointerSlots(child, axis, size)
+		if err != nil {
+			return 0, err
+		}
+		if inline {
+			if count > 0 {
+				floor += n.Gap
+			}
+			floor += childMin
+		} else {
+			floor = max(floor, childMin)
+		}
+		count++
+	}
+	if len(n.Children) == 0 {
+		w, h, err := ui.Measure(n, func(string, ui.TextAttrs) (int, int) { return 0, 0 })
+		if err != nil {
+			return 0, err
+		}
+		floor = w
+		if axis == ui.Vertical {
+			floor = h
+		}
+	} else {
+		pad := n.Padding
+		if axis == ui.Horizontal && n.Kind == ui.KindCapsule {
+			pad = ui.CapsulePadX(n)
+		}
+		if floor > 0 {
+			floor += 2 * pad
+		}
+	}
+	if n.Action != "" {
+		floor = max(floor, size)
+	}
+	if axis == ui.Vertical {
+		n.MinHeight = max(floor, n.Height)
+		return n.MinHeight, nil
+	}
+	n.MinWidth = max(floor, n.Width)
+	return n.MinWidth, nil
+}
+
+// hitBarNode extends a control's target across the visible band, excluding
+// the outside gap and any subtree layout dropped. Paint bounds stay intact.
+func hitBarNode(n *ui.Node, x, y int, body ui.Rect, axis ui.Axis) (string, bool) {
+	if n == nil || n.Absent || n.Kind == ui.KindEffect || n.State.Has(ui.StateDisabled) || n.Bounds.W <= 0 || n.Bounds.H <= 0 {
+		return "", false
+	}
+	if !barTargetBounds(n.Bounds, body, axis).Contains(x, y) {
+		return "", false
+	}
+	for i := len(n.Children) - 1; i >= 0; i-- {
+		if n.Children[i] == nil {
+			continue
+		}
+		childBody := body
+		// Cross-axis siblings keep separate targets. A valid multi-row plugin
+		// must not have its first row covered by the last row's expansion.
+		if len(n.Children) > 1 && (axis == ui.Horizontal && n.Kind == ui.KindColumn || axis == ui.Vertical && n.Kind == ui.KindRow) {
+			childBody = intersectRects(body, n.Children[i].Bounds)
+		}
+		if action, ok := hitBarNode(n.Children[i], x, y, childBody, axis); ok {
+			return action, true
+		}
+	}
+	return n.Action, n.Action != ""
+}
+
+func barTargetBounds(bounds, body ui.Rect, axis ui.Axis) ui.Rect {
+	if bounds.W <= 0 || bounds.H <= 0 || body.W <= 0 || body.H <= 0 {
+		return bounds
+	}
+	if axis == ui.Vertical {
+		bounds.X, bounds.W = body.X, body.W
+	} else {
+		bounds.Y, bounds.H = body.Y, body.H
+	}
+	return bounds
+}
+
 func (b *Bar) scrollActionAtLocked(x, y int) (config.BarScrollAction, string, bool) {
+	body := b.bodyLocked(b.configured.width, b.configured.height)
 	sections := b.widgets()
 	for sectionIndex := len(sections) - 1; sectionIndex >= 0; sectionIndex-- {
 		section := sections[sectionIndex]
 		for widgetIndex := len(section) - 1; widgetIndex >= 0; widgetIndex-- {
 			key := fmt.Sprintf("%d:%d", sectionIndex, widgetIndex)
-			if action, key, ok := scrollActionInWidget(section[widgetIndex], x, y, key); ok {
+			if action, key, ok := scrollActionInWidget(section[widgetIndex], x, y, key, body, b.barAxis()); ok {
 				return action, key, true
 			}
 		}
@@ -968,14 +1085,14 @@ func (b *Bar) scrollActionAtLocked(x, y int) (config.BarScrollAction, string, bo
 	return "", "", false
 }
 
-func scrollActionInWidget(w textWidget, x, y int, key string) (config.BarScrollAction, string, bool) {
+func scrollActionInWidget(w textWidget, x, y int, key string, body ui.Rect, axis ui.Axis) (config.BarScrollAction, string, bool) {
 	node := visibleWidgetNode(w)
-	if node == nil || !node.Bounds.Contains(x, y) {
+	if node == nil || !barTargetBounds(node.Bounds, body, axis).Contains(x, y) {
 		return "", "", false
 	}
 	for memberIndex := len(w.members) - 1; memberIndex >= 0; memberIndex-- {
 		memberKey := fmt.Sprintf("%s:%d", key, memberIndex)
-		if action, memberKey, ok := scrollActionInWidget(w.members[memberIndex], x, y, memberKey); ok {
+		if action, memberKey, ok := scrollActionInWidget(w.members[memberIndex], x, y, memberKey, body, axis); ok {
 			return action, memberKey, true
 		}
 	}
@@ -1004,6 +1121,7 @@ func (b *Bar) tooltipAt(x, y int) (string, *ui.Node, ui.Rect, bool) {
 }
 
 func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
+	body, axis := b.bodyLocked(b.configured.width, b.configured.height), b.barAxis()
 	for _, section := range b.widgets() {
 		for _, w := range section {
 			if w.node != nil && visibleWidgetNode(w) == nil {
@@ -1013,20 +1131,20 @@ func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
 				if visibleWidgetNode(m) == nil {
 					continue
 				}
-				if tip := widgetTooltip(m); (tip != "" || m.tooltipTree() != nil) && m.node.Bounds.Contains(x, y) {
+				if tip := widgetTooltip(m); (tip != "" || m.tooltipTree() != nil) && barTargetBounds(m.node.Bounds, body, axis).Contains(x, y) {
 					return tip, m.tooltipTree(), m.node.Bounds, true
 				}
 			}
 			if w.node == nil {
 				continue
 			}
-			if tip := widgetTooltip(w); (tip != "" || w.tooltipTree() != nil) && w.node.Bounds.Contains(x, y) {
+			if tip := widgetTooltip(w); (tip != "" || w.tooltipTree() != nil) && barTargetBounds(w.node.Bounds, body, axis).Contains(x, y) {
 				return tip, w.tooltipTree(), w.node.Bounds, true
 			}
 		}
 	}
 	for _, node := range b.trayNodes {
-		if node.Tooltip != "" && node.Bounds.Contains(x, y) {
+		if node.Tooltip != "" && barTargetBounds(node.Bounds, body, axis).Contains(x, y) {
 			return node.Tooltip, nil, node.Bounds, true
 		}
 	}
@@ -1215,6 +1333,10 @@ func (b *Bar) trayGestureLocked(action string) (trayGesture, bool) {
 func barStyle(theme Theme) render.Style {
 	style := theme.Style()
 	style.Scale120 = ui.ScaleUnit
+	if theme.BarTextSize > 0 && theme.BarTextSize != style.Size {
+		applyBarLabelSize(&style.Type, theme.BarTextSize)
+		style.Size = theme.BarTextSize
+	}
 	// An attached bar meets the screen along its edge and curves into the
 	// screen's sides at both ends, the shape blurShape publishes.
 	if g := theme.barGeometry(); g.Attached() {
