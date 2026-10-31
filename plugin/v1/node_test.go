@@ -1242,3 +1242,32 @@ func TestMinorTwentyFourGaugeFieldsRoundTripOnTheWire(t *testing.T) {
 		}
 	}
 }
+
+func TestMinorTwentyFiveGaugeBandLabelRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	var n Node
+	if err := json.Unmarshal([]byte(`{"kind":"gauge","value":0.5,"bands":[{"until":1,"severity":"good","label":"Moderate"}]}`), &n); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(&n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"label":"Moderate"`) {
+		t.Fatalf("band label was lost on the wire: %s", raw)
+	}
+}
+
+func TestMinorTwentyFiveRejectsOversizedGaugeBandLabel(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{"kind":"gauge","value":0.5,"bands":[{"until":1,"severity":"good","label":"` + strings.Repeat("x", 65) + `"}]}`)
+	var n Node
+	if err := json.Unmarshal(raw, &n); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(&n, ViewPanel); err == nil {
+		t.Fatal("accepted a 65-byte gauge band label")
+	}
+}

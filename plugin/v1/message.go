@@ -32,7 +32,9 @@ const (
 	// audit's Review and Risky shields, and paints a bare button's icon in
 	// the button's tone. A plugin that uses those icons declares minor 23 so
 	// an older shell refuses it instead of failing to convert its views.
-	ProtocolMinor = 24
+	// Minor 24 adds half-circle gauges with severity bands.
+	// Minor 25 adds text labels to those bands.
+	ProtocolMinor = 25
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.

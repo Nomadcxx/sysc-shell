@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -112,6 +113,31 @@ func TestHalfGaugeSweepsLeftToRight(t *testing.T) {
 	}
 	if got := ringColorAtSweep(c, .98, true); got != severityPaint(ui.SeverityHigh, testStyle.ContainerHighest) {
 		t.Fatalf("end of sweep = %#v, want the high zone", got)
+	}
+}
+
+func TestHalfGaugePaintsBandLabels(t *testing.T) {
+	t.Parallel()
+
+	var labeled ui.Node
+	if err := json.Unmarshal([]byte(`{"bands":[{"until":0.25,"severity":0,"label":"Low"},{"until":0.5,"severity":1,"label":"Moderate"},{"until":0.75,"severity":2,"label":"High"},{"until":1,"severity":2,"label":"Extreme"}]}`), &labeled); err != nil {
+		t.Fatal(err)
+	}
+	labeled.Form = ui.GaugeHalf
+	labeled.Value = 0.4
+	labeled.ValueText = "High"
+
+	withLabels := paintGauge(t, &labeled, 240, 180)
+	withoutLabels := paintGauge(t, &ui.Node{
+		Value: 0.4, ValueText: "High", Form: ui.GaugeHalf, Bands: []ui.GaugeBand{
+			{Until: 0.25, Severity: ui.SeverityGood},
+			{Until: 0.5, Severity: ui.SeverityModerate},
+			{Until: 0.75, Severity: ui.SeverityHigh},
+			{Until: 1, Severity: ui.SeverityHigh},
+		},
+	}, 240, 180)
+	if bytes.Equal(withLabels.Pix, withoutLabels.Pix) {
+		t.Fatal("half gauge ignored its severity-band labels")
 	}
 }
 

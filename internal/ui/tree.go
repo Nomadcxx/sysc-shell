@@ -620,6 +620,8 @@ type GaugeBand struct {
 	Until float64
 	// Severity picks the painted colour.
 	Severity Severity
+	// Label names the category represented by this zone.
+	Label string
 }
 
 // GaugeForm selects the arc a gauge paints.

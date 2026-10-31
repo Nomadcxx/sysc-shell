@@ -434,6 +434,7 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 			out.Bands = append(out.Bands, ui.GaugeBand{
 				Until:    band.Until,
 				Severity: gaugeSeverity(band.Severity),
+				Label:    band.Label,
 			})
 		}
 	case v1.KindGraph:

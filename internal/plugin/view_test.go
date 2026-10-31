@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1324,6 +1326,23 @@ func TestConvertGaugeFormAndBands(t *testing.T) {
 	}
 	if gauge.Bands[0].Severity != ui.SeverityGood || gauge.Bands[1].Severity != ui.SeverityHigh {
 		t.Fatalf("severity did not convert: %+v", gauge.Bands)
+	}
+}
+
+func TestConvertGaugeBandLabels(t *testing.T) {
+	t.Parallel()
+
+	var root v1.Node
+	if err := json.Unmarshal([]byte(`{"kind":"column","children":[{"kind":"gauge","form":"half","value":0.5,"bands":[{"until":1,"severity":"good","label":"Low"}]}]}`), &root); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := Convert(&root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := reflect.ValueOf(tree.Children[0].Bands[0]).FieldByName("Label")
+	if !label.IsValid() || label.String() != "Low" {
+		t.Fatalf("converted gauge band label = %v, want Low", label)
 	}
 }
 

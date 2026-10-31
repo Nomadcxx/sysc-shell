@@ -77,6 +77,8 @@ const (
 	// MaxGaugeBands bounds a gauge's severity zones. Six is enough for the
 	// six air quality categories and keeps the arc readable.
 	MaxGaugeBands = 6
+	// MaxGaugeBandLabelBytes bounds text before the host shapes it.
+	MaxGaugeBandLabelBytes = 64
 	// MinCycleMS and MaxCycleMS bound one pass through a sprite cycle. Faster
 	// than this, a pose lasts under a frame at 60 Hz for a full cycle; slower,
 	// the motion stops reading as motion.
@@ -174,6 +176,8 @@ type GaugeBand struct {
 	Until float64 `json:"until"`
 	// Severity picks the painted colour.
 	Severity Severity `json:"severity"`
+	// Label names the category represented by this zone. Minor twenty-five.
+	Label string `json:"label,omitempty"`
 }
 
 // EventKind names an input event a node declares it can emit. A node receives
@@ -555,6 +559,9 @@ func (v *validator) nodeIn(n *Node, path string, depth int, segmentChild bool) e
 		return err
 	}
 	if err := v.minorTwentyFour(n, path); err != nil {
+		return err
+	}
+	if err := v.minorTwentyFive(n, path); err != nil {
 		return err
 	}
 	if n.Selected && (!segmentChild || n.Kind != KindButton) {
@@ -1143,6 +1150,16 @@ func (v *validator) minorTwentyFour(n *Node, path string) error {
 			return fmt.Errorf("%s.bands[%d]: unknown severity %q", path, i, band.Severity)
 		}
 		previous = band.Until
+	}
+	return nil
+}
+
+// minorTwentyFive bounds the optional text painted for each severity zone.
+func (v *validator) minorTwentyFive(n *Node, path string) error {
+	for i, band := range n.Bands {
+		if len(band.Label) > MaxGaugeBandLabelBytes {
+			return fmt.Errorf("%s.bands[%d]: label is %d bytes, more than the %d allowed", path, i, len(band.Label), MaxGaugeBandLabelBytes)
+		}
 	}
 	return nil
 }

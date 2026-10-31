@@ -275,6 +275,12 @@ func paintBandedGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 		}
 	}
 
+	if half && !n.Absent {
+		if err := paintGaugeBandLabels(c, n.Bands, box, text, style, cx, cy, inner, start, sweep, n.Tone); err != nil {
+			return err
+		}
+	}
+
 	// The needle answers "where is it now". A stopped arc would instead read as
 	// progress toward a goal, and a threshold reading is not a goal.
 	if !n.Absent {
@@ -304,6 +310,95 @@ func paintBandedGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 	}
 	spec := textSpec(style, n).AtSize(fitGaugeText(text, value, centre.W, radialValueSize(size, value)))
 	return paintCentredTextColor(c, value, centre, text, spec, true, textColor(style, n.Tone), false)
+}
+
+// paintGaugeBandLabels names each zone inside the arc, where labels do not
+// compete with the reading below it. Slots follow adjacent zone centres so
+// longer names are shortened before they can overlap a neighbouring label.
+func paintGaugeBandLabels(c *Canvas, bands []ui.GaugeBand, box ui.Rect, text *TextRenderer, style Style, cx, cy, inner, start, sweep float64, tone ui.Tone) error {
+	if len(bands) == 0 || text == nil || box.W <= 0 {
+		return nil
+	}
+	labelSize := max(style.Scale120.Physical(8), 1)
+	spec := style.Type.Spec(theme.RoleCaption).AtSize(labelSize)
+	labelRadius := max(inner-float64(labelSize)*1.4, 0)
+	centres := make([]float64, len(bands))
+	previous := 0.0
+	for i, band := range bands {
+		end := band.Until
+		if i == len(bands)-1 && end < 1 {
+			end = 1
+		}
+		progress := (previous + end) / 2
+		centres[i] = cx + math.Sin(start+progress*sweep)*labelRadius
+		previous = band.Until
+	}
+
+	previous = 0
+	for i, band := range bands {
+		if band.Label == "" {
+			previous = band.Until
+			continue
+		}
+		end := band.Until
+		if i == len(bands)-1 && end < 1 {
+			end = 1
+		}
+		progress := (previous + end) / 2
+		angle := start + progress*sweep
+		x := centres[i]
+		left, right := float64(box.X+2), float64(box.X+box.W-2)
+		if i > 0 {
+			left = (centres[i-1] + x) / 2
+		}
+		if i+1 < len(bands) {
+			right = (x + centres[i+1]) / 2
+		}
+		width := int(right-left) - 2
+		if width <= 0 {
+			previous = band.Until
+			continue
+		}
+		label := compactGaugeBandLabel(band.Label, width, text, spec)
+		if label != "" {
+			_, height, err := text.Measure(label, spec, false)
+			if err != nil {
+				return err
+			}
+			y := cy - math.Cos(angle)*labelRadius
+			labelBox := ui.Rect{X: int(x) - width/2, Y: int(y) - height/2, W: width, H: height}
+			if err := paintCentredTextColor(c, label, labelBox, text, spec, false, textColor(style, tone), false); err != nil {
+				return err
+			}
+		}
+		previous = band.Until
+	}
+	return nil
+}
+
+func compactGaugeBandLabel(label string, width int, text *TextRenderer, spec TextSpec) string {
+	candidates := []string{label}
+	switch label {
+	case "Very Good":
+		candidates = append(candidates, "V. Good", "V.G.")
+	case "Very High":
+		candidates = append(candidates, "V. High", "V.H.")
+	case "Very Poor":
+		candidates = append(candidates, "V. Poor", "V.P.")
+	case "Extremely Poor":
+		candidates = append(candidates, "E. Poor", "E.P.")
+	case "Moderate":
+		candidates = append(candidates, "Mod.")
+	case "Extreme":
+		candidates = append(candidates, "Ext.")
+	}
+	for _, candidate := range candidates {
+		measured, _, err := text.Measure(candidate, spec, false)
+		if err == nil && measured <= width {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // fitGaugeText shrinks a centre label until it fits the width available to it.
