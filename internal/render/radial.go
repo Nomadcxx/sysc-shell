@@ -302,8 +302,32 @@ func paintBandedGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 	} else if value == "" {
 		value = fmt.Sprintf("%.0f%%", fraction*100)
 	}
-	spec := textSpec(style, n).AtSize(radialValueSize(size, value))
+	spec := textSpec(style, n).AtSize(fitGaugeText(text, value, centre.W, radialValueSize(size, value)))
 	return paintCentredTextColor(c, value, centre, text, spec, true, textColor(style, n.Tone), false)
+}
+
+// fitGaugeText shrinks a centre label until it fits the width available to it.
+//
+// A percentage is short enough to scale with the arc, but a banded gauge can
+// carry a reading and its category ("19.9 ug/m3 Fair"), which at the
+// arc-derived size overflows and truncates. Shrinking beats truncating here
+// because the label is the accessible form of the gauge: a clipped reading is
+// worse than a smaller one. It never grows text past the size the arc asked
+// for, and stops at a floor so a pathological label still truncates rather
+// than vanishing.
+func fitGaugeText(text *TextRenderer, value string, width, size int) int {
+	if text == nil || width <= 0 || size <= 0 || value == "" {
+		return size
+	}
+	const minSize = 10
+	for size > minSize {
+		w, _, err := text.Measure(value, TextSpec{Size: size}, true)
+		if err != nil || w <= width {
+			return size
+		}
+		size -= max(size/10, 1)
+	}
+	return minSize
 }
 
 // paintNeedle draws a radial hairline at one angle of a gauge.
