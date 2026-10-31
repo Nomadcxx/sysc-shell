@@ -128,6 +128,28 @@ func TestBandedGaugeDrawsNeedleAtValue(t *testing.T) {
 	}
 }
 
+func TestFitGaugeTextLeavesRoomForTheArc(t *testing.T) {
+	t.Parallel()
+	// A banded gauge carries a reading and its category, which is far wider
+	// than the percentage the arc-derived size was tuned for. Fitting must
+	// shrink it to leave a margin, not merely stop at the arc's full width.
+	tr := NewTextRenderer(mustTestFace(t))
+	label := "19.9 µg/m³ Fair"
+	const width = 200
+	base := radialValueSize(width, label)
+	got := fitGaugeText(tr, label, width, base)
+	if got >= base {
+		t.Fatalf("fitGaugeText kept the arc size %d for a %dpx box, so it never shrank", base, width)
+	}
+	measured, _, err := tr.Measure(label, TextSpec{Size: got}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measured > width*9/10 {
+		t.Fatalf("label measured %dpx in a %dpx box, leaving no margin", measured, width)
+	}
+}
+
 func TestBandedGaugeAbsentPaintsNoZonesOrNeedle(t *testing.T) {
 	t.Parallel()
 	c := paintGauge(t, &ui.Node{Absent: true, Value: .5, Bands: halfGaugeBands()}, 96, 96)
@@ -222,6 +244,14 @@ func ringColorAtSweep(c *Canvas, progress float64, half bool) Color {
 		}
 	}
 	return best
+}
+
+// inkAt reports whether a pixel carries any paint.
+func inkAt(c *Canvas, x, y int) bool {
+	if x < 0 || y < 0 || x >= c.Width || y >= c.Height {
+		return false
+	}
+	return c.Pix[y*c.Stride+x*4+3] > 8
 }
 
 func countInk(c *Canvas, box ui.Rect) int {

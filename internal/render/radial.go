@@ -320,9 +320,11 @@ func fitGaugeText(text *TextRenderer, value string, width, size int) int {
 		return size
 	}
 	const minSize = 10
+	// Leave a margin so the label never touches the arc's legs.
+	budget := width * 9 / 10
 	for size > minSize {
 		w, _, err := text.Measure(value, TextSpec{Size: size}, true)
-		if err != nil || w <= width {
+		if err != nil || w <= budget {
 			return size
 		}
 		size -= max(size/10, 1)
