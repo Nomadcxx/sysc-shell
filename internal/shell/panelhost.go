@@ -431,6 +431,7 @@ type PanelHost struct {
 	// onbPage and onbScroll are the wizard's step and retained body scroll.
 	onbPage             onboardingPage
 	onbScroll           int
+	onbScrollTop        bool
 	onbPluginSelections map[string]bool
 	onbFontLocale       string
 	onbFontState        onboardingFontState
@@ -4345,6 +4346,9 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	}
 	if h.id == PanelOnboarding {
 		h.onbScroll = onboardingScrollOffset(h.root)
+		if h.onbScrollTop {
+			h.onbScroll, h.onbScrollTop = 0, false
+		}
 	}
 	focusedKey := ""
 	focusedName := ""

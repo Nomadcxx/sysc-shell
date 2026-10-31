@@ -608,10 +608,12 @@ func onbIdleCards(r *Registry, h *PanelHost) *ui.Node {
 	for _, mode := range modes {
 		var chip *ui.Node
 		if !available[mode.value] {
+			reasonWidth, _ := h.measureText()(mode.reason, ui.TextAttrs{Role: theme.RoleCaption})
+			chipWidth := max(min(width-2*h.metrics().CardPadding, reasonWidth+2*theme.MarginS), 0)
 			chip = &ui.Node{
-				Kind: ui.KindCapsule, Key: "onb-idle-reason:" + mode.value, Padding: theme.MarginXS,
+				Kind: ui.KindCapsule, Key: "onb-idle-reason:" + mode.value, Width: chipWidth, Padding: theme.MarginXS,
 				PaddingX: theme.MarginS, Fill: ui.FillContainerHighest, Shape: ui.ShapeStadium,
-				Children: []*ui.Node{{Kind: ui.KindText, Text: mode.reason, TextRole: theme.RoleCaption}},
+				Children: []*ui.Node{h.wrappedText(mode.reason, theme.RoleCaption, ui.ToneNormal, max(chipWidth-2*theme.MarginS, 0), 0)},
 			}
 		}
 		cards = append(cards, onbChoiceCardWith(h, "onb-idle:"+mode.value, "pick:idle.after="+mode.value,
@@ -1058,7 +1060,7 @@ func onbPlaceCard(r *Registry, h *PanelHost) *ui.Node {
 		theme.RoleCaption, ui.ToneSubtle, width-2*m.CardPadding, 0)}
 	reading := r.reading
 	resolved := strings.EqualFold(strings.TrimSpace(r.cfg.Weather.City), city) && reading.Location != "" &&
-		(r.weather == nil || !r.weather.LocationPending())
+		(r.weather == nil || !r.weather.LocationPending() && r.weather.LocationSource() == reading.Location)
 	if resolved {
 		condition := render.WeatherCondition(reading.Code)
 		lines = []*ui.Node{
@@ -1327,7 +1329,7 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 			return false
 		}
 		h.onbPage = onboardingPage(page)
-		h.onbScroll = 0
+		h.onbScrollTop = true
 		if h.onbPage == onbRegion {
 			r.checkOnboardingFont(h)
 		}
@@ -1342,13 +1344,13 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		return true
 	case "onb-back":
 		h.onbPage = h.onbPage.prev()
-		h.onbScroll = 0
+		h.onbScrollTop = true
 		r.rebuildPanel(h)
 		h.focusByName(onbMainLabelFor(h, h.onbPage))
 		return true
 	case "onb-next":
 		h.onbPage = h.onbPage.next()
-		h.onbScroll = 0
+		h.onbScrollTop = true
 		if h.onbPage == onbRegion {
 			r.checkOnboardingFont(h)
 		}

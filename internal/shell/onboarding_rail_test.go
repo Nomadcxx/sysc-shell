@@ -199,14 +199,38 @@ func TestOnboardingStepperJumpsToAnyStep(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	h.onbPage = onbAppearance
-	h.onbScroll = 40
 	reg.rebuildPanel(h)
+	onboardingNodeByKey(h.root, onbBodyKey).ScrollOffset = 40
 	h.setFocus(byAction(h.root, "onb-step:4"))
 	if !h.activate(reg) {
 		t.Fatal("step 5 rejected activation")
 	}
 	if h.onbPage != onbPlugins || h.onbScroll != 0 {
 		t.Fatalf("after jump page=%d scroll=%d, want page %d and scroll 0", h.onbPage, h.onbScroll, onbPlugins)
+	}
+}
+
+func TestOnboardingPageNavigationResetsBodyScroll(t *testing.T) {
+	for _, action := range []string{"onb-next", "onb-back"} {
+		t.Run(action, func(t *testing.T) {
+			reg, h := openOnboardingAt(t, 800, 350, 120)
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			h.onbPage = onbRegion
+			reg.rebuildPanel(h)
+			onboardingNodeByKey(h.root, onbBodyKey).ScrollOffset = 40
+			reg.rebuildPanel(h)
+			if onboardingScrollOffset(h.root) != 40 {
+				t.Fatal("rebuilding the current page lost its scroll position")
+			}
+			h.setFocus(byAction(h.root, action))
+			if !h.activate(reg) {
+				t.Fatal("navigation rejected activation")
+			}
+			if h.onbScroll != 0 || onboardingScrollOffset(h.root) != 0 {
+				t.Fatalf("after navigation retained=%d body=%d, want zero", h.onbScroll, onboardingScrollOffset(h.root))
+			}
+		})
 	}
 }
 
@@ -417,6 +441,8 @@ func TestOnboardingRegionPlaceCardFollowsWeather(t *testing.T) {
 		t.Fatalf("place card before lookup = %q, want the lookup line", treeText(place))
 	}
 	reg.cfg.Weather.City = "melbourne "
+	reg.weather.SetLocationConfigured(true)
+	reg.weather.SetLocationLabel("Melbourne, Victoria, Australia")
 	reg.mu.Unlock()
 	reg.UpdateWeather(services.Reading{Observed: true, Location: "Melbourne, Victoria, Australia", Temperature: 14, Unit: services.UnitCelsius})
 	reg.mu.Lock()
@@ -429,6 +455,46 @@ func TestOnboardingRegionPlaceCardFollowsWeather(t *testing.T) {
 	reg.rebuildPanel(h)
 	if text := treeText(onboardingNodeByKey(h.root, "onb-place")); strings.Contains(text, "Melbourne") {
 		t.Fatalf("place card for a new city = %q, still shows the old place", text)
+	}
+}
+
+func TestOnboardingPlaceCardRejectsPreviousLocationReading(t *testing.T) {
+	reg, h := openOnboardingRegion(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.cfg.Weather.City = "Sydney"
+	h.draft.Weather.City = "Sydney"
+	// The service has resolved the new source, while the last observation
+	// still belongs to Melbourne (for example, after a forecast failure).
+	reg.weather = services.NewWeather(-33.87, 151.21, services.UnitCelsius)
+	reg.weather.SetLocationLabel("Sydney, New South Wales, Australia")
+	reg.reading = services.Reading{Observed: true, Location: "Melbourne, Victoria, Australia", Temperature: 14}
+	reg.rebuildPanel(h)
+	if text := treeText(onboardingNodeByKey(h.root, "onb-place")); strings.Contains(text, "Melbourne") {
+		t.Fatalf("new city's card displays the previous observation: %q", text)
+	}
+	reg.reading.Location = "Sydney, New South Wales, Australia"
+	reg.rebuildPanel(h)
+	if text := treeText(onboardingNodeByKey(h.root, "onb-place")); !strings.Contains(text, "Sydney") {
+		t.Fatalf("matching observation is missing: %q", text)
+	}
+}
+
+func TestOnboardingIdleReasonsFitAllCatalogs(t *testing.T) {
+	for _, language := range []string{"en", "es", "pt", "ja", "ko", "ru"} {
+		t.Run(language, func(t *testing.T) {
+			reg, h := openOnboardingAt(t, 3440, 1440, 120)
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			h.draft.Session.Language = language
+			h.set = reg.settingsForLocked(h.draft)
+			h.draft.Session.Locker = ""
+			h.onbPage = onbIdle
+			reg.rebuildPanel(h)
+			if err := h.configure(h.logicalW, h.logicalH, 120); err != nil {
+				t.Fatalf("translated idle page does not fit: %v", err)
+			}
+		})
 	}
 }
 
