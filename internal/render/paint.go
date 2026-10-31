@@ -1851,6 +1851,9 @@ func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		ghostStyle.Foreground = style.Subtle
 		return paintChrome(c, n, text, ghostStyle, size, Color{}, 0)
 	}
+	if n.Bare && n.Fill == ui.FillNone {
+		return paintChrome(c, n, text, style, size, Color{}, 0)
+	}
 	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
 }
 

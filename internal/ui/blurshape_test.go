@@ -195,3 +195,59 @@ func TestBlurStripsForAFlushPanel(t *testing.T) {
 		t.Fatal("the other far corner gained a wedge or lost its radius")
 	}
 }
+
+// At a fractional scale a strip must cover only pixels the painter fills: a
+// strip past the painted arc blurs the wallpaper beside a transparent corner.
+// The painter fills a rounded rectangle row by row with RoundedInset on the
+// physical rectangle and the radius clamped to half its shorter side.
+func TestScaledBlurStripsStayInsideThePaintedCorner(t *testing.T) {
+	t.Parallel()
+	for _, scale := range []Scale120{125, 150, 175, 200, 210} {
+		for _, body := range []Rect{
+			{X: 10, Y: 1298, W: 28, H: 20},
+			{X: 3, Y: 7, W: 44, H: 22},
+			{X: 0, Y: 0, W: 120, H: 31},
+			{X: 13, Y: 5, W: 19, H: 60},
+		} {
+			for _, radius := range []int{4, 9, 10, 15} {
+				p := scale.PhysicalRect(body)
+				r := min(scale.Physical(radius), min(p.W, p.H)/2)
+				painted := func(x, y int) bool {
+					py := y - p.Y
+					if py < 0 || py >= p.H {
+						return false
+					}
+					inset := RoundedInset(py, p.H, r)
+					return x >= p.X+inset && x < p.X+p.W-inset
+				}
+				for _, strip := range BlurStrips(SurfaceShape{Body: body, Radius: radius, Scale: scale}) {
+					ps := scale.PhysicalRect(strip)
+					for y := ps.Y; y < ps.Y+ps.H; y++ {
+						for x := ps.X; x < ps.X+ps.W; x++ {
+							if !painted(x, y) {
+								t.Fatalf("scale %d body %+v radius %d: strip %+v covers unpainted pixel (%d,%d)", scale, body, radius, strip, x, y)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// A unit or unset scale keeps the logical rows exactly as before.
+func TestUnitScaleBlurStripsAreUnchanged(t *testing.T) {
+	t.Parallel()
+	shape := SurfaceShape{Body: Rect{X: 10, Y: 4, W: 28, H: 20}, Radius: 10}
+	want := BlurStrips(shape)
+	shape.Scale = ScaleUnit
+	got := BlurStrips(shape)
+	if len(got) != len(want) {
+		t.Fatalf("unit scale strips = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unit scale strip %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

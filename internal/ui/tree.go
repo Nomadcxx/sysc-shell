@@ -423,6 +423,11 @@ type Node struct {
 	// Fill selects a capsule's background, and a button's chrome. Zero is the
 	// surface capsule / an unfilled button (the wrapping pill is the chrome).
 	Fill Fill
+	// Bare stops an unfilled button painting its resting base, so the surface
+	// it sits on is its only chrome. A plugin's bar button sets it: without
+	// it, the control's own level paints a lighter chip inside the bar pill.
+	// Hover and press layers still paint.
+	Bare bool
 	// FillRole and InkRole are read only when Fill is FillRole.
 	FillRole PaintRole
 	InkRole  PaintRole
