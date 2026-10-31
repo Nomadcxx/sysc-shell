@@ -49,14 +49,14 @@ func TestLauncherDisplayRendersToPNG(t *testing.T) {
 	entries := launcherDisplayPNGEntries()
 	outputs := []int{120, 150}
 	states := []struct {
-		name string
-		mode string
-		menu bool
+		name    string
+		mode    string
+		actions bool
 	}{
 		{name: "list", mode: config.LauncherDisplayList},
 		{name: "compact", mode: config.LauncherDisplayCompact},
 		{name: "grid", mode: config.LauncherDisplayGrid},
-		{name: "grid-menu", mode: config.LauncherDisplayGrid, menu: true},
+		{name: "actions", mode: config.LauncherDisplayGrid, actions: true},
 	}
 	trigger := Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}
 	for _, scale120 := range outputs {
@@ -69,24 +69,22 @@ func TestLauncherDisplayRendersToPNG(t *testing.T) {
 				reg.mu.Lock()
 				reg.cfg.Launcher.Display = state.mode
 				longIndex, actionIndex := -1, -1
-				var actionID string
 				for i, res := range h.launcherResults {
 					if res.Entry.ID == entries[6].ID {
 						longIndex = i
 					}
 					if actionIndex < 0 && i < launcherGridColumns*3 && len(res.Entry.Actions) > 0 {
-						actionIndex, actionID = i, res.Entry.ID
+						actionIndex = i
 					}
 				}
-				if longIndex < 0 || state.menu && actionIndex < 0 {
+				if longIndex < 0 || state.actions && actionIndex < 0 {
 					reg.mu.Unlock()
 					t.Fatalf("fixture results: long name index %d, visible action index %d", longIndex, actionIndex)
 				}
-				if state.menu {
-					h.launcherSel = actionIndex
-					if !h.openLauncherActions(reg, actionID) || h.menu == nil || !h.menu.Opened() {
+				if state.actions {
+					if !h.openLauncherActions(reg, actionIndex) || h.launcherActionsBack == nil {
 						reg.mu.Unlock()
-						t.Fatal("could not open the fixture desktop actions menu")
+						t.Fatal("could not open the fixture desktop actions view")
 					}
 				} else {
 					h.launcherSel = longIndex

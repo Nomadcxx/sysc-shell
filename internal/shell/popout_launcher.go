@@ -93,6 +93,9 @@ const (
 	launcherGridPad     = 10
 	// launcherGridHints is launcherHints with the arrows the grid adds.
 	launcherGridHints = "↑↓←→ Navigate • Enter Select • Esc Close"
+	// launcherActionsHints is the actions view's legend: Esc goes back to the
+	// results instead of closing.
+	launcherActionsHints = "↑↓ Navigate • Enter Select • Esc Back"
 )
 
 // launcherLayout is the geometry one rebuild uses for the result list. Rows,
@@ -128,8 +131,8 @@ func launcherLayoutFor(r *Registry, h *PanelHost) launcherLayout {
 		l.mode, l.columns, l.gap, l.padTop, l.padBottom = config.LauncherDisplayGrid, launcherGridColumns, launcherGridGap, launcherGridPad, launcherGridPad
 		// Each visual row sits half a gap inside the list on every side, as
 		// a list row does, and the tiles in it are a gap apart.
-		listWidth := h.place.Panel.W - 2*theme.MarginL
-		l.cellWidth = max((listWidth-(l.columns-1)*l.gap)/l.columns, 1)
+		rowWidth := h.place.Panel.W - 2*theme.MarginL - l.gap
+		l.cellWidth = max((rowWidth-(l.columns-1)*l.gap)/l.columns, 1)
 		l.tileHeight = 2*l.padTop + l.iconSize + theme.MarginS + 2*launcherCaptionLineHeight(h)
 		l.slot = l.tileHeight + l.gap
 	}
@@ -316,8 +319,14 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 			var output uint32
 			applied := false
 			if h != nil && h.launcherQueryGen == snap.gen {
-				h.launcherResults = launcherWithHints(h.query, snap.rows)
-				h.launcherAppsOnly = snap.appsOnly
+				// Rows for the current query belong to the results the
+				// actions view hides, so Esc shows them rather than older ones.
+				rows := launcherWithHints(h.query, snap.rows)
+				if back := h.launcherActionsBack; back != nil {
+					back.results, back.appsOnly = rows, snap.appsOnly
+				} else {
+					h.launcherResults, h.launcherAppsOnly = rows, snap.appsOnly
+				}
 				h.launcherAwaiting = false
 				r.rebuildPanel(h)
 				output = h.output
@@ -382,11 +391,14 @@ func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
 
 	h.launcherQueryGen = gen
 	h.launcherAwaiting = true
-	// A menu belongs to the result set that opened it. Drop it whenever a
-	// query changes so a delayed result cannot leave an old desktop action live.
-	h.menu = nil
-	h.launcherMenuID = ""
-	h.launcherActions = nil
+	// The actions view belongs to the result set that opened it. A new query
+	// puts those rows back until its own snapshot replaces them, so a delayed
+	// result cannot leave an old desktop action live. The caller sets the
+	// selection.
+	if back := h.launcherActionsBack; back != nil {
+		h.launcherResults, h.launcherAppsOnly = back.results, back.appsOnly
+		h.launcherActionsBack = nil
+	}
 	if plan.kind == launcherKindOverview {
 		h.launcherResults = r.launcherOverviewRows(plan.passed)
 		h.launcherAppsOnly = false
@@ -622,15 +634,21 @@ func (h *PanelHost) launcherHeaderHeight() int {
 // muted text tone -- it measures 1.47:1 and cannot carry text -- so the
 // footer steps back by size, not by contrast.
 func launcherFooter(h *PanelHost, count int, l launcherLayout) *ui.Node {
-	hints := launcherHints
-	if l.mode == config.LauncherDisplayGrid {
-		hints = launcherGridHints
+	if h.launcherActionsBack != nil && len(h.launcherResults) > 0 {
+		// The view's first row is the application whose actions it shows.
+		text := fmt.Sprintf(h.tr("launcher.actions_for", "%s actions"), h.launcherResults[0].Entry.Name) +
+			" • " + launcherActionsHints
+		return &ui.Node{Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption, Text: text}
 	}
 	// Hint rows (empty ID) explain; they are not results.
 	for _, res := range h.launcherResults {
 		if res.Entry.ID == "" {
 			count--
 		}
+	}
+	hints := launcherHints
+	if l.mode == config.LauncherDisplayGrid && count > 0 {
+		hints = launcherGridHints
 	}
 	nounKey, one, other := "launcher.noun.result", "result", "results"
 	if strings.TrimSpace(h.query) == "" {
@@ -728,9 +746,6 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int, l 
 		return nil
 	}
 	res := results[i]
-	if h.launcherMenuID == res.Entry.ID && res.Action == "" && h.menu != nil && h.menu.Opened() {
-		return h.menu.Node()
-	}
 	fill := ui.FillNone
 	if i == h.launcherSel && res.Entry.ID != "" {
 		fill = ui.FillSoft
@@ -762,28 +777,18 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int, l 
 }
 
 // launcherGridRow is one virtual-list item of the grid: up to l.columns
-// tiles. An open actions menu takes the whole row rather than one tile, which
-// is too narrow to hold it.
+// tiles.
 func launcherGridRow(r *Registry, h *PanelHost, results []launcher.Result, row int, l launcherLayout) *ui.Node {
 	start := row * l.columns
 	if row < 0 || start >= len(results) {
 		return nil
 	}
 	end := min(start+l.columns, len(results))
-	if h.menu != nil && h.menu.Opened() {
-		for _, res := range results[start:end] {
-			if h.launcherMenuID == res.Entry.ID && res.Action == "" {
-				menu := h.menu.Node()
-				menu.Width = h.place.Panel.W - 2*theme.MarginL
-				return menu
-			}
-		}
-	}
 	tiles := make([]*ui.Node, 0, end-start)
 	for i := start; i < end; i++ {
 		tiles = append(tiles, launcherGridTile(r, h, results[i], i, l))
 	}
-	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{
+	return &ui.Node{Kind: ui.KindColumn, Padding: l.gap / 2, Children: []*ui.Node{{
 		Kind: ui.KindRow, Gap: l.gap, Height: l.tileHeight, CenterY: true, Children: tiles,
 	}}}
 }
@@ -935,19 +940,24 @@ func (h *PanelHost) launcherVisibleOffset(count int, l launcherLayout) int {
 func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 	n := len(h.launcherResults)
 	l := launcherLayoutFor(r, h)
-	grid := l.mode == config.LauncherDisplayGrid
+	grid := l.mode == config.LauncherDisplayGrid && n > 0
 	page := max(h.launcherPageItems(l), 1)
+	// The actions view is a list of one application's rows: the arrows stay
+	// in it rather than stepping into query history.
+	history := h.launcherActionsBack == nil
 	switch key {
+	case keyEsc:
+		return h.launcherCloseActions(r)
 	case keyUp:
 		// In the grid, Up climbs rows first and reaches query history only
 		// from the top row, where the list always reaches it.
-		if (!grid || h.launcherSel < l.columns) && h.launcherHistoryMove(r, -1) {
+		if history && (!grid || h.launcherSel < l.columns) && h.launcherHistoryMove(r, -1) {
 			return true
 		}
 		h.launcherMoveSel(r, -l.columns)
 		return true
 	case keyDown:
-		if h.launcherHistoryMove(r, 1) {
+		if history && h.launcherHistoryMove(r, 1) {
 			return true
 		}
 		h.launcherMoveSel(r, l.columns)
@@ -1259,9 +1269,9 @@ func (r *Registry) activateLauncherService(h *PanelHost, svc *launcher.Service, 
 }
 
 // launcherPointerPress handles row clicks. A left press launches immediately
-// (Noctalia's single-click); a right press opens the row's desktop actions as
-// a KindMenu (D7). Rows are deliberately not focusable, so the field keeps
-// keyboard focus and typing always filters.
+// (Noctalia's single-click); a right press opens the row's desktop actions
+// view. Rows are deliberately not focusable, so the field keeps keyboard
+// focus and typing always filters.
 func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
 	if h.launcherAwaiting {
 		return true
@@ -1271,82 +1281,80 @@ func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
 	if !ok || i >= len(h.launcherResults) {
 		return false
 	}
-	res := h.launcherResults[i]
 	h.launcherAttempt++
 	if e.Button == btnRight {
-		if res.Action != "" {
-			return true // an action row has no actions menu of its own
-		}
-		return h.openLauncherActions(r, res.Entry.ID)
+		return h.openLauncherActions(r, i)
 	}
 	h.launcherSel = i
 	h.launcherActivateSelected(r)
 	return true
 }
 
-func (h *PanelHost) openLauncherActions(r *Registry, id string) bool {
-	if h.launcherAwaiting {
+// launcherSavedResults is the result list the actions view replaced.
+type launcherSavedResults struct {
+	results     []launcher.Result
+	appsOnly    bool
+	sel, scroll int
+}
+
+// openLauncherActions replaces the results with application i's desktop
+// actions, drawn as ordinary list rows: the application's own row, then one
+// row per action, which launcherActivateSelected runs through res.Action.
+// An application without actions, an action row, or a row inside the view
+// opens nothing.
+func (h *PanelHost) openLauncherActions(r *Registry, i int) bool {
+	if h.launcherAwaiting || h.launcherActionsBack != nil || i < 0 || i >= len(h.launcherResults) {
 		return true
 	}
-	var actions []launcher.Action
-	for _, res := range h.launcherResults {
-		if res.Entry.ID == id {
-			actions = res.Entry.Actions
-			break
+	res := h.launcherResults[i]
+	app := res.Entry
+	if res.Action != "" || len(app.Actions) == 0 {
+		return true
+	}
+	rows := make([]launcher.Result, 0, 1+len(app.Actions))
+	rows = append(rows, launcher.Result{Entry: app})
+	for _, a := range app.Actions {
+		row := app
+		row.Name = a.Name
+		row.Comment = app.Name + " · " + h.tr("launcher.desktop_action", "desktop action")
+		if a.IconName != "" {
+			row.IconName = a.IconName
 		}
+		rows = append(rows, launcher.Result{Entry: row, Action: a.ID})
 	}
-	if len(actions) == 0 {
-		return true
+	h.launcherActionsBack = &launcherSavedResults{
+		results: h.launcherResults, appsOnly: h.launcherAppsOnly,
+		sel: h.launcherSel, scroll: h.launcherScroll,
 	}
-	names := make([]string, len(actions))
-	for i, a := range actions {
-		names[i] = a.Name
-	}
-	h.menu = NewMenu(names, 0)
-	h.menu.Open()
-	h.launcherMenuID = id
-	h.launcherActions = actions
+	// Not applications only, so every display mode lays the view out as a list.
+	h.launcherResults, h.launcherAppsOnly = rows, false
+	h.launcherSel, h.launcherScroll = 1, 0
 	r.rebuildPanel(h)
 	return true
 }
 
-// applyLauncherMenu runs the selected desktop action after the menu closes
-// with a committed selection.
-func (h *PanelHost) applyLauncherMenu(r *Registry) {
-	if h.menu == nil || h.launcherAwaiting {
-		return
-	}
-	idx := h.menu.Index()
-	if idx < 0 || idx >= len(h.launcherActions) {
-		return
-	}
-	action := h.launcherActions[idx].ID
-	id := h.launcherMenuID
-	h.launcherMenuID = ""
-	h.launcherSpawn(r, id, action, true)
-}
-
-func (h *PanelHost) activateLauncher(r *Registry, n *ui.Node) bool {
-	if h.launcherAwaiting {
-		return true
-	}
-	if n.Kind != ui.KindMenu || h.menu == nil {
+// launcherCloseActions puts back the results, selection and scroll the
+// actions view replaced. It reports false when no view is showing, so Esc
+// closes the launcher as usual.
+func (h *PanelHost) launcherCloseActions(r *Registry) bool {
+	back := h.launcherActionsBack
+	if back == nil {
 		return false
 	}
-	if h.menu.Opened() {
-		h.menu.Select()
-		h.applyLauncherMenu(r)
-	} else {
-		h.menu.Open()
-	}
+	h.launcherActionsBack = nil
+	h.launcherResults, h.launcherAppsOnly = back.results, back.appsOnly
+	h.launcherSel, h.launcherScroll = back.sel, back.scroll
+	h.launcherAttempt++
 	r.rebuildPanel(h)
 	return true
 }
 
 // launcherRowAt finds the index of the laid-out row under a point by its
-// launch action.
+// launch action. A row scrolled partly out of the list keeps its full bounds
+// but is clipped to the list, so a point outside the list is never a row: the
+// field above it would otherwise launch whatever is scrolled under it.
 func launcherRowAt(n *ui.Node, x, y int) (int, bool) {
-	if n == nil {
+	if n == nil || n.Kind == ui.KindVirtualList && !n.Bounds.Contains(x, y) {
 		return 0, false
 	}
 	if v, ok := strings.CutPrefix(n.Action, "launch:"); ok && n.Bounds.Contains(x, y) {

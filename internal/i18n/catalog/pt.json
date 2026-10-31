@@ -203,6 +203,8 @@
  "keyboard-layout.select": "Selecionar layout",
  "keyboard-layout.switching": "Alternando para %s…",
  "keyboard-layout.unavailable": "A troca de layout não está disponível",
+ "launcher.actions_for": "Ações de %s",
+ "launcher.desktop_action": "ação da área de trabalho",
  "launcher.no_results": "Nenhum resultado",
  "launcher.notes.capture": "Capturar nota",
  "launcher.notes.capture_comment": "Criar uma nota Markdown na pasta de Notas configurada",

@@ -222,10 +222,14 @@ func TestSettingsApplicationsLauncherDisplaySavesMode(t *testing.T) {
 		if control == nil {
 			t.Fatal("no launcher display control on the Applications page")
 		}
+		// The same radio group every other settings choice uses.
+		if control.Role != "radiogroup" || control.Name != "Launcher display" {
+			t.Fatalf("control role %q name %q, want a radiogroup named Launcher display", control.Role, control.Name)
+		}
 		var names, picked []string
 		for _, seg := range control.Children {
-			if seg.Role != "tab" || !seg.Focusable {
-				t.Fatalf("segment %+v is not a focusable tab", seg)
+			if seg.Role != "radio" || !seg.Focusable {
+				t.Fatalf("segment %+v is not a focusable radio", seg)
 			}
 			names = append(names, seg.Name)
 			if seg.State&ui.StateSelected != 0 {

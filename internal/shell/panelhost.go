@@ -308,12 +308,13 @@ type PanelHost struct {
 	fields             map[string]*ui.Field
 	editors            map[string]*retainedEditor
 
-	launcherResults         []launcher.Result
-	launcherAppsOnly        bool // launcherResults are all applications
-	launcherSel             int
-	launcherScroll          int
-	launcherMenuID          string
-	launcherActions         []launcher.Action
+	launcherResults  []launcher.Result
+	launcherAppsOnly bool // launcherResults are all applications
+	launcherSel      int
+	launcherScroll   int
+	// launcherActionsBack is set while the actions view shows: it holds the
+	// results the view replaced, which Esc puts back.
+	launcherActionsBack     *launcherSavedResults
 	launcherHistoryBrowsing bool
 	launcherHistoryCursor   int
 	launcherHistoryDraft    string
@@ -3103,9 +3104,7 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 			return false
 		}
 		if !h.menu.Opened() && key != keyEsc {
-			if h.id == PanelLauncher {
-				h.applyLauncherMenu(r)
-			} else if strings.HasPrefix(h.menuPath, "plugin-set:") {
+			if strings.HasPrefix(h.menuPath, "plugin-set:") {
 				_ = r.handlePluginManager(h, &ui.Node{
 					Kind: ui.KindMenu, Action: h.menuPath, Text: h.menu.Value(),
 				})
@@ -3949,7 +3948,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return h.activateBluetooth(r, n)
 	}
 	if h.id == PanelLauncher {
-		return h.activateLauncher(r, n)
+		return false // rows act through launcherKeyPress and launcherPointerPress
 	}
 	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
 		return true

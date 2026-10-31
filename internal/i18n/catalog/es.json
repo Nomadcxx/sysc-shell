@@ -203,6 +203,8 @@
  "keyboard-layout.select": "Seleccionar distribución",
  "keyboard-layout.switching": "Cambiando a %s…",
  "keyboard-layout.unavailable": "El cambio de distribución no está disponible",
+ "launcher.actions_for": "Acciones de %s",
+ "launcher.desktop_action": "acción de escritorio",
  "launcher.no_results": "Sin resultados",
  "launcher.notes.capture": "Capturar nota",
  "launcher.notes.capture_comment": "Crea una nota Markdown en la carpeta Notas configurada",

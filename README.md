@@ -282,6 +282,12 @@ until you also set `"allow_dangerous": true`.
 The launcher also lists open Niri windows. Type `/win` to browse them or `/win <query>` to search
 window titles, app names and app IDs, then select a result to focus it.
 
+`launcher.display` sets how application results are laid out: `"list"` (the default), `"compact"` (one
+line per application) or `"grid"` (five columns of icons). Settings → Applications → Launcher display
+sets the same value. Results that are not applications, such as a calculator answer or a `/` provider,
+always show as a list. Right-click an application to see its desktop actions; Esc goes back to the
+results.
+
 ### Checking the config file
 
 ```bash
