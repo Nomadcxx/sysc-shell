@@ -74,6 +74,9 @@ const (
 	// was never meant to carry.
 	MinSpriteFrames = 2
 	MaxSpriteFrames = 32
+	// MaxGaugeBands bounds a gauge's severity zones. Six is enough for the
+	// six air quality categories and keeps the arc readable.
+	MaxGaugeBands = 6
 	// MinCycleMS and MaxCycleMS bound one pass through a sprite cycle. Faster
 	// than this, a pose lasts under a frame at 60 Hz for a full cycle; slower,
 	// the motion stops reading as motion.
@@ -144,6 +147,34 @@ const (
 	// KindScheduleGrid arranges bounded event occurrences in local-time columns.
 	KindScheduleGrid NodeKind = "schedule_grid"
 )
+
+// GaugeForm selects the arc a gauge paints.
+type GaugeForm string
+
+const (
+	// GaugeFull is the ring every gauge drew before minor twenty-four.
+	GaugeFull GaugeForm = ""
+	// GaugeHalf is a semicircle open at the bottom.
+	GaugeHalf GaugeForm = "half"
+)
+
+// Severity names how alarming a gauge band is. It is deliberately not a tone:
+// tones follow the theme's accent, and a health threshold must not.
+type Severity string
+
+const (
+	SeverityGood     Severity = "good"
+	SeverityModerate Severity = "moderate"
+	SeverityHigh     Severity = "high"
+)
+
+// GaugeBand is one severity zone of a gauge's track.
+type GaugeBand struct {
+	// Until is the exclusive end of the zone as a fraction of the arc, 0..1.
+	Until float64 `json:"until"`
+	// Severity picks the painted colour.
+	Severity Severity `json:"severity"`
+}
 
 // EventKind names an input event a node declares it can emit. A node receives
 // only the kinds it declares, which is what lets the host derive hit testing
@@ -254,6 +285,16 @@ type Node struct {
 	// ValueText is the gauge's centre label, such as a remaining time. An
 	// empty value falls back to a percentage.
 	ValueText string `json:"value_text,omitempty"`
+	// Form selects the arc a gauge paints. The zero value is the full ring.
+	// FormHalf draws a semicircle open at the bottom, which suits a single
+	// threshold reading: the flat edge is where its label belongs. Minor
+	// twenty-four.
+	Form GaugeForm `json:"form,omitempty"`
+	// Bands paints the gauge track as ordered severity zones instead of one
+	// accent arc, so a health threshold reads the same in every theme. Each
+	// band covers the arc up to its Until fraction; Severity picks the colour.
+	// Minor twenty-four.
+	Bands []GaugeBand `json:"bands,omitempty"`
 
 	// Tone selects semantic presentation.
 	Tone Tone `json:"tone,omitempty"`
@@ -511,6 +552,9 @@ func (v *validator) nodeIn(n *Node, path string, depth int, segmentChild bool) e
 		return err
 	}
 	if err := v.minorSeventeen(n, path); err != nil {
+		return err
+	}
+	if err := v.minorTwentyFour(n, path); err != nil {
 		return err
 	}
 	if n.Selected && (!segmentChild || n.Kind != KindButton) {
@@ -1053,6 +1097,52 @@ func icon(name string) error {
 		if !ok {
 			return fmt.Errorf("icon name %q is not a lower-case identifier", name)
 		}
+	}
+	return nil
+}
+
+// minorTwentyFour validates the half form and severity bands. Both are
+// additive: an older host ignores them and paints a full ring in the accent
+// colour, which reports the same value in a different shape rather than
+// failing.
+func (v *validator) minorTwentyFour(n *Node, path string) error {
+	if n.Form == "" && n.Bands == nil {
+		return nil
+	}
+	if n.Kind != KindGauge {
+		return fmt.Errorf("%s: form and bands are only valid on a gauge", path)
+	}
+	switch n.Form {
+	case GaugeFull, GaugeHalf:
+	default:
+		return fmt.Errorf("%s: unknown gauge form %q", path, n.Form)
+	}
+	if n.Bands == nil {
+		return nil
+	}
+	if len(n.Bands) == 0 {
+		return fmt.Errorf("%s: bands is empty; omit it to keep the accent arc", path)
+	}
+	if len(n.Bands) > MaxGaugeBands {
+		return fmt.Errorf("%s: %d bands, more than the %d allowed", path, len(n.Bands), MaxGaugeBands)
+	}
+	previous := 0.0
+	for i, band := range n.Bands {
+		if math.IsNaN(band.Until) || math.IsInf(band.Until, 0) {
+			return fmt.Errorf("%s.bands[%d]: until is not finite", path, i)
+		}
+		if band.Until <= 0 || band.Until > 1 {
+			return fmt.Errorf("%s.bands[%d]: until %v is outside zero through one", path, i, band.Until)
+		}
+		if i > 0 && band.Until <= previous {
+			return fmt.Errorf("%s.bands[%d]: until %v does not exceed the previous %v", path, i, band.Until, previous)
+		}
+		switch band.Severity {
+		case SeverityGood, SeverityModerate, SeverityHigh:
+		default:
+			return fmt.Errorf("%s.bands[%d]: unknown severity %q", path, i, band.Severity)
+		}
+		previous = band.Until
 	}
 	return nil
 }

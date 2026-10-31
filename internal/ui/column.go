@@ -98,6 +98,11 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			return n.Height, nil
 		}
 		if n.Width > 0 {
+			if n.Form == GaugeHalf {
+				// A half gauge is wider than it is tall: the arc is a
+				// semicircle and the label sits beneath its flat edge.
+				return max(n.Width*3/4, 1), nil
+			}
 			return n.Width, nil
 		}
 		return MeterHeight, nil

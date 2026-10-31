@@ -230,6 +230,11 @@ type Node struct {
 	Placeholder string
 	// ValueText is the compact formatted value painted inside a radial gauge.
 	ValueText string
+	// Form selects the arc a gauge paints. GaugeHalf is a semicircle open at
+	// the bottom, for a single threshold reading.
+	Form GaugeForm
+	// Bands paints a gauge's track as severity zones instead of an accent arc.
+	Bands []GaugeBand
 	// Icon names a glyph in the dedicated chrome icon inventory.
 	Icon string
 	// Key identifies a node across tree rebuilds so host-retained state -- an
@@ -597,6 +602,34 @@ const (
 	// critical. It paints the theme's Tertiary role: the theme has no warning
 	// token, and Tertiary exists on every palette.
 	ToneActivity
+)
+
+// Severity names how alarming a gauge band is. It is deliberately separate
+// from Tone: a tone follows the theme, and a health threshold must not.
+type Severity uint8
+
+const (
+	SeverityGood Severity = iota
+	SeverityModerate
+	SeverityHigh
+)
+
+// GaugeBand is one severity zone of a gauge track.
+type GaugeBand struct {
+	// Until is the exclusive end of the zone as a fraction of the arc.
+	Until float64
+	// Severity picks the painted colour.
+	Severity Severity
+}
+
+// GaugeForm selects the arc a gauge paints.
+type GaugeForm uint8
+
+const (
+	// GaugeFull is the complete ring.
+	GaugeFull GaugeForm = iota
+	// GaugeHalf is a semicircle open at the bottom.
+	GaugeHalf
 )
 
 // Shape names the corner treatment a node asks for.

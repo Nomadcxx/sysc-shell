@@ -1295,3 +1295,56 @@ func TestConvertKeepsPanelButtonsBased(t *testing.T) {
 		t.Errorf("panel surface button = fill %v bare %t, want an unfilled button with its base", converted.Fill, converted.Bare)
 	}
 }
+
+func TestConvertGaugeFormAndBands(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{
+		Kind: v1.KindColumn,
+		Children: []*v1.Node{{
+			Kind:  v1.KindGauge,
+			Value: 0.4,
+			Form:  v1.GaugeHalf,
+			Bands: []v1.GaugeBand{
+				{Until: 0.5, Severity: v1.SeverityGood},
+				{Until: 1, Severity: v1.SeverityHigh},
+			},
+		}},
+	}
+	tree, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gauge := tree.Children[0]
+	if gauge.Form != ui.GaugeHalf {
+		t.Fatalf("form = %v, want half", gauge.Form)
+	}
+	if len(gauge.Bands) != 2 {
+		t.Fatalf("bands = %+v", gauge.Bands)
+	}
+	if gauge.Bands[0].Severity != ui.SeverityGood || gauge.Bands[1].Severity != ui.SeverityHigh {
+		t.Fatalf("severity did not convert: %+v", gauge.Bands)
+	}
+}
+
+func TestConvertPlainGaugeStaysFull(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{
+		Kind: v1.KindColumn,
+		Children: []*v1.Node{{
+			Kind: v1.KindGauge, Value: 0.5,
+		}},
+	}
+	tree, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gauge := tree.Children[0]
+	if gauge.Form != ui.GaugeFull {
+		t.Fatalf("an unadorned gauge converted to form %v", gauge.Form)
+	}
+	if gauge.Bands != nil {
+		t.Fatalf("an unadorned gauge gained bands: %+v", gauge.Bands)
+	}
+}

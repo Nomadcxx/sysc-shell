@@ -412,6 +412,12 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
 
 	case ui.KindRadialGauge:
+		// A gauge with neither bands nor the half form keeps the legacy
+		// painter, byte for byte. Only a node that asked for a scale takes
+		// the banded path.
+		if n.Form != ui.GaugeFull || len(n.Bands) > 0 {
+			return paintBandedGauge(c, n, text, style)
+		}
 		return paintRadialGauge(c, n, text, style)
 
 	case ui.KindSpinner:

@@ -528,6 +528,11 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		h := n.Height
 		if h <= 0 {
 			h = size
+			if n.Form == GaugeHalf {
+				// A half gauge is a semicircle plus its label, so the arc
+				// occupies the top three quarters and the rest is text.
+				h = max(size*3/4, 1)
+			}
 		}
 		return size, h, nil
 	case KindGraph:
