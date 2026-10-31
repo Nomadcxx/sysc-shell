@@ -736,10 +736,6 @@ func onbPluginTiles(r *Registry, h *PanelHost) []*ui.Node {
 		if name == "" {
 			name = manifest.ID
 		}
-		widgetLabel := manifest.Widgets[0].Label
-		if widgetLabel == "" {
-			widgetLabel = manifest.Widgets[0].ID
-		}
 		selected := slices.Contains(view.Plugins.Enabled, manifest.ID) && onbConfigHasPluginPlacement(view, manifest.ID)
 		initial, _ := utf8.DecodeRuneInString(name)
 		check := &ui.Node{
@@ -764,8 +760,11 @@ func onbPluginTiles(r *Registry, h *PanelHost) []*ui.Node {
 				check,
 			}},
 			h.wrappedText(name, theme.RoleLabel, ui.ToneNormal, inner, 1),
-			h.wrappedText(fmt.Sprintf(onbText(h, "plugins.widget", "Bar widget: %s"), widgetLabel), theme.RoleCaption, ui.ToneSubtle, inner, 1),
 		}}
+		// Most manifests name no widget, and its ID ("bar") says nothing.
+		if label := manifest.Widgets[0].Label; label != "" {
+			body.Children = append(body.Children, h.wrappedText(fmt.Sprintf(onbText(h, "plugins.widget", "Bar widget: %s"), label), theme.RoleCaption, ui.ToneSubtle, inner, 1))
+		}
 		height, err := ui.ContentHeight(body, inner, h.measureText())
 		if err != nil {
 			height = m.StandardControl
@@ -788,6 +787,9 @@ func onbPluginTiles(r *Registry, h *PanelHost) []*ui.Node {
 		tile.Value = value
 		row := rows[len(rows)-1]
 		row.Children = append(row.Children, tile)
+	}
+	for _, row := range rows {
+		onbEvenCards(row.Children)
 	}
 	return []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: rows}}
 }

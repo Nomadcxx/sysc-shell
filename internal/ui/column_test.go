@@ -523,3 +523,29 @@ func TestColumnEmptyCapsuleKeepsExplicitBox(t *testing.T) {
 		t.Fatalf("dot height = %d, want its width 6", dot.Bounds.H)
 	}
 }
+
+// A fixed-height button holding a column is a card: the column sits inside
+// the padding on every edge, as an unsized card's does. A box too tight for
+// the padding keeps the old placement rather than squeezing the column.
+func TestFixedHeightCardButtonInsetsItsColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		height int
+		wantY  int
+	}{
+		{"room for padding", 60, 9},
+		{"too tight for padding", 20, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := &Node{Kind: KindColumn, Children: []*Node{{Kind: KindText, Text: "Dark"}}}
+			card := &Node{Kind: KindButton, Width: 120, Height: tc.height, Padding: 9, Children: []*Node{body}}
+			root := &Node{Kind: KindColumn, Children: []*Node{card}}
+			if err := LayoutColumn(root, Rect{W: 200, H: 100}, fixedMeasure); err != nil {
+				t.Fatal(err)
+			}
+			if body.Bounds.Y != tc.wantY || body.Bounds.X != 9 {
+				t.Fatalf("card column at (%d,%d), want (9,%d)", body.Bounds.X, body.Bounds.Y, tc.wantY)
+			}
+		})
+	}
+}

@@ -300,6 +300,19 @@ func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
 			pinRowEnd(child, inner)
 			return nil
 		case KindColumn:
+			// A fixed-height button around a column is a card. Dropping the
+			// vertical padding centres an inline label, but here it pinned the
+			// card's content to its top edge, so the column keeps the inset
+			// whenever the box has room for it.
+			if fixedHeight {
+				h, err := columnChildHeight(child, inner.W, measure)
+				if err != nil {
+					return err
+				}
+				if h+2*n.Padding <= n.Bounds.H {
+					inner.Y, inner.H = n.Bounds.Y+n.Padding, n.Bounds.H-2*n.Padding
+				}
+			}
 			return LayoutColumn(child, inner, measure)
 		}
 	}
