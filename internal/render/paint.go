@@ -1578,6 +1578,11 @@ func interactionLayer(fg Color, n *ui.Node) Color {
 // paintInteraction overlays the animated state wash and any press ripple on
 // the node's physical box. Ripple origin is converted as an output point, then
 // made local to the mask so offset controls and fractional scales align.
+//
+// The ripple is the pressed state layer spreading from the press point, so it
+// paints at the pressed layer's strength. RippleDisc's alpha is the disc's own
+// fade, not an opacity: at full strength an accent button's disc was its label
+// colour, hiding the fill and the label until it faded (sysc-2119).
 func paintInteraction(c *Canvas, n *ui.Node, box ui.Rect, radius int, fg Color, style Style) {
 	if layer := interactionLayer(fg, n); layer.A > 0 {
 		blendFill(c, box, radius, 0, layer)
@@ -1596,7 +1601,7 @@ func paintInteraction(c *Canvas, n *ui.Node, box ui.Rect, radius int, fg Color, 
 	if x0 >= x1 || y0 >= y1 {
 		return
 	}
-	blendMask(c, RippleMask(box.W, box.H, radius, cx, cy, disc, image.Rect(x0-box.X, y0-box.Y, x1-box.X, y1-box.Y)), x0, y0, withAlpha(fg, alpha))
+	blendMask(c, RippleMask(box.W, box.H, radius, cx, cy, disc, image.Rect(x0-box.X, y0-box.Y, x1-box.X, y1-box.Y)), x0, y0, withAlpha(fg, pressedLayerAlpha*alpha))
 }
 
 // paintChrome draws one filled, optionally outlined, optionally state-layered

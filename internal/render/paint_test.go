@@ -2003,6 +2003,34 @@ func TestRipplePaintsFromThePressOrigin(t *testing.T) {
 	}
 }
 
+// The ripple is the pressed state layer spreading from the press point, not a
+// solid disc: on an accent button its foreground is the label colour, and a
+// solid disc of it hid the fill and the label until the fade (sysc-2119).
+func TestRippleWashKeepsTheFillLegible(t *testing.T) {
+	t.Parallel()
+	paint := func(ripple ui.RipplePaint) Color {
+		n := &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillAccent, Bounds: ui.Rect{W: 40, H: 20}, Ripple: ripple}
+		c := newTestCanvas(t, 40, 20)
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(t, c, 20, 10)
+	}
+	rest := paint(ui.RipplePaint{})
+	grown := paint(ui.RipplePaint{Phase: 0.5, X: 20, Y: 10})
+	if grown == rest {
+		t.Fatal("no ripple wash at the press origin")
+	}
+	fill, fg := testStyle.accent(), testStyle.onAccent()
+	channels := [][4]uint8{{rest.R, grown.R, fill.R, fg.R}, {rest.G, grown.G, fill.G, fg.G}, {rest.B, grown.B, fill.B, fg.B}}
+	for i, ch := range channels {
+		limit := pressedLayerAlpha*math.Abs(float64(ch[3])-float64(ch[2])) + 2
+		if shift := math.Abs(float64(ch[1]) - float64(ch[0])); shift > limit {
+			t.Fatalf("ripple moved channel %d by %.0f, want at most the pressed layer's %.0f: rest %+v, grown %+v", i, shift, limit, rest, grown)
+		}
+	}
+}
+
 func TestRippleOriginIsMaskLocalAtFractionalScale(t *testing.T) {
 	t.Parallel()
 	style := testStyle
