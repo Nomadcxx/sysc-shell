@@ -988,8 +988,18 @@ func barPointerSlots(n *ui.Node, axis ui.Axis, size int) (int, error) {
 	n.MinWidth, n.MinHeight = 0, 0
 	floor, count := 0, 0
 	inline := axis == ui.Horizontal && (n.Kind == ui.KindRow || n.Kind == ui.KindButton) || axis == ui.Vertical && n.Kind == ui.KindColumn
+	pad := n.Padding
+	if axis == ui.Horizontal && n.Kind == ui.KindCapsule {
+		pad = ui.CapsulePadX(n)
+	}
+	childSize := size
+	// A pill around one control is that control's target, so its padding
+	// already counts toward the slot.
+	if soleCapsuleAction(n) != nil {
+		childSize = max(0, size-2*pad)
+	}
 	for _, child := range n.Children {
-		childMin, err := barPointerSlots(child, axis, size)
+		childMin, err := barPointerSlots(child, axis, childSize)
 		if err != nil {
 			return 0, err
 		}
@@ -1012,14 +1022,8 @@ func barPointerSlots(n *ui.Node, axis ui.Axis, size int) (int, error) {
 		if axis == ui.Vertical {
 			floor = h
 		}
-	} else {
-		pad := n.Padding
-		if axis == ui.Horizontal && n.Kind == ui.KindCapsule {
-			pad = ui.CapsulePadX(n)
-		}
-		if floor > 0 {
-			floor += 2 * pad
-		}
+	} else if floor > 0 {
+		floor += 2 * pad
 	}
 	if n.Action != "" {
 		floor = max(floor, size)
@@ -1055,7 +1059,43 @@ func hitBarNode(n *ui.Node, x, y int, body ui.Rect, axis ui.Axis) (string, bool)
 			return action, true
 		}
 	}
-	return n.Action, n.Action != ""
+	if n.Action != "" {
+		return n.Action, true
+	}
+	if c := soleCapsuleAction(n); c != nil && !c.State.Has(ui.StateDisabled) && c.Bounds.W > 0 && c.Bounds.H > 0 {
+		return c.Action, true
+	}
+	return "", false
+}
+
+// soleCapsuleAction returns the one control inside a pill that has no action
+// of its own, or nil when the pill is not a capsule or holds zero or several.
+func soleCapsuleAction(n *ui.Node) *ui.Node {
+	if n == nil || n.Kind != ui.KindCapsule || n.Action != "" {
+		return nil
+	}
+	var found *ui.Node
+	count := 0
+	var walk func(*ui.Node)
+	walk = func(c *ui.Node) {
+		if c == nil || c.Absent || count > 1 {
+			return
+		}
+		if c.Action != "" {
+			found = c
+			count++
+		}
+		for _, child := range c.Children {
+			walk(child)
+		}
+	}
+	for _, child := range n.Children {
+		walk(child)
+	}
+	if count != 1 {
+		return nil
+	}
+	return found
 }
 
 func barTargetBounds(bounds, body ui.Rect, axis ui.Axis) ui.Rect {

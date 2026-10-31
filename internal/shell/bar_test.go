@@ -1006,6 +1006,42 @@ func TestBarPointerSlotsReserveNestedControls(t *testing.T) {
 	}
 }
 
+// A pill around one control is that control's target, so its padding counts
+// toward the slot instead of widening an already-wide pill.
+func TestBarPointerSlotsCountSingleControlCapsulePadding(t *testing.T) {
+	for _, axis := range []ui.Axis{ui.Horizontal, ui.Vertical} {
+		button := &ui.Node{Kind: ui.KindButton, Action: "open"}
+		root := &ui.Node{Kind: ui.KindCapsule, Padding: 6, Children: []*ui.Node{button}}
+		got, err := barPointerSlots(root, axis, 30)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 30 {
+			t.Errorf("axis %d: pill slot = %d, want 30 including its 6 px padding", axis, got)
+		}
+	}
+}
+
+func TestBarPointerTargetsCoverSingleControlCapsule(t *testing.T) {
+	button := &ui.Node{Kind: ui.KindButton, Bounds: ui.Rect{X: 6, Y: 6, W: 18, H: 18}, Action: "open"}
+	root := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{W: 30, H: 30}, Children: []*ui.Node{button}}
+	body := ui.Rect{W: 100, H: 30}
+	if got, ok := hitBarNode(root, 2, 15, body, ui.Horizontal); !ok || got != "open" {
+		t.Fatalf("pill padding hits %q/%v, want open", got, ok)
+	}
+	button.State = ui.StateDisabled
+	if _, ok := hitBarNode(root, 2, 15, body, ui.Horizontal); ok {
+		t.Fatal("pill padding activates a disabled control")
+	}
+	group := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{W: 60, H: 30}, Children: []*ui.Node{
+		{Kind: ui.KindButton, Bounds: ui.Rect{X: 6, W: 24, H: 30}, Action: "first"},
+		{Kind: ui.KindButton, Bounds: ui.Rect{X: 30, W: 24, H: 30}, Action: "second"},
+	}}
+	if _, ok := hitBarNode(group, 2, 15, body, ui.Horizontal); ok {
+		t.Fatal("padding of a multi-control pill picked one of its controls")
+	}
+}
+
 func TestBarPointerBandSharesTooltipAndWheelTargets(t *testing.T) {
 	bar := newTestBar(t)
 	t.Cleanup(bar.stopAnimation)
