@@ -117,10 +117,6 @@ func HelperServe(args []string) int {
 	switch mode {
 	case "exit-before-hello":
 		return 3
-	case "explain-and-exit-before-hello":
-		fmt.Fprintln(os.Stderr, "starting up")
-		fmt.Fprintln(os.Stderr, "calendar: connect to the session bus: no address")
-		return 1
 	case "garbage":
 		fmt.Fprintln(os.Stdout, "this is not a protocol message")
 		return 0
