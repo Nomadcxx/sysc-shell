@@ -8,6 +8,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 // The Home page is one row table that fits its viewport without scrolling
@@ -176,6 +177,11 @@ func ccHomeToggles(r *Registry, h *PanelHost, body int, caffeine bool, wallsStat
 	if supported {
 		count++
 	}
+	var pluginActions []pluginQuickAction
+	if r != nil && r.plugins != nil {
+		pluginActions = r.plugins.quickActions(r.cfg.Plugins.Enabled)
+		count += len(pluginActions)
+	}
 	w := (body - (count-1)*ccHomeGap) / count
 	caffeineButton := caffeinePresetControl(r, h, w, tr)
 	screensaver := ccHomePill(w, "schedule", "Screensaver", "settings-section:Screensaver", false)
@@ -194,7 +200,72 @@ func ccHomeToggles(r *Registry, h *PanelHost, body int, caffeine bool, wallsStat
 		night.Tooltip = nightLightTooltip(nightState)
 		children = append(children, night)
 	}
+	for _, action := range pluginActions {
+		children = append(children, ccPluginQuickAction(w, action))
+	}
 	return &ui.Node{Kind: ui.KindRow, Height: ccHomeToggleH, Gap: ccHomeGap, Children: children}
+}
+
+func ccPluginQuickAction(width int, action pluginQuickAction) *ui.Node {
+	label, tooltip, tone := "Checking", "Waiting for the plugin to report service status.", ui.ToneSubtle
+	selected, disabled := false, false
+	switch {
+	case !action.running:
+		label, tooltip, tone, disabled = "Unavailable", action.status.Message, ui.ToneError, true
+		if tooltip == "" {
+			tooltip = "The plugin is not running."
+		}
+	case action.status.Busy:
+		label, tooltip, tone, disabled = "Working", "The service is changing state.", ui.ToneAccent, true
+	case !action.hasStatus || action.status.State == v1.ServiceStateUnknown:
+		label, disabled = "Checking", true
+	case action.status.State == v1.ServiceStateActive:
+		label, selected, tone = "On", true, ui.ToneNormal
+	case action.status.State == v1.ServiceStateInactive:
+		label = "Off"
+	case action.status.State == v1.ServiceStateUnavailable:
+		label, tooltip, tone, disabled = "Unavailable", action.status.Message, ui.ToneError, true
+		if tooltip == "" {
+			tooltip = "The service is unavailable."
+		}
+	case action.status.State == v1.ServiceStateError:
+		label, tone, disabled = "Error", ui.ToneError, true
+		tooltip = action.status.Message
+		if tooltip == "" {
+			tooltip = "Open details and refresh status before changing state."
+		} else {
+			tooltip += " Open details and refresh status before changing state."
+		}
+	default:
+		label, disabled = "Checking", true
+	}
+	if action.status.State != v1.ServiceStateError {
+		if action.status.Message != "" && tooltip != "" && action.status.Message != tooltip {
+			tooltip += " " + action.status.Message
+		} else if action.status.Message != "" {
+			tooltip = action.status.Message
+		}
+	}
+	if tooltip != "" {
+		tooltip = action.label + ": " + tooltip
+	} else {
+		tooltip = action.label + ": " + label + ". Activate to toggle."
+	}
+	displayLabel := label
+	if label == "On" || label == "Off" {
+		displayLabel = "Guard " + label
+	}
+	actionID := "cc:plugin-service:" + action.pluginID + ":" + action.serviceID + ":" + action.action
+	n := ccHomePill(width, action.icon, displayLabel, actionID, selected)
+	n.Name = action.label + ": " + label
+	n.Tooltip = tooltip
+	if len(n.Children) > 1 {
+		n.Children[1].Tone = tone
+	}
+	if disabled {
+		ccDisable(n)
+	}
+	return n
 }
 
 func caffeinePresetControl(r *Registry, h *PanelHost, width int, tr translateFunc) *ui.Node {

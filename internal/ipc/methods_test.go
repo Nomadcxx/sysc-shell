@@ -26,6 +26,30 @@ func TestMethodsListsEveryExactMethod(t *testing.T) {
 	}
 }
 
+func TestPluginActionUsesItsAPI2HandlerWithStrictParams(t *testing.T) {
+	s := NewServer("", Handlers{API: map[string]APIMethod{
+		"plugin.action": func(raw json.RawMessage) (any, error) {
+			var p struct {
+				PluginID  string `json:"plugin_id"`
+				ServiceID string `json:"service_id"`
+				ActionID  string `json:"action_id"`
+			}
+			if err := DecodeParams(raw, &p); err != nil {
+				return nil, err
+			}
+			return map[string]any{"plugin": p.PluginID, "service": p.ServiceID, "action": p.ActionID}, nil
+		},
+	}})
+	got := string(s.handleLine(`{"id":1,"method":"plugin.action","params":{"plugin_id":"org.sysc.lid-guard","service_id":"lid-guard","action_id":"toggle"}}`))
+	if !strings.Contains(got, `"ok":true`) || !strings.Contains(got, `"action":"toggle"`) {
+		t.Fatalf("plugin.action reply = %s", got)
+	}
+	got = string(s.handleLine(`{"id":2,"method":"plugin.action","params":{"plugin_id":"org.sysc.lid-guard","service_id":"lid-guard","action_id":"toggle","shell":"true"}}`))
+	if !strings.Contains(got, `"code":"invalid_params"`) {
+		t.Fatalf("plugin.action accepted unknown params: %s", got)
+	}
+}
+
 func TestMethodPrefixesAreTheDelegatedFamilies(t *testing.T) {
 	want := []string{"nightlight.", "plugins.", "theme."}
 	if got := MethodPrefixes(); !reflect.DeepEqual(got, want) {

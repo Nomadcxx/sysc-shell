@@ -308,6 +308,10 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	if n == nil || h.id != PanelControlCenter {
 		return false
 	}
+	if pluginID, serviceID, actionID, ok := parseControlCentrePluginAction(n.Action); ok {
+		r.scheduleControl(h, func() error { return r.PluginAction(pluginID, serviceID, actionID) })
+		return true
+	}
 	if requested, ok := strings.CutPrefix(n.Action, "settings-section:"); ok {
 		r.closePanelLocked(h.id)
 		return r.openSettingsAtLocked(h.output, requested)
@@ -441,6 +445,18 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	}
 	r.switchPanelLocked(h, target)
 	return true
+}
+
+func parseControlCentrePluginAction(action string) (pluginID, serviceID, actionID string, ok bool) {
+	const prefix = "cc:plugin-service:"
+	if !strings.HasPrefix(action, prefix) {
+		return "", "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(action, prefix), ":")
+	if len(parts) != 3 || !v1.ValidPluginID(parts[0]) || !v1.ValidEntryID(parts[1]) || !v1.ValidEntryID(parts[2]) {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
 }
 
 // switchPanelLocked retires h and opens target where h was, leaving any other

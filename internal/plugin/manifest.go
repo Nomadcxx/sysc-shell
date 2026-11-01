@@ -38,6 +38,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-shell/plugin/icons"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -51,6 +52,8 @@ const (
 	MaxManifestBytes = 256 << 10
 	// MaxEntries bounds each of the services, widgets, and panels lists.
 	MaxEntries = 32
+	// MaxServiceActions bounds one service's action allowlist.
+	MaxServiceActions = 16
 	// MaxSettings bounds one settings schema, whether plugin or instance
 	// scoped.
 	MaxSettings = 64
@@ -285,8 +288,18 @@ const maxFilesystemPaths = 32
 // Service is one background behaviour the plugin owns. It is metadata for the
 // manager: the process supplies the behaviour itself.
 type Service struct {
-	ID    string
-	Label string
+	ID          string
+	Label       string
+	Actions     []string
+	QuickAction *ServiceQuickAction
+}
+
+// ServiceQuickAction is a manifest-declared action tile in the Control
+// Center.
+type ServiceQuickAction struct {
+	Label  string
+	Icon   string
+	Action string
 }
 
 // Widget is one bar entry a user can place. Its settings are instance scoped,
@@ -429,8 +442,16 @@ type wireRequires struct {
 }
 
 type wireEntry struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
+	ID          string           `json:"id"`
+	Label       string           `json:"label,omitempty"`
+	Actions     *[]string        `json:"actions,omitempty"`
+	QuickAction *wireQuickAction `json:"quick_action,omitempty"`
+}
+
+type wireQuickAction struct {
+	Label  string `json:"label"`
+	Icon   string `json:"icon"`
+	Action string `json:"action"`
 }
 
 type wireWidget struct {
@@ -592,7 +613,7 @@ func validateManifest(w wireManifest) (Manifest, error) {
 	if m.Requires, err = requires(w.Requires); err != nil {
 		return Manifest{}, err
 	}
-	if m.Services, err = services(w.Services); err != nil {
+	if m.Services, err = services(w.Services, w.Protocol.Minor); err != nil {
 		return Manifest{}, err
 	}
 	if m.Widgets, err = widgets(w.Widgets); err != nil {
@@ -770,7 +791,7 @@ func entryIDs(field string, count int, id func(int) string) error {
 	return nil
 }
 
-func services(w []wireEntry) ([]Service, error) {
+func services(w []wireEntry, minor int) ([]Service, error) {
 	if err := entryIDs("services", len(w), func(i int) string { return w[i].ID }); err != nil {
 		return nil, err
 	}
@@ -779,9 +800,56 @@ func services(w []wireEntry) ([]Service, error) {
 		if err := text(fmt.Sprintf("services[%d].label", i), e.Label, maxLabelBytes, false); err != nil {
 			return nil, err
 		}
-		out[i] = Service{ID: e.ID, Label: e.Label}
+		if (e.Actions != nil || e.QuickAction != nil) && minor < v1.ServiceActionMinor {
+			return nil, fmt.Errorf("services[%d]: actions and quick_action require protocol minor %d", i, v1.ServiceActionMinor)
+		}
+
+		var actions []string
+		seenActions := make(map[string]bool)
+		if e.Actions != nil {
+			if len(*e.Actions) == 0 {
+				return nil, fmt.Errorf("services[%d].actions must declare at least one action", i)
+			}
+			if len(*e.Actions) > MaxServiceActions {
+				return nil, fmt.Errorf("services[%d].actions lists %d entries, more than the %d allowed", i, len(*e.Actions), MaxServiceActions)
+			}
+			actions = make([]string, 0, len(*e.Actions))
+			for j, action := range *e.Actions {
+				if !v1.ValidEntryID(action) {
+					return nil, fmt.Errorf("services[%d].actions[%d]: id %q is not an identifier of at most %d bytes", i, j, action, v1.MaxEntryIDBytes)
+				}
+				if seenActions[action] {
+					return nil, fmt.Errorf("services[%d].actions: id %q is declared twice", i, action)
+				}
+				seenActions[action] = true
+				actions = append(actions, action)
+			}
+		}
+
+		var quick *ServiceQuickAction
+		if e.QuickAction != nil {
+			wq := e.QuickAction
+			if err := text(fmt.Sprintf("services[%d].quick_action.label", i), wq.Label, maxLabelBytes, true); err != nil {
+				return nil, err
+			}
+			if !v1.ValidEntryID(wq.Icon) || !manifestIcon(wq.Icon) {
+				return nil, fmt.Errorf("services[%d].quick_action.icon %q is not in the shell catalogue", i, wq.Icon)
+			}
+			if !v1.ValidEntryID(wq.Action) {
+				return nil, fmt.Errorf("services[%d].quick_action.action %q is not an identifier", i, wq.Action)
+			}
+			if !seenActions[wq.Action] {
+				return nil, fmt.Errorf("services[%d].quick_action.action %q is not declared in actions", i, wq.Action)
+			}
+			quick = &ServiceQuickAction{Label: wq.Label, Icon: wq.Icon, Action: wq.Action}
+		}
+		out[i] = Service{ID: e.ID, Label: e.Label, Actions: actions, QuickAction: quick}
 	}
 	return out, nil
+}
+
+func manifestIcon(name string) bool {
+	return icons.ValidName(name)
 }
 
 func widgets(w []wireWidget) ([]Widget, error) {

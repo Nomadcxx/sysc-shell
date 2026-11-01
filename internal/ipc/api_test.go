@@ -178,6 +178,29 @@ func TestCapabilitiesMatchDispatch(t *testing.T) {
 	}
 }
 
+func TestPluginActionCapabilityRequiresRegisteredAPIHandler(t *testing.T) {
+	hasPluginAction := func(s *Server) bool {
+		t.Helper()
+		m := decodeReply(t, s.handleLine(`{"id":1,"method":"ipc.capabilities"}`))
+		methods := m["result"].(map[string]any)["methods"].([]any)
+		for _, method := range methods {
+			if method == "plugin.action" {
+				return true
+			}
+		}
+		return false
+	}
+	if hasPluginAction(NewServer("", Handlers{})) {
+		t.Fatal("plugin.action was advertised without a registered API handler")
+	}
+	registered := NewServer("", Handlers{API: map[string]APIMethod{
+		"plugin.action": func(json.RawMessage) (any, error) { return map[string]bool{"queued": true}, nil },
+	}})
+	if !hasPluginAction(registered) {
+		t.Fatal("registered plugin.action API handler was not advertised")
+	}
+}
+
 func TestLineLimit(t *testing.T) {
 	sock, cancel := startServer(t, Handlers{Status: func() map[string]any { return map[string]any{} }})
 	defer cancel()

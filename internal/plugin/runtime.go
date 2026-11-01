@@ -76,13 +76,13 @@ type RuntimeOptions struct {
 	ShutdownGrace    time.Duration
 	// SessionEnded runs once after a live helper session ends, before any
 	// automatic restart. Stop invokes it when it closes a live session.
-	SessionEnded func()
+	SessionEnded func(session uint64)
 	// SessionStarted runs after every successful launch, with the new
 	// session live and no lock held. A started process knows nothing about
 	// the views the host still holds, so on a restart the host must
 	// re-announce them; on a first start there are none and the host does
 	// nothing.
-	SessionStarted func()
+	SessionStarted func(session uint64)
 	// Launcher is the binary that applies a plugin's boundary and executes
 	// it (see LaunchFlag). Empty starts the plugin directly, unbounded.
 	Launcher string
@@ -119,7 +119,7 @@ func (o RuntimeOptions) now() time.Time {
 type Runtime struct {
 	candidate Candidate
 	opts      RuntimeOptions
-	messages  chan v1.Message
+	messages  chan RuntimeMessage
 	// out queues host→plugin writes so callers never touch the plugin's
 	// stdin pipe directly: a plugin that stops draining would otherwise
 	// block whoever sent last — including the shell's main loop, which
@@ -132,6 +132,7 @@ type Runtime struct {
 	since         time.Time
 	failure       string
 	starts        int
+	sessionSeq    uint64
 	stderr        []byte
 	consent       ConsentVerdict
 	boundary      Boundary
@@ -146,12 +147,20 @@ type Runtime struct {
 	stopping   bool
 }
 
+// RuntimeMessage ties one plugin message to the process session that sent it.
+// A restarted process can restart its own revision counters, so consumers use
+// this host-local sequence to discard queued messages from an older session.
+type RuntimeMessage struct {
+	Session uint64
+	Message v1.Message
+}
+
 // NewRuntime returns a stopped runtime for one discovered candidate.
 func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
 	r := &Runtime{
 		candidate: c,
 		opts:      opts,
-		messages:  make(chan v1.Message, 32),
+		messages:  make(chan RuntimeMessage, 32),
 		state:     StateDisabled,
 		since:     opts.now(),
 		budget:    newRestartBudget(),
@@ -245,7 +254,7 @@ func (r *Runtime) flushOut() {
 // context and never queued here (gh #66). The read loop has to put the rest
 // somewhere, and delivering it is the only alternative to discarding a view
 // the plugin meant the user to see.
-func (r *Runtime) Messages() <-chan v1.Message { return r.messages }
+func (r *Runtime) Messages() <-chan RuntimeMessage { return r.messages }
 
 // earlyCall is a host.call that arrived before SetCalls. It keeps the session
 // it belongs to, so answering it later is bound to that session's lifetime.
@@ -465,6 +474,8 @@ func (r *Runtime) launch(ctx context.Context) error {
 		cancelSession()
 		return nil
 	}
+	r.sessionSeq++
+	session := r.sessionSeq
 	q := make(chan outItem, sendQueueDepth)
 	r.session = sess
 	r.sessionCancel = cancelSession
@@ -474,9 +485,9 @@ func (r *Runtime) launch(ctx context.Context) error {
 
 	r.setState(StateRunning, "")
 	if r.opts.SessionStarted != nil {
-		r.opts.SessionStarted()
+		r.opts.SessionStarted(session)
 	}
-	go r.supervise(ctx, sessionCtx, cancelSession, sess, generation)
+	go r.supervise(ctx, sessionCtx, cancelSession, sess, generation, session)
 	return nil
 }
 
@@ -485,7 +496,7 @@ func (r *Runtime) launch(ctx context.Context) error {
 // It runs outside the runtime's mutex. A plugin's writes are its own business;
 // holding the lock across them would let one slow process stall every status
 // read the manager makes.
-func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.CancelFunc, sess *Session, generation int) {
+func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.CancelFunc, sess *Session, generation int, session uint64) {
 	var readErr error
 	for {
 		msg, err := sess.Recv()
@@ -522,7 +533,7 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 			continue
 		}
 		select {
-		case r.messages <- msg:
+		case r.messages <- RuntimeMessage{Session: session, Message: msg}:
 		case <-sessionCtx.Done():
 			// Stop (or a lost start race) ended this session. A consumerless
 			// publish must not outlive it: parent ctx stays alive for the
@@ -556,7 +567,7 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 		return
 	}
 	if r.opts.SessionEnded != nil {
-		r.opts.SessionEnded()
+		r.opts.SessionEnded(session)
 	}
 
 	if errors.Is(readErr, ErrFlooding) {
@@ -594,6 +605,7 @@ func (r *Runtime) Stop() {
 	r.generation++
 	sess := r.session
 	cancelSession := r.sessionCancel
+	session := r.sessionSeq
 	r.session = nil
 	r.sessionCancel = nil
 	r.out = nil
@@ -611,7 +623,7 @@ func (r *Runtime) Stop() {
 		r.stderr = sess.Stderr()
 		r.mu.Unlock()
 		if r.opts.SessionEnded != nil {
-			r.opts.SessionEnded()
+			r.opts.SessionEnded(session)
 		}
 	}
 	if cancelSession != nil {

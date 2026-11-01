@@ -296,14 +296,37 @@ func TestNotificationReplyDoesNotBlockTheShell(t *testing.T) {
 		t.Fatal("notify never started")
 	}
 	select {
-	case msg := <-r.Messages():
-		if _, ok := msg.(*v1.ViewSnapshot); !ok {
-			t.Fatalf("got %T, want a snapshot while notify is still in flight", msg)
+	case event := <-r.Messages():
+		if _, ok := event.Message.(*v1.ViewSnapshot); !ok {
+			t.Fatalf("got %T, want a snapshot while notify is still in flight", event.Message)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("snapshot blocked behind notify")
 	}
 	close(release)
+}
+
+func TestRuntimeMessagesCarryTheirSessionGeneration(t *testing.T) {
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "ok")}, helperOptions())
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	if err := r.Send(&v1.ViewOpen{ViewID: "generation", View: v1.ViewBar, Entry: "bar"}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case event := <-r.Messages():
+		if event.Session == 0 {
+			t.Fatal("runtime message has no session generation")
+		}
+		if _, ok := event.Message.(*v1.ViewSnapshot); !ok {
+			t.Fatalf("runtime message = %T, want a view snapshot", event.Message)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("plugin message never reached the runtime")
+	}
 }
 
 func TestRuntimeRetainsProtocolFailure(t *testing.T) {
@@ -326,7 +349,7 @@ func TestRuntimeRetainsProtocolFailure(t *testing.T) {
 func TestRuntimeSessionEndedRunsOnceWhenStopped(t *testing.T) {
 	var ended atomic.Int32
 	opts := helperOptions()
-	opts.SessionEnded = func() { ended.Add(1) }
+	opts.SessionEnded = func(uint64) { ended.Add(1) }
 	r := NewRuntime(Candidate{Manifest: installHelper(t, "ok")}, opts)
 	r.Stop()
 	if got := ended.Load(); got != 0 {
@@ -345,7 +368,7 @@ func TestRuntimeSessionEndedRunsOnceWhenStopped(t *testing.T) {
 func TestRuntimeSessionEndedRunsAfterOrderlyExit(t *testing.T) {
 	var ended atomic.Int32
 	opts := helperOptions()
-	opts.SessionEnded = func() { ended.Add(1) }
+	opts.SessionEnded = func(uint64) { ended.Add(1) }
 	r := NewRuntime(Candidate{Manifest: installHelper(t, "ok")}, opts)
 	if err := r.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -362,7 +385,7 @@ func TestRuntimeSessionEndedRunsAfterOrderlyExit(t *testing.T) {
 func TestRuntimeSessionEndedRunsOnProtocolFailure(t *testing.T) {
 	var ended atomic.Int32
 	opts := helperOptions()
-	opts.SessionEnded = func() { ended.Add(1) }
+	opts.SessionEnded = func(uint64) { ended.Add(1) }
 	r := NewRuntime(Candidate{Manifest: installHelper(t, "malformed-after-hello")}, opts)
 	if err := r.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -378,7 +401,7 @@ func TestRuntimeSessionEndedPrecedesEachAutomaticRestart(t *testing.T) {
 	var startsAtEnd []int
 	var r *Runtime
 	opts := helperOptions()
-	opts.SessionEnded = func() {
+	opts.SessionEnded = func(uint64) {
 		mu.Lock()
 		startsAtEnd = append(startsAtEnd, r.Status().Starts)
 		mu.Unlock()
@@ -456,7 +479,7 @@ func TestRuntimeSuperviseStopsAfterSessionCancelWhilePublishing(t *testing.T) {
 
 	r := NewRuntime(Candidate{Manifest: installHelper(t, "flood")}, helperOptions())
 	for len(r.messages) < cap(r.messages) {
-		r.messages <- &v1.ViewSnapshot{ViewID: "filler"} // fill the buffer: the next publish blocks
+		r.messages <- RuntimeMessage{Session: 1, Message: &v1.ViewSnapshot{ViewID: "filler"}} // fill the buffer: the next publish blocks
 	}
 
 	ctx, cancelCtx := context.WithCancel(context.Background())
@@ -465,7 +488,7 @@ func TestRuntimeSuperviseStopsAfterSessionCancelWhilePublishing(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		r.supervise(ctx, sessionCtx, cancelSession, sess, 0)
+		r.supervise(ctx, sessionCtx, cancelSession, sess, 0, 1)
 	}()
 
 	time.Sleep(150 * time.Millisecond) // let supervise block in the publish select
@@ -512,8 +535,8 @@ func TestEarlyHostCallDoesNotOutliveItsSession(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 	select {
-	case msg := <-r.Messages():
-		if _, ok := msg.(*v1.HostCall); ok {
+	case event := <-r.Messages():
+		if _, ok := event.Message.(*v1.HostCall); ok {
 			t.Fatal("host call reached the message queue")
 		}
 	default:
@@ -535,8 +558,8 @@ func TestEarlyHostCallOverflowIsAnsweredWithAnError(t *testing.T) {
 	deadline := time.After(3 * time.Second)
 	for len(overflowed) < 8 {
 		select {
-		case msg := <-r.Messages():
-			st, ok := msg.(*v1.PluginStatus)
+		case event := <-r.Messages():
+			st, ok := event.Message.(*v1.PluginStatus)
 			if !ok {
 				continue
 			}

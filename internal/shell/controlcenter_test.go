@@ -536,6 +536,115 @@ func TestHomeToggleRowHoldsFourPills(t *testing.T) {
 	}
 }
 
+func TestControlCentrePluginQuickActionUsesServiceStatusAndDispatches(t *testing.T) {
+	const pluginID = "org.sysc.lidguard"
+	reg := bindServiceTestPlugin(t, pluginID, true)
+	waitPluginState(t, reg.plugins, pluginID, plugin.StateRunning)
+	if err := reg.PluginAction(pluginID, "lid-guard", "toggle"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		status, ok := reg.plugins.serviceStatus(pluginID, "lid-guard")
+		return ok && status.State == v1.ServiceStateActive
+	})
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	root := ccHome(reg, h)
+	const action = "cc:plugin-service:org.sysc.lidguard:lid-guard:toggle"
+	quick := findNode(root, func(n *ui.Node) bool { return n.Action == action })
+	if quick == nil {
+		t.Fatal("Control Center did not render the declared Lid Guard quick action")
+	}
+	label := findNode(quick, func(n *ui.Node) bool { return n.Kind == ui.KindText })
+	if quick.Kind != ui.KindButton || label == nil || label.Text != "Guard On" || quick.Name != "Lid Guard: On" || !quick.State.Has(ui.StateSelected) || quick.State.Has(ui.StateDisabled) {
+		t.Fatalf("active quick action = %+v, want an enabled selected On pill", quick)
+	}
+	if !h.activateControlCentre(reg, quick) {
+		t.Fatal("Control Center did not dispatch the declared service action")
+	}
+	waitFor(t, func() bool {
+		status, ok := reg.plugins.serviceStatus(pluginID, "lid-guard")
+		return ok && status.Revision > 2
+	})
+}
+
+func TestControlCentreQuickActionStatusLabelsAndAvailability(t *testing.T) {
+	const pluginID = "org.sysc.lidguard"
+	reg := bindServiceTestPlugin(t, pluginID, true)
+	waitPluginState(t, reg.plugins, pluginID, plugin.StateRunning)
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	const quickName = "Lid Guard: "
+	const action = "cc:plugin-service:org.sysc.lidguard:lid-guard:toggle"
+
+	check := func(name, text string, state v1.ServiceState, busy, disabled, selected bool, revision uint64) {
+		t.Helper()
+		slot := pluginSlotForTest(t, reg.plugins, pluginID)
+		reg.plugins.mu.Lock()
+		session := slot.session
+		reg.plugins.mu.Unlock()
+		reg.plugins.acceptServiceStatus(slot, session, &v1.ServiceStatus{
+			ServiceID: "lid-guard", State: state, Busy: busy, Revision: revision,
+		})
+		root := ccHome(reg, h)
+		button := findNode(root, func(n *ui.Node) bool { return n.Name == quickName+name })
+		if button == nil {
+			t.Fatalf("Control Center has no %s quick action", name)
+		}
+		label := findNode(button, func(n *ui.Node) bool { return n.Kind == ui.KindText })
+		if label == nil || label.Text != text || button.State.Has(ui.StateDisabled) != disabled || button.State.Has(ui.StateSelected) != selected {
+			t.Errorf("%s quick action = %+v label=%+v, want text %q disabled=%t selected=%t", name, button, label, text, disabled, selected)
+		}
+		if name == "On" && label != nil && label.Tone != ui.ToneNormal {
+			t.Errorf("active quick action label tone = %d, want normal foreground on the accent fill", label.Tone)
+		}
+		if disabled && button.Action != "" {
+			t.Errorf("disabled %s quick action retained action %q", name, button.Action)
+		}
+		if disabled && strings.Contains(button.Tooltip, "Activate") {
+			t.Errorf("disabled %s quick action tooltip invites activation: %q", name, button.Tooltip)
+		}
+		if name == "Working" && !strings.Contains(button.Tooltip, "changing state") {
+			t.Errorf("busy quick action tooltip = %q, want changing-state feedback", button.Tooltip)
+		}
+		if !disabled && button.Action != action {
+			t.Errorf("enabled %s quick action action = %q, want %q", name, button.Action, action)
+		}
+	}
+
+	check("Checking", "Checking", v1.ServiceStateUnknown, false, true, false, 1)
+	check("Off", "Guard Off", v1.ServiceStateInactive, false, false, false, 2)
+	check("On", "Guard On", v1.ServiceStateActive, false, false, true, 3)
+	check("Working", "Working", v1.ServiceStateUnknown, true, true, false, 4)
+	check("Unavailable", "Unavailable", v1.ServiceStateUnavailable, false, true, false, 5)
+	check("Error", "Error", v1.ServiceStateError, false, true, false, 6)
+
+	disabled := bindServiceTestPlugin(t, pluginID, false)
+	if quick := findNode(ccHome(disabled, h), func(n *ui.Node) bool { return strings.HasPrefix(n.Name, quickName) }); quick != nil {
+		t.Fatalf("disabled plugin still contributed a Control Center action: %+v", quick)
+	}
+}
+
+func TestControlCentreErrorQuickActionRequiresDetailsAndRefresh(t *testing.T) {
+	action := pluginQuickAction{
+		pluginID: "org.sysc.lidguard", serviceID: "lid-guard", label: "Lid Guard",
+		icon: "laptop", action: "toggle", running: true, hasStatus: true,
+		status: v1.ServiceStatus{
+			State: v1.ServiceStateError, Message: "systemd returned an unknown Lid Guard service state.",
+		},
+	}
+	quick := ccPluginQuickAction(240, action)
+	if !quick.State.Has(ui.StateDisabled) || quick.Action != "" {
+		t.Fatalf("error quick action = %+v, want a disabled control", quick)
+	}
+	if strings.Contains(quick.Tooltip, "Activate") {
+		t.Errorf("error quick action tooltip invites activation: %q", quick.Tooltip)
+	}
+	for _, want := range []string{"systemd returned an unknown Lid Guard service state.", "details", "refresh"} {
+		if !strings.Contains(strings.ToLower(quick.Tooltip), strings.ToLower(want)) {
+			t.Errorf("error quick action tooltip missing %q: %q", want, quick.Tooltip)
+		}
+	}
+}
+
 func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	got := renderText(ccHome(&Registry{}, h))
