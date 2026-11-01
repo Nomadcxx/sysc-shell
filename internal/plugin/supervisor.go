@@ -228,9 +228,27 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 
 	if err := s.handshake(ctx, sess); err != nil {
 		s.reap(sess)
-		return nil, err
+		return nil, withStderr(err, sess.Stderr())
 	}
 	return sess, nil
+}
+
+// maxStartStderr bounds the stderr line a failed start carries.
+const maxStartStderr = 512
+
+// withStderr adds the last line a plugin wrote to standard error to the error
+// that ended its start. The host only logs a failed start, and a plugin that
+// exits before plugin.hello says why on stderr or nowhere.
+func withStderr(err error, stderr []byte) error {
+	lines := strings.Split(strings.TrimSpace(string(stderr)), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last == "" {
+		return err
+	}
+	if len(last) > maxStartStderr {
+		last = strings.ToValidUTF8(last[:maxStartStderr], "") + "…"
+	}
+	return fmt.Errorf("%w (stderr: %s)", err, last)
 }
 
 // startSession builds the plugin process and starts it. The handshake belongs

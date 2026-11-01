@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,6 +234,27 @@ func TestStartReportsAProcessThatExitsImmediately(t *testing.T) {
 	_, err := s.Start(context.Background())
 	if err == nil {
 		t.Fatal("Start accepted a process that exited before the handshake")
+	}
+}
+
+func TestStartNamesTheStderrOfAPluginThatExitsBeforeHello(t *testing.T) {
+	t.Parallel()
+
+	s := supervisor(installHelper(t, "explain-and-exit-before-hello"))
+	_, err := s.Start(context.Background())
+	if err == nil {
+		t.Fatal("Start accepted a process that exited before the handshake")
+	}
+	// The host only logs the error, so the plugin's own reason has to be in
+	// it; the last line is the one that explains the exit.
+	if want := "calendar: connect to the session bus: no address"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to carry %q", err, want)
+	}
+	if strings.Contains(err.Error(), "starting up") {
+		t.Fatalf("err = %v, want only the last stderr line", err)
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("err = %v, want it to still wrap io.EOF", err)
 	}
 }
 
