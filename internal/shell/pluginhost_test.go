@@ -61,7 +61,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestPluginHostGrantsCalendarActionCapabilities(t *testing.T) {
-	for _, want := range []plugin.Capability{plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapFiles} {
+	for _, want := range []plugin.Capability{plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapFiles, plugin.CapLocation} {
 		found := false
 		for _, got := range hostPluginCaps {
 			if got == want {
