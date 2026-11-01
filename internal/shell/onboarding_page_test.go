@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1759,10 +1760,15 @@ func TestOnboardingPluginSelectionIsIdempotentAndRemovesNestedItems(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The placement goes just before the notifications bell, which ends the
+	// default bar; every existing item keeps its order.
 	for name, bar := range map[string]config.Bar{"shared": selected.Bar, "DP-2": selected.Outputs[0].Bar} {
-		if !reflect.DeepEqual(bar.Right[:len(cfg.Bar.Right)], cfg.Bar.Right) ||
-			countPluginPlacements(bar, pluginID) != countPluginPlacements(cfg.Bar, pluginID)+1 {
-			t.Errorf("%s bar selection changed existing order or did not add one placement: %+v", name, bar.Right)
+		rest := slices.DeleteFunc(slices.Clone(bar.Right), func(it config.Item) bool { return it.Plugin == pluginID })
+		n := len(bar.Right)
+		if !reflect.DeepEqual(rest, cfg.Bar.Right) ||
+			countPluginPlacements(bar, pluginID) != countPluginPlacements(cfg.Bar, pluginID)+1 ||
+			bar.Right[n-1].ID != "notifications" || bar.Right[n-2].Plugin != pluginID {
+			t.Errorf("%s bar selection changed existing order or did not add one placement before the bell: %+v", name, bar.Right)
 		}
 	}
 	repeated, err := onbSetPluginSelected(selected, manifest, true)

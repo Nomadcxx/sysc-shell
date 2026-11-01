@@ -1027,6 +1027,7 @@ func newPanelRegistryWithoutBridge(t *testing.T) *Registry {
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	reg.onboardingHardware = func() onbMachine { return onbMachine{} }
 	t.Cleanup(reg.Close)
 	return reg
 }

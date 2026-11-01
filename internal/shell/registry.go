@@ -72,6 +72,14 @@ type Registry struct {
 	onboardingDraft            config.Config
 	onboardingPluginSelections map[string]bool
 	onboardingError            string
+	// onboardingInstalls are the catalog installs the wizard queued, keyed by
+	// plugin ID. They outlive the panel, as an install outlives its request.
+	onboardingInstalls map[string]onbInstall
+	// onboardingHardware probes what the default plugin set depends on.
+	// Tests replace it.
+	onboardingHardware         func() onbMachine
+	onboardingCatalogRequested bool
+	onboardingCatalogErr       error
 	// effectOutputs names the connectors whose wallpaper is a playing or
 	// paused terminal effect. Their bars frost at the floor (WithEffectBehind).
 	effectOutputs      map[string]bool
@@ -555,6 +563,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		dwell:                    newDwell(defaultDwell),
 		runArgv:                  runArgvDefault,
 		lookPath:                 exec.LookPath,
+		onboardingHardware:       probeOnboardingHardware,
 		settingsReadDir:          os.ReadDir,
 		runArgvOutput:            runArgvOutputDefault,
 		forceQuitRunningAppScope: forceQuitNiriAppScopeDefault,
@@ -1932,6 +1941,7 @@ func (r *Registry) tryOpenOnboardingLocked(first uint32) {
 // completed install back into a dismissed one.
 func (r *Registry) markOnboardingOutcomeLocked(outcome onboarding.Outcome) error {
 	r.onboardingPluginSelections = nil
+	r.onboardingInstalls = nil
 	path := onboarding.StatePath()
 	if outcome == onboarding.OutcomeDismissed {
 		state, err := onboarding.Load(path)

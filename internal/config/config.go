@@ -839,6 +839,7 @@ func Default() Config {
 					{ID: "gpu", Display: "radial", Interval: defaultMetricInterval},
 				}},
 				{ID: "clipboard"},
+				{ID: "volume"},
 				{ID: "privacy"},
 				{ID: "notifications"},
 			},
