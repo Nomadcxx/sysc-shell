@@ -147,14 +147,23 @@ func onbConfigHasItem(cfg config.Config, id string) bool {
 	return false
 }
 
-// onbEnsureItemPlacement appends a native item to every bar's right lane
-// that lacks it, as plugin placements are.
+// onbRightInsertIndex is where the wizard adds to a right lane: before the
+// notifications bell, which ends the default bar, or at the end without one.
+func onbRightInsertIndex(items []config.Item) int {
+	if i := slices.IndexFunc(items, func(it config.Item) bool { return it.ID == "notifications" }); i >= 0 {
+		return i
+	}
+	return len(items)
+}
+
+// onbEnsureItemPlacement adds a native item to every bar's right lane that
+// lacks it, where plugin placements go.
 func onbEnsureItemPlacement(cfg *config.Config, id string) error {
 	ensure := func(bar *config.Bar) error {
 		if onbBarContains(*bar, func(item config.Item) bool { return item.ID == id }) {
 			return nil
 		}
-		items, err := config.InsertItem(bar.Right, len(bar.Right), config.Item{ID: id})
+		items, err := config.InsertItem(bar.Right, onbRightInsertIndex(bar.Right), config.Item{ID: id})
 		if err != nil {
 			return err
 		}

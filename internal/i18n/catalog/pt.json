@@ -329,7 +329,7 @@
  "onboarding.idle.screensaver_line": "Executa o sysc-walls sobre o ambiente de trabalho.",
  "onboarding.intro.appearance": "Escolha o modo do tema e o papel de parede. As paletas, os esquemas e a disposição da barra ficam nas Definições.",
  "onboarding.intro.idle": "Escolha o que acontece quando a sessão fica inativa ou mantenha o comportamento atual.",
- "onboarding.intro.plugins": "Escolha os plugins de barra instalados que quer ativar e colocar na barra. As escolhas são guardadas ao terminar; pode instalar plugins mais tarde nas Definições.",
+ "onboarding.intro.plugins": "Escolha o que vai na sua barra. Os plugins marcados são instalados a partir do catálogo de plugins; tudo é salvo quando você terminar.",
  "onboarding.intro.ready": "Reveja as alterações aplicadas. As Definições incluem estes controlos e o resto do shell.",
  "onboarding.intro.region": "Configure a localização e as unidades meteorológicas e escolha o idioma da interface. O esquema do teclado continua a ser gerido pelo sistema operativo.",
  "onboarding.intro.welcome": "Configure o essencial para começar. As alterações são aplicadas à medida que escolhe e continuam disponíveis nas Definições.",

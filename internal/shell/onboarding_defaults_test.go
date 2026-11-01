@@ -187,6 +187,9 @@ func TestOnboardingFinishPlacesCheckedBuiltInItems(t *testing.T) {
 	if onbConfigHasItem(saved, "wifi") {
 		t.Fatal("Finish placed the unticked Wi-Fi item")
 	}
+	if right := saved.Bar.Right; right[len(right)-1].ID != "notifications" || right[len(right)-2].ID != "battery" {
+		t.Fatalf("right lane = %+v, want battery just before the notifications bell", right)
+	}
 }
 
 // Finish waits for the installs "Install and continue" queued, and an

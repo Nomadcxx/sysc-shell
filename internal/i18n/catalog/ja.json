@@ -329,7 +329,7 @@
  "onboarding.idle.screensaver_line": "デスクトップ上で sysc-walls を実行します。",
  "onboarding.intro.appearance": "テーマのモードと壁紙を選びます。パレット、配色、バーの配置は設定にあります。",
  "onboarding.intro.idle": "セッションがアイドル状態になったときの動作を選ぶか、現在の設定をそのまま使います。",
- "onboarding.intro.plugins": "インストール済みのバー用プラグインから、起動時に有効にしてバーへ配置するものを選びます。選択内容は完了時に保存されます。プラグインは後から設定でインストールできます。",
+ "onboarding.intro.plugins": "バーに置くものを選びます。チェックしたプラグインはプラグインカタログからインストールされ、完了時にすべて保存されます。",
  "onboarding.intro.ready": "適用された内容を確認します。ここで使った項目とシェルの他の設定は設定画面にあります。",
  "onboarding.intro.region": "天気の地域と単位を設定し、画面の言語を選びます。キーボード配列は OS で管理します。",
  "onboarding.intro.welcome": "まずは基本項目を設定しましょう。選んだ内容はすぐに反映され、後から設定で変更できます。",

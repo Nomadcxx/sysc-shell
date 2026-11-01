@@ -64,8 +64,8 @@ const (
 		"language. Keyboard layouts stay with the OS."
 	onbIntroIdle = "Choose the action for an idle session, or keep the current " +
 		"behaviour. Timing and availability stay in Settings."
-	onbIntroPlugins = "Choose installed bar plugins to enable and place on the bar. " +
-		"Your choices save when you finish; install plugins later in Settings."
+	onbIntroPlugins = "Choose what goes on your bar. Ticked plugins install from the " +
+		"plugin catalog; everything saves when you finish."
 	onbIntroReady = "Review what applied. Settings holds every control this " +
 		"wizard used, plus the rest of the shell."
 
@@ -976,7 +976,7 @@ func onbEnsureWeatherPlacement(cfg *config.Config) error {
 		if onbBarHasWeatherPlacement(*bar) {
 			return nil
 		}
-		items, err := config.InsertItem(bar.Right, len(bar.Right), config.Item{ID: "weather"})
+		items, err := config.InsertItem(bar.Right, onbRightInsertIndex(bar.Right), config.Item{ID: "weather"})
 		if err != nil {
 			return err
 		}
@@ -1011,7 +1011,7 @@ func onbSetPluginSelected(cfg config.Config, manifest plugin.Manifest, selected 
 			}
 			item := config.Item{ID: "plugin", Plugin: manifest.ID, Entry: manifest.Widgets[0].ID}
 			minter.Ensure(&item)
-			items, err := config.InsertItem(bar.Right, len(bar.Right), item)
+			items, err := config.InsertItem(bar.Right, onbRightInsertIndex(bar.Right), item)
 			if err != nil {
 				return err
 			}
@@ -1394,11 +1394,13 @@ func (r *Registry) finishOnboardingLocked(h *PanelHost) error {
 		h.writeTimer.Stop()
 		h.writeTimer = nil
 	}
-	draft, err := onbPluginSelectionConfig(h.draft, onbPluginCandidates(r), h.onbPluginSelections)
-	if err != nil {
+	// Built-in items go in first, so plugins follow them on the bar.
+	draft := h.draft.Clone()
+	if err := r.applyOnboardingItems(h, &draft); err != nil {
 		return err
 	}
-	if err := r.applyOnboardingItems(h, &draft); err != nil {
+	draft, err := onbPluginSelectionConfig(draft, onbPluginCandidates(r), h.onbPluginSelections)
+	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(draft.Weather.City) != "" {
