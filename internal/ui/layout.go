@@ -482,6 +482,12 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 	if err != nil {
 		return err
 	}
+	if child.Kind == KindText && w > inner.W {
+		// A section squeezes an elastic title's capsule when the band is
+		// tight. The text keeps the granted box so the painter ellipsizes it,
+		// rather than painting at its natural width over the next pill.
+		w = inner.W
+	}
 	child.Bounds = Rect{X: inner.X + max((inner.W-w)/2, 0), Y: inner.Y + (inner.H-h)/2, W: w, H: h}
 	return nil
 }
