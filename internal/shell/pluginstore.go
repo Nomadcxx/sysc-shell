@@ -83,6 +83,12 @@ func (r *Registry) relayPluginStoreUpdates(st *store.Store, updates <-chan store
 				r.rebuildPanel(storeHost)
 				publish = append(publish, publication{storeHost.output, PanelPluginStore})
 			}
+			// The wizard offers catalog plugins and reports the installs it
+			// queued, both read from this snapshot.
+			if onbHost := r.panelHosts[PanelOnboarding]; onbHost != nil {
+				r.rebuildPanel(onbHost)
+				publish = append(publish, publication{onbHost.output, PanelOnboarding})
+			}
 			r.mu.Unlock()
 
 			for _, p := range publish {
