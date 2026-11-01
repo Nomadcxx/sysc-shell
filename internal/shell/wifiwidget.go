@@ -16,7 +16,7 @@ const panelWifiAction = "panel:wifi"
 
 func buildWifiWidget(m theme.Metrics) textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "wifi_off", IconSize: m.IconNormal,
+		Kind: ui.KindIcon, Icon: "wifi_off",
 		Action: panelWifiAction,
 	}
 	return textWidget{

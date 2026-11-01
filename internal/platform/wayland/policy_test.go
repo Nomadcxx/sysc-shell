@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 func TestDisabledHostDoesNotBuildABar(t *testing.T) {
@@ -216,14 +217,24 @@ func TestPrepareConfigConfiguresMappedReplacementForProspectiveGeometry(t *testi
 		gap       int
 		wantWidth int
 		wantH     int
+		// sized leaves the standard density in place, so the bar takes the
+		// row for its 1536x864 output; the others pin a row so their height
+		// is the stated one.
+		sized bool
 	}{
 		{name: "left", edge: "left", height: 48, gap: 4, wantWidth: 52, wantH: 864},
 		{name: "right", edge: "right", height: 48, gap: 4, wantWidth: 52, wantH: 864},
 		{name: "bottom", edge: "bottom", height: 48, gap: 4, wantWidth: 1536, wantH: 52},
 		{name: "thickness override", edge: "left", height: 60, gap: 4, wantWidth: 64, wantH: 864},
+		// The comfortable row's 37 px band, two 4 px gaps, and the one gap a
+		// floating bar's surface carries.
+		{name: "sized to output", edge: "left", height: 48, gap: 4, wantWidth: 49, wantH: 864, sized: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			candidate := config.Default()
+			if !tc.sized {
+				candidate.Theme.Density = theme.DensityDefault
+			}
 			candidate.Bar.Edge, candidate.Bar.Height, candidate.Bar.Gap = tc.edge, tc.height, tc.gap
 			candidateBar := candidate.Bar
 			if tc.name == "thickness override" {

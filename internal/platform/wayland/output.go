@@ -98,4 +98,5 @@ func (o *owner) onOutputDone(h *OutputHost) {
 			u.app.OutputSize(width, height)
 		}
 	}
+	o.retier(h)
 }

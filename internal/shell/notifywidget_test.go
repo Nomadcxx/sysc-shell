@@ -34,8 +34,10 @@ func TestANotifyWidgetRendersOneFixedMaterialBell(t *testing.T) {
 	if w.inner.Kind != ui.KindIcon || w.inner.Icon != "notifications" {
 		t.Fatalf("indicator = kind %v icon %q, want one notifications icon", w.inner.Kind, w.inner.Icon)
 	}
-	if w.inner.IconSize != 20 {
-		t.Fatalf("icon size = %d, want 20", w.inner.IconSize)
+	// The bell names no size: the bar gives it the glyph size its pill
+	// derives (ui.SizeIcons in the bar layout), like every other bar glyph.
+	if w.inner.IconSize != 0 {
+		t.Fatalf("icon size = %d, want unset so the bar sizes it", w.inner.IconSize)
 	}
 	if len(w.inner.Children) != 0 {
 		t.Fatalf("bell has %d children, want no width-changing sibling", len(w.inner.Children))

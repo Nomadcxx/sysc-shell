@@ -11,7 +11,7 @@ const panelPowerProfileAction = "panel:power-profile"
 // powerprofilesctl reserves no gap for it.
 func buildPowerProfileWidget() textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "speed", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "speed",
 	}
 	text := &ui.Node{Kind: ui.KindText}
 	row := &ui.Node{

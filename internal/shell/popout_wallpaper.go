@@ -1854,7 +1854,7 @@ func (r *Registry) paintTheme(cfg config.Config, tokens theme.Tokens, themeErr s
 func (r *Registry) paintThemeLocked(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) (map[string]uint32, []wayland.Invalidation) {
 	nextBars := make(map[*Bar]Theme, len(r.bars))
 	for _, bar := range r.bars {
-		next, err := resolveOutputTheme(cfg, bar.connector(), tokens, r.caps.Blur, r.effectOutputs[bar.connector()])
+		next, err := resolveBarTheme(cfg, r.barPolicy(cfg, bar.connector()), tokens, r.caps.Blur, r.effectOutputs[bar.connector()])
 		if err != nil {
 			if commit {
 				r.themeErr = err.Error()

@@ -559,6 +559,32 @@ func TestResolveThemeAppliesCompositionAndBarOverride(t *testing.T) {
 	}
 }
 
+// A bar sized to its output fills itself from its row: the standard row's
+// 25 px pill inside a comfortable 37 px band would leave the reform half done.
+func TestResolveThemeTakesAnOutputSizedBarsRow(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bar := cfg.BarFor("eDP-1", 1536, 864)
+	got, err := ResolveTheme(cfg, bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := theme.MetricsFor(theme.DensityComfortable)
+	m := got.Metrics
+	if m.BarHeight != bar.Height || m.CapsuleHeight != row.CapsuleHeight || m.CapsulePadding != row.CapsulePadding || m.BarItemMin != row.BarItemMin {
+		t.Fatalf("bar metrics = height %d pill %d pad %d slot %d, want %d and the comfortable row %d/%d/%d",
+			m.BarHeight, m.CapsuleHeight, m.CapsulePadding, m.BarItemMin, bar.Height, row.CapsuleHeight, row.CapsulePadding, row.BarItemMin)
+	}
+	// Panels keep the configured density's controls.
+	standard, _ := theme.MetricsFor(theme.DensityStandard)
+	if m.StandardControl != standard.StandardControl || m.IconNormal != standard.IconNormal {
+		t.Fatalf("panel controls = %d/%d, want the standard row's %d/%d", m.StandardControl, m.IconNormal, standard.StandardControl, standard.IconNormal)
+	}
+}
+
 func TestResolveThemeAppliesAccessibilityAfterBarOverrides(t *testing.T) {
 	t.Parallel()
 	doc := `{"theme":{"preset":"expressive"},"bar":{"height":52},"accessibility":{"high-contrast":true}}`

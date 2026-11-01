@@ -85,6 +85,40 @@ func TestStandardPresetKeepsLegacyBarGeometry(t *testing.T) {
 	}
 }
 
+func TestAutoBarDensityFollowsTheOutputsShortSide(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		w, h int
+		want Density
+	}{
+		{0, 0, DensityStandard},
+		{1280, 0, DensityStandard},
+		{1280, 719, DensityCompact},
+		{1280, 720, DensityComfortable},
+		{1536, 864, DensityComfortable}, // 1920x1080 at 1.25
+		{1920, 1199, DensityComfortable},
+		{1920, 1200, DensitySpacious},
+		{3440, 1440, DensitySpacious},
+		{1440, 3440, DensitySpacious}, // portrait: the short side decides
+		{720, 1280, DensityComfortable},
+	} {
+		if got := AutoBarDensity(tc.w, tc.h); got != tc.want {
+			t.Errorf("AutoBarDensity(%d, %d) = %s, want %s", tc.w, tc.h, got, tc.want)
+		}
+	}
+}
+
+func TestBarGlyphSizeIsThreeQuartersOfThePillOnAnEvenBox(t *testing.T) {
+	t.Parallel()
+
+	for capsule, want := range map[int]int{19: 14, 21: 16, 25: 18, 29: 22, 31: 24} {
+		if got := BarGlyphSize(capsule); got != want {
+			t.Errorf("BarGlyphSize(%d) = %d, want %d", capsule, got, want)
+		}
+	}
+}
+
 func TestProfileDensityTable(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

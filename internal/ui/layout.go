@@ -887,3 +887,18 @@ func ownHeight(n *Node, contentHeight int) int {
 	}
 	return contentHeight
 }
+
+// SizeIcons gives every icon under n that names no size of its own the given
+// size. The bar uses it so built-in widgets and plugin buttons, which both
+// leave the size unset, take one glyph size derived from the pill.
+func SizeIcons(n *Node, size int) {
+	if n == nil {
+		return
+	}
+	if n.Kind == KindIcon && n.IconSize == 0 {
+		n.IconSize = size
+	}
+	for _, child := range n.Children {
+		SizeIcons(child, size)
+	}
+}

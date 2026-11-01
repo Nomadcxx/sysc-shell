@@ -14,7 +14,7 @@ const panelIdleInhibitorAction = "panel:idle-inhibitor"
 // needs a place to be switched on from.
 func buildIdleInhibitorWidget() textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "coffee", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "coffee",
 	}
 	text := &ui.Node{Kind: ui.KindText, Tabular: true}
 	row := &ui.Node{

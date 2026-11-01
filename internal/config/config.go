@@ -275,6 +275,12 @@ type Bar struct {
 	// in the frosted and islands styles, both percentages.
 	FrostOpacity int
 	PillOpacity  int
+
+	// Row is the density whose bar metrics (pill, padding, item slot, label
+	// role) this policy uses when BarFor sized it for its output. It is
+	// resolved, never read from or written to the file; empty means the
+	// theme's own density.
+	Row theme.Density
 }
 
 // Body is the drawn height of the bar: the surface extent less the gap that
@@ -943,6 +949,35 @@ func (c Config) ForConnector(name string) Bar {
 		}
 	}
 	return c.Bar
+}
+
+// BarFor resolves one connector's bar for its output's logical size. The
+// standard density sizes its bar per output through theme.AutoBarDensity, so
+// one configuration fits a laptop panel and a desktop monitor. Another
+// density, an explicit bar height, or an unknown size keeps ForConnector's
+// policy; an explicit padding or spacing keeps its own value.
+func (c Config) BarFor(connector string, logicalWidth, logicalHeight int) Bar {
+	b := c.ForConnector(connector)
+	if c.Theme.Density != theme.DensityStandard {
+		return b
+	}
+	row := theme.AutoBarDensity(logicalWidth, logicalHeight)
+	before := deriveBar(b, c.Theme)
+	if row == theme.DensityStandard || b.Height != before.Height {
+		return b
+	}
+	sized := c.Theme
+	sized.Density = row
+	after := deriveBar(b, sized)
+	b.Height = after.Height
+	if b.Padding == before.Padding {
+		b.Padding = after.Padding
+	}
+	if b.Spacing == before.Spacing {
+		b.Spacing = after.Spacing
+	}
+	b.Row = row
+	return b
 }
 
 func (c Config) TemplateEnabled(name string) bool {
