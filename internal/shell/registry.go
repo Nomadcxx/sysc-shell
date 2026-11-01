@@ -2400,6 +2400,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 					r.weather.SetLocationConfigured(cfg.Weather.Configured)
 					r.weather.SetLocationLabel(cfg.Weather.Location)
 					r.weather.SetCity(cfg.Weather.City)
+					r.plugins.locationMaybeChanged()
 					r.nightLight.Configure(nightLightSchedule(cfg.NightLight), cfg.Accessibility.ReducedMotion)
 					r.syncNightLightWeatherLeaseLocked(cfg)
 					if len(geometryOutputs) > 0 {

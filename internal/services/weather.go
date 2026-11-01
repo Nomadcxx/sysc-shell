@@ -425,24 +425,15 @@ func (w *Weather) fetch() (Reading, error) {
 		location := ""
 		if city != "" {
 			if !resolved {
-				place, err := weather.Geocode(ctx, w.client, w.geocodingEndpoint, city)
-				if err != nil {
-					w.mu.Lock()
-					changed := w.cityVersion != cityVersion
-					w.mu.Unlock()
-					if changed {
-						continue
-					}
-					return Reading{}, err
-				}
-				name, lat, lon, resolved = place.Name, place.Latitude, place.Longitude, true
-				w.mu.Lock()
-				if w.city != city || w.cityVersion != cityVersion {
-					w.mu.Unlock()
+				var current bool
+				var err error
+				name, lat, lon, current, err = w.geocode(ctx, city, cityVersion)
+				if !current {
 					continue
 				}
-				w.placeName, w.resolvedLat, w.resolvedLon, w.resolved = name, lat, lon, true
-				w.mu.Unlock()
+				if err != nil {
+					return Reading{}, err
+				}
 			}
 			q.Latitude, q.Longitude = lat, lon
 			location = name
@@ -504,6 +495,63 @@ func sendReading(updates chan Reading, reading Reading) {
 	case updates <- reading:
 	default:
 	}
+}
+
+// geocode resolves city and caches the result. current is false when the city
+// changed while the request was out, in which case the caller starts over and
+// neither the result nor the error applies.
+func (w *Weather) geocode(ctx context.Context, city string, cityVersion uint64) (name string, lat, lon float64, current bool, err error) {
+	place, err := weather.Geocode(ctx, w.client, w.geocodingEndpoint, city)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.city != city || w.cityVersion != cityVersion {
+		return "", 0, 0, false, nil
+	}
+	if err != nil {
+		return "", 0, 0, true, err
+	}
+	w.placeName, w.resolvedLat, w.resolvedLon, w.resolved = place.Name, place.Latitude, place.Longitude, true
+	return place.Name, place.Latitude, place.Longitude, true, nil
+}
+
+// Place is the configured location resolved to coordinates, for consumers
+// other than the forecast. A configured city is geocoded here if the forecast
+// has not done it yet, so the answer does not depend on a weather widget
+// being on screen; the resolution is shared with the forecast either way.
+func (w *Weather) Place(ctx context.Context) (Place, error) {
+	for {
+		w.mu.Lock()
+		city, cityVersion := w.city, w.cityVersion
+		place := Place{Configured: w.locationConfigured, Latitude: w.latitude, Longitude: w.longitude, Label: w.locationLabel}
+		if city != "" {
+			place = Place{Configured: true, Latitude: w.resolvedLat, Longitude: w.resolvedLon, Label: w.placeName}
+		}
+		resolved := w.resolved
+		w.mu.Unlock()
+		if city == "" || resolved {
+			if !place.Configured {
+				return Place{}, nil
+			}
+			return place, nil
+		}
+		name, lat, lon, current, err := w.geocode(ctx, city, cityVersion)
+		if !current {
+			continue
+		}
+		if err != nil {
+			return Place{Configured: true, Pending: true, Label: city}, err
+		}
+		return Place{Configured: true, Latitude: lat, Longitude: lon, Label: name}, nil
+	}
+}
+
+// Place is a location in decimal degrees with an optional display name.
+// Pending marks a configured city that could not be geocoded yet.
+type Place struct {
+	Configured          bool
+	Pending             bool
+	Latitude, Longitude float64
+	Label               string
 }
 
 // ResolvedLocation reports the coordinates the weather service is actually

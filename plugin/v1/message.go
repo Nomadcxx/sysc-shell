@@ -34,7 +34,9 @@ const (
 	// an older shell refuses it instead of failing to convert its views.
 	// Minor 24 adds half-circle gauges with severity bands.
 	// Minor 25 adds text labels to those bands.
-	ProtocolMinor = 25
+	// Minor 26 adds location.get and location.changed: the place the shell's
+	// weather settings name, for a plugin granted the location capability.
+	ProtocolMinor = 26
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.
@@ -46,6 +48,11 @@ const ViewErrorMinor = 21
 
 // ViewResizeMinor is the first protocol minor that carries view.resize.
 const ViewResizeMinor = 22
+
+// LocationMinor is the first protocol minor that carries location.get and
+// location.changed. The host pushes location.changed only to a plugin that
+// negotiated it, for the reason given on ViewErrorMinor.
+const LocationMinor = 26
 
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
@@ -61,6 +68,7 @@ const (
 	TypeViewError       = "view.error"
 	TypeInputEvent      = "input.event"
 	TypeSettingsChanged = "settings.changed"
+	TypeLocationChanged = "location.changed"
 	TypeHostReply       = "host.reply"
 
 	// Plugin to host.
@@ -331,6 +339,7 @@ const (
 	CallSurfaceClose      CallKind = "surface.close"
 	CallSurfacePin        CallKind = "surface.pin"
 	CallClipboardRead     CallKind = "clipboard.read"
+	CallLocationGet       CallKind = "location.get"
 	CallWallpaperSnapshot CallKind = "wallpaper.snapshot"
 	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
 	CallOpenURL           CallKind = "open-url"
@@ -540,6 +549,33 @@ type FilesBrowseResult struct {
 type PanelResult struct {
 	ViewID string `json:"view_id"`
 }
+
+// LocationGetParams has no options: there is one shell location.
+type LocationGetParams struct{}
+
+// Location is the place the shell's weather settings name, resolved to
+// coordinates. Configured is false when the user has set no location, which a
+// plugin should treat as "use your own setting" rather than as 0,0. Pending is
+// true while a configured city is still being geocoded; a location.changed
+// follows once it resolves.
+type Location struct {
+	Configured bool    `json:"configured"`
+	Pending    bool    `json:"pending,omitempty"`
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	// Label is a display name such as "Melbourne", or empty.
+	Label string `json:"label,omitempty"`
+}
+
+// LocationChanged tells a plugin granted the location capability that the
+// shell's location changed. It carries the new location, so the plugin need
+// not call location.get again.
+type LocationChanged struct {
+	Type     string   `json:"type"`
+	Location Location `json:"location"`
+}
+
+func (*LocationChanged) messageType() string { return TypeLocationChanged }
 
 // ClipboardReadParams has no options: clipboard imports always read bounded
 // plain text from the current selection.

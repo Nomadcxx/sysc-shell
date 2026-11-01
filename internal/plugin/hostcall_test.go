@@ -875,3 +875,28 @@ func TestAWithheldGrantSaysWhy(t *testing.T) {
 		t.Errorf("an undeclared capability lost its advice: %q", undeclared)
 	}
 }
+
+func TestHostCallLocationRequiresGrant(t *testing.T) {
+	t.Parallel()
+	called := false
+	callback := func(context.Context) (v1.Location, error) {
+		called = true
+		return v1.Location{Configured: true, Latitude: 51.5072, Longitude: -0.1276, Label: "London"}, nil
+	}
+	call := &v1.HostCall{ID: "where", Call: v1.CallLocationGet, Params: jsonOf(t, v1.LocationGetParams{})}
+	denied := NewDispatcher(CallEnv{Location: callback}).Handle(context.Background(), call)
+	if denied.OK || !strings.Contains(denied.Error, `"location"`) || called {
+		t.Fatalf("ungranted location.get = %+v, callback called=%v", denied, called)
+	}
+
+	allowed := NewDispatcher(CallEnv{Granted: []Capability{CapLocation}, Location: callback}).Handle(context.Background(), call)
+	var got v1.Location
+	if !allowed.OK || json.Unmarshal(allowed.Result, &got) != nil || got.Label != "London" || got.Latitude != 51.5072 {
+		t.Fatalf("granted location.get = %+v, result=%+v", allowed, got)
+	}
+
+	unavailable := NewDispatcher(CallEnv{Granted: []Capability{CapLocation}}).Handle(context.Background(), call)
+	if unavailable.OK {
+		t.Fatalf("location.get with no provider = %+v", unavailable)
+	}
+}
