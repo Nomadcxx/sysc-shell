@@ -556,8 +556,9 @@ type LocationGetParams struct{}
 // Location is the place the shell's weather settings name, resolved to
 // coordinates. Configured is false when the user has set no location, which a
 // plugin should treat as "use your own setting" rather than as 0,0. Pending is
-// true while a configured city is still being geocoded; a location.changed
-// follows once it resolves.
+// true when the configured city could not be resolved yet. A plugin can retry
+// location.get; a later config reload may push location.changed with the
+// resolved place.
 type Location struct {
 	Configured bool    `json:"configured"`
 	Pending    bool    `json:"pending,omitempty"`

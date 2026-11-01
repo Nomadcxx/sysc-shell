@@ -37,9 +37,9 @@ func locationOf(place services.Place) v1.Location {
 	}
 }
 
-// location answers location.get. A city that cannot be geocoded yet is a
-// pending location rather than a failed call: the plugin keeps its own
-// setting meanwhile, and location.changed follows once the city resolves.
+// location answers location.get. A city that cannot be resolved yet is a
+// pending location rather than a failed call. A plugin can retry location.get;
+// a later config reload may push location.changed after resolution.
 func (h *pluginHost) location(ctx context.Context, id string) (v1.Location, error) {
 	if h.r.weather == nil {
 		return v1.Location{}, nil
