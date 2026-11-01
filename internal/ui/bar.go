@@ -462,23 +462,23 @@ func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int)
 	// shortfall by sharing the remainder evenly, each capped at its natural
 	// width. A narrowed title is present and legible in a way a dropped one is
 	// not, until it is narrowed below elasticLegible: then it would read as an
-	// empty pill, so it alone is dropped and the fixed items keep their place.
+	// empty pill, so it alone is left out and the fixed items keep their place.
+	// It is not counted as overflow: overflow marks a cut at the section's tail
+	// (overflowFades), and nothing after the title was cut.
 	if elasticCount > 0 && fixedTotal+spacingTotal < budget {
 		share := (budget - fixedTotal - spacingTotal) / elasticCount
 		if share >= minShare {
-			dropped := 0
 			for i, n := range items {
 				if elastic(n) {
 					granted[i] = min(widths[i], share)
 					if granted[i] < widths[i] && granted[i] < elasticLegible {
 						granted[i] = -1
-						dropped++
 					}
 					continue
 				}
 				granted[i] = widths[i]
 			}
-			return granted, dropped
+			return granted, 0
 		}
 	}
 
