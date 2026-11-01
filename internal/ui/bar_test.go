@@ -385,3 +385,18 @@ func TestElasticBarItemsDoNotShrinkBelowPointerSlots(t *testing.T) {
 		}
 	}
 }
+
+// A title squeezed below a few legible characters reads as an empty pill, so
+// it is dropped and counted while the fixed items keep their place.
+func TestElasticTitleTooNarrowToReadIsDropped(t *testing.T) {
+	title := &Node{Kind: KindText, Text: "title", MaxWidth: 260}
+	chip := &Node{Kind: KindText, Text: "chip"}
+	granted, dropped := grantsWithin([]*Node{chip, title}, []int{100, 260}, 150, 4)
+	if granted[0] != 100 || granted[1] != -1 || dropped != 1 {
+		t.Fatalf("grants = %v dropped %d, want the chip kept and the 46 px title dropped", granted, dropped)
+	}
+	granted, dropped = grantsWithin([]*Node{chip, title}, []int{100, 260}, 200, 4)
+	if granted[0] != 100 || granted[1] != 96 || dropped != 0 {
+		t.Fatalf("grants = %v dropped %d, want a legible 96 px title", granted, dropped)
+	}
+}
