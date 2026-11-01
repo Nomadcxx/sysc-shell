@@ -109,6 +109,8 @@ func TestNarrowNamesNeedTheirProtocolMinor(t *testing.T) {
 		{19, []string{"state:x"}, `takes no scope`},
 		{19, []string{"state-reader"}, "not one this shell offers"},
 		{16, []string{"state", "files"}, ""},
+		{25, []string{"location"}, `"location" requires protocol minor 26`},
+		{26, []string{"location", "state"}, ""},
 	} {
 		var document map[string]any
 		if err := json.Unmarshal([]byte(edit(t, "capabilities", tc.caps)), &document); err != nil {

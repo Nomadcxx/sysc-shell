@@ -243,7 +243,8 @@ func TestStartNamesTheStderrOfAPluginThatExitsBeforeHello(t *testing.T) {
 	m := installHelper(t, "exit-before-hello")
 	// A plain script keeps go test -cover from appending its GOCOVERDIR
 	// warning to this plugin's stderr and hiding the diagnostic under test.
-	script := "#!/bin/sh\nprintf '%s\\n' 'starting up' >&2\nprintf '%s\\n' 'calendar: connect to the session bus: no address' >&2\nexit 1\n"
+	// Read host.hello first so Start reaches EOF without racing an EPIPE.
+	script := "#!/bin/sh\nIFS= read -r _ || exit 1\nprintf '%s\\n' 'starting up' >&2\nprintf '%s\\n' 'calendar: connect to the session bus: no address' >&2\nexit 1\n"
 	if err := os.WriteFile(m.ExecPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write plugin helper: %v", err)
 	}

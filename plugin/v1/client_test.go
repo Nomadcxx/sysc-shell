@@ -157,3 +157,19 @@ func TestClientStdoutContainsProtocolOnly(t *testing.T) {
 	}
 	_ = time.Second
 }
+
+func TestLocationChangedRoundTrips(t *testing.T) {
+	var buf bytes.Buffer
+	want := LocationChanged{Location: Location{Configured: true, Latitude: 35.6762, Longitude: 139.6503, Label: "Tokyo"}}
+	if err := NewEncoder(&buf).Encode(&want); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := NewDecoder(&buf, ToPlugin).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := msg.(*LocationChanged)
+	if !ok || got.Location != want.Location {
+		t.Fatalf("decoded %#v", msg)
+	}
+}

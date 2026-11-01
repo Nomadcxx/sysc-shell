@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -771,3 +772,60 @@ const hourlyWeatherBody = `{
     "precipitation_probability":[10,20,80]
   }
 }`
+
+// Place geocodes a configured city without a weather lease, shares the result
+// with the forecast, and reports coordinates or nothing otherwise.
+func TestWeatherPlaceResolvesWithoutALease(t *testing.T) {
+	t.Parallel()
+	var geoCalls atomic.Int32
+	geo := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		geoCalls.Add(1)
+		_, _ = rw.Write([]byte(`{"results":[{"name":"Brisbane","latitude":-27.47,"longitude":153.02,"country":"Australia"}]}`))
+	}))
+	t.Cleanup(geo.Close)
+
+	w := NewWeather(-37.81, 144.96, UnitCelsius)
+	w.geocodingEndpoint = geo.URL
+	t.Cleanup(w.Close)
+	w.SetLocationLabel("Home")
+	if got, err := w.Place(context.Background()); err != nil || got != (Place{Configured: true, Latitude: -37.81, Longitude: 144.96, Label: "Home"}) {
+		t.Fatalf("coordinate place = %+v, %v", got, err)
+	}
+
+	w.SetCity("Brisbane")
+	for range 2 {
+		got, err := w.Place(context.Background())
+		if err != nil || got != (Place{Configured: true, Latitude: -27.47, Longitude: 153.02, Label: "Brisbane"}) {
+			t.Fatalf("city place = %+v, %v", got, err)
+		}
+	}
+	if geoCalls.Load() != 1 {
+		t.Fatalf("geocoded %d times, want one cached resolution", geoCalls.Load())
+	}
+	if lat, lon, ok := w.ResolvedLocation(); !ok || lat != -27.47 || lon != 153.02 {
+		t.Fatalf("forecast does not share the resolution: %v,%v,%v", lat, lon, ok)
+	}
+
+	w.SetCity("")
+	w.SetLocationConfigured(false)
+	if got, err := w.Place(context.Background()); err != nil || got.Configured {
+		t.Fatalf("unconfigured place = %+v, %v", got, err)
+	}
+}
+
+// A city the geocoder cannot resolve is a pending place, not a fabricated one.
+func TestWeatherPlacePendingOnGeocodeFailure(t *testing.T) {
+	t.Parallel()
+	geo := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(geo.Close)
+	w := NewWeather(0, 0, UnitCelsius)
+	w.geocodingEndpoint = geo.URL
+	t.Cleanup(w.Close)
+	w.SetCity("Brisbane")
+	got, err := w.Place(context.Background())
+	if err == nil || !got.Pending || !got.Configured || got.Label != "Brisbane" || got.Latitude != 0 {
+		t.Fatalf("failed geocode place = %+v, %v", got, err)
+	}
+}

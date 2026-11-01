@@ -63,6 +63,7 @@ type CallEnv struct {
 	Screenshot          func(context.Context, string) error
 	ScreenshotDirectory func(context.Context) (string, error)
 	BrowseFiles         func(context.Context, v1.FilesBrowseParams) (v1.FilesBrowseResult, error)
+	Location            func(context.Context) (v1.Location, error)
 	MaxPending          int
 	CallTimeout         time.Duration
 }
@@ -118,6 +119,8 @@ func classOf(call v1.CallKind) Capability {
 		return CapScreenshotRead
 	case v1.CallFilesBrowse:
 		return CapFiles
+	case v1.CallLocationGet:
+		return CapLocation
 	}
 	return ""
 }
@@ -282,6 +285,19 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 		return d.screenshot(ctx, call)
 	case v1.CallFilesBrowse:
 		return d.filesBrowse(ctx, call)
+	case v1.CallLocationGet:
+		var params v1.LocationGetParams
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if d.env.Location == nil {
+			return failReply(call.ID, "location is not available")
+		}
+		location, err := d.env.Location(ctx)
+		if err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, location)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}

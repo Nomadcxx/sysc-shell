@@ -103,6 +103,7 @@ type pluginHost struct {
 	starts           sync.WaitGroup
 	closing          bool
 	slots            map[string]*pluginSlot
+	locations        pluginLocations
 	views            map[string]*hostedView
 	surfaces         map[string]*pluginSurfaceHost
 	// swapping holds plugin ids replace has stopped and not yet restarted.
@@ -146,7 +147,7 @@ var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
 	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
 	plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapScreenshot,
-	plugin.CapFiles,
+	plugin.CapFiles, plugin.CapLocation,
 	plugin.CapStateRead, plugin.CapStateWrite, plugin.CapWallpaperRead, plugin.CapWallpaperWrite,
 	plugin.CapScreenshotCapture, plugin.CapScreenshotRead, plugin.CapOutputsRead, plugin.CapFilesBrowser,
 }
@@ -1256,6 +1257,9 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 		Screenshot:          h.screenshotStart,
 		ScreenshotDirectory: h.screenshotDirectory,
 		BrowseFiles:         h.browseFiles,
+		Location: func(ctx context.Context) (v1.Location, error) {
+			return h.location(ctx, id)
+		},
 	}
 }
 

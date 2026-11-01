@@ -100,6 +100,10 @@ const (
 	CapScreenshot Capability = "screenshot"
 	// CapFiles lets a plugin open the host-owned file browser under a named root.
 	CapFiles Capability = "files"
+	// CapLocation lets a plugin read the place the shell's weather settings
+	// name, and be told when it changes. It is a narrow name from the start,
+	// declarable from protocol minor 26.
+	CapLocation Capability = "location"
 )
 
 // The narrowed classes say whether a plugin may read or change something, the
@@ -138,6 +142,7 @@ var knownCapabilities = map[Capability]bool{
 	CapOpenURL:          true, CapClipboardWrite: true,
 	CapScreenshot: true,
 	CapFiles:      true,
+	CapLocation:   true,
 	CapStateRead:  true, CapStateWrite: true, CapWallpaperRead: true, CapWallpaperWrite: true,
 	CapScreenshotCapture: true, CapScreenshotRead: true, CapOutputsRead: true, CapFilesBrowser: true,
 }
@@ -576,11 +581,12 @@ func validateManifest(w wireManifest) (Manifest, error) {
 	if m.Capabilities, err = capabilities(w.Capabilities); err != nil {
 		return Manifest{}, err
 	}
-	if m.Protocol.Minor < NarrowCapabilityMinor {
-		for i, c := range m.Capabilities {
-			if narrowCapabilities[c] {
-				return Manifest{}, fmt.Errorf("capabilities[%d]: %q requires protocol minor %d", i, c, NarrowCapabilityMinor)
-			}
+	for i, c := range m.Capabilities {
+		if narrowCapabilities[c] && m.Protocol.Minor < NarrowCapabilityMinor {
+			return Manifest{}, fmt.Errorf("capabilities[%d]: %q requires protocol minor %d", i, c, NarrowCapabilityMinor)
+		}
+		if c == CapLocation && m.Protocol.Minor < v1.LocationMinor {
+			return Manifest{}, fmt.Errorf("capabilities[%d]: %q requires protocol minor %d", i, c, v1.LocationMinor)
 		}
 	}
 	if m.Requires, err = requires(w.Requires); err != nil {
