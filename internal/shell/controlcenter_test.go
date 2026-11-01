@@ -596,6 +596,11 @@ func TestControlCentreQuickActionStatusLabelsAndAvailability(t *testing.T) {
 		if name == "On" && label != nil && label.Tone != ui.ToneNormal {
 			t.Errorf("active quick action label tone = %d, want normal foreground on the accent fill", label.Tone)
 		}
+		if name == "Unavailable" || name == "Error" {
+			if button.Fill != ui.FillErrorContainer || label == nil || label.Tone != ui.ToneNormal {
+				t.Errorf("%s quick action = %+v label=%+v, want error-container fill with paired foreground", name, button, label)
+			}
+		}
 		if disabled && button.Action != "" {
 			t.Errorf("disabled %s quick action retained action %q", name, button.Action)
 		}

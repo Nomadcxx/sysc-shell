@@ -259,6 +259,10 @@ func ccPluginQuickAction(width int, action pluginQuickAction) *ui.Node {
 	n := ccHomePill(width, action.icon, displayLabel, actionID, selected)
 	n.Name = action.label + ": " + label
 	n.Tooltip = tooltip
+	if tone == ui.ToneError {
+		n.Fill = ui.FillErrorContainer
+		tone = ui.ToneNormal
+	}
 	if len(n.Children) > 1 {
 		n.Children[1].Tone = tone
 	}
