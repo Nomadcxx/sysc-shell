@@ -10,6 +10,10 @@ const (
 	panelMediaAction     = "panel:media"
 	mediaPlayPauseAction = "media:playpause"
 	mediaBarArtSize      = 20
+	// mediaTitleMaxWidth bounds the title when the item sets no width, which
+	// configuration cannot: a marquee scrolls inside a box, and an unbounded
+	// one claimed the whole bar for a long track (sysc-2127).
+	mediaTitleMaxWidth = 200
 )
 
 func hasMediaItem(items []config.Item) bool {
@@ -25,8 +29,8 @@ func hasMediaItem(items []config.Item) bool {
 // play/pause button, absent while no player is on the bus. Hovering or clicking
 // the art and title opens the media strip (2026-10-08 bar media strip design).
 func buildMediaWidget(items ...config.Item) textWidget {
-	maxWidth := 0
-	if len(items) > 0 {
+	maxWidth := mediaTitleMaxWidth
+	if len(items) > 0 && items[0].MaxWidth > 0 {
 		maxWidth = items[0].MaxWidth
 	}
 	row := &ui.Node{Kind: ui.KindRow, Gap: groupGap, Action: panelMediaAction, Absent: true,
