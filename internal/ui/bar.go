@@ -367,6 +367,10 @@ func subtreeExceedsCross(n *Node, bounds Rect, axis Axis) bool {
 	return false
 }
 
+// elasticLegible is the narrowest box, in logical pixels, a squeezed elastic
+// item is shown in: a few characters and an ellipsis, padding included.
+const elasticLegible = 64
+
 // elastic reports whether a node is built to shrink rather than disappear.
 // Declaring a width cap is the marker: in this bar that is the focused-window
 // title, the media title and the weather line, each of which ellipsizes inside
@@ -456,14 +460,20 @@ func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int)
 
 	// The fixed items and the spacing still fit, so the elastic ones absorb the
 	// shortfall by sharing the remainder evenly, each capped at its natural
-	// width. Nothing is dropped: a narrowed title is present and legible in a
-	// way a dropped one is not.
+	// width. A narrowed title is present and legible in a way a dropped one is
+	// not, until it is narrowed below elasticLegible: then it would read as an
+	// empty pill, so it alone is left out and the fixed items keep their place.
+	// It is not counted as overflow: overflow marks a cut at the section's tail
+	// (overflowFades), and nothing after the title was cut.
 	if elasticCount > 0 && fixedTotal+spacingTotal < budget {
 		share := (budget - fixedTotal - spacingTotal) / elasticCount
 		if share >= minShare {
 			for i, n := range items {
 				if elastic(n) {
 					granted[i] = min(widths[i], share)
+					if granted[i] < widths[i] && granted[i] < elasticLegible {
+						granted[i] = -1
+					}
 					continue
 				}
 				granted[i] = widths[i]

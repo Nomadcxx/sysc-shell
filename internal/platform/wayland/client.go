@@ -125,6 +125,10 @@ type Callbacks struct {
 	PrepareConfig func(config.Config, []HostIdentity, uint64) (PreparedConfig, error)
 	// DropHost releases per-bar resources after a bar is destroyed.
 	DropHost func(global uint32)
+	// OutputLogicalSize, when set, learns a connector's logical size before
+	// the owner builds or replaces its bar, so the application resolves the
+	// same output-sized bar policy (config.BarFor) as the surface.
+	OutputLogicalSize func(connector string, width, height int)
 	// Invalidations is owned by the caller. Run only receives from it and
 	// never closes it.
 	Invalidations <-chan Invalidation
@@ -585,7 +589,7 @@ func (o *owner) bindOutput(global, version uint32) {
 // hostBecameReady creates the bar for a host that just gained done and a name.
 func (o *owner) hostBecameReady(h *OutputHost) error {
 	if o.cfg != nil {
-		h.policy = o.cfg.ForConnector(h.connector)
+		h.policy = o.barPolicy(h, *o.cfg)
 	}
 	if !h.policy.Enabled {
 		h.state = hostIdle
@@ -611,6 +615,50 @@ func (o *owner) hostBecameReady(h *OutputHost) error {
 		return err
 	}
 	return nil
+}
+
+// outputLogicalSize is the host's logical size at its bar's current scale,
+// reported to the application so both sides size the bar from one value.
+// Before the bar's fractional scale arrives it assumes scale 1; retier
+// corrects the row if the real scale moves the output into another tier.
+func (o *owner) outputLogicalSize(h *OutputHost) (int, int) {
+	var scale ui.Scale120
+	if h.bar != nil && h.bar.ss != nil {
+		scale = h.bar.ss.scale120
+	}
+	w, hgt := h.logicalSize(scale)
+	if o.cb.OutputLogicalSize != nil {
+		o.cb.OutputLogicalSize(h.connector, w, hgt)
+	}
+	return w, hgt
+}
+
+// barPolicy is cfg's bar for h at its output's logical size.
+func (o *owner) barPolicy(h *OutputHost, cfg config.Config) config.Bar {
+	w, hgt := o.outputLogicalSize(h)
+	return cfg.BarFor(h.connector, w, hgt)
+}
+
+// retier re-applies the live configuration when an output's logical size has
+// moved its bar into another auto-sized row: a fractional scale arriving after
+// the bar was created, a mode change, or a rotation. The prepared path
+// replaces every bar at once, as a reload does.
+func (o *owner) retier(h *OutputHost) {
+	if o.cfg == nil || h.state != hostMapped {
+		return
+	}
+	next := o.barPolicy(h, *o.cfg)
+	if next.Row == h.policy.Row && next.Height == h.policy.Height {
+		return
+	}
+	// As a reload does: a candidate that cannot be prepared keeps the bars
+	// that are up, and only a failure while applying is fatal.
+	prepared, err := o.prepareConfig(*o.cfg, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysc-shell: bar size for %s kept: %v\n", h.connector, err)
+		return
+	}
+	o.fail(o.applyPreparedConfig(prepared))
 }
 
 func (o *owner) destroyGlobals() error {
@@ -944,6 +992,9 @@ func (o *owner) onPreferredScale(h *OutputHost, u *surfaceUnit, e fractionalscal
 	if u.ss.eligible() && !u.awaitingConfigure {
 		o.failUnit(h, u, o.reconfigure(h, u))
 	}
+	if u == h.bar {
+		o.retier(h)
+	}
 }
 
 // reconfigure retires the host's buffer generation and allocates a new one at
@@ -1260,15 +1311,16 @@ func abandon(prepared PreparedConfig, err error) (preparedOwnerConfig, error) {
 func (o *owner) prepareConfig(cfg config.Config, configGeneration uint64) (preparedOwnerConfig, error) {
 	live := o.hosts.each()
 	ready := make([]*OutputHost, 0, len(live))
-	connectors := make([]string, 0, len(live))
+	outputs := make([]config.Output, 0, len(live))
 	for _, h := range live {
 		if !h.alive || !h.ready() {
 			continue
 		}
 		ready = append(ready, h)
-		connectors = append(connectors, h.connector)
+		w, hgt := o.outputLogicalSize(h)
+		outputs = append(outputs, config.Output{Connector: h.connector, Width: w, Height: hgt})
 	}
-	policies, err := config.Resolve(cfg, connectors)
+	policies, err := config.ResolveOutputs(cfg, outputs)
 	if err != nil {
 		return preparedOwnerConfig{}, err
 	}

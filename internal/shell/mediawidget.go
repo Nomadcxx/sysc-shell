@@ -36,9 +36,9 @@ func buildMediaWidget(items ...config.Item) textWidget {
 	row := &ui.Node{Kind: ui.KindRow, Gap: groupGap, Action: panelMediaAction, Absent: true,
 		Name: "Media", Role: "button",
 		Children: []*ui.Node{
-			{Kind: ui.KindIcon, Key: "media-art", Icon: "music_note", IconSize: DefaultTheme().Metrics.IconNormal},
+			{Kind: ui.KindIcon, Key: "media-art", Icon: "music_note"},
 			{Kind: ui.KindText, Key: "media-title", MaxWidth: maxWidth, Marquee: true},
-			{Kind: ui.KindIcon, Key: "media-play", Icon: "play_arrow", IconSize: DefaultTheme().Metrics.IconNormal,
+			{Kind: ui.KindIcon, Key: "media-play", Icon: "play_arrow",
 				Action: mediaPlayPauseAction, Name: "Play or pause", Role: "button"},
 		}}
 	return textWidget{

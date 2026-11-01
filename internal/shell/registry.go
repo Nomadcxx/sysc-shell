@@ -53,11 +53,16 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu          sync.Mutex
-	cfg         config.Config
-	outputs     map[string]outputState
-	bars        map[uint32]*Bar
-	fontCatalog registryFontCatalog
+	mu sync.Mutex
+	// outputSizes is each connector's logical size as the platform last
+	// reported it (SetOutputLogicalSize). Its own lock keeps barPolicy usable
+	// from paths that hold mu and paths that do not.
+	outputSizeMu sync.Mutex
+	outputSizes  map[string][2]int
+	cfg          config.Config
+	outputs      map[string]outputState
+	bars         map[uint32]*Bar
+	fontCatalog  registryFontCatalog
 	// onboardingPending keeps the first-start offer until an interactive,
 	// focused output can host it. Output loss restores the offer and its small
 	// view state for the next usable output.
@@ -1420,8 +1425,34 @@ func (r *Registry) panelTheme() Theme {
 // terminal effect behind it applied, so the bar and the panels that join it
 // agree about its ground.
 func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, blur, effectBehind bool) (Theme, error) {
-	t, err := ResolveTheme(cfg, cfg.ForConnector(connector), tok)
+	return resolveBarTheme(cfg, cfg.ForConnector(connector), tok, blur, effectBehind)
+}
+
+// resolveBarTheme is resolveOutputTheme for a bar policy already resolved,
+// typically sized to its output by barPolicy.
+func resolveBarTheme(cfg config.Config, bar config.Bar, tok theme.Tokens, blur, effectBehind bool) (Theme, error) {
+	t, err := ResolveTheme(cfg, bar, tok)
 	return t.WithEffectBehind(effectBehind, blur), err
+}
+
+// SetOutputLogicalSize records a connector's logical size. The platform calls
+// it before it builds or replaces that connector's bar, so the bar and every
+// panel joined to it resolve the row the platform sized the surface to.
+func (r *Registry) SetOutputLogicalSize(connector string, width, height int) {
+	r.outputSizeMu.Lock()
+	defer r.outputSizeMu.Unlock()
+	if r.outputSizes == nil {
+		r.outputSizes = make(map[string][2]int)
+	}
+	r.outputSizes[connector] = [2]int{width, height}
+}
+
+// barPolicy is a connector's bar under cfg at its output's last reported size.
+func (r *Registry) barPolicy(cfg config.Config, connector string) config.Bar {
+	r.outputSizeMu.Lock()
+	size := r.outputSizes[connector]
+	r.outputSizeMu.Unlock()
+	return cfg.BarFor(connector, size[0], size[1])
 }
 
 func (r *Registry) panelThemeFor(output uint32) Theme {
@@ -1455,7 +1486,7 @@ func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens t
 	if bar, ok := r.bars[output]; ok {
 		connector = bar.connector()
 	}
-	t, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector])
+	t, err := resolveBarTheme(cfg, r.barPolicy(cfg, connector), tokens, r.caps.Blur, r.effectOutputs[connector])
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -1960,7 +1991,7 @@ func (r *Registry) adoptBar(
 	// theme before adoption so a preview or commit that arrived during the
 	// build cannot install a bar with stale colors.
 	cfg, tokens := r.effectiveThemeLocked()
-	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur, r.effectOutputs[connector]); err == nil {
+	if next, err := resolveBarTheme(cfg, r.barPolicy(cfg, connector), tokens, r.caps.Blur, r.effectOutputs[connector]); err == nil {
 		next.WallpaperLuminance = r.wallpaperLuminance[connector]
 		bar.retheme(next)
 	}
@@ -3193,12 +3224,12 @@ func (r *Registry) ensureRunningIndexLocked() {
 func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Tokens) (
 	*Bar, []*services.Lease, wayland.HostCallbacks, error,
 ) {
-	policy := cfg.ForConnector(connector)
+	policy := r.barPolicy(cfg, connector)
 	r.mu.Lock()
 	blur, effect := r.caps.Blur, r.effectOutputs[connector]
 	luminance := r.wallpaperLuminance[connector]
 	r.mu.Unlock()
-	th, err := resolveOutputTheme(cfg, connector, tok, blur, effect)
+	th, err := resolveBarTheme(cfg, policy, tok, blur, effect)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}

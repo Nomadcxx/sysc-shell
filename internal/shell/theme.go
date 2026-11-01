@@ -213,6 +213,13 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 	m.BarHeight = bar.Height
 	m.BarPadding = bar.Padding
 	m.BarSpacing = bar.Spacing
+	if row, ok := theme.MetricsFor(bar.Row); ok && bar.Row != "" {
+		// A bar sized to its output takes its pill, padding, item slot and
+		// label role from the row its height came from, so what sits in the
+		// bar fills it in the same proportion as on any other row.
+		m.CapsuleHeight, m.CapsulePadding = row.CapsuleHeight, row.CapsulePadding
+		m.BarItemMin, m.BarText = row.BarItemMin, row.BarText
+	}
 
 	radius := bar.Radius
 	t := Theme{

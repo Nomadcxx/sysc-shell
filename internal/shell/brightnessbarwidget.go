@@ -14,7 +14,7 @@ const panelBrightnessAction = "panel:brightness"
 // brightness service there is nothing to show and no bar space to reserve.
 func buildBrightnessWidget() textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "brightness_high", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "brightness_high",
 	}
 	text := &ui.Node{Kind: ui.KindText, Tabular: true}
 	row := &ui.Node{

@@ -482,6 +482,12 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 	if err != nil {
 		return err
 	}
+	if child.Kind == KindText && w > inner.W {
+		// A section squeezes an elastic title's capsule when the band is
+		// tight. The text keeps the granted box so the painter ellipsizes it,
+		// rather than painting at its natural width over the next pill.
+		w = inner.W
+	}
 	child.Bounds = Rect{X: inner.X + max((inner.W-w)/2, 0), Y: inner.Y + (inner.H-h)/2, W: w, H: h}
 	return nil
 }
@@ -886,4 +892,19 @@ func ownHeight(n *Node, contentHeight int) int {
 		return min(n.Height, contentHeight)
 	}
 	return contentHeight
+}
+
+// SizeIcons gives every icon under n that names no size of its own the given
+// size. The bar uses it so built-in widgets and plugin buttons, which both
+// leave the size unset, take one glyph size derived from the pill.
+func SizeIcons(n *Node, size int) {
+	if n == nil {
+		return
+	}
+	if n.Kind == KindIcon && n.IconSize == 0 {
+		n.IconSize = size
+	}
+	for _, child := range n.Children {
+		SizeIcons(child, size)
+	}
 }

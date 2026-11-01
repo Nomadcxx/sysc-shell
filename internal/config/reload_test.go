@@ -3,7 +3,69 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
+
+func TestBarForSizesTheStandardBarPerOutput(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"bar":{"gap":4}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := cfg.ForConnector("eDP-1")
+	if got := cfg.BarFor("eDP-1", 0, 0); got.Height != base.Height || got.Row != "" {
+		t.Fatalf("unknown size = %d/%q, want the standard bar %d", got.Height, got.Row, base.Height)
+	}
+	for _, tc := range []struct {
+		connector string
+		w, h      int
+		row       theme.Density
+	}{
+		{"eDP-1", 1536, 864, theme.DensityComfortable},
+		{"DP-1", 3440, 1440, theme.DensitySpacious},
+		{"HDMI-1", 1280, 600, theme.DensityCompact},
+	} {
+		m, _ := theme.MetricsFor(tc.row)
+		got := cfg.BarFor(tc.connector, tc.w, tc.h)
+		if got.Row != tc.row || got.Height != m.BarHeight+8 || got.Padding != m.BarPadding || got.Spacing != m.BarSpacing {
+			t.Errorf("%s at %dx%d = row %q %d/%d/%d, want %q %d/%d/%d", tc.connector, tc.w, tc.h,
+				got.Row, got.Height, got.Padding, got.Spacing, tc.row, m.BarHeight+8, m.BarPadding, m.BarSpacing)
+		}
+	}
+	bars, err := ResolveOutputs(cfg, []Output{{Connector: "eDP-1", Width: 1536, Height: 864}})
+	if err != nil || len(bars) != 1 || bars[0].Row != theme.DensityComfortable {
+		t.Fatalf("ResolveOutputs = %+v, %v; want the comfortable row", bars, err)
+	}
+}
+
+func TestBarForKeepsASizeTheUserChose(t *testing.T) {
+	t.Parallel()
+	for _, doc := range []string{
+		`{"bar":{"height":44}}`,
+		`{"theme":{"density":"compact"}}`,
+		`{"theme":{"preset":"expressive"}}`,
+		`{"outputs":[{"connector":"eDP-1","bar":{"height":36}}]}`,
+	} {
+		cfg, err := Parse([]byte(doc))
+		if err != nil {
+			t.Fatalf("%s: %v", doc, err)
+		}
+		want := cfg.ForConnector("eDP-1")
+		got := cfg.BarFor("eDP-1", 1536, 864)
+		if got.Height != want.Height || got.Padding != want.Padding || got.Spacing != want.Spacing || got.Row != "" {
+			t.Errorf("%s: BarFor = %d/%d/%d row %q, want the chosen %d/%d/%d", doc,
+				got.Height, got.Padding, got.Spacing, got.Row, want.Height, want.Padding, want.Spacing)
+		}
+	}
+	cfg, err := Parse([]byte(`{"bar":{"padding":3}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.BarFor("eDP-1", 1536, 864); got.Padding != 3 || got.Row != theme.DensityComfortable {
+		t.Fatalf("explicit padding = %d row %q, want 3 kept on the comfortable row", got.Padding, got.Row)
+	}
+}
 
 func TestResolveReturnsOnePolicyPerConnector(t *testing.T) {
 	t.Parallel()

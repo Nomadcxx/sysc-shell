@@ -14,7 +14,7 @@ const panelLockKeysAction = "panel:lock-keys"
 // the surface keeps a place to read the state from.
 func buildLockKeysWidget() textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "keyboard", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "keyboard",
 	}
 	text := &ui.Node{Kind: ui.KindText}
 	row := &ui.Node{

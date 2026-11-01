@@ -11,7 +11,7 @@ const panelThemeModeAction = "panel:theme-mode"
 // is always present.
 func buildThemeModeWidget() textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "palette", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "palette",
 	}
 	text := &ui.Node{Kind: ui.KindText}
 	row := &ui.Node{

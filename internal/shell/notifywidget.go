@@ -15,7 +15,7 @@ const (
 
 func buildNotifyWidget(m theme.Metrics) textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "notifications", IconSize: m.IconNormal,
+		Kind: ui.KindIcon, Icon: "notifications",
 		Action: panelNotificationsAction,
 	}
 	return textWidget{

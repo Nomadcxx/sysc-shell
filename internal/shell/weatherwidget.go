@@ -49,7 +49,7 @@ func unitSuffix(u services.Unit) string {
 // temperature, the weather panel as its action, and a structured tooltip that
 // carries the reading's facts rather than the item's name.
 func buildWeatherWidget(item config.Item, m theme.Metrics) textWidget {
-	icon := &ui.Node{Kind: ui.KindIcon, Icon: "cloud", IconSize: m.IconNormal}
+	icon := &ui.Node{Kind: ui.KindIcon, Icon: "cloud"}
 	text := &ui.Node{Kind: ui.KindText, Tabular: true, MaxWidth: item.MaxWidth}
 	row := &ui.Node{
 		Kind: ui.KindRow, Gap: theme.MarginS,

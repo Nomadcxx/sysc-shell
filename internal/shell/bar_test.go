@@ -1026,6 +1026,39 @@ func TestBarPointerSlotsCountSingleControlCapsulePadding(t *testing.T) {
 	}
 }
 
+func TestSizeBarGlyphsFillsOnlyUnsetIcons(t *testing.T) {
+	free := &ui.Node{Kind: ui.KindIcon, Icon: "wifi"}
+	fixed := &ui.Node{Kind: ui.KindIcon, Icon: "bedtime", IconSize: 16}
+	label := &ui.Node{Kind: ui.KindText, Text: "14°C"}
+	root := &ui.Node{Kind: ui.KindCapsule, Children: []*ui.Node{{Kind: ui.KindRow, Children: []*ui.Node{free, label}}, fixed}}
+	ui.SizeIcons(root, theme.BarGlyphSize(29))
+	if free.IconSize != 22 || fixed.IconSize != 16 || label.IconSize != 0 {
+		t.Fatalf("glyph sizes = %d/%d/%d, want 22 for the unset icon, the fixed 16 kept, text untouched", free.IconSize, fixed.IconSize, label.IconSize)
+	}
+}
+
+// A widget with no current value measures zero wide so the bar closes up;
+// the slot minimum must not hold it open as an empty pill.
+func TestBarPointerSlotsLeaveAnEmptyItemCollapsed(t *testing.T) {
+	for _, axis := range []ui.Axis{ui.Horizontal, ui.Vertical} {
+		for _, pillAction := range []string{"", "panel:session"} {
+			label := &ui.Node{Kind: ui.KindText, Action: "panel:session"}
+			root := &ui.Node{Kind: ui.KindCapsule, Padding: 6, Action: pillAction, Children: []*ui.Node{label}}
+			got, err := barPointerSlots(root, axis, 30)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != 0 || label.MinWidth != 0 || label.MinHeight != 0 {
+				t.Errorf("axis %d, pill action %q: empty item slot = %d, want 0", axis, pillAction, got)
+			}
+			label.Text = "99%"
+			if got, _ = barPointerSlots(root, axis, 30); got != 30 {
+				t.Errorf("axis %d, pill action %q: filled item slot = %d, want 30", axis, pillAction, got)
+			}
+		}
+	}
+}
+
 func TestBarPointerTargetsCoverSingleControlCapsule(t *testing.T) {
 	button := &ui.Node{Kind: ui.KindButton, Bounds: ui.Rect{X: 6, Y: 6, W: 18, H: 18}, Action: "open"}
 	root := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{W: 30, H: 30}, Children: []*ui.Node{button}}

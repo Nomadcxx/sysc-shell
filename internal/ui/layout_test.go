@@ -172,6 +172,25 @@ func TestCapsuleCentersLeafChild(t *testing.T) {
 	}
 }
 
+// A bar grants an elastic title less than it measured when the band is tight;
+// the title must ellipsize inside its pill, not paint over the next one.
+func TestBarSectionKeepsASqueezedTitleInsideItsPill(t *testing.T) {
+	t.Parallel()
+	title := &Node{Kind: KindText, Text: strings.Repeat("w", 40), MaxWidth: 260}
+	pill := &Node{Kind: KindCapsule, Padding: 6, Children: []*Node{title}}
+	fixed := &Node{Kind: KindCapsule, Padding: 6, Children: []*Node{{Kind: KindText, Text: strings.Repeat("m", 20)}}}
+	content := Rect{W: 400, H: 30}
+	if _, err := ArrangeBar(content, Horizontal, []*Node{pill}, nil, []*Node{fixed}, 4, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if pill.Bounds.W <= 0 || pill.Bounds.W >= 272 {
+		t.Fatalf("title pill = %+v, want it squeezed", pill.Bounds)
+	}
+	if end, limit := title.Bounds.X+title.Bounds.W, pill.Bounds.X+pill.Bounds.W; end > limit || title.Bounds.X < pill.Bounds.X {
+		t.Fatalf("title %+v paints outside its pill %+v", title.Bounds, pill.Bounds)
+	}
+}
+
 func TestCapsuleDoesNotShiftOversizedLeafPastItsLeftEdge(t *testing.T) {
 	t.Parallel()
 	icon := &Node{Kind: KindIcon, Icon: "wifi", IconSize: 24}

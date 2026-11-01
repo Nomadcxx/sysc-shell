@@ -12,7 +12,7 @@ const panelNightLightAction = "panel:nightlight"
 // without the capability reserves no gap.
 func buildNightLightWidget() textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "bedtime", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "bedtime",
 	}
 	row := &ui.Node{
 		Kind:   ui.KindRow,

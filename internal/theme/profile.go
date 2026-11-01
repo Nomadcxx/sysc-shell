@@ -256,6 +256,32 @@ var metrics = map[Density]Metrics{
 func ToOdd(n int) int  { return n/2*2 + 1 }
 func ToEven(n int) int { return n / 2 * 2 }
 
+// AutoBarDensity picks the bar's row for an output from its logical short
+// side. Logical pixels already carry the compositor scale the user chose for
+// readability, so the rule needs no DPI: a larger screen, usually viewed from
+// further away, gets a larger bar. An unknown size keeps the standard row.
+func AutoBarDensity(logicalWidth, logicalHeight int) Density {
+	short := min(logicalWidth, logicalHeight)
+	switch {
+	case short <= 0:
+		return DensityStandard
+	case short < 720:
+		return DensityCompact
+	case short < 1200:
+		return DensityComfortable
+	default:
+		return DensitySpacious
+	}
+}
+
+// BarGlyphSize is the bar's icon size for a pill of the given height: three
+// quarters of it, on an even box like the glyph grid. Deriving it from the
+// pill keeps glyphs in proportion as the row changes, as DankMaterialShell
+// derives its bar icons from bar thickness.
+func BarGlyphSize(capsuleHeight int) int {
+	return 2 * ((capsuleHeight*3 + 4) / 8)
+}
+
 // MetricsFor returns the row for a density.
 //
 // The superseded name projects the old bar geometry onto the current default

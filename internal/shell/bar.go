@@ -13,6 +13,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
@@ -521,8 +522,10 @@ func (b *Bar) layoutLocked(width, height int) error {
 	sections := b.sections()
 	content := b.contentLocked(width, height)
 	axis := b.barAxis()
+	glyph := theme.BarGlyphSize(b.theme.Metrics.CapsuleHeight)
 	for _, section := range sections {
 		for _, n := range section {
+			ui.SizeIcons(n, glyph)
 			if _, err := barPointerSlots(n, axis, b.theme.Metrics.BarItemMin); err != nil {
 				return err
 			}
@@ -986,6 +989,11 @@ func barPointerSlots(n *ui.Node, axis ui.Axis, size int) (int, error) {
 		return 0, nil
 	}
 	n.MinWidth, n.MinHeight = 0, 0
+	// A widget with no current value, such as a battery before its first
+	// sample, measures zero wide so the bar closes up around it.
+	if barNodeEmpty(n) {
+		return 0, nil
+	}
 	floor, count := 0, 0
 	inline := axis == ui.Horizontal && (n.Kind == ui.KindRow || n.Kind == ui.KindButton) || axis == ui.Vertical && n.Kind == ui.KindColumn
 	pad := n.Padding
@@ -1034,6 +1042,23 @@ func barPointerSlots(n *ui.Node, axis ui.Axis, size int) (int, error) {
 	}
 	n.MinWidth = max(floor, n.Width)
 	return n.MinWidth, nil
+}
+
+// barNodeEmpty reports a subtree that paints nothing: text leaves without
+// text, icon or image, and containers holding only such leaves.
+func barNodeEmpty(n *ui.Node) bool {
+	if n == nil || n.Absent {
+		return true
+	}
+	if len(n.Children) == 0 {
+		return n.Kind == ui.KindText && n.Text == "" && n.Icon == "" && n.Image == nil
+	}
+	for _, child := range n.Children {
+		if !barNodeEmpty(child) {
+			return false
+		}
+	}
+	return true
 }
 
 // hitBarNode extends a control's target across the visible band, excluding

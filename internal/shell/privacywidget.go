@@ -52,7 +52,7 @@ func privacyIconNodes(icons []privacyWidgetIcon, m theme.Metrics) []*ui.Node {
 	nodes := make([]*ui.Node, 0, len(icons))
 	for _, icon := range icons {
 		node := &ui.Node{
-			Kind: ui.KindIcon, Icon: icon.name, IconSize: m.IconNormal,
+			Kind: ui.KindIcon, Icon: icon.name,
 			IconProjectFirst: icon.projectIcon, Name: icon.label, Role: "img", Tone: icon.tone,
 		}
 		if icon.active {

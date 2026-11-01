@@ -14,7 +14,7 @@ const panelBluetoothAction = "panel:bluetooth"
 // not retain adapter or device state of its own.
 func buildBluetoothWidget() textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "bluetooth_disabled", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "bluetooth_disabled",
 	}
 	battery := &ui.Node{Kind: ui.KindText, Tabular: true}
 	row := &ui.Node{
