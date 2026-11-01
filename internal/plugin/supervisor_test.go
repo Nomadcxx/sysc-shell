@@ -240,7 +240,14 @@ func TestStartReportsAProcessThatExitsImmediately(t *testing.T) {
 func TestStartNamesTheStderrOfAPluginThatExitsBeforeHello(t *testing.T) {
 	t.Parallel()
 
-	s := supervisor(installHelper(t, "explain-and-exit-before-hello"))
+	m := installHelper(t, "exit-before-hello")
+	// A plain script keeps go test -cover from appending its GOCOVERDIR
+	// warning to this plugin's stderr and hiding the diagnostic under test.
+	script := "#!/bin/sh\nprintf '%s\\n' 'starting up' >&2\nprintf '%s\\n' 'calendar: connect to the session bus: no address' >&2\nexit 1\n"
+	if err := os.WriteFile(m.ExecPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write plugin helper: %v", err)
+	}
+	s := supervisor(m)
 	_, err := s.Start(context.Background())
 	if err == nil {
 		t.Fatal("Start accepted a process that exited before the handshake")
