@@ -192,3 +192,35 @@ func TestMediaPillCarriesAPlayButtonThatFollowsState(t *testing.T) {
 		}
 	}
 }
+
+// The default bar carries media in its centre lane, and the centre is placed
+// first. A title with no cap took the width the right lane needed, so a long
+// track hid clipboard, sound and notifications outright (sysc-2127).
+func TestALongMediaTitleLeavesTheDefaultRightLane(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	m := standardMetrics()
+	bar := &Bar{
+		left:   buildWidgets(cfg.Bar.Left, 8, m),
+		center: buildWidgets(cfg.Bar.Center, 8, m),
+		right:  buildWidgets(cfg.Bar.Right, 8, m),
+	}
+	view := barView{Now: reference, Media: services.MediaState{
+		Available: true, Status: services.PlaybackPaused,
+		Title: "Why Australia Is Sick: Immigration, Productivity and Political Dysfunction | Misha Saul",
+	}}
+	for _, w := range bar.center {
+		if w.refresh != nil {
+			w.refresh(view)
+		}
+	}
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return 8 * len([]rune(s)), 16 }
+	sections := bar.sections()
+	over, err := ui.ArrangeBar(ui.Rect{W: 1536, H: 32}, ui.Horizontal, sections[0], sections[1], sections[2], m.BarSpacing, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if over.Right > 0 || over.Center > 0 {
+		t.Fatalf("a long media title overflowed the bar: centre %d, right %d dropped", over.Center, over.Right)
+	}
+}
