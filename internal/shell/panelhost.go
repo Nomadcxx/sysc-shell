@@ -434,10 +434,12 @@ type PanelHost struct {
 	onbScroll           int
 	onbScrollTop        bool
 	onbPluginSelections map[string]bool
-	onbFontLocale       string
-	onbFontState        onboardingFontState
-	onbMoving           bool
-	onbMoveMode         bool
+	// onbMachine caches the default set's hardware probe for this wizard.
+	onbMachine    *onbMachine
+	onbFontLocale string
+	onbFontState  onboardingFontState
+	onbMoving     bool
+	onbMoveMode   bool
 	// onbWordmark is the wizard's painted wordmark, kept until the box or the
 	// palette it was painted for changes.
 	onbWordmark    *ui.Image
@@ -1470,6 +1472,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.fields = map[string]*ui.Field{}
 	}
 	if id == PanelOnboarding {
+		r.requestOnboardingCatalogLocked()
 		h.set = r.settingsForLocked(r.cfg)
 		h.draft = r.cfg.Clone()
 		if r.onboardingResume {

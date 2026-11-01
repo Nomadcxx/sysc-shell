@@ -480,7 +480,7 @@ func onbWelcomeCards(h *PanelHost) []*ui.Node {
 		{"look", onbText(h, "welcome.look", "Look"), onbText(h, "welcome.look_line", "Dark or light, and a wallpaper.")},
 		{"weather", onbText(h, "welcome.weather", "Weather"), onbText(h, "welcome.weather_line", "Your city and units.")},
 		{"idle", onbText(h, "welcome.idle", "Idle"), onbText(h, "welcome.idle_line", "Screensaver or lock.")},
-		{"plugins", onbText(h, "welcome.plugins", "Plugins"), onbText(h, "welcome.plugins_line", "Bar extras from your installed plugins.")},
+		{"plugins", onbText(h, "welcome.plugins", "Plugins"), onbText(h, "welcome.plugins_line", "Bar items and plugins for this computer.")},
 	}
 	out := make([]*ui.Node, 0, len(cards))
 	for i, card := range cards {
@@ -702,96 +702,198 @@ func onbWallpaperRow(r *Registry, h *PanelHost) *ui.Node {
 
 const onbPluginCheck = 20 // token-exempt: a tile's check disc
 
-// onbPluginTiles shows the installed bar plugins as tiles, four to a row on
-// the wide frame. Activating one stages it; nothing is written until setup
-// finishes. With none installed, the step offers the plugin store.
+// onbPluginTiles shows what the default set would add -- native items, the
+// core plugins, and plugins for tools this computer already has -- above the
+// installed bar plugins, as tiles four to a row on the wide frame. Activating
+// one stages it; nothing is written until setup finishes. Checked catalog
+// plugins carry the store's consent lines.
 func onbPluginTiles(r *Registry, h *PanelHost) []*ui.Node {
-	candidates := onbPluginCandidates(r)
-	if len(candidates) == 0 {
-		return []*ui.Node{
-			onbCaption(h, onbText(h, "plugins.empty", "No installed bar plugins yet. The plugin store has more.")),
-			{Kind: ui.KindRow, Children: []*ui.Node{
-				onbActionButton(h, "onb-plugin-store", "action.plugin_store", "Open plugin store", "extension"),
-			}},
-		}
-	}
-	view, err := onbPluginSelectionConfig(h.draft, candidates, h.onbPluginSelections)
-	if err != nil {
-		view = h.draft
-	}
-	m := h.metrics()
 	columns := 4
 	if !onbWide(h) {
 		columns = 2
 	}
 	width := (onbContentWidth(h) - (columns-1)*theme.MarginM) / columns
-	inner := max(width-2*m.CardPadding, 0)
-	var rows []*ui.Node
-	for i, candidate := range candidates {
-		if i%columns == 0 {
-			rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM})
+	var out []*ui.Node
+
+	recs := r.onbRecommendationsFor(h)
+	locale := r.pluginStoreDetailLocale(h)
+	groups := []struct {
+		group onbRecGroup
+		label string
+	}{
+		{onbGroupBuiltIn, onbText(h, "plugins.group_built_in", "Built into the bar")},
+		{onbGroupCore, onbText(h, "plugins.recommended", "Recommended")},
+		{onbGroupFound, onbText(h, "plugins.group_found", "Found on this computer")},
+	}
+	shown := 0
+	for _, g := range groups {
+		var tiles []*ui.Node
+		for _, rec := range recs {
+			if rec.group != g.group {
+				continue
+			}
+			// A native item's group heading already says it is built in.
+			name, caption := onbItemName(h, rec.item), ""
+			if !rec.native() {
+				name, caption = rec.listing.Entry.LocalizedName(locale), onbText(h, "plugins.official", "Official plugin")
+			}
+			tiles = append(tiles, onbTile(h, "onb-rec:"+rec.key, rec.key, name, caption, onbRecSelected(rec, h.onbPluginSelections), width))
 		}
-		manifest := candidate.Manifest
-		name := manifest.Name
-		if name == "" {
-			name = manifest.ID
+		if len(tiles) > 0 {
+			out = append(out, onbGroupLabel(h, g.label), onbTileGrid(tiles, columns))
+			shown += len(tiles)
 		}
-		selected := slices.Contains(view.Plugins.Enabled, manifest.ID) && onbConfigHasPluginPlacement(view, manifest.ID)
-		initial, _ := utf8.DecodeRuneInString(name)
-		check := &ui.Node{
-			Kind: ui.KindCapsule, Key: "onb-plugin-check:" + manifest.ID,
-			Width: onbPluginCheck, Height: onbPluginCheck, Shape: ui.ShapeCircle,
-			Stroke: 1, StrokeFill: ui.FillOutline, // token-exempt: a hairline ring, not a ladder value
-		}
-		if selected {
-			check.Fill, check.Stroke = ui.FillAccent, 0
-			check.Children = []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
-				Kind: ui.KindIcon, Icon: "check", IconSize: m.IconSmall, CenterX: true, CenterY: true,
-			}}}}
-		}
-		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-			{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
-				{
-					Kind: ui.KindCapsule, Width: onbBadge, Height: onbBadge, Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium,
-					Children: []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
-						Kind: ui.KindText, Text: strings.ToUpper(string(initial)), TextRole: theme.RoleLabel, CenterX: true, CenterY: true,
-					}}}},
-				},
-				check,
-			}},
-			h.wrappedText(name, theme.RoleLabel, ui.ToneNormal, inner, 1),
-		}}
-		// Most manifests name no widget, and its ID ("bar") says nothing.
-		if label := manifest.Widgets[0].Label; label != "" {
-			body.Children = append(body.Children, h.wrappedText(fmt.Sprintf(onbText(h, "plugins.widget", "Bar widget: %s"), label), theme.RoleCaption, ui.ToneSubtle, inner, 1))
-		}
-		height, err := ui.ContentHeight(body, inner, h.measureText())
+	}
+	switch onbCatalogStatus(r) {
+	case onbCatalogLoading:
+		out = append(out, onbCaption(h, onbText(h, "plugins.loading", "Loading the plugin catalog…")))
+	case onbCatalogUnavailable:
+		out = append(out, onbCaption(h, onbText(h, "plugins.catalog_unavailable", "The plugin catalog is unavailable. You can install plugins later from the plugin store.")))
+	}
+
+	candidates := onbPluginCandidates(r)
+	if len(candidates) > 0 {
+		view, err := onbPluginSelectionConfig(h.draft, candidates, h.onbPluginSelections)
 		if err != nil {
-			height = m.StandardControl
+			view = h.draft
 		}
-		value := 0.0
-		tile := &ui.Node{
-			Kind: ui.KindButton, Action: "onb-plugin:" + manifest.ID, Role: "checkbox", Focusable: true,
-			Name:  fmt.Sprintf(onbText(h, "plugins.toggle", "Place %s on the bar"), name),
-			Width: width, Height: height + 2*m.CardPadding, Padding: m.CardPadding,
-			Shape: ui.ShapeCard, Fill: ui.FillContainerHigh,
-			Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
-			Children: []*ui.Node{body},
+		var tiles []*ui.Node
+		for _, candidate := range candidates {
+			manifest := candidate.Manifest
+			name := manifest.Name
+			if name == "" {
+				name = manifest.ID
+			}
+			// Most manifests name no widget, and its ID ("bar") says nothing.
+			caption := ""
+			if label := manifest.Widgets[0].Label; label != "" {
+				caption = fmt.Sprintf(onbText(h, "plugins.widget", "Bar widget: %s"), label)
+			}
+			selected := slices.Contains(view.Plugins.Enabled, manifest.ID) && onbConfigHasPluginPlacement(view, manifest.ID)
+			tiles = append(tiles, onbTile(h, "onb-plugin:"+manifest.ID, manifest.ID, name, caption, selected, width))
 		}
-		if selected {
-			value = 1
-			tile.Fill = ui.FillSoft
-			tile.Stroke = 2 // token-exempt: the chosen option's ring
-			tile.StrokeFill = ui.FillAccent
+		if len(out) > 0 {
+			out = append(out, onbGroupLabel(h, onbText(h, "plugins.installed", "Installed")))
 		}
-		tile.Value = value
-		row := rows[len(rows)-1]
-		row.Children = append(row.Children, tile)
+		out = append(out, onbTileGrid(tiles, columns))
+	} else if shown == 0 {
+		out = append(out, onbCaption(h, onbText(h, "plugins.empty", "No installed bar plugins yet. The plugin store has more.")))
 	}
-	for _, row := range rows {
-		onbEvenCards(row.Children)
+
+	if consent := onbConsentBlock(r, h); consent != nil {
+		out = append(out, consent)
 	}
-	return []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: rows}}
+	out = append(out, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+		onbActionButton(h, "onb-plugin-store", "action.plugin_store", "Open plugin store", "extension"),
+	}})
+	return out
+}
+
+func onbItemName(h *PanelHost, item string) string {
+	switch item {
+	case "volume":
+		return onbText(h, "plugins.item_volume", "Sound")
+	case "wifi":
+		return onbText(h, "plugins.item_wifi", "Wi-Fi")
+	case "battery":
+		return onbText(h, "plugins.item_battery", "Battery")
+	}
+	return item
+}
+
+func onbGroupLabel(h *PanelHost, text string) *ui.Node {
+	return &ui.Node{Kind: ui.KindText, Text: text, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+}
+
+func onbTileGrid(tiles []*ui.Node, columns int) *ui.Node {
+	grid := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+	for i := 0; i < len(tiles); i += columns {
+		row := tiles[i:min(i+columns, len(tiles))]
+		grid.Children = append(grid.Children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: onbEvenCards(row)})
+	}
+	return grid
+}
+
+// onbTile is one checkable tile: an initial badge, a check disc, the name and
+// an optional caption.
+func onbTile(h *PanelHost, action, key, name, caption string, selected bool, width int) *ui.Node {
+	m := h.metrics()
+	inner := max(width-2*m.CardPadding, 0)
+	initial, _ := utf8.DecodeRuneInString(name)
+	check := &ui.Node{
+		Kind: ui.KindCapsule, Key: "onb-plugin-check:" + key,
+		Width: onbPluginCheck, Height: onbPluginCheck, Shape: ui.ShapeCircle,
+		Stroke: 1, StrokeFill: ui.FillOutline, // token-exempt: a hairline ring, not a ladder value
+	}
+	if selected {
+		check.Fill, check.Stroke = ui.FillAccent, 0
+		check.Children = []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+			Kind: ui.KindIcon, Icon: "check", IconSize: m.IconSmall, CenterX: true, CenterY: true,
+		}}}}
+	}
+	body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
+		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
+			{
+				Kind: ui.KindCapsule, Width: onbBadge, Height: onbBadge, Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium,
+				Children: []*ui.Node{{Kind: ui.KindColumn, Children: []*ui.Node{{
+					Kind: ui.KindText, Text: strings.ToUpper(string(initial)), TextRole: theme.RoleLabel, CenterX: true, CenterY: true,
+				}}}},
+			},
+			check,
+		}},
+		h.wrappedText(name, theme.RoleLabel, ui.ToneNormal, inner, 1),
+	}}
+	if caption != "" {
+		body.Children = append(body.Children, h.wrappedText(caption, theme.RoleCaption, ui.ToneSubtle, inner, 1))
+	}
+	height, err := ui.ContentHeight(body, inner, h.measureText())
+	if err != nil {
+		height = m.StandardControl
+	}
+	tile := &ui.Node{
+		Kind: ui.KindButton, Action: action, Role: "checkbox", Focusable: true,
+		Name:  fmt.Sprintf(onbText(h, "plugins.toggle", "Place %s on the bar"), name),
+		Width: width, Height: height + 2*m.CardPadding, Padding: m.CardPadding,
+		Shape: ui.ShapeCard, Fill: ui.FillContainerHigh,
+		Stroke: 1, StrokeFill: ui.FillOutlineVariant, // token-exempt: a hairline border, not a ladder value
+		Children: []*ui.Node{body},
+	}
+	if selected {
+		tile.Value = 1
+		tile.Fill = ui.FillSoft
+		tile.Stroke = 2 // token-exempt: the chosen option's ring
+		tile.StrokeFill = ui.FillAccent
+	}
+	return tile
+}
+
+// onbConsentBlock is the sources design's install consent (D5) for every
+// checked catalog plugin: source, version, commit, digest, capabilities and
+// required commands, the lines the store's own sheet shows. The primary
+// action reads "Install and continue" while it is shown.
+func onbConsentBlock(r *Registry, h *PanelHost) *ui.Node {
+	pending := r.onbPendingInstalls(h)
+	if len(pending) == 0 {
+		return nil
+	}
+	m := h.metrics()
+	width := onbContentWidth(h)
+	inner := max(width-2*m.CardPadding, 1)
+	locale := r.pluginStoreDetailLocale(h)
+	lines := []*ui.Node{
+		{Kind: ui.KindText, Text: onbText(h, "plugins.consent_title", "Install from the plugin catalog"), TextRole: theme.RoleLabel},
+		h.wrappedText(onbText(h, "plugins.consent", "Plugins run as you, with access to your files and the network. Each one starts once setup finishes."), theme.RoleCaption, ui.ToneNormal, inner, 0),
+	}
+	for _, rec := range pending {
+		detail := detailFor(rec.listing, false, nil, "", locale)
+		lines = append(lines, &ui.Node{Kind: ui.KindText, Text: detail.Title, TextRole: theme.RoleLabel})
+		for _, line := range detail.ConsentLines {
+			lines = append(lines, h.wrappedText(line, theme.RoleCaption, ui.ToneSubtle, inner, 0))
+		}
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Key: "onb-consent", Width: width, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: lines},
+	}}
 }
 
 func onbPluginCandidates(r *Registry) []plugin.Candidate {
@@ -1097,6 +1199,28 @@ func onbSelectedPlugins(r *Registry, h *PanelHost) []string {
 		}
 		names = append(names, name)
 	}
+	locale := r.pluginStoreDetailLocale(h)
+	for id, q := range r.onboardingInstalls {
+		if slices.ContainsFunc(candidates, func(c plugin.Candidate) bool { return c.Manifest.ID == id }) {
+			continue
+		}
+		switch state, _ := onbInstallStatus(q, r.pluginStoreSnapshot.Listings, id); state {
+		case onbInstalling:
+			names = append(names, fmt.Sprintf(onbText(h, "review.installing", "%s (installing)"), q.name))
+		case onbInstallFailed:
+			names = append(names, fmt.Sprintf(onbText(h, "review.install_failed", "%s (install failed)"), q.name))
+		}
+	}
+	for _, rec := range r.onbRecommendationsFor(h) {
+		if !onbRecSelected(rec, h.onbPluginSelections) {
+			continue
+		}
+		if rec.native() {
+			names = append(names, onbItemName(h, rec.item))
+		} else {
+			names = append(names, rec.listing.Entry.LocalizedName(locale))
+		}
+	}
 	return names
 }
 
@@ -1150,15 +1274,19 @@ func onbFooter(r *Registry, h *PanelHost) *ui.Node {
 	if h.onbPage == onbReady {
 		action = "onb-finish"
 	}
-	main := h.button(action, onbMainLabelFor(h, h.onbPage), "")
+	label := onbMainLabelFor(h, h.onbPage)
+	if h.onbPage == onbPlugins && len(r.onbPendingInstalls(h)) > 0 {
+		label = onbText(h, "action.install_continue", "Install and continue")
+	}
+	main := h.button(action, label, "")
 	main.Shape = ui.ShapeStadium
 	main.Fill = ui.FillAccent
-	if h.onbPage == onbReady && r.idleApplying {
+	if h.onbPage == onbReady && (r.idleApplying || r.syncOnboardingInstallsLocked()) {
 		main.State |= ui.StateDisabled
 		main.AriaDisabled = true
 	}
 	status := &ui.Node{Kind: ui.KindText, Key: "onb-status", Role: "status", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
-	if h.onbPage == onbPlugins && len(onbPluginCandidates(r)) > 0 {
+	if h.onbPage == onbPlugins && (len(onbPluginCandidates(r)) > 0 || len(r.onbRecommendationsFor(h)) > 0) {
 		status.Text = onbStepSummary(r, h, onbPlugins)
 	}
 	return &ui.Node{Kind: ui.KindRow, Key: "onb-footer", PinEnd: true, Children: []*ui.Node{
@@ -1259,12 +1387,18 @@ func (r *Registry) finishOnboardingLocked(h *PanelHost) error {
 	if r.idleApplying {
 		return fmt.Errorf("%s", onbText(h, "error.idle_applying", "Wait for the idle setting to finish applying."))
 	}
+	if r.syncOnboardingInstallsLocked() {
+		return fmt.Errorf("%s", onbText(h, "error.installing", "Wait for the plugins to finish installing."))
+	}
 	if h.writeTimer != nil {
 		h.writeTimer.Stop()
 		h.writeTimer = nil
 	}
 	draft, err := onbPluginSelectionConfig(h.draft, onbPluginCandidates(r), h.onbPluginSelections)
 	if err != nil {
+		return err
+	}
+	if err := r.applyOnboardingItems(h, &draft); err != nil {
 		return err
 	}
 	if strings.TrimSpace(draft.Weather.City) != "" {
@@ -1302,6 +1436,20 @@ func onboardingScrollOffset(root *ui.Node) int {
 // activateOnboarding claims the wizard's own actions and returns false for
 // everything else, so pick:, set: and browse: keep the shared handlers.
 func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
+	if key, ok := strings.CutPrefix(n.Action, "onb-rec:"); ok {
+		if !slices.ContainsFunc(r.onbRecommendationsFor(h), func(rec onbRec) bool { return rec.key == key }) {
+			return false
+		}
+		selections := cloneOnboardingPluginSelections(h.onbPluginSelections)
+		if selections == nil {
+			selections = make(map[string]bool)
+		}
+		selections[key] = n.Value == 0
+		h.onbPluginSelections = selections
+		h.errLabel = ""
+		r.rebuildPanel(h)
+		return true
+	}
 	if id, ok := strings.CutPrefix(n.Action, "onb-plugin:"); ok {
 		candidates := onbPluginCandidates(r)
 		for _, candidate := range candidates {
@@ -1351,6 +1499,14 @@ func (h *PanelHost) activateOnboarding(r *Registry, n *ui.Node) bool {
 		h.focusByName(onbMainLabelFor(h, h.onbPage))
 		return true
 	case "onb-next":
+		if h.onbPage == onbPlugins {
+			if err := r.queueOnboardingInstallsLocked(h); err != nil {
+				h.errLabel = err.Error()
+				r.rebuildPanel(h)
+				return true
+			}
+			h.errLabel = ""
+		}
 		h.onbPage = h.onbPage.next()
 		h.onbScrollTop = true
 		if h.onbPage == onbRegion {
