@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,16 +14,14 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
-func TestVolumeIsKnownButNotDefault(t *testing.T) {
+// Sound is part of the base bar with notifications and clipboard (owner,
+// 2026-11-01); it was opt-in before.
+func TestVolumeIsADefault(t *testing.T) {
 	if _, ok := knownItems["volume"]; !ok {
 		t.Error("config must accept the volume item")
 	}
-	for _, sec := range [][]Item{Default().Bar.Left, Default().Bar.Right} {
-		for _, it := range sec {
-			if it.ID == "volume" {
-				t.Error("volume must not join the default bar: like wallpaper, it is opt-in")
-			}
-		}
+	if !slices.ContainsFunc(Default().Bar.Right, func(it Item) bool { return it.ID == "volume" }) {
+		t.Error("the default bar has no volume item")
 	}
 }
 
@@ -477,7 +476,7 @@ func TestDefaultVocabularyShipsCentrePillAndMedia(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
-			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" || m.ID == "privacy" {
+			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" || m.ID == "volume" || m.ID == "privacy" {
 				continue
 			}
 			if m.Interval <= 0 {
