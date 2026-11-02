@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
@@ -178,8 +179,9 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, termina
 		}
 		switch name {
 		case "niri":
-			cfg := filepath.Join(home, ".config", "niri", "config.kdl")
-			gen := filepath.Join(home, ".config", "niri", "sysc-shell.kdl")
+			dir := compositor.ConfigDir(home, compositor.Detect(os.Getenv))
+			cfg := filepath.Join(dir, "config.kdl")
+			gen := filepath.Join(dir, "sysc-shell.kdl")
 			if !on {
 				record(name, UnapplyNiri(cfg, gen))
 				continue
