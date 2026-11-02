@@ -24,6 +24,9 @@ var atomicReplace = seam.New(os.Rename)
 // rename. A deferred cleanup removes the temp on every error. Rename replaces
 // a symlink at path rather than following it.
 func Write(path string, c Config) error {
+	if err := ValidateInput(c.Input); err != nil {
+		return err
+	}
 	if c.TerminalArt.Blur < 0 || c.TerminalArt.Blur > 64 {
 		return fmt.Errorf("config: terminal-art.blur must be in 0..64")
 	}
@@ -111,6 +114,10 @@ func Write(path string, c Config) error {
 func toWire(c Config) wireConfig {
 	d := Default()
 	var w wireConfig
+	if !c.Input.IsZero() {
+		in := c.Input.Clone()
+		w.Input = &in
+	}
 	// The base bar is written against the bar its own resolved theme derives,
 	// not against the default bar: a compact preset moves the derived height
 	// to 40, and recording that as an explicit override would pin the bar
