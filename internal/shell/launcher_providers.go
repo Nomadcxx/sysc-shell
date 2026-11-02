@@ -430,28 +430,36 @@ func (r *Registry) launcherCopy(text string) error {
 	return nil
 }
 
-// launcherRun starts an activated entry through the compositor. The spawn argv
-// arrives as "niri msg action spawn --" plus the command, the same shape the
-// launcher's own default used. The env helper runs inside Niri's spawn so the
-// token reaches the application process rather than the IPC client.
-//
-// sysc-launch v0.5.0 starts the desktop command directly when no Run is
-// configured. That would make the shell the parent of every application it
-// launches, leave the compositor unaware of them, and give them the shell's
-// lifetime. The shell is Niri first, so it names the spawn path itself.
+// launcherRun sends application launches over IPC while keeping the pinned
+// launcher's Run callback contract. The activation token reaches the application.
 func (r *Registry) launcherRun(ctx context.Context, argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("launcher: empty spawn argv")
 	}
 	r.mu.Lock()
-	run := r.runArgv
+	run, send := r.runArgv, r.niriSend
 	serial := r.launcherActivationSerial
 	r.mu.Unlock()
-	if run == nil {
-		return errors.New("launcher: no spawn runner is wired")
-	}
 	if token := r.requestActivationToken(ctx, serial); token != "" {
 		argv = niriSpawnWithActivationToken(argv, token)
+	}
+	// The pinned launcher passes its spawn CLI argv to Run. Keep that library
+	// contract while sending the application command directly over IPC.
+	prefix := []string{"niri", "msg", "action", "spawn", "--"}
+	if len(argv) >= len(prefix) && slices.Equal(argv[:len(prefix)], prefix) {
+		if len(argv) == len(prefix) {
+			return errors.New("launcher: empty application command")
+		}
+		body := niri.Spawn{Command: slices.Clone(argv[len(prefix):])}
+		if send != nil {
+			return send(body)
+		}
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		return niri.Action(ctx, os.Getenv("NIRI_SOCKET"), body)
+	}
+	if run == nil {
+		return errors.New("launcher: no spawn runner is wired")
 	}
 	return run(argv)
 }
