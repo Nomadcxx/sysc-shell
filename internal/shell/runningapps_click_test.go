@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -89,11 +90,14 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatal("Store action missing")
 	}
 	host.choose(actionIndex)
-	if len(spawned) != 1 {
-		t.Fatalf("spawns = %d, want 1", len(spawned))
+	if len(spawned) != 0 {
+		t.Fatalf("external spawns = %v, want none", spawned)
 	}
-	if len(spawned[0]) < 6 || spawned[0][0] != "niri" || spawned[0][3] != "spawn" {
-		t.Fatalf("spawn argv = %v, want niri msg action spawn -- …", spawned[0])
+	if len(sent) != 2 {
+		t.Fatalf("niri sends = %v, want focus then spawn", sent)
+	}
+	if spawn, ok := sent[1].(niri.Spawn); !ok || !slices.Equal(spawn.Command, []string{"steam", "steam://store"}) {
+		t.Fatalf("spawn action = %+v", sent[1])
 	}
 
 	bar.onAction("running-app:steam", buttonRight)
@@ -311,9 +315,9 @@ func TestRunningAppsMenuEscapeCloses(t *testing.T) {
 func TestRunningAppsMenuChoosesOnPressRelease(t *testing.T) {
 	t.Parallel()
 	reg, bar := steamMenuReg(t)
-	var spawned [][]string
-	reg.runArgv = func(argv []string) error {
-		spawned = append(spawned, append([]string(nil), argv...))
+	var spawned []any
+	reg.niriSend = func(body any) error {
+		spawned = append(spawned, body)
 		return nil
 	}
 	bar.onAction("running-app:steam", buttonRight)

@@ -1019,10 +1019,7 @@ func (r *Registry) spawnDesktopExecLocked(execLine string) {
 		log.Print("running-apps exec: ", err)
 		return
 	}
-	full := append([]string{"niri", "msg", "action", "spawn", "--"}, argv...)
-	if err := r.runArgv(full); err != nil {
-		log.Print("niri spawn: ", err)
-	}
+	r.sendNiriLocked(niri.Spawn{Command: argv})
 }
 
 func xdgApplicationDirs() []string {

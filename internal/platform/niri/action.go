@@ -8,6 +8,11 @@ import (
 	"net"
 )
 
+// Spawn starts a command in the compositor session.
+type Spawn struct {
+	Command []string `json:"command"`
+}
+
 // ToggleOverview toggles Niri's compositor-rendered overview.
 type ToggleOverview struct{}
 
@@ -141,6 +146,8 @@ func Action(ctx context.Context, socketPath string, body any) error {
 func marshalAction(body any) ([]byte, error) {
 	var inner map[string]any
 	switch v := body.(type) {
+	case Spawn:
+		inner = map[string]any{"Spawn": v}
 	case FocusWindow:
 		inner = map[string]any{"FocusWindow": v}
 	case CloseWindow:

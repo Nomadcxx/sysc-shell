@@ -264,6 +264,14 @@ func applyNiri(configPath, genPath, rendered string, force bool) error {
 	if strings.Contains(body, niriInclude) {
 		return nil
 	}
+	// Input overrides must remain after the theme when the theme is first enabled.
+	lines := strings.SplitAfter(body, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == `include optional=true "sysc-shell-input.kdl"` {
+			lines[i] = niriInclude + "\n" + line
+			return writeFileAtomic(configPath, []byte(strings.Join(lines, "")), 0o644)
+		}
+	}
 	out := body
 	if !strings.HasSuffix(out, "\n") && out != "" {
 		out += "\n"

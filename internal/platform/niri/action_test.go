@@ -161,3 +161,14 @@ func TestMarshalToggleWindowFloatingTargetsStableWindowID(t *testing.T) {
 		t.Fatalf("action = %s, want %s", got, want)
 	}
 }
+
+func TestMarshalSpawn(t *testing.T) {
+	got, err := marshalAction(Spawn{Command: []string{"foot", "-e", "htop"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"Action":{"Spawn":{"command":["foot","-e","htop"]}}}`
+	if string(got) != want {
+		t.Fatalf("action = %s, want %s", got, want)
+	}
+}
