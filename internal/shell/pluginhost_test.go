@@ -3,6 +3,7 @@ package shell
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -73,6 +74,181 @@ func TestPluginHostGrantsCalendarActionCapabilities(t *testing.T) {
 			t.Errorf("host capability set omits %q", want)
 		}
 	}
+}
+
+func TestPluginServiceActionDispatchesAndValidatesStatus(t *testing.T) {
+	const pluginID = "org.sysc.lidguard"
+	reg := bindServiceTestPlugin(t, pluginID, true)
+	waitPluginState(t, reg.plugins, pluginID, plugin.StateRunning)
+
+	if err := reg.PluginAction(pluginID, "lid-guard", "toggle"); err != nil {
+		t.Fatalf("PluginAction: %v", err)
+	}
+	waitFor(t, func() bool {
+		status, ok := reg.plugins.serviceStatus(pluginID, "lid-guard")
+		return ok && status.Revision == 2 && status.State == v1.ServiceStateActive
+	})
+
+	status, _ := reg.plugins.serviceStatus(pluginID, "lid-guard")
+	if status.Message != "received toggle" {
+		t.Fatalf("status message = %q, want proof that toggle reached the plugin", status.Message)
+	}
+
+	for _, staleOrInvalid := range []*v1.ServiceStatus{
+		{ServiceID: "lid-guard", State: v1.ServiceStateInactive, Revision: 1},
+		{ServiceID: "lid-guard", State: "suspended", Revision: 3},
+		{ServiceID: "missing", State: v1.ServiceStateInactive, Revision: 4},
+		{ServiceID: "lid-guard", State: v1.ServiceStateError, Message: strings.Repeat("x", v1.MaxServiceStatusMessageBytes+1), Revision: 5},
+		{ServiceID: "lid-guard", State: v1.ServiceStateError, Message: "line one\nline two", Revision: 6},
+		{ServiceID: "lid-guard", State: v1.ServiceStateError, Revision: 0},
+	} {
+		slot := pluginSlotForTest(t, reg.plugins, pluginID)
+		reg.plugins.mu.Lock()
+		session := slot.session
+		reg.plugins.mu.Unlock()
+		reg.plugins.onMessage(slot, session, staleOrInvalid)
+	}
+	status, _ = reg.plugins.serviceStatus(pluginID, "lid-guard")
+	if status.Revision != 2 || status.State != v1.ServiceStateActive || status.Message != "received toggle" {
+		t.Fatalf("invalid or stale update replaced current status: %+v", status)
+	}
+}
+
+func TestPluginServiceActionRejectsUndeclaredServiceActionAndDisabledPlugin(t *testing.T) {
+	const pluginID = "org.sysc.lidguard"
+	reg := bindServiceTestPlugin(t, pluginID, true)
+	waitPluginState(t, reg.plugins, pluginID, plugin.StateRunning)
+	for _, args := range [][2]string{{"missing", "toggle"}, {"lid-guard", "bogus"}} {
+		if err := reg.PluginAction(pluginID, args[0], args[1]); err == nil {
+			t.Errorf("PluginAction(%q, %q) accepted an undeclared action", args[0], args[1])
+		}
+	}
+
+	disabled := bindServiceTestPlugin(t, pluginID, false)
+	if err := disabled.PluginAction(pluginID, "lid-guard", "toggle"); err == nil {
+		t.Fatal("PluginAction accepted an action for a disabled plugin")
+	}
+}
+
+func TestPluginServiceStatusRejectsOldSessionRevision(t *testing.T) {
+	const pluginID = "org.sysc.lidguard"
+	reg := bindServiceTestPlugin(t, pluginID, true)
+	waitPluginState(t, reg.plugins, pluginID, plugin.StateRunning)
+	slot := pluginSlotForTest(t, reg.plugins, pluginID)
+	reg.plugins.mu.Lock()
+	oldSession := slot.session
+	reg.plugins.mu.Unlock()
+	if oldSession == 0 {
+		t.Fatal("plugin has no active session")
+	}
+	newSession := oldSession + 1
+	reg.plugins.serviceSessionEnded(pluginID, slot, oldSession)
+	reg.plugins.serviceSessionStarted(pluginID, slot, newSession)
+
+	// A high revision from the session that ended must not poison the new
+	// session's revision sequence, which starts again at one.
+	reg.plugins.onMessage(slot, oldSession, &v1.ServiceStatus{
+		ServiceID: "lid-guard", State: v1.ServiceStateError, Revision: 99,
+	})
+	if _, ok := reg.plugins.serviceStatus(pluginID, "lid-guard"); ok {
+		t.Fatal("status from the ended plugin session repopulated the cache")
+	}
+	reg.plugins.onMessage(slot, newSession, &v1.ServiceStatus{
+		ServiceID: "lid-guard", State: v1.ServiceStateInactive, Revision: 1,
+	})
+	status, ok := reg.plugins.serviceStatus(pluginID, "lid-guard")
+	if !ok || status.State != v1.ServiceStateInactive || status.Revision != 1 {
+		t.Fatalf("new-session status = %+v, ok=%t; want inactive revision 1", status, ok)
+	}
+}
+
+func TestPluginActionIPCValidatesParamsAndDispatchesDeclaredAction(t *testing.T) {
+	const pluginID = "org.sysc.lidguard"
+	reg := bindServiceTestPlugin(t, pluginID, true)
+	waitPluginState(t, reg.plugins, pluginID, plugin.StateRunning)
+	result, err := reg.PluginActionCall(json.RawMessage(`{"plugin_id":"org.sysc.lidguard","service_id":"lid-guard","action_id":"toggle"}`))
+	if err != nil {
+		t.Fatalf("PluginActionCall: %v", err)
+	}
+	if result.(map[string]any)["queued"] != true {
+		t.Fatalf("PluginActionCall result = %+v, want queued=true", result)
+	}
+	waitFor(t, func() bool {
+		status, ok := reg.plugins.serviceStatus(pluginID, "lid-guard")
+		return ok && status.State == v1.ServiceStateActive
+	})
+	if _, err := reg.PluginActionCall(json.RawMessage(`{"plugin_id":"org.sysc.lidguard","service_id":"lid-guard","action_id":"toggle","extra":true}`)); err == nil {
+		t.Fatal("PluginActionCall accepted an unknown parameter")
+	}
+}
+
+func bindServiceTestPlugin(t testing.TB, id string, enabled bool) *Registry {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, id)
+	bin := filepath.Join(dir, "bin", "sysc-plugin-lid-guard")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	program := `#!/bin/sh
+IFS= read -r hello || exit 2
+printf '%s\n' '{"type":"plugin.hello","protocol":{"major":1,"minor":27},"plugin":{"id":"org.sysc.lidguard","name":"Lid Guard","version":"1.0.0"},"capabilities":[]}'
+	revision=1
+	while IFS= read -r line; do
+  case "$line" in
+    *'"action_id":"toggle"'*)
+      revision=$((revision + 1))
+      printf '%s\n' "{\"type\":\"service.status\",\"service_id\":\"lid-guard\",\"state\":\"active\",\"busy\":false,\"message\":\"received toggle\",\"revision\":$revision}"
+      ;;
+    *'"type":"host.shutdown"'*) exit 0 ;;
+  esac
+done
+`
+	if err := os.WriteFile(bin, []byte(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{
+  "schema": 1,
+  "id": "org.sysc.lidguard",
+  "name": "Lid Guard",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 27},
+  "exec": "bin/sysc-plugin-lid-guard",
+  "services": [{
+    "id": "lid-guard",
+    "actions": ["enable", "disable", "toggle", "refresh", "status"],
+    "quick_action": {"label": "Lid Guard", "icon": "laptop", "action": "toggle"}
+  }]
+}`
+	if err := os.WriteFile(filepath.Join(dir, plugin.ManifestName), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	if enabled {
+		cfg.Plugins.Enabled = []string{id}
+	}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{Roots: []plugin.Root{{Path: root, Source: plugin.SourceUser}}, StateDir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	return reg
+}
+
+func waitPluginState(t *testing.T, host *pluginHost, id string, want plugin.State) {
+	t.Helper()
+	waitFor(t, func() bool { return host.status(id).State == want })
+}
+
+func pluginSlotForTest(t testing.TB, host *pluginHost, id string) *pluginSlot {
+	t.Helper()
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	slot := host.slots[id]
+	if slot == nil {
+		t.Fatalf("plugin %s has no running slot", id)
+	}
+	return slot
 }
 
 const testPanelShortcutManifest = `{

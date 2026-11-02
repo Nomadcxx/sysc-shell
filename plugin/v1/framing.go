@@ -40,11 +40,12 @@ const (
 // registry holds the constructor for every name each side accepts.
 var registry = map[Direction]map[string]func() Message{
 	ToHost: {
-		TypePluginHello:  func() Message { return &PluginHello{} },
-		TypeViewSnapshot: func() Message { return &ViewSnapshot{} },
-		TypeViewPatch:    func() Message { return &ViewPatch{} },
-		TypeHostCall:     func() Message { return &HostCall{} },
-		TypePluginStatus: func() Message { return &PluginStatus{} },
+		TypePluginHello:   func() Message { return &PluginHello{} },
+		TypeViewSnapshot:  func() Message { return &ViewSnapshot{} },
+		TypeViewPatch:     func() Message { return &ViewPatch{} },
+		TypeHostCall:      func() Message { return &HostCall{} },
+		TypePluginStatus:  func() Message { return &PluginStatus{} },
+		TypeServiceStatus: func() Message { return &ServiceStatus{} },
 	},
 	ToPlugin: {
 		TypeHostHello:       func() Message { return &HostHello{} },
@@ -58,6 +59,7 @@ var registry = map[Direction]map[string]func() Message{
 		TypeInputEvent:      func() Message { return &InputEvent{} },
 		TypeSettingsChanged: func() Message { return &SettingsChanged{} },
 		TypeHostReply:       func() Message { return &HostReply{} },
+		TypeServiceAction:   func() Message { return &ServiceAction{} },
 	},
 }
 
@@ -140,6 +142,8 @@ func stamp(m Message) error {
 		v.Type = name
 	case *HostReply:
 		v.Type = name
+	case *ServiceAction:
+		v.Type = name
 	case *PluginHello:
 		v.Type = name
 	case *ViewSnapshot:
@@ -149,6 +153,8 @@ func stamp(m Message) error {
 	case *HostCall:
 		v.Type = name
 	case *PluginStatus:
+		v.Type = name
+	case *ServiceStatus:
 		v.Type = name
 	default:
 		return fmt.Errorf("plugin/v1: %T is not a version-one message", m)

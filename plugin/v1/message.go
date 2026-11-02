@@ -36,7 +36,8 @@ const (
 	// Minor 25 adds text labels to those bands.
 	// Minor 26 adds location.get and location.changed: the place the shell's
 	// weather settings name, for a plugin granted the location capability.
-	ProtocolMinor = 26
+	// Minor 27 adds declared service actions and typed service status updates.
+	ProtocolMinor = 27
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.
@@ -54,6 +55,10 @@ const ViewResizeMinor = 22
 // negotiated it, for the reason given on ViewErrorMinor.
 const LocationMinor = 26
 
+// ServiceActionMinor is the first protocol minor that carries service actions
+// and status updates.
+const ServiceActionMinor = 27
+
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
 // message rather than guessing.
@@ -70,13 +75,15 @@ const (
 	TypeSettingsChanged = "settings.changed"
 	TypeLocationChanged = "location.changed"
 	TypeHostReply       = "host.reply"
+	TypeServiceAction   = "service.action"
 
 	// Plugin to host.
-	TypePluginHello  = "plugin.hello"
-	TypeViewSnapshot = "view.snapshot"
-	TypeViewPatch    = "view.patch"
-	TypeHostCall     = "host.call"
-	TypePluginStatus = "plugin.status"
+	TypePluginHello   = "plugin.hello"
+	TypeViewSnapshot  = "view.snapshot"
+	TypeViewPatch     = "view.patch"
+	TypeHostCall      = "host.call"
+	TypePluginStatus  = "plugin.status"
+	TypeServiceStatus = "service.status"
 )
 
 // Message is one framed protocol value. The interface method is unexported so
@@ -391,6 +398,44 @@ type PluginStatus struct {
 }
 
 func (*PluginStatus) messageType() string { return TypePluginStatus }
+
+// ServiceAction asks a declared plugin service to perform one named action.
+// The host validates both IDs against the manifest before sending it.
+type ServiceAction struct {
+	Type      string `json:"type"`
+	ServiceID string `json:"service_id"`
+	ActionID  string `json:"action_id"`
+}
+
+func (*ServiceAction) messageType() string { return TypeServiceAction }
+
+// ServiceState is an observed service state, independent of whether an action
+// is currently running.
+type ServiceState string
+
+const (
+	ServiceStateUnknown     ServiceState = "unknown"
+	ServiceStateInactive    ServiceState = "inactive"
+	ServiceStateActive      ServiceState = "active"
+	ServiceStateUnavailable ServiceState = "unavailable"
+	ServiceStateError       ServiceState = "error"
+)
+
+// MaxServiceStatusMessageBytes bounds plugin-supplied detail text.
+const MaxServiceStatusMessageBytes = 512
+
+// ServiceStatus reports an observed state for one declared service. Revision
+// increases within a plugin session; a new session starts a fresh sequence.
+type ServiceStatus struct {
+	Type      string       `json:"type"`
+	ServiceID string       `json:"service_id"`
+	State     ServiceState `json:"state"`
+	Busy      bool         `json:"busy"`
+	Message   string       `json:"message,omitempty"`
+	Revision  uint64       `json:"revision"`
+}
+
+func (*ServiceStatus) messageType() string { return TypeServiceStatus }
 
 // The call parameter and result payloads. They are separate types rather than
 // maps so that both sides decode the same shape strictly.

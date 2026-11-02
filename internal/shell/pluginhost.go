@@ -8,11 +8,14 @@ import (
 	"slices"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"log/slog"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -36,11 +39,27 @@ type PluginHostOptions struct {
 type pluginSlot struct {
 	rt    *plugin.Runtime
 	store plugin.StateStore
+	// session is the runtime generation currently allowed to contribute state.
+	// Registry.mu does not guard it; h.mu does.
+	session uint64
 	// ctx is cancelled by stopPlugin. The host context stays live across
 	// disable, and the runtime never closes Messages, so this is what lets
 	// pumpRuntime return.
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type pluginServiceKey struct {
+	pluginID  string
+	serviceID string
+}
+
+type pluginQuickAction struct {
+	pluginID, serviceID string
+	label, icon, action string
+	status              v1.ServiceStatus
+	running             bool
+	hasStatus           bool
 }
 
 type detachedPluginView struct {
@@ -106,6 +125,7 @@ type pluginHost struct {
 	locations        pluginLocations
 	views            map[string]*hostedView
 	surfaces         map[string]*pluginSurfaceHost
+	serviceStatuses  map[pluginServiceKey]v1.ServiceStatus
 	// swapping holds plugin ids replace has stopped and not yet restarted.
 	// ensure refuses to start one of these: a concurrent syncEnabled must not
 	// resurrect the old copy while its directory is mid-swap.
@@ -157,17 +177,18 @@ var hostPluginCaps = []plugin.Capability{
 func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 	ctx, stop := context.WithCancel(context.Background())
 	h := &pluginHost{
-		r:            r,
-		opts:         opts,
-		ctx:          ctx,
-		stop:         stop,
-		prep:         plugin.NewPreparer(2, plugin.Measure),
-		slots:        make(map[string]*pluginSlot),
-		views:        make(map[string]*hostedView),
-		surfaces:     make(map[string]*pluginSurfaceHost),
-		lastAnchor:   make(map[string]pluginAnchor),
-		swapping:     make(map[string]bool),
-		recordInputs: opts.recordInputs,
+		r:               r,
+		opts:            opts,
+		ctx:             ctx,
+		stop:            stop,
+		prep:            plugin.NewPreparer(2, plugin.Measure),
+		slots:           make(map[string]*pluginSlot),
+		views:           make(map[string]*hostedView),
+		surfaces:        make(map[string]*pluginSurfaceHost),
+		serviceStatuses: make(map[pluginServiceKey]v1.ServiceStatus),
+		lastAnchor:      make(map[string]pluginAnchor),
+		swapping:        make(map[string]bool),
+		recordInputs:    opts.recordInputs,
 	}
 	h.images = icons.NewWorker(icons.FileResolver{}, h.applyPluginImage)
 	go h.images.Run(ctx)
@@ -436,25 +457,33 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	if !ok {
 		return fmt.Errorf("plugin %s is not installed", id)
 	}
+	var slot *pluginSlot
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
-		Supported:      hostPluginCaps,
-		Consent:        h.consentLookup(),
-		Launcher:       h.opts.Launcher,
-		StateDir:       h.stateDir(),
-		Limits:         v1.DefaultLimits,
-		SessionEnded:   func() { h.clearWallpaperMasks(id) },
-		SessionStarted: func() { h.reopenViews(id) },
+		Supported: hostPluginCaps,
+		Consent:   h.consentLookup(),
+		Launcher:  h.opts.Launcher,
+		StateDir:  h.stateDir(),
+		Limits:    v1.DefaultLimits,
+		SessionEnded: func(session uint64) {
+			h.serviceSessionEnded(id, slot, session)
+			h.clearWallpaperMasks(id)
+		},
+		SessionStarted: func(session uint64) {
+			h.serviceSessionStarted(id, slot, session)
+			h.reopenViews(id)
+		},
 	})
 	store, err := plugin.OpenStore(h.stateDir(), id)
 	if err != nil {
 		return err
 	}
+	slotCtx, cancel := context.WithCancel(h.ctx)
+	slot = &pluginSlot{rt: rt, store: store, ctx: slotCtx, cancel: cancel}
 	if err := rt.Start(h.ctx); err != nil {
+		cancel()
 		return err
 	}
 	rt.SetCalls(plugin.NewDispatcher(h.callEnv(id, rt, store)))
-	slotCtx, cancel := context.WithCancel(h.ctx)
-	slot := &pluginSlot{rt: rt, store: store, ctx: slotCtx, cancel: cancel}
 	if h.ensureRaceHook != nil {
 		h.ensureRaceHook(id, rt)
 	}
@@ -645,16 +674,197 @@ func (h *pluginHost) clearWallpaperMasks(id string) {
 	}
 }
 
+func (h *pluginHost) serviceSessionStarted(id string, slot *pluginSlot, session uint64) {
+	if slot == nil || session == 0 {
+		return
+	}
+	h.mu.Lock()
+	slot.session = session
+	changed := false
+	if current := h.slots[id]; current == nil || current == slot {
+		changed = h.clearServiceStatusesLocked(id)
+	}
+	h.mu.Unlock()
+	if changed {
+		h.r.refreshPluginServiceStatus()
+	}
+}
+
+func (h *pluginHost) serviceSessionEnded(id string, slot *pluginSlot, session uint64) {
+	if slot == nil {
+		return
+	}
+	h.mu.Lock()
+	if slot.session == session {
+		slot.session = 0
+	}
+	changed := false
+	if current := h.slots[id]; current == nil || current == slot {
+		changed = h.clearServiceStatusesLocked(id)
+	}
+	h.mu.Unlock()
+	if changed {
+		h.r.refreshPluginServiceStatus()
+	}
+}
+
+func (h *pluginHost) clearServiceStatusesLocked(pluginID string) bool {
+	changed := false
+	for key := range h.serviceStatuses {
+		if key.pluginID == pluginID {
+			delete(h.serviceStatuses, key)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (h *pluginHost) serviceStatus(pluginID, serviceID string) (v1.ServiceStatus, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	status, ok := h.serviceStatuses[pluginServiceKey{pluginID: pluginID, serviceID: serviceID}]
+	return status, ok
+}
+
+func (h *pluginHost) quickActions(enabled []string) []pluginQuickAction {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var actions []pluginQuickAction
+	for _, pluginID := range enabled {
+		candidate, ok := h.catalog.Lookup(pluginID)
+		if !ok {
+			continue
+		}
+		slot := h.slots[pluginID]
+		for _, service := range candidate.Manifest.Services {
+			if service.QuickAction == nil {
+				continue
+			}
+			quick := service.QuickAction
+			action := pluginQuickAction{
+				pluginID: pluginID, serviceID: service.ID,
+				label: quick.Label, icon: quick.Icon, action: quick.Action,
+				running: slot != nil && slot.session != 0 && !h.closing,
+			}
+			if status, found := h.serviceStatuses[pluginServiceKey{pluginID: pluginID, serviceID: service.ID}]; found {
+				action.status, action.hasStatus = status, true
+			}
+			if !action.running {
+				action.status = v1.ServiceStatus{State: v1.ServiceStateUnavailable, Message: "The plugin is not running."}
+				action.hasStatus = true
+			}
+			actions = append(actions, action)
+		}
+	}
+	return actions
+}
+
+func (h *pluginHost) acceptServiceStatus(slot *pluginSlot, session uint64, status *v1.ServiceStatus) {
+	if slot == nil || slot.rt == nil || session == 0 || status == nil || status.Revision == 0 ||
+		!validServiceState(status.State) || !validServiceStatusMessage(status.Message) {
+		return
+	}
+	manifest := slot.rt.Manifest()
+	declared := false
+	for _, service := range manifest.Services {
+		if service.ID == status.ServiceID {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return
+	}
+
+	h.mu.Lock()
+	if h.slots[manifest.ID] != slot || slot.session != session || h.closing {
+		h.mu.Unlock()
+		return
+	}
+	key := pluginServiceKey{pluginID: manifest.ID, serviceID: status.ServiceID}
+	previous, found := h.serviceStatuses[key]
+	if found && status.Revision <= previous.Revision {
+		h.mu.Unlock()
+		return
+	}
+	if h.serviceStatuses == nil {
+		h.serviceStatuses = make(map[pluginServiceKey]v1.ServiceStatus)
+	}
+	h.serviceStatuses[key] = *status
+	changed := !found || previous.State != status.State || previous.Busy != status.Busy || previous.Message != status.Message
+	h.mu.Unlock()
+	if changed {
+		h.r.refreshPluginServiceStatus()
+	}
+}
+
+func validServiceState(state v1.ServiceState) bool {
+	switch state {
+	case v1.ServiceStateUnknown, v1.ServiceStateInactive, v1.ServiceStateActive,
+		v1.ServiceStateUnavailable, v1.ServiceStateError:
+		return true
+	default:
+		return false
+	}
+}
+
+func validServiceStatusMessage(message string) bool {
+	if len(message) > v1.MaxServiceStatusMessageBytes || !utf8.ValidString(message) {
+		return false
+	}
+	for _, r := range message {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *pluginHost) dispatchServiceAction(pluginID, serviceID, actionID string) error {
+	if !v1.ValidPluginID(pluginID) || !v1.ValidEntryID(serviceID) || !v1.ValidEntryID(actionID) {
+		return errors.New("plugin action contains an invalid identifier")
+	}
+	h.mu.Lock()
+	slot := h.slots[pluginID]
+	current := slot != nil && !h.closing && slot.session != 0
+	h.mu.Unlock()
+	if !current {
+		return fmt.Errorf("plugin %s is not running", pluginID)
+	}
+	if slot.rt.Status().State != plugin.StateRunning {
+		return fmt.Errorf("plugin %s is not running", pluginID)
+	}
+	manifest := slot.rt.Manifest()
+	if slot.rt.Protocol().Minor < v1.ServiceActionMinor {
+		return fmt.Errorf("plugin %s did not negotiate service actions", pluginID)
+	}
+	for _, service := range manifest.Services {
+		if service.ID != serviceID {
+			continue
+		}
+		if slices.Contains(service.Actions, actionID) {
+			return slot.rt.Send(&v1.ServiceAction{ServiceID: serviceID, ActionID: actionID})
+		}
+		return fmt.Errorf("plugin %s does not declare action %q for service %q", pluginID, actionID, serviceID)
+	}
+	return fmt.Errorf("plugin %s does not declare service %q", pluginID, serviceID)
+}
+
 func (h *pluginHost) pumpRuntime(slot *pluginSlot) {
 	for {
 		select {
 		case <-slot.ctx.Done():
 			return
-		case msg, ok := <-slot.rt.Messages():
+		case event, ok := <-slot.rt.Messages():
 			if !ok {
 				return
 			}
-			h.onMessage(slot, msg)
+			h.mu.Lock()
+			current := h.slots[slot.rt.Manifest().ID] == slot && slot.session == event.Session
+			h.mu.Unlock()
+			if current && event.Message != nil {
+				h.onMessage(slot, event.Session, event.Message)
+			}
 		}
 	}
 }
@@ -673,8 +883,10 @@ func (h *pluginHost) pumpResults() {
 	}
 }
 
-func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
+func (h *pluginHost) onMessage(slot *pluginSlot, session uint64, msg v1.Message) {
 	switch m := msg.(type) {
+	case *v1.ServiceStatus:
+		h.acceptServiceStatus(slot, session, m)
 	case *v1.ViewSnapshot:
 		h.mu.Lock()
 		v, ok := h.views[m.ViewID]
@@ -2090,6 +2302,43 @@ func (r *Registry) PluginPID(id string) int {
 		return 0
 	}
 	return r.plugins.pid(id)
+}
+
+// PluginAction dispatches a manifest-declared action to a running plugin.
+func (r *Registry) PluginAction(pluginID, serviceID, actionID string) error {
+	if r.plugins == nil {
+		return errors.New("plugins not bound")
+	}
+	return r.plugins.dispatchServiceAction(pluginID, serviceID, actionID)
+}
+
+// PluginActionCall is the API-2 handler for plugin.action. The host performs
+// the same manifest authorization as UI actions before it queues the message.
+func (r *Registry) PluginActionCall(params json.RawMessage) (any, error) {
+	var p struct {
+		PluginID  string `json:"plugin_id"`
+		ServiceID string `json:"service_id"`
+		ActionID  string `json:"action_id"`
+	}
+	if err := ipc.DecodeParams(params, &p); err != nil {
+		return nil, err
+	}
+	if !v1.ValidPluginID(p.PluginID) || !v1.ValidEntryID(p.ServiceID) || !v1.ValidEntryID(p.ActionID) {
+		return nil, &ipc.Error{Code: ipc.CodeInvalidParams, Message: "invalid plugin, service, or action identifier"}
+	}
+	if err := r.PluginAction(p.PluginID, p.ServiceID, p.ActionID); err != nil {
+		return nil, err
+	}
+	return map[string]any{"queued": true}, nil
+}
+
+func (r *Registry) refreshPluginServiceStatus() {
+	r.mu.Lock()
+	output, open := r.rebuildControlCentreLocked()
+	r.mu.Unlock()
+	if open {
+		r.publishSurface(output, panelSurfaceID(PanelControlCenter))
+	}
 }
 
 func (r *Registry) SetPluginEnabled(id string, on bool) error {

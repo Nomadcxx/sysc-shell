@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -96,6 +97,121 @@ func TestLoadManifestAcceptsTheDesignFixture(t *testing.T) {
 	if !m.Grants(CapNotifications) || !m.Grants(CapState) {
 		t.Errorf("capabilities = %v", m.Capabilities)
 	}
+}
+
+func TestManifestServiceActionsAndQuickAction(t *testing.T) {
+	manifest := manifestWithService(t, 27, map[string]any{
+		"id": "lid-guard", "label": "Lid Guard",
+		"actions":      []string{"enable", "disable", "toggle", "refresh", "status"},
+		"quick_action": map[string]any{"label": "Lid Guard", "icon": "laptop", "action": "toggle"},
+	})
+	m, err := ParseManifest(manifest)
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if len(m.Services) != 1 || m.Services[0].ID != "lid-guard" {
+		t.Fatalf("services = %+v", m.Services)
+	}
+	svc := reflect.ValueOf(m.Services[0])
+	actions := svc.FieldByName("Actions")
+	if !actions.IsValid() || actions.Len() != 5 || actions.Index(2).String() != "toggle" {
+		t.Fatalf("service actions = %v, want enable/disable/toggle/refresh/status", actions)
+	}
+	quick := svc.FieldByName("QuickAction")
+	if !quick.IsValid() {
+		t.Fatal("service has no QuickAction field")
+	}
+	if quick.Kind() == reflect.Pointer {
+		quick = quick.Elem()
+	}
+	for field, want := range map[string]string{"Label": "Lid Guard", "Icon": "laptop", "Action": "toggle"} {
+		got := quick.FieldByName(field)
+		if !got.IsValid() || got.String() != want {
+			t.Errorf("quick action %s = %v, want %q", field, got, want)
+		}
+	}
+}
+
+func TestManifestServiceActionFieldsRequireMinor27(t *testing.T) {
+	manifest := manifestWithService(t, 26, map[string]any{
+		"id": "lid-guard", "actions": []string{"toggle"},
+	})
+	err := parseManifestError(t, manifest)
+	if err == nil || !strings.Contains(err.Error(), "protocol minor 27") {
+		t.Fatalf("ParseManifest error = %v, want protocol minor 27 requirement", err)
+	}
+}
+
+func TestManifestLegacyServiceEntryRemainsValidAtMinor25(t *testing.T) {
+	manifest := manifestWithService(t, 25, map[string]any{"id": "timer"})
+	if _, err := ParseManifest(manifest); err != nil {
+		t.Fatalf("ParseManifest legacy service: %v", err)
+	}
+}
+
+func TestManifestServiceRejectsInvalidActionDeclarations(t *testing.T) {
+	tests := []struct {
+		name    string
+		service map[string]any
+		want    string
+	}{
+		{
+			name:    "duplicate action",
+			service: map[string]any{"id": "lid-guard", "actions": []string{"toggle", "toggle"}},
+			want:    "declared twice",
+		},
+		{
+			name:    "invalid action id",
+			service: map[string]any{"id": "lid-guard", "actions": []string{"../toggle"}},
+			want:    "identifier",
+		},
+		{
+			name: "quick action not declared",
+			service: map[string]any{
+				"id": "lid-guard", "actions": []string{"enable"},
+				"quick_action": map[string]any{"label": "Lid Guard", "icon": "laptop", "action": "toggle"},
+			},
+			want: "not declared",
+		},
+		{
+			name: "unknown quick action icon",
+			service: map[string]any{
+				"id": "lid-guard", "actions": []string{"toggle"},
+				"quick_action": map[string]any{"label": "Lid Guard", "icon": "not-a-real-icon", "action": "toggle"},
+			},
+			want: "shell catalogue",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parseManifestError(t, manifestWithService(t, 27, tt.service))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ParseManifest error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func manifestWithService(t *testing.T, minor int, service map[string]any) []byte {
+	t.Helper()
+	raw := edit(t, "services", []any{service})
+	var manifest map[string]any
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	protocol := manifest["protocol"].(map[string]any)
+	protocol["minor"] = minor
+	out, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func parseManifestError(t *testing.T, manifest []byte) error {
+	t.Helper()
+	_, err := ParseManifest(manifest)
+	return err
 }
 
 func TestLoadManifestAcceptsWallpaperCapability(t *testing.T) {

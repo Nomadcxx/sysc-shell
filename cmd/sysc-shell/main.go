@@ -455,6 +455,7 @@ func run(ctx context.Context) (err error) {
 			Status:     registry.Status,
 			OSDStep:    registry.OSDStep,
 			Plugins:    registry.PluginStoreCall,
+			API:        map[string]ipc.APIMethod{"plugin.action": registry.PluginActionCall},
 			Screenshot: registry.Screenshot,
 			Switcher:   registry.ShowWindowSwitcher,
 			Theme:      registry.ThemeCall,
