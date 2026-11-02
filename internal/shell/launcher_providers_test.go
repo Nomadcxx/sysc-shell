@@ -186,7 +186,9 @@ func TestLauncherServiceConfigSpawnsThroughTheCompositor(t *testing.T) {
 	r := newPanelRegistry(t)
 	var mu sync.Mutex
 	var spawned []string
-	r.runArgv = func(argv []string) error {
+	r.runArgv = func([]string) error { return errors.New("unexpected subprocess") }
+	r.niriSend = func(body any) error {
+		argv := body.(niri.Spawn).Command
 		mu.Lock()
 		spawned = slices.Clone(argv)
 		mu.Unlock()
@@ -209,7 +211,7 @@ func TestLauncherServiceConfigSpawnsThroughTheCompositor(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	want := []string{"niri", "msg", "action", "spawn", "--", "firefox"}
+	want := []string{"firefox"}
 	if !slices.Equal(spawned, want) {
 		t.Fatalf("spawn argv = %v, want %v", spawned, want)
 	}
@@ -220,7 +222,9 @@ func TestLauncherRunPassesActivationTokenToApplication(t *testing.T) {
 
 	r := newPanelRegistry(t)
 	spawned := make(chan []string, 1)
-	r.runArgv = func(argv []string) error {
+	r.runArgv = func([]string) error { return errors.New("unexpected subprocess") }
+	r.niriSend = func(body any) error {
+		argv := body.(niri.Spawn).Command
 		spawned <- slices.Clone(argv)
 		return nil
 	}
@@ -250,7 +254,7 @@ func TestLauncherRunPassesActivationTokenToApplication(t *testing.T) {
 		t.Fatal("launcher did not request an activation token")
 	}
 	got := <-spawned
-	want := []string{"niri", "msg", "action", "spawn", "--", "env", "XDG_ACTIVATION_TOKEN=activation-token", "firefox"}
+	want := []string{"env", "XDG_ACTIVATION_TOKEN=activation-token", "firefox"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("argv = %v, want %v", got, want)
 	}
@@ -261,7 +265,9 @@ func TestLauncherRunFallsBackWhenActivationTokenIsInvalid(t *testing.T) {
 
 	r := newPanelRegistry(t)
 	spawned := make(chan []string, 1)
-	r.runArgv = func(argv []string) error {
+	r.runArgv = func([]string) error { return errors.New("unexpected subprocess") }
+	r.niriSend = func(body any) error {
+		argv := body.(niri.Spawn).Command
 		spawned <- slices.Clone(argv)
 		return nil
 	}
@@ -273,8 +279,8 @@ func TestLauncherRunFallsBackWhenActivationTokenIsInvalid(t *testing.T) {
 		req.Done <- "invalid\x00token"
 	}()
 
-	want := []string{"niri", "msg", "action", "spawn", "--", "firefox"}
-	if err := r.launcherRun(context.Background(), want); err != nil {
+	want := []string{"firefox"}
+	if err := r.launcherRun(context.Background(), append([]string{"niri", "msg", "action", "spawn", "--"}, want...)); err != nil {
 		t.Fatalf("launcherRun: %v", err)
 	}
 	if got := <-spawned; !slices.Equal(got, want) {
