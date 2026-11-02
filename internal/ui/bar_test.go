@@ -378,7 +378,7 @@ func TestElasticBarItemsDoNotShrinkBelowPointerSlots(t *testing.T) {
 		{Kind: KindText, Text: "one", MaxWidth: 100, MinWidth: 24},
 		{Kind: KindText, Text: "two", MaxWidth: 100, MinWidth: 24},
 	}
-	granted, _ := grantsWithin(items, []int{60, 60}, 40, 0)
+	granted, _ := grantsWithin(items, []int{60, 60}, []int{60, 60}, 40, 0)
 	for i, width := range granted {
 		if width >= 0 && width < items[i].MinWidth {
 			t.Errorf("item %d granted %d, want dropped or at least %d", i, width, items[i].MinWidth)
@@ -391,13 +391,60 @@ func TestElasticBarItemsDoNotShrinkBelowPointerSlots(t *testing.T) {
 func TestElasticTitleTooNarrowToReadIsDropped(t *testing.T) {
 	title := &Node{Kind: KindText, Text: "title", MaxWidth: 260}
 	chip := &Node{Kind: KindText, Text: "chip"}
-	granted, dropped := grantsWithin([]*Node{chip, title}, []int{100, 260}, 150, 4)
+	granted, dropped := grantsWithin([]*Node{chip, title}, []int{100, 260}, []int{0, 64}, 150, 4)
 	// Left out, but not overflow: nothing after it was cut, so no fade.
 	if granted[0] != 100 || granted[1] != -1 || dropped != 0 {
 		t.Fatalf("grants = %v dropped %d, want the chip kept and the 46 px title left out uncounted", granted, dropped)
 	}
-	granted, dropped = grantsWithin([]*Node{chip, title}, []int{100, 260}, 200, 4)
+	granted, dropped = grantsWithin([]*Node{chip, title}, []int{100, 260}, []int{0, 64}, 200, 4)
 	if granted[0] != 100 || granted[1] != 96 || dropped != 0 {
 		t.Fatalf("grants = %v dropped %d, want a legible 96 px title", granted, dropped)
+	}
+}
+
+// A pill that holds controls beside its title stays legible only with room
+// for those controls too. When both elastic items cannot stay legible, the
+// bare title is left out first so the media controls keep working.
+func TestElasticRowPillKeepsItsControlsAndTitleGoesFirst(t *testing.T) {
+	title := &Node{Kind: KindCapsule, Children: []*Node{{Kind: KindText, Text: "title", MaxWidth: 260}}}
+	media := &Node{Kind: KindCapsule, Children: []*Node{{Kind: KindRow, Children: []*Node{
+		{Kind: KindIcon, Icon: "music_note"},
+		{Kind: KindText, Text: "track", MaxWidth: 200},
+		{Kind: KindIcon, Icon: "play_arrow"},
+	}}}}
+	if !elastic(media) {
+		t.Fatal("media pill reads as fixed, want it elastic through its capped title")
+	}
+	items := []*Node{title, media}
+	widths := []int{260, 240}
+	// Floors: the title 64; the media pill 64 plus its 40 px of icons.
+	floors := []int{64, 104}
+
+	granted, dropped := grantsWithin(items, widths, floors, 200, 4)
+	if dropped != 0 || granted[0] < 64 || granted[1] < 104 || granted[0]+granted[1] > 196 {
+		t.Fatalf("grants = %v dropped %d, want both legible within 196 px", granted, dropped)
+	}
+	granted, dropped = grantsWithin(items, widths, floors, 150, 4)
+	if dropped != 0 || granted[0] != -1 || granted[1] != 150 {
+		t.Fatalf("grants = %v dropped %d, want the title left out and media given all 150 px", granted, dropped)
+	}
+}
+
+// The media pill's floor counts its art and play button beside a legible
+// title, so it is never narrowed to icons with no text between them.
+func TestElasticFloorsCountARowPillsFixedMembers(t *testing.T) {
+	title := &Node{Kind: KindCapsule, Children: []*Node{{Kind: KindText, Text: "title", MaxWidth: 260}}}
+	media := &Node{Kind: KindCapsule, Children: []*Node{{Kind: KindRow, Gap: 4, Children: []*Node{
+		{Kind: KindIcon, Icon: "music_note"},
+		{Kind: KindText, Text: "track", MaxWidth: 200},
+		{Kind: KindIcon, Icon: "play_arrow"},
+	}}}}
+	chip := text("chip")
+	floors, err := elasticFloors([]*Node{chip, title, media}, []int{40, 260, 300}, fixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{0, elasticLegible, elasticLegible + 20 + 4 + 4 + 20}; floors[0] != want[0] || floors[1] != want[1] || floors[2] != want[2] {
+		t.Fatalf("floors = %v, want %v", floors, want)
 	}
 }

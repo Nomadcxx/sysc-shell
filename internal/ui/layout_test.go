@@ -191,6 +191,48 @@ func TestBarSectionKeepsASqueezedTitleInsideItsPill(t *testing.T) {
 	}
 }
 
+// The media widget is a pill around art, a capped title and a play button.
+// Squeezed, the title narrows inside the pill and both icons keep their size,
+// so the window title beside it survives instead of being left out.
+func TestBarSectionShrinksTheTitleInsideARowPill(t *testing.T) {
+	t.Parallel()
+	title := &Node{Kind: KindText, Text: strings.Repeat("w", 40), MaxWidth: 260}
+	titlePill := &Node{Kind: KindCapsule, Padding: 6, Children: []*Node{title}}
+	art := &Node{Kind: KindIcon, Icon: "music_note"}
+	track := &Node{Kind: KindText, Text: strings.Repeat("t", 40), MaxWidth: 200}
+	play := &Node{Kind: KindIcon, Icon: "play_arrow"}
+	media := &Node{Kind: KindCapsule, Padding: 6, Children: []*Node{
+		{Kind: KindRow, Gap: 4, Children: []*Node{art, track, play}},
+	}}
+	content := Rect{W: 400, H: 30}
+	if _, err := ArrangeBar(content, Horizontal, []*Node{titlePill, media}, nil, nil, 4, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if titlePill.Bounds.W <= 0 || media.Bounds.W <= 0 {
+		t.Fatalf("title pill %+v, media pill %+v: want both present", titlePill.Bounds, media.Bounds)
+	}
+	if natural := 2*6 + 20 + 4 + 200 + 4 + 20; media.Bounds.W >= natural {
+		t.Fatalf("media pill = %+v, want it squeezed below %d", media.Bounds, natural)
+	}
+	for name, icon := range map[string]*Node{"art": art, "play": play} {
+		if icon.Bounds.W != 20 || icon.Bounds.H != 20 {
+			t.Errorf("%s icon = %+v, want its 20 px size kept", name, icon.Bounds)
+		}
+	}
+	if track.Bounds.W >= 200 || track.Bounds.X+track.Bounds.W > play.Bounds.X {
+		t.Errorf("track %+v, play %+v: want the title narrowed before the button", track.Bounds, play.Bounds)
+	}
+	if end, limit := play.Bounds.X+play.Bounds.W, media.Bounds.X+media.Bounds.W; end > limit {
+		t.Errorf("play button ends at %d, past its pill at %d", end, limit)
+	}
+	if track.MaxWidth != 200 {
+		t.Errorf("track MaxWidth = %d after layout, want the configured 200 restored", track.MaxWidth)
+	}
+	if titlePill.Bounds.X+titlePill.Bounds.W > media.Bounds.X {
+		t.Errorf("title pill %+v overlaps media pill %+v", titlePill.Bounds, media.Bounds)
+	}
+}
+
 func TestCapsuleDoesNotShiftOversizedLeafPastItsLeftEdge(t *testing.T) {
 	t.Parallel()
 	icon := &Node{Kind: KindIcon, Icon: "wifi", IconSize: 24}
