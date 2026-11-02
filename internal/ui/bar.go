@@ -315,7 +315,10 @@ func placeSection(items []*Node, axis Axis, mainOrigin int, content Rect, budget
 	if err != nil {
 		return 0, err
 	}
-	granted, dropped := barGrants(items, main, axis, budget, reserve, spacing)
+	granted, dropped, err := barGrants(items, main, axis, budget, reserve, spacing, measure)
+	if err != nil {
+		return 0, err
+	}
 
 	placed := 0
 	m := mainOrigin
@@ -376,42 +379,108 @@ const elasticLegible = 64
 // title, the media title and the weather line, each of which ellipsizes inside
 // whatever box it is given. A fixed item has one right size and is better
 // dropped and counted than shown as a sliver.
+func elastic(n *Node) bool {
+	text, _ := elasticText(n)
+	return text != nil
+}
+
+// elasticText finds the width-capped node a squeezed item narrows, and the row
+// holding it when it shares its pill with fixed members.
 //
 // A capsule is chrome wrapped around one child, so it is as elastic as what it
 // holds. Without descending, every capsuled widget reads as fixed and the bar
-// drops the very titles this rule exists to keep.
-func elastic(n *Node) bool {
+// drops the very titles this rule exists to keep. A row inside a pill is
+// elastic when exactly one member is a capped text: the media widget is art, a
+// track title and a play button, and only the title can give up width. A row
+// with two capped texts has no single place to take width from, so it stays
+// fixed.
+func elasticText(n *Node) (text, row *Node) {
 	if n == nil {
-		return false
+		return nil, nil
 	}
 	if n.MaxWidth > 0 {
-		return true
+		return n, nil
 	}
 	if n.Kind != KindCapsule {
-		return false
+		return nil, nil
 	}
 	for _, c := range n.Children {
-		if elastic(c) {
-			return true
+		if text, row := elasticText(c); text != nil {
+			return text, row
+		}
+		if c != nil && c.Kind == KindRow {
+			if text := rowCappedText(c); text != nil {
+				return text, c
+			}
 		}
 	}
-	return false
+	return nil, nil
+}
+
+// rowCappedText returns a row's one width-capped text member, or nil when it
+// has none or several.
+func rowCappedText(row *Node) *Node {
+	var found *Node
+	for _, c := range row.Children {
+		if c == nil || c.MaxWidth <= 0 {
+			continue
+		}
+		if c.Kind != KindText || found != nil {
+			return nil
+		}
+		found = c
+	}
+	return found
+}
+
+// elasticFloors is the narrowest width each elastic item stays legible at: a
+// few characters of its text, plus whatever shares a row with that text and
+// cannot shrink, such as the media widget's art and play button. Fixed items
+// get zero. An item narrower than its floor keeps its natural width as the
+// floor: it can be shown whole or left out, not narrowed.
+func elasticFloors(items []*Node, widths []int, measure MeasureText) ([]int, error) {
+	floors := make([]int, len(items))
+	for i, n := range items {
+		text, row := elasticText(n)
+		if text == nil {
+			continue
+		}
+		floor := elasticLegible
+		if row != nil {
+			rowW, _, err := measureNode(row, 0, measure)
+			if err != nil {
+				return nil, fmt.Errorf("ui: item %d: %w", i, err)
+			}
+			textW, _, err := measureNode(text, 0, measure)
+			if err != nil {
+				return nil, fmt.Errorf("ui: item %d: %w", i, err)
+			}
+			floor += max(rowW-textW, 0)
+		}
+		floors[i] = min(widths[i], max(floor, n.MinWidth))
+	}
+	return floors, nil
 }
 
 // sectionGrants decides each item's width, returning -1 for a dropped item and
 // how many were dropped. The reserve is charged only when something overflows
 // without it.
-func sectionGrants(items []*Node, widths []int, budget, reserve, spacing int) ([]int, int) {
-	granted, dropped := grantsWithin(items, widths, max(0, budget), spacing)
+func sectionGrants(items []*Node, widths, floors []int, budget, reserve, spacing int) ([]int, int) {
+	granted, dropped := grantsWithin(items, widths, floors, max(0, budget), spacing)
 	if dropped > 0 && reserve > 0 {
-		granted, dropped = grantsWithin(items, widths, max(0, budget-reserve), spacing)
+		granted, dropped = grantsWithin(items, widths, floors, max(0, budget-reserve), spacing)
 	}
 	return granted, dropped
 }
 
-func barGrants(items []*Node, main []int, axis Axis, budget, reserve, spacing int) ([]int, int) {
+func barGrants(items []*Node, main []int, axis Axis, budget, reserve, spacing int, measure MeasureText) ([]int, int, error) {
 	if axis == Horizontal {
-		return sectionGrants(items, main, budget, reserve, spacing)
+		floors, err := elasticFloors(items, main, measure)
+		if err != nil {
+			return nil, 0, err
+		}
+		granted, dropped := sectionGrants(items, main, floors, budget, reserve, spacing)
+		return granted, dropped, nil
 	}
 	// Height is intrinsic for upright content. A width-capped label may
 	// ellipsize across the strip, but its line height cannot be compressed.
@@ -427,7 +496,7 @@ func barGrants(items []*Node, main []int, axis Axis, budget, reserve, spacing in
 			granted[i] = -1
 		}
 	}
-	return granted, len(main) - fit
+	return granted, len(main) - fit, nil
 }
 
 // grantsWithin gives every fixed item its natural width and lets the elastic
@@ -435,51 +504,60 @@ func barGrants(items []*Node, main []int, axis Axis, budget, reserve, spacing in
 // its chips, instead of dropping whichever came last. Only when the fixed items
 // alone do not fit does the section fall back to dropping whole items from the
 // far end.
-func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int) {
+//
+// Each elastic item is first given its floor, the narrowest width it stays
+// legible at, and the rest is shared evenly, each capped at its natural width.
+// A narrowed title is present and legible in a way a dropped one is not; below
+// its floor it would read as an empty pill. So when the floors do not all fit,
+// elastic items are left out one at a time, lowest floor first: a bare title
+// goes before a pill that also carries controls, such as the media widget's
+// play button. A left-out elastic item is not counted as overflow: overflow
+// marks a cut at the section's tail (overflowFades), and nothing after the
+// title was cut.
+func grantsWithin(items []*Node, widths, floors []int, budget, spacing int) ([]int, int) {
 	granted := make([]int, len(items))
 	if len(items) == 0 {
 		return granted, 0
 	}
-	spacingTotal := spacing * (len(items) - 1)
-	fixedTotal, elasticNatural, elasticCount := 0, 0, 0
-	minShare := 1
+	fixedTotal, fixedCount := 0, 0
+	var shown []int
 	for i, n := range items {
 		if elastic(n) {
-			elasticNatural += widths[i]
-			elasticCount++
-			minShare = max(minShare, n.MinWidth)
+			shown = append(shown, i)
 			continue
 		}
 		fixedTotal += widths[i]
+		fixedCount++
 	}
 
-	if fixedTotal+elasticNatural+spacingTotal <= budget {
-		copy(granted, widths)
-		return granted, 0
-	}
-
-	// The fixed items and the spacing still fit, so the elastic ones absorb the
-	// shortfall by sharing the remainder evenly, each capped at its natural
-	// width. A narrowed title is present and legible in a way a dropped one is
-	// not, until it is narrowed below elasticLegible: then it would read as an
-	// empty pill, so it alone is left out and the fixed items keep their place.
-	// It is not counted as overflow: overflow marks a cut at the section's tail
-	// (overflowFades), and nothing after the title was cut.
-	if elasticCount > 0 && fixedTotal+spacingTotal < budget {
-		share := (budget - fixedTotal - spacingTotal) / elasticCount
-		if share >= minShare {
+	for {
+		count := fixedCount + len(shown)
+		room := budget - fixedTotal - spacing*max(count-1, 0)
+		floorTotal := 0
+		for _, i := range shown {
+			floorTotal += floors[i]
+		}
+		if room >= floorTotal {
 			for i, n := range items {
 				if elastic(n) {
-					granted[i] = min(widths[i], share)
-					if granted[i] < widths[i] && granted[i] < elasticLegible {
-						granted[i] = -1
-					}
-					continue
+					granted[i] = -1
+				} else {
+					granted[i] = widths[i]
 				}
-				granted[i] = widths[i]
 			}
+			shareAboveFloors(granted, shown, widths, floors, room-floorTotal)
 			return granted, 0
 		}
+		if len(shown) == 0 {
+			break
+		}
+		lowest := 0
+		for k, i := range shown {
+			if floors[i] <= floors[shown[lowest]] {
+				lowest = k
+			}
+		}
+		shown = append(shown[:lowest], shown[lowest+1:]...)
 	}
 
 	fits := fitCount(widths, budget, spacing)
@@ -491,6 +569,35 @@ func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int)
 		granted[i] = -1
 	}
 	return granted, len(items) - fits
+}
+
+// shareAboveFloors grants each shown elastic item its floor and then shares
+// spare evenly among them, each capped at its natural width, handing what a
+// capped item cannot use to the others.
+func shareAboveFloors(granted, shown, widths, floors []int, spare int) {
+	open := make([]int, 0, len(shown))
+	for _, i := range shown {
+		granted[i] = floors[i]
+		if granted[i] < widths[i] {
+			open = append(open, i)
+		}
+	}
+	for len(open) > 0 && spare > 0 {
+		share := spare / len(open)
+		if share == 0 {
+			return
+		}
+		next := open[:0]
+		for _, i := range open {
+			add := min(share, widths[i]-granted[i])
+			granted[i] += add
+			spare -= add
+			if granted[i] < widths[i] {
+				next = append(next, i)
+			}
+		}
+		open = next
+	}
 }
 
 // placeTruncating grants each item min(natural, remaining) along the main
@@ -598,7 +705,10 @@ func fittedExtent(items []*Node, content Rect, axis Axis, budget, reserve, spaci
 	if err != nil {
 		return 0, err
 	}
-	granted, _ := barGrants(items, main, axis, budget, reserve, spacing)
+	granted, _, err := barGrants(items, main, axis, budget, reserve, spacing, measure)
+	if err != nil {
+		return 0, err
+	}
 	used, placed := 0, 0
 	for _, w := range granted {
 		if w < 0 {

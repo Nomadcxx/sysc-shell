@@ -287,7 +287,9 @@ type Node struct {
 	// revisions. It arrived with protocol minor six.
 	Animate bool `json:"animate,omitempty"`
 	// ValueText is the gauge's centre label, such as a remaining time. An
-	// empty value falls back to a percentage.
+	// empty value falls back to a percentage, except on a banded half gauge
+	// with no Icon: that paints as a dial, with thick zones, a pointer from
+	// its hub and no centre text, sized for a bar slot read at a distance.
 	ValueText string `json:"value_text,omitempty"`
 	// Form selects the arc a gauge paints. The zero value is the full ring.
 	// FormHalf draws a semicircle open at the bottom, which suits a single
