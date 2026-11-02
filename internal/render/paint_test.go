@@ -19,6 +19,10 @@ const (
 )
 
 var testStyle = Style{
+	Roles: [ui.PaintRoleCount]Color{
+		ui.PaintSecondaryContainer:   {R: 0x4a, G: 0x44, B: 0x58, A: 0xff},
+		ui.PaintOnSecondaryContainer: {R: 0xe8, G: 0xde, B: 0xf8, A: 0xff},
+	},
 	Size:       16,
 	Scale120:   ui.ScaleUnit,
 	Body:       ui.Rect{W: canvasW, H: canvasH},
@@ -1788,20 +1792,48 @@ func TestOutlinedButtonKeepsParentFillAndDrawsABoundary(t *testing.T) {
 	}
 }
 
-func TestSelectedChromeUsesPrimaryAndItsPairedForeground(t *testing.T) {
+func TestSelectedControlsUseSecondaryContainerPair(t *testing.T) {
 	t.Parallel()
-	n := &ui.Node{Kind: ui.KindButton, Text: "Balanced", Height: 40, Width: 140,
-		Padding: 12, Action: "profile:balanced", State: ui.StateSelected}
-	c := paintChromeNode(t, n, testStyle)
-
-	fx, fy := fillPointOf(n)
-	if got := pixelAt(t, c, fx, fy); got != testStyle.Accent {
-		t.Errorf("selected fill = %+v, want Primary %+v", got, testStyle.Accent)
-	}
-	// The label must be the token paired with the fill, not the panel's own
-	// foreground, or a selected segment loses contrast.
-	if litPixels(c, testStyle.OnPrimary) == 0 {
-		t.Error("selected label is not painted in OnPrimary")
+	for _, mode := range compositionModes() {
+		for _, kind := range []string{"segment", "rail item", "dropdown option"} {
+			t.Run(mode.name+"/"+kind, func(t *testing.T) {
+				style := mode.style
+				selected := &ui.Node{
+					Kind: ui.KindButton, Text: "Balanced", State: ui.StateSelected,
+					Bounds: ui.Rect{X: 8, Y: 8, W: 180, H: 40}, Padding: 12,
+				}
+				root := selected
+				switch kind {
+				case "segment":
+					selected.Text = ""
+					selected.Children = []*ui.Node{{Kind: ui.KindText, Text: "Balanced", Bounds: selected.Bounds}}
+					root = &ui.Node{Kind: ui.KindSegmented, Children: []*ui.Node{selected}}
+				case "rail item":
+					// Selection must still outrank an explicitly declared fill.
+					selected.Fill, selected.FillRole, selected.InkRole = ui.FillRole, ui.PaintPrimary, ui.PaintOnPrimary
+				case "dropdown option":
+					selected.Kind, selected.State, selected.Value = ui.KindText, 0, 1
+					selected.Bounds.Y = 44
+					root = &ui.Node{Kind: ui.KindMenu, Text: "Balanced", Padding: 12,
+						Bounds: ui.Rect{X: 8, Y: 8, W: 180, H: 32}, Children: []*ui.Node{selected}}
+				}
+				c := newTestCanvas(t, 200, 100)
+				text := NewTextRenderer(mustTestFace(t))
+				if err := paintNode(c, root, text, style, style.Size); err != nil {
+					t.Fatal(err)
+				}
+				if err := paintMenuOverlays(c, root, text, style, style.Size); err != nil {
+					t.Fatal(err)
+				}
+				x, y := fillPointOf(selected)
+				if got, want := pixelAt(t, c, x, y), style.Roles[ui.PaintSecondaryContainer]; got != want {
+					t.Errorf("selected fill = %+v, want SecondaryContainer %+v", got, want)
+				}
+				if litPixels(c, style.Roles[ui.PaintOnSecondaryContainer]) == 0 {
+					t.Error("selected label has no OnSecondaryContainer pixel")
+				}
+			})
+		}
 	}
 }
 
@@ -2106,7 +2138,7 @@ func TestStrokeRoundedLeavesTheInteriorAlone(t *testing.T) {
 // row with layout but no paint: KindSegmented fell through paintNode's switch to
 // the default arm, so opening the power panel returned "unsupported kind 17" and
 // took the shell down with it. The container owns allocation, not chrome, so
-// each segment paints its own fill: Primary when selected, quiet container
+// each segment paints its own fill: SecondaryContainer when selected, quiet container
 // otherwise.
 func TestPaintSegmentedPaintsItsSegments(t *testing.T) {
 	t.Parallel()
@@ -2128,8 +2160,8 @@ func TestPaintSegmentedPaintsItsSegments(t *testing.T) {
 	c := paintChromeNode(t, row, testStyle)
 
 	x, y := fillPointOf(selected)
-	if got := pixelAt(t, c, x, y); got != testStyle.Accent {
-		t.Errorf("selected segment fill = %+v, want the accent %+v", got, testStyle.Accent)
+	if got, want := pixelAt(t, c, x, y), testStyle.Roles[ui.PaintSecondaryContainer]; got != want {
+		t.Errorf("selected segment fill = %+v, want SecondaryContainer %+v", got, want)
 	}
 	x, y = fillPointOf(idle)
 	if got := pixelAt(t, c, x, y); got != testStyle.containerHighest() {
@@ -2600,8 +2632,8 @@ func TestPaintMenuUsesStadiumShapeAndSelectedFill(t *testing.T) {
 	}
 	c := paintChromeNode(t, n, testStyle)
 	x, y := fillPointOf(n)
-	if got := pixelAt(t, c, x, y); got != testStyle.accent() {
-		t.Fatalf("selected menu fill = %+v, want accent %+v", got, testStyle.accent())
+	if got, want := pixelAt(t, c, x, y), testStyle.Roles[ui.PaintSecondaryContainer]; got != want {
+		t.Fatalf("selected menu fill = %+v, want SecondaryContainer %+v", got, want)
 	}
 	if got := pixelAt(t, c, n.Bounds.X, n.Bounds.Y); got != testStyle.Background {
 		t.Fatalf("stadium menu corner = %+v, want untouched background %+v", got, testStyle.Background)

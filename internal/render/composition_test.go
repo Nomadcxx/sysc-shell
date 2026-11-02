@@ -11,6 +11,8 @@ import (
 // in one mode even when it happens to be right in the other.
 func lightStyle() Style {
 	s := testStyle
+	s.Roles[ui.PaintSecondaryContainer] = Color{R: 0xe8, G: 0xde, B: 0xf8, A: 0xff}
+	s.Roles[ui.PaintOnSecondaryContainer] = Color{R: 0x1d, G: 0x19, B: 0x2b, A: 0xff}
 	s.Background = Color{R: 0xfa, G: 0xf9, B: 0xfd, A: 0xff}
 	s.Foreground = Color{R: 0x1a, G: 0x1c, B: 0x1e, A: 0xff}
 	s.Track = Color{R: 0x74, G: 0x77, B: 0x7f, A: 0xff}
@@ -79,7 +81,9 @@ func TestCompositionRowsResolveInBothModes(t *testing.T) {
 		{
 			row:   "selected control",
 			state: ui.StateSelected,
-			want:  func(s Style) (Color, Color) { return s.Accent, s.OnPrimary },
+			want: func(s Style) (Color, Color) {
+				return s.Roles[ui.PaintSecondaryContainer], s.Roles[ui.PaintOnSecondaryContainer]
+			},
 		},
 		{
 			row:  "tonal selection",
