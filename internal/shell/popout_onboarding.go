@@ -56,7 +56,7 @@ const (
 	onbTitlePlugins    = "Startup plugins"
 	onbTitleReady      = "You are ready"
 
-	onbIntroWelcome = "Set up the basics for a comfortable start. Changes apply as " +
+	onbIntroWelcome = "Set up sysc-shell for Niri or sysc-compositor. Changes apply as " +
 		"you make them and stay available later in Settings."
 	onbIntroAppearance = "Set the theme mode and wallpaper. Detailed palettes, " +
 		"schemes and bar layout stay in Settings."

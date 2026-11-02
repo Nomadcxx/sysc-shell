@@ -86,6 +86,7 @@ type Registry struct {
 	wallpaperLuminance map[string]float64
 	leases             map[uint32][]*services.Lease
 	niriSnapshot       niri.Snapshot
+	inputSettings      inputSettingsSnapshot
 	privacyPipe        services.PrivacySnapshot
 	privacy            privacyState
 	privacySvc         *services.Privacy
@@ -508,6 +509,7 @@ func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
 // values stay English tokens.
 func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
 	return settings.DefaultFor(cfg,
+		r.inputSettings.option(),
 		settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)),
 		settings.WithBattery(r.autoPauseBattery.Present),
 	).Localized(i18n.Resolve(cfg.Session.Language))

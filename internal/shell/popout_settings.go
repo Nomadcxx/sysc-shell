@@ -457,13 +457,17 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	var entries []settings.Entry
 	if h.set != nil {
-		entries = overlayIdleGets(r, h.draft.Session.Locker, h.set.Section(section))
+		entries = h.set.Section(section)
+		if len(settings.SectionPages(section)) > 0 {
+			entries = h.set.PageEntries(section, page)
+		}
+		entries = overlayIdleGets(r, h.draft.Session.Locker, entries)
 	}
 	if section == "Tray" {
 		entries = settingsTrayTitles(r, entries)
 	}
 	content := settingsSectionColumn(r, h, section, entries)
-	if section == "Session" {
+	if section == "Session" && page == "General" {
 		content.Children = append(content.Children, polkitStatusCard(r, h))
 		content.Children = append(content.Children, onboardingReopenCard(h))
 	}
@@ -1389,6 +1393,17 @@ func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		}
 	}
 	trailing.Children = append(trailing.Children, control)
+	if e.Disabled != "" {
+		var disable func(*ui.Node)
+		disable = func(n *ui.Node) {
+			n.State |= ui.StateDisabled
+			n.AriaDisabled, n.Focusable = true, false
+			for _, child := range n.Children {
+				disable(child)
+			}
+		}
+		disable(trailing)
+	}
 
 	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{label, trailing}}
 	if e.Describe == "" && browseFeedback == "" {
@@ -2288,19 +2303,28 @@ func applySettingsWriteChanges(cfg *config.Config, changes []settingsWriteChange
 }
 
 func (r *Registry) writeSettingsChanges(h *PanelHost, changes []settingsWriteChange, revision uint64, path string, fallback config.Config, palettes []theme.PaletteInfo) (bool, error) {
-	// Take configWriteMu first. The worker never takes Registry.mu while it
-	// holds either write lock, so reloads can invalidate its revision safely.
+	// IPC can wait for a second. Read before either writer lock so unrelated
+	// settings commits do not wait for an unavailable compositor.
+	var state inputSettingsSnapshot
+	inputChanged := hasInputChanges(changes)
+	if inputChanged {
+		state = readInputSettings()
+	}
+	// File transactions serialize here. settingsWriteMu protects only the
+	// revision and reload snapshots: the owner takes it while handling input.
 	r.configWriteMu.Lock()
 	defer r.configWriteMu.Unlock()
 	r.settingsWriteMu.Lock()
-	defer r.settingsWriteMu.Unlock()
 	if h.settingsWriteRevision != revision {
+		r.settingsWriteMu.Unlock()
 		return false, nil
 	}
 	if path == "" {
 		h.settingsWriteChanges = nil
+		r.settingsWriteMu.Unlock()
 		return true, nil
 	}
+	r.settingsWriteMu.Unlock()
 	cfg, err := config.LoadRequired(path)
 	if errors.Is(err, os.ErrNotExist) {
 		cfg = fallback
@@ -2310,16 +2334,39 @@ func (r *Registry) writeSettingsChanges(h *PanelHost, changes []settingsWriteCha
 	if err := applySettingsWriteChanges(&cfg, changes, palettes); err != nil {
 		return true, err
 	}
-	if err := r.writeConfigLocked(cfg); err != nil {
+	r.settingsWriteMu.Lock()
+	current := h.settingsWriteRevision == revision
+	r.settingsWriteMu.Unlock()
+	if !current {
+		return false, nil
+	}
+	if inputChanged {
+		if err := applyInputSettings(&cfg, changes, state); err != nil {
+			return true, err
+		}
+	}
+	if err := config.Write(path, cfg); err != nil {
 		return true, err
 	}
-	h.settingsWriteChanges = nil
+	r.settingsWriteMu.Lock()
+	// An edit arriving during the file writes remains queued for the next
+	// serialized transaction and is rebased over this write on reload.
+	if h.settingsWriteRevision == revision {
+		h.settingsWriteChanges = nil
+	}
 	r.settingsWriteGeneration++
 	if r.reloads != nil {
 		r.settingsWriteReloads = append(r.settingsWriteReloads, settingsWriteReload{
 			generation: r.settingsWriteGeneration,
 			config:     cfg.Clone(),
 		})
+	}
+	r.settingsWriteMu.Unlock()
+	if r.reloads != nil {
+		select {
+		case r.reloads <- struct{}{}:
+		default:
+		}
 	}
 	return true, nil
 }

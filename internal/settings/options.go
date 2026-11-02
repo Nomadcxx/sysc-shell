@@ -3,6 +3,7 @@ package settings
 import (
 	"slices"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
@@ -14,12 +15,21 @@ type CustomPalette struct {
 }
 
 type options struct {
-	custom      []CustomPalette
-	hideBattery bool
+	custom       []CustomPalette
+	hideBattery  bool
+	input        config.Input
+	hideTouchpad bool
+	inputBlocked string
 }
 
 // Option adjusts a registry at construction.
 type Option func(*options)
+
+// WithInput supplies the compositor snapshot read outside the UI lock. It is
+// used only for display; setters mark only the value the user changes.
+func WithInput(effective config.Input, touchpad bool, blocked string) Option {
+	return func(o *options) { o.input, o.hideTouchpad, o.inputBlocked = effective, !touchpad, blocked }
+}
 
 // WithCustomPalettes supplies the saved palettes, which makes the custom source
 // and the appearance.custom entry available.

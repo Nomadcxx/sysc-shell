@@ -2,7 +2,7 @@
 Description=sysc-shell Wayland shell
 Documentation=https://github.com/Nomadcxx/sysc-shell
 
-# niri --session starts graphical-session.target and puts WAYLAND_DISPLAY and
+# niri-session and sysc-compositor-session start graphical-session.target and put WAYLAND_DISPLAY and
 # NIRI_SOCKET into the systemd user environment, so the shell needs no
 # Environment= of its own. Requisite makes a manual start outside a session
 # fail loudly instead of launching a shell with nothing to attach to.

@@ -220,6 +220,9 @@ type PanelHost struct {
 	// settingsPage is the open section's page (settings redesign D1). Empty
 	// means the section's first.
 	settingsPage string
+	// inputSettingsPending coalesces device reads while the input page or a
+	// matching Settings search is visible. Protected by Registry.mu.
+	inputSettingsPending bool
 	// barPreview is the last bar preview that resolved, kept so a draft that
 	// is mid-edit does not blank the Appearance page's preview.
 	barPreview *ui.Image
@@ -630,6 +633,7 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 			return fmt.Errorf("unknown section %q", requested)
 		}
 		if h.section == section && settingsCurrentPage(h, section) == page {
+			r.refreshInputSettingsAsync(h)
 			h.settingsRailRevealPending = section
 			if h.logicalW > 0 && h.logicalH > 0 {
 				if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
@@ -653,6 +657,9 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		r.settingsSectionChangingLocked(h, section)
 	}
 	h.section, h.settingsPage = section, page
+	if id == PanelSettings {
+		r.refreshInputSettingsAsync(h)
+	}
 	r.rebuildPanel(h)
 	r.publishSurface(h.output, panelSurfaceID(id))
 	return nil
@@ -3632,6 +3639,9 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 			h.settingsSearchScrollTop = strings.TrimSpace(f.Text) != ""
 		}
 		h.query = f.Text
+		if h.id == PanelSettings {
+			r.refreshInputSettingsAsync(h)
+		}
 		if h.id == PanelPluginStore {
 			h.pluginStoreQuery.Text = f.Text
 			h.pluginStoreScroll = 0
@@ -4039,6 +4049,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if page, ok := strings.CutPrefix(n.Action, "page:"); ok {
 		h.invalidateSettingsBrowse()
 		h.settingsPage, h.settingsScrollTop = page, true
+		if h.id == PanelSettings {
+			r.refreshInputSettingsAsync(h)
+		}
 		r.rebuildPanel(h)
 		return true
 	}
@@ -4754,6 +4767,10 @@ func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 		return
 	}
 	h.set = r.settingsForLocked(h.draft)
+	if strings.HasPrefix(e.Path, "input.") {
+		h.deferDraft(r, e.Path, v)
+		return
+	}
 	// A toggle or a menu is a decision the user has finished making, so it
 	// goes to the file at once. A slider or a field is a stream of them, and
 	// writing per keystroke rewrote the whole document each time.
@@ -4850,6 +4867,14 @@ func (h *PanelHost) flushDraft(r *Registry) {
 		changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
 		r.settingsWriteMu.Unlock()
 		if len(changes) == 0 {
+			return
+		}
+		if hasInputChanges(changes) {
+			path, fallback := r.configPath, r.cfg.Clone()
+			palettes := append([]theme.PaletteInfo(nil), r.palettes...)
+			r.scheduleControlResult(h, func() (bool, error) {
+				return r.writeSettingsChanges(h, changes, revision, path, fallback, palettes)
+			})
 			return
 		}
 		apply, err := r.writeSettingsChanges(h, changes, revision, r.configPath, r.cfg.Clone(),

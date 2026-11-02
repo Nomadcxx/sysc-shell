@@ -3,7 +3,7 @@
 </p>
 
 
-A desktop shell for Niri, written in Go. Bars, panels and OSDs, with separate daemons for
+A desktop shell for Niri and sysc-compositor, written in Go. Bars, panels and OSDs, with separate daemons for
 notifications, clipboard history and the system tray.
 
 <details>
@@ -55,7 +55,7 @@ Captured from fixture data with invented names, so nothing here is a real accoun
 
 ### Requirements
 
-Niri, started as a session (`niri-session`, which is what display managers run) so
+Niri or sysc-compositor, started through `niri-session` or `sysc-compositor-session` so
 systemd knows about your graphical session. Source builds need Go 1.26.4+.
 
 Optional: `matugen` for wallpaper colours, `awww`, `swaybg` or `gSlapper` for wallpapers, and
@@ -64,7 +64,7 @@ Optional: `matugen` for wallpaper colours, `awww`, `swaybg` or `gSlapper` for wa
 ### Guided installer (recommended)
 
 Use the [SYSC Go installer](https://github.com/Nomadcxx/sysc#install) to set up
-the shell, its companions and your Niri session together.
+the shell, its companions and your compositor session together.
 
 ### AUR
 
@@ -76,7 +76,8 @@ yay -S sysc-shell
 systemctl --user enable --now sysc-shell.service
 ```
 
-Run the service command inside a Niri session started with `niri-session`.
+Run the service command inside a session started with `niri-session` or
+`sysc-compositor-session`.
 The package pulls in notifications, clipboard, tray and sysc-lock; its service
 starts them before the shell. On first start, it creates a missing shell config
 with sysc-lock selected and tray presentation enabled. Existing configs stay intact.
@@ -140,7 +141,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now sysc-shell.service
 ```
 
-The service starts with your Niri session and restarts the shell if it crashes. If your Niri config
+The service starts with your graphical session and restarts the shell if it crashes. If your compositor config
 already has a `spawn-at-startup` line for sysc-shell, remove it, or you'll get two shells. More
 detail in [packaging/systemd](packaging/systemd/README.md).
 
@@ -190,7 +191,7 @@ for what each one needs.
 
 ## Usage
 
-Everything opens from the bar. To open panels from the keyboard, bind `sysc-shell ipc` in your Niri
+Everything opens from the bar. To open panels from the keyboard, bind `sysc-shell ipc` in your Niri or sysc-compositor
 config:
 
 ```kdl
@@ -206,6 +207,12 @@ The panels you can name are `launcher`, `control-center`, `notifications`, `clip
 `weather`, `system-monitor`, `session`, `power`, `settings`, `wallpaper`, `audio`, `network`,
 `bluetooth`, `files`, `onboarding`, `terminal-art` and `plugin-store`. `wallpaper` and `terminal-art` are opt-in. The full set of bindings,
 including brightness and mute, is in [docs/niri-hotkeys.md](docs/niri-hotkeys.md).
+
+In Settings → Session → Mouse & touchpad, change pointer speed, scrolling and touchpad
+behaviour. This needs Niri 26.04 or sysc-compositor. The shell writes
+`sysc-shell-input.kdl` in the running compositor’s config directory and adds an optional
+include at the end of `config.kdl`. Settings outside the page, such as `tap-button-map`,
+survive changes. The Touchpad group appears when udev reports a touchpad.
 
 From a terminal:
 
@@ -279,7 +286,7 @@ to search it. `on_select` receives the full output line as `{selection}` and the
 evaluation. Fixed actions appear in launcher search; actions marked `"dangerous": true` stay hidden
 until you also set `"allow_dangerous": true`.
 
-The launcher also lists open Niri windows. Type `/win` to browse them or `/win <query>` to search
+The launcher also lists open compositor windows. Type `/win` to browse them or `/win <query>` to search
 window titles, app names and app IDs, then select a result to focus it.
 
 `launcher.display` sets how application results are laid out: `"list"` (the default), `"compact"` (one
@@ -296,7 +303,7 @@ sysc-shell config check /path/to/config.json
 ```
 
 `config check` answers whether the shell would accept a configuration file, without a compositor, a
-Niri socket or a Wayland connection, so you can run it from a script or before restarting the shell.
+compositor IPC socket or a Wayland connection, so you can run it from a script or before restarting the shell.
 The path defaults to `$XDG_CONFIG_HOME/sysc-shell/config.json`. An absent default file is reported as
 ok with `(defaults, file not found)`: the shell starts with its built-in defaults, and that is the
 answer. The exit codes are a contract: 0 accepted, 1 the loader rejected the content, 2 usage or a
@@ -320,7 +327,7 @@ output failure. A missing optional daemon warns; a missing shell IPC socket fail
 
 ## Panels and integrations
 
-The shell draws through `wl_shm` and talks to Niri over its IPC socket.
+The shell draws through `wl_shm` and talks to Niri or sysc-compositor over the Niri-compatible IPC socket.
 
 - **Bars**: one per output, with workspaces, window title, clock, weather, CPU, memory, temperature,
   GPU, disk, network, battery and the system tray
@@ -348,7 +355,7 @@ The shell draws through `wl_shm` and talks to Niri over its IPC socket.
   with [sysc-terminal](https://github.com/Nomadcxx/sysc-terminal). Playback pauses by reason when an
   output is covered or a fullscreen window takes it
 - **Idle screensaver**: [sysc-walls](https://github.com/Nomadcxx/sysc-walls), controlled from Settings
-- **Frosted glass**: blurred bars and panels on Niri 26.04 and later
+- **Frosted glass**: blurred bars and panels on Niri 26.04 and later or sysc-compositor
 - **Plugins**: a plugin manager and store, with panel previews rendered through the shell's own
   pipeline. The official plugins live in [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins)
 
