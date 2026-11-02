@@ -2473,6 +2473,24 @@ func (h *pluginHost) replace(id string, swap func() error) error {
 	return err
 }
 
+// declaredValues copies the stored values the schema still declares. A plugin
+// release can drop a setting a user once saved; carrying that key into the
+// write would fail validation and block every later change to the plugin's
+// settings, so the stale key is left behind instead.
+func declaredValues(schema []plugin.Setting, stored map[string]any) map[string]any {
+	declared := make(map[string]bool, len(schema))
+	for _, s := range schema {
+		declared[s.Key] = true
+	}
+	out := map[string]any{}
+	for k, v := range stored {
+		if declared[k] {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func (h *pluginHost) applySetting(pluginID, key string, value any) error {
 	h.r.mu.Lock()
 	defer h.r.mu.Unlock()
@@ -2497,10 +2515,7 @@ func (h *pluginHost) applySettingLocked(pluginID, key string, value any) error {
 	if cfg.Plugins.Settings == nil {
 		cfg.Plugins.Settings = map[string]map[string]any{}
 	}
-	cur := map[string]any{}
-	for k, v := range cfg.Plugins.Settings[pluginID] {
-		cur[k] = v
-	}
+	cur := declaredValues(schema, cfg.Plugins.Settings[pluginID])
 	cur[key] = value
 	if err := plugin.CheckValues(schema, cur); err != nil {
 		return err

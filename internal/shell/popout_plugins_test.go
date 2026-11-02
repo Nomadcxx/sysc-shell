@@ -492,6 +492,20 @@ func TestRejectedPluginSettingLeavesConfigUnchanged(t *testing.T) {
 	}
 }
 
+// A setting a plugin release dropped must not block changes to the settings
+// it still declares.
+func TestDeclaredValuesDropsSettingsTheSchemaNoLongerDeclares(t *testing.T) {
+	schema := []plugin.Setting{{Key: "latitude", Type: plugin.SettingFloat}, {Key: "show", Type: plugin.SettingSelect}}
+	stored := map[string]any{"latitude": -37.8, "source_epa": true, "radius_km": 15.0}
+	got := declaredValues(schema, stored)
+	if len(got) != 1 || got["latitude"] != -37.8 {
+		t.Fatalf("declaredValues = %v, want only the declared latitude", got)
+	}
+	if len(stored) != 3 {
+		t.Fatal("declaredValues changed the stored map")
+	}
+}
+
 func treeText(n *ui.Node) string {
 	var b strings.Builder
 	dumpText(n, &b)
