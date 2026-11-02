@@ -88,7 +88,7 @@ func TestBandedGaugePaintsZonesBeyondTheValue(t *testing.T) {
 func TestHalfGaugePaintsOnlyTheUpperHalf(t *testing.T) {
 	t.Parallel()
 	full := paintGauge(t, &ui.Node{Value: 0, Bands: halfGaugeBands()}, 96, 96)
-	half := paintGauge(t, &ui.Node{Value: 0, Bands: halfGaugeBands(), Form: ui.GaugeHalf}, 96, 96)
+	half := paintGauge(t, &ui.Node{Value: 0, ValueText: "Fair", Bands: halfGaugeBands(), Form: ui.GaugeHalf}, 96, 96)
 
 	// A full gauge with no value still paints its track all the way round, so
 	// the lower half has ink. A half gauge leaves it empty.
@@ -105,7 +105,7 @@ func TestHalfGaugePaintsOnlyTheUpperHalf(t *testing.T) {
 func TestHalfGaugeSweepsLeftToRight(t *testing.T) {
 	t.Parallel()
 	// The needle sits mid-sweep, so the two ends are clear of it.
-	c := paintGauge(t, &ui.Node{Value: .5, Bands: halfGaugeBands(), Form: ui.GaugeHalf}, 96, 96)
+	c := paintGauge(t, &ui.Node{Value: .5, ValueText: "Fair", Bands: halfGaugeBands(), Form: ui.GaugeHalf}, 96, 96)
 	// The half arc runs from nine o'clock to three, so both ends of the sweep
 	// sit on the horizontal midline rather than at twelve o'clock.
 	if got := ringColorAtSweep(c, .02, true); got != severityPaint(ui.SeverityGood, testStyle.ContainerHighest) {
@@ -183,6 +183,111 @@ func TestBandedGaugeAbsentPaintsNoZonesOrNeedle(t *testing.T) {
 		if got, want := ringColorAt(c, progress), testStyle.ContainerHighest; got != want {
 			t.Fatalf("absent gauge at %v%% painted %#v, want the empty track %#v", progress*100, got, want)
 		}
+	}
+}
+
+func TestIsDialGaugeNeedsAnEmptyCentre(t *testing.T) {
+	t.Parallel()
+	bands := halfGaugeBands()
+	for _, tc := range []struct {
+		name string
+		n    ui.Node
+		want bool
+	}{
+		{"banded half, empty centre", ui.Node{Form: ui.GaugeHalf, Bands: bands}, true},
+		{"banded half with a value", ui.Node{Form: ui.GaugeHalf, Bands: bands, ValueText: "53 Fair"}, false},
+		{"banded half with an icon", ui.Node{Form: ui.GaugeHalf, Bands: bands, Icon: "wind"}, false},
+		{"half without bands", ui.Node{Form: ui.GaugeHalf}, false},
+		{"banded full ring", ui.Node{Bands: bands}, false},
+	} {
+		if got := isDialGauge(&tc.n); got != tc.want {
+			t.Errorf("%s: isDialGauge = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// dialGeometry repeats the painter's layout for a dial box, so tests can
+// sample the arc and the hub where they were painted.
+func dialGeometry(w, h int) (cx, cy, outer, stroke, hub float64) {
+	size := min(w, int(float64(h)/(0.5+dialHubFraction)))
+	hub = float64(size) * dialHubFraction
+	cx = float64(w) / 2
+	cy = (float64(h)-(float64(size)/2+hub))/2 + float64(size)/2
+	return cx, cy, float64(size)/2 - 0.5, float64(max(size/6, 1)), hub
+}
+
+// A dial paints its zones as a band thick enough to read at bar size, not the
+// hairline a labelled gauge of the same size gets.
+func TestDialGaugePaintsThickZones(t *testing.T) {
+	t.Parallel()
+	const w, h = 64, 40
+	c := paintGauge(t, &ui.Node{Value: .1, Form: ui.GaugeHalf, Bands: halfGaugeBands()}, w, h)
+	cx, cy, outer, stroke, _ := dialGeometry(w, h)
+	// Sample the high zone at three depths across the band; all must be zone
+	// colour, which a hairline could never satisfy.
+	angle := -math.Pi/2 + .95*math.Pi
+	for _, depth := range []float64{0.25, 0.5, 0.75} {
+		r := outer - stroke*depth
+		x, y := int(cx+math.Sin(angle)*r), int(cy-math.Cos(angle)*r)
+		if got := pixelAt(t, c, x, y); got.A < 200 {
+			t.Fatalf("high zone at depth %.2f of the band is %#v, want solid paint", depth, got)
+		}
+	}
+}
+
+// The pointer starts at the hub, so the reading is an angle seen from across a
+// room rather than a tick on the arc.
+func TestDialGaugePointsFromTheHub(t *testing.T) {
+	t.Parallel()
+	const w, h = 64, 40
+	low := paintGauge(t, &ui.Node{Value: .1, Form: ui.GaugeHalf, Bands: halfGaugeBands()}, w, h)
+	high := paintGauge(t, &ui.Node{Value: .9, Form: ui.GaugeHalf, Bands: halfGaugeBands()}, w, h)
+	cx, cy, outer, stroke, _ := dialGeometry(w, h)
+	if got := pixelAt(t, low, int(cx), int(cy)); got != testStyle.Foreground {
+		t.Fatalf("hub pixel = %#v, want the foreground %#v", got, testStyle.Foreground)
+	}
+	// Halfway out along each reading's angle, the pointer is foreground on its
+	// own dial and absent from the other.
+	mid := (outer - stroke) / 2
+	for _, tc := range []struct {
+		value     float64
+		with, not *Canvas
+	}{{.1, low, high}, {.9, high, low}} {
+		angle := -math.Pi/2 + tc.value*math.Pi
+		x, y := int(cx+math.Sin(angle)*mid), int(cy-math.Cos(angle)*mid)
+		if !inkAt(tc.with, x, y) {
+			t.Fatalf("value %.1f: no pointer halfway out at (%d,%d)", tc.value, x, y)
+		}
+		if inkAt(tc.not, x, y) {
+			t.Fatalf("value %.1f: the other dial has ink at (%d,%d)", tc.value, x, y)
+		}
+	}
+}
+
+// A dial has no centre text, so nothing paints below its hub: no percentage
+// is invented for a reading that is a position on a scale.
+func TestDialGaugePaintsNoText(t *testing.T) {
+	t.Parallel()
+	const w, h = 64, 40
+	c := paintGauge(t, &ui.Node{Value: .5, Form: ui.GaugeHalf, Bands: halfGaugeBands()}, w, h)
+	_, cy, _, _, hub := dialGeometry(w, h)
+	below := int(cy+hub) + 2
+	if got := countInk(c, ui.Rect{Y: below, W: w, H: h - below}); got != 0 {
+		t.Fatalf("dial painted %d pixels below its hub", got)
+	}
+}
+
+func TestDialGaugeAbsentPaintsTrackOnly(t *testing.T) {
+	t.Parallel()
+	const w, h = 64, 40
+	c := paintGauge(t, &ui.Node{Absent: true, Value: .5, Form: ui.GaugeHalf, Bands: halfGaugeBands()}, w, h)
+	cx, cy, outer, stroke, _ := dialGeometry(w, h)
+	if inkAt(c, int(cx), int(cy)) {
+		t.Fatal("an absent dial painted its hub")
+	}
+	r := outer - stroke/2
+	if got := pixelAt(t, c, int(cx), int(cy-r)); got != testStyle.Track {
+		t.Fatalf("absent dial track = %#v, want %#v", got, testStyle.Track)
 	}
 }
 
