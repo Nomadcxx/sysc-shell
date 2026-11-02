@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	waylandclient "github.com/Nomadcxx/sysc-wayland/client"
@@ -289,6 +290,40 @@ func TestPendingGeometryChangeWaitsForEqualSizeConfigure(t *testing.T) {
 	_, _, decision, job := o.nextJob()
 	if decision != render.DecisionRender || job.Width != 100 || job.Height != 100 || job.Generation != 2 {
 		t.Fatalf("accepted configure job = %+v, decision %v; want a fresh 100x100 generation", job, decision)
+	}
+}
+
+func TestEqualSizeConfigureKeepsMappedBarReadyForReload(t *testing.T) {
+	o, _ := newDispatchTestOwner(t)
+	cfg := config.Default()
+	h := newHost(7, nil)
+	h.connector, h.doneSeen, h.state, h.policy = "DP-1", true, hostMapped, cfg.Bar
+	h.bar.layer = layershell.NewZwlrLayerSurfaceV1(o.display.Context())
+	h.bar.ss.configure(1200, h.surfaceHeight())
+	h.bar.ss.acknowledge()
+	h.bar.current = &generation{}
+	o.hosts = newHostSet()
+	o.hosts.hosts[h.global] = h
+	o.hosts.arrival = append(o.hosts.arrival, h.global)
+	o.cfg = &cfg
+	configured := false
+	o.cb.PrepareConfig = func(config.Config, []HostIdentity, uint64) (PreparedConfig, error) {
+		callbacks := validHostCallbacks()
+		callbacks.Configure = func(width, height, scale120 int) error {
+			configured = true
+			return nil
+		}
+		return PreparedConfig{Hosts: map[uint32]HostCallbacks{7: callbacks}, Commit: func() {}, Rollback: func() {}}, nil
+	}
+
+	o.onConfigure(h, h.bar, layershell.ZwlrLayerSurfaceV1ConfigureEvent{
+		Serial: 1, Width: 1200, Height: uint32(h.surfaceHeight()),
+	})
+	if _, err := o.prepareConfig(cfg, 0); err != nil {
+		t.Fatal(err)
+	}
+	if h.state != hostMapped || !configured {
+		t.Fatalf("equal-size configure left state %v, replacement configured %v; want mapped and configured", h.state, configured)
 	}
 }
 

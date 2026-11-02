@@ -967,10 +967,10 @@ func (o *owner) onConfigure(h *OutputHost, u *surfaceUnit, e layershell.ZwlrLaye
 		return
 	}
 	reconfigure := u.acceptConfigure(int(e.Width), int(e.Height))
-	if u == h.bar {
-		h.state = hostConfiguring
-	}
 	if reconfigure {
+		if u == h.bar {
+			h.state = hostConfiguring
+		}
 		if err := o.reconfigure(h, u); err != nil {
 			o.failUnit(h, u, err)
 			return
