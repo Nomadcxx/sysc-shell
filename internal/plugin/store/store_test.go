@@ -128,6 +128,13 @@ func newStoreFixtureWithInterval(t *testing.T, local map[string]string, checkInt
 func TestStoreUpdatesPublishLatestSnapshot(t *testing.T) {
 	t.Parallel()
 	f := newStoreFixture(t, nil)
+	// Run publishes one snapshot at startup. Take it first: landing between
+	// the two receives below, it read as a stale second update.
+	select {
+	case <-f.st.Updates():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the store did not publish its startup snapshot")
+	}
 	f.st.setBusy("first")
 	f.st.setBusy("latest")
 
