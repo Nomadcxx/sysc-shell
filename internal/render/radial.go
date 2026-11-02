@@ -195,8 +195,20 @@ func paintBandedGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 	}
 
 	half := n.Form == ui.GaugeHalf
+	// A half gauge with nothing for its centre is a dial: a bar-sized glyph
+	// read from across a room, where the zones and a pointer from the hub carry
+	// the reading and a made-up percentage would only be noise.
+	dial := isDialGauge(n)
 	var cx, cy float64
-	if half {
+	hub := 0.0
+	if dial {
+		// The dial is the arc plus the hub below its centre, centred in the
+		// box so it sits on the bar's text line rather than its top edge.
+		size = min(box.W, int(float64(box.H)/(0.5+dialHubFraction)))
+		hub = float64(size) * dialHubFraction
+		cx = float64(box.X) + float64(box.W)/2
+		cy = float64(box.Y) + (float64(box.H)-(float64(size)/2+hub))/2 + float64(size)/2
+	} else if half {
 		// A half gauge spends its box on the arc plus the label beneath it.
 		// The arc is a semicircle, so it needs size/2 vertically and size
 		// horizontally; a box two-thirds arc to one-third label means the
@@ -213,6 +225,11 @@ func paintBandedGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 
 	hairline := max(style.Scale120.Physical(2), 1)
 	stroke := max(size/14, hairline)
+	if dial {
+		// A hairline zone cannot be told apart at a glance; the dial's zones
+		// are the whole message, so they get a band the eye can find.
+		stroke = max(size/6, hairline)
+	}
 	outer := float64(size)/2 - 0.5
 	inner := outer - float64(stroke)
 	radius := (outer + inner) / 2
@@ -237,6 +254,12 @@ func paintBandedGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 	bandColors := make([]Color, len(n.Bands))
 	for i, band := range n.Bands {
 		bandColors[i] = severityPaint(band.Severity, track)
+	}
+	if dial {
+		// A dial sits on a bar pill, itself a container tone, so its empty
+		// arc takes the on-surface track to stay visible. The zones keep the
+		// container contrast above, which is the surface they are read on.
+		track = style.Track
 	}
 
 	paintBox := ui.Rect{
@@ -273,6 +296,16 @@ func paintBandedGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 			}
 			blendCoverage(c, x, y, col, coverage)
 		}
+	}
+
+	if dial {
+		if !n.Absent {
+			angle := start + fraction*sweep
+			width := max(float64(stroke)*0.55, float64(hairline)*1.5)
+			paintNeedleSpan(c, cx, cy, radius, 0, radius, width, angle, style.Foreground)
+			paintHub(c, cx, cy, hub, style.Foreground)
+		}
+		return nil
 	}
 
 	if half && !n.Absent {
@@ -430,8 +463,12 @@ func fitGaugeText(text *TextRenderer, value string, width, size int) int {
 // paintNeedle draws a radial hairline at one angle of a gauge.
 func paintNeedle(c *Canvas, cx, cy, radius, inner, outer, halfStroke float64, stroke int, hairline int, angle float64, col Color) {
 	width := max(float64(stroke)/3, float64(hairline)*1.5)
-	from := inner - halfStroke*0.6
-	to := outer + halfStroke*0.6
+	paintNeedleSpan(c, cx, cy, radius, inner-halfStroke*0.6, outer+halfStroke*0.6, width, angle, col)
+}
+
+// paintNeedleSpan paints a pointer of the given width along angle, from the
+// distance from to the distance to measured out from the centre.
+func paintNeedleSpan(c *Canvas, cx, cy, radius, from, to, width, angle float64, col Color) {
 	ux, uy := math.Sin(angle), -math.Cos(angle)
 
 	box := ui.Rect{
@@ -486,4 +523,30 @@ func themeSeverity(s ui.Severity) theme.Severity {
 		return theme.SeverityHigh
 	}
 	return theme.SeverityGood
+}
+
+// dialHubFraction is the hub's radius as a fraction of a dial's diameter.
+const dialHubFraction = 0.09
+
+// isDialGauge reports whether a gauge paints as a dial: banded, half form, and
+// with neither a value nor an icon for its centre.
+func isDialGauge(n *ui.Node) bool {
+	return n.Form == ui.GaugeHalf && len(n.Bands) > 0 && n.ValueText == "" && n.Icon == ""
+}
+
+// paintHub paints the disc a dial's pointer turns on.
+func paintHub(c *Canvas, cx, cy, r float64, col Color) {
+	if r <= 0 {
+		return
+	}
+	box := ui.Rect{X: int(cx - r - 1), Y: int(cy - r - 1), W: int(2*r) + 3, H: int(2*r) + 3}
+	x0, y0, x1, y1 := c.clip(box)
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			d := math.Hypot(float64(x)+0.5-cx, float64(y)+0.5-cy)
+			if cov := min(max(r+0.5-d, 0), 1); cov > 0 {
+				blendCoverage(c, x, y, col, cov)
+			}
+		}
+	}
 }
