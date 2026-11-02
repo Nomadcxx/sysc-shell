@@ -845,15 +845,18 @@ func paintMenuPopup(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 			continue
 		}
 		cb := style.Scale120.PhysicalRect(child.Bounds)
+		foreground := textColor(style, child.Tone)
 		if child.Value != 0 {
-			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
+			fill, ink := chromeFill(style, &ui.Node{State: ui.StateSelected}, surface)
+			c.FillRounded(cb, style.Scale120.Physical(4), fill)
+			foreground = ink
 		}
 		if child.State != 0 {
-			paintInteraction(c, child, cb, style.Scale120.Physical(4), style.Foreground, style)
+			paintInteraction(c, child, cb, style.Scale120.Physical(4), foreground, style)
 		}
 		pad := style.Scale120.Physical(n.Padding)
 		option := ui.Rect{X: cb.X + pad, Y: cb.Y, W: max(cb.W-2*pad, 0), H: cb.H}
-		_ = paintText(c, child.Text, option, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
+		_ = paintTextColor(c, child.Text, option, text, style, textSpec(style, child), child.Tabular, foreground, child.Underline)
 	}
 	return nil
 }
@@ -1419,11 +1422,9 @@ func rowFill(style Style, n *ui.Node) (fill, fg Color, layered bool) {
 }
 
 func chromeFill(style Style, n *ui.Node, base Color) (fill, fg Color) {
-	// Selection outranks the declared fill: a selected segment is Primary
-	// whatever it rests in. D6 names OnPrimary for this row specifically, so
-	// it reads the paired token directly rather than the accent's foreground.
+	// Selection outranks the declared fill and keeps its tonal foreground pair.
 	if n.State.Has(ui.StateSelected) {
-		return style.accent(), style.buttonText()
+		return resolvePaintRole(style, ui.PaintSecondaryContainer), resolvePaintRole(style, ui.PaintOnSecondaryContainer)
 	}
 	if n.Fill == ui.FillRole {
 		return resolvePaintRole(style, n.FillRole), resolvePaintRole(style, n.InkRole)
