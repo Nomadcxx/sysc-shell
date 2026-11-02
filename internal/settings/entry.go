@@ -51,6 +51,8 @@ type Entry struct {
 	Path     string
 	Label    string
 	Describe string
+	// Disabled is the reason the setting cannot currently be changed.
+	Disabled string
 	Section  string
 	Group    string
 	// GroupLiteral marks Group as an identifier rather than a prose name: a

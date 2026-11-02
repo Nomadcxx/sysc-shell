@@ -1465,6 +1465,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		}
 		h.set = r.settingsForLocked(r.cfg)
 		r.refreshPalettesAsync(h)
+		r.refreshInputSettingsAsync(h)
 		h.draft = r.cfg.Clone()
 		h.section = "Bar"
 		h.search = ui.NewField("")
@@ -4038,6 +4039,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if page, ok := strings.CutPrefix(n.Action, "page:"); ok {
 		h.invalidateSettingsBrowse()
+		if page == "Mouse & touchpad" {
+			r.refreshInputSettingsAsync(h)
+		}
 		h.settingsPage, h.settingsScrollTop = page, true
 		r.rebuildPanel(h)
 		return true
@@ -4754,6 +4758,10 @@ func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 		return
 	}
 	h.set = r.settingsForLocked(h.draft)
+	if strings.HasPrefix(e.Path, "input.") {
+		h.deferDraft(r, e.Path, v)
+		return
+	}
 	// A toggle or a menu is a decision the user has finished making, so it
 	// goes to the file at once. A slider or a field is a stream of them, and
 	// writing per keystroke rewrote the whole document each time.
@@ -4850,6 +4858,14 @@ func (h *PanelHost) flushDraft(r *Registry) {
 		changes := append([]settingsWriteChange(nil), h.settingsWriteChanges...)
 		r.settingsWriteMu.Unlock()
 		if len(changes) == 0 {
+			return
+		}
+		if hasInputChanges(changes) {
+			path, fallback := r.configPath, r.cfg.Clone()
+			palettes := append([]theme.PaletteInfo(nil), r.palettes...)
+			r.scheduleControlResult(h, func() (bool, error) {
+				return r.writeSettingsChanges(h, changes, revision, path, fallback, palettes)
+			})
 			return
 		}
 		apply, err := r.writeSettingsChanges(h, changes, revision, r.configPath, r.cfg.Clone(),
