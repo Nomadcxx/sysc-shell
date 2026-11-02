@@ -63,21 +63,46 @@ func readInputSettings() inputSettingsSnapshot {
 	return loadInputSettings(compositor.ConfigDir(os.Getenv("HOME"), kind), kind, version, "/run/udev/data")
 }
 
-func (r *Registry) refreshInputSettingsAsync(h *PanelHost) {
-	go func() {
-		state := readInputSettings()
-		r.mu.Lock()
-		r.inputSettings = state
-		if r.panelHosts[PanelSettings] != h {
-			r.mu.Unlock()
-			return
+func inputSettingsViewActive(h *PanelHost) bool {
+	if h == nil || h.id != PanelSettings {
+		return false
+	}
+	if strings.TrimSpace(h.query) == "" {
+		return h.section == "Session" && settingsCurrentPage(h, h.section) == "Mouse & touchpad"
+	}
+	// Search the complete registry so a touchpad setting can trigger the
+	// hardware probe before the current snapshot knows a touchpad exists.
+	for _, entry := range settings.DefaultFor(h.draft).Search(h.query) {
+		if strings.HasPrefix(entry.Path, "input.") {
+			return true
 		}
-		h.set = r.settingsForLocked(h.draft)
-		r.rebuildPanel(h)
-		output := h.output
+	}
+	return false
+}
+
+// refreshInputSettingsAsync is called with Registry.mu held. Unrelated
+// Settings pages do not need a device read or a background tree replacement.
+func (r *Registry) refreshInputSettingsAsync(h *PanelHost) {
+	if !inputSettingsViewActive(h) || h.inputSettingsPending {
+		return
+	}
+	h.inputSettingsPending = true
+	go func() { r.finishInputSettingsRefresh(h, readInputSettings()) }()
+}
+
+func (r *Registry) finishInputSettingsRefresh(h *PanelHost, state inputSettingsSnapshot) {
+	r.mu.Lock()
+	h.inputSettingsPending = false
+	r.inputSettings = state
+	if r.panelHosts[PanelSettings] != h || !inputSettingsViewActive(h) {
 		r.mu.Unlock()
-		r.publishSurface(output, panelSurfaceID(PanelSettings))
-	}()
+		return
+	}
+	h.set = r.settingsForLocked(h.draft)
+	r.rebuildPanel(h)
+	output := h.output
+	r.mu.Unlock()
+	r.publishSurface(output, panelSurfaceID(PanelSettings))
 }
 
 func hasInputChanges(changes []settingsWriteChange) bool {

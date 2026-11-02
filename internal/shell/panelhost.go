@@ -220,6 +220,9 @@ type PanelHost struct {
 	// settingsPage is the open section's page (settings redesign D1). Empty
 	// means the section's first.
 	settingsPage string
+	// inputSettingsPending coalesces device reads while the input page or a
+	// matching Settings search is visible. Protected by Registry.mu.
+	inputSettingsPending bool
 	// barPreview is the last bar preview that resolved, kept so a draft that
 	// is mid-edit does not blank the Appearance page's preview.
 	barPreview *ui.Image
@@ -630,6 +633,7 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 			return fmt.Errorf("unknown section %q", requested)
 		}
 		if h.section == section && settingsCurrentPage(h, section) == page {
+			r.refreshInputSettingsAsync(h)
 			h.settingsRailRevealPending = section
 			if h.logicalW > 0 && h.logicalH > 0 {
 				if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
@@ -653,6 +657,9 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		r.settingsSectionChangingLocked(h, section)
 	}
 	h.section, h.settingsPage = section, page
+	if id == PanelSettings {
+		r.refreshInputSettingsAsync(h)
+	}
 	r.rebuildPanel(h)
 	r.publishSurface(h.output, panelSurfaceID(id))
 	return nil
@@ -1465,7 +1472,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		}
 		h.set = r.settingsForLocked(r.cfg)
 		r.refreshPalettesAsync(h)
-		r.refreshInputSettingsAsync(h)
 		h.draft = r.cfg.Clone()
 		h.section = "Bar"
 		h.search = ui.NewField("")
@@ -3633,6 +3639,9 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 			h.settingsSearchScrollTop = strings.TrimSpace(f.Text) != ""
 		}
 		h.query = f.Text
+		if h.id == PanelSettings {
+			r.refreshInputSettingsAsync(h)
+		}
 		if h.id == PanelPluginStore {
 			h.pluginStoreQuery.Text = f.Text
 			h.pluginStoreScroll = 0
@@ -4039,10 +4048,10 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if page, ok := strings.CutPrefix(n.Action, "page:"); ok {
 		h.invalidateSettingsBrowse()
-		if page == "Mouse & touchpad" {
+		h.settingsPage, h.settingsScrollTop = page, true
+		if h.id == PanelSettings {
 			r.refreshInputSettingsAsync(h)
 		}
-		h.settingsPage, h.settingsScrollTop = page, true
 		r.rebuildPanel(h)
 		return true
 	}

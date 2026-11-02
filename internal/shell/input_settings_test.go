@@ -208,3 +208,80 @@ func TestInputPageVersionReadDoesNotBlockOwnerEdits(t *testing.T) {
 		t.Fatal("newer edit was cleared")
 	}
 }
+
+func TestInputSettingsRefreshOnlyRebuildsAnActiveInputView(t *testing.T) {
+	for _, tc := range []struct {
+		name, section, page, query string
+		active                     bool
+	}{
+		{name: "bar editor", section: "Bar", page: "Layout"},
+		{name: "general session", section: "Session", page: "General"},
+		{name: "unrelated search", section: "Bar", query: "wallpaper"},
+		{name: "input page", section: "Session", page: "Mouse & touchpad", active: true},
+		{name: "touchpad search", section: "Bar", query: "tap to click", active: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newSettingsRegistry(t, config.Default())
+			h := newSettingsHost()
+			h.stopAnim = make(chan struct{})
+			h.section, h.settingsPage, h.query = tc.section, tc.page, tc.query
+			r.mu.Lock()
+			r.panelHosts[PanelSettings] = h
+			oldRoot, oldSet := h.root, h.set
+			r.mu.Unlock()
+			// Complete a read after navigation has chosen the current view. A
+			// snapshot may be cached without changing an unrelated retained tree.
+			r.finishInputSettingsRefresh(h, inputSettingsSnapshot{ready: true, touchpad: true})
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if !r.inputSettings.ready {
+				t.Fatal("snapshot not cached")
+			}
+			changed := h.root != oldRoot || h.set != oldSet
+			if changed != tc.active {
+				t.Fatalf("view changed=%t, want %t", changed, tc.active)
+			}
+			if tc.active && h.set.ByPath("input.touchpad.tap") == nil {
+				t.Fatal("touchpad setting not initialized")
+			}
+		})
+	}
+}
+
+func TestInputSettingsReadsStartForDeepLinksAndHiddenTouchpadSearch(t *testing.T) {
+	t.Setenv("NIRI_SOCKET", "")
+	t.Setenv("SYSC_SOCKET", "")
+	for _, query := range []string{"", "tap to click"} {
+		t.Run(query, func(t *testing.T) {
+			r := newSettingsRegistry(t, config.Default())
+			h := newSettingsHost()
+			h.stopAnim = make(chan struct{})
+			r.mu.Lock()
+			r.panelHosts[PanelSettings] = h
+			h.set = r.settingsForLocked(h.draft)
+			if h.set.ByPath("input.touchpad.tap") != nil {
+				r.mu.Unlock()
+				t.Fatal("touchpad should be hidden before the probe")
+			}
+			r.refreshInputSettingsAsync(h)
+			if h.inputSettingsPending {
+				r.mu.Unlock()
+				t.Fatal("opening the unrelated Bar page started a device read")
+			}
+			if query == "" {
+				if err := r.selectPanelSectionLocked(PanelSettings, "Session/Mouse & touchpad"); err != nil {
+					r.mu.Unlock()
+					t.Fatal(err)
+				}
+			} else {
+				h.query = query
+				r.refreshInputSettingsAsync(h)
+			}
+			pending := h.inputSettingsPending
+			r.mu.Unlock()
+			if !pending {
+				t.Fatal("input view did not start a device read")
+			}
+		})
+	}
+}
