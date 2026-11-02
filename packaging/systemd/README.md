@@ -1,15 +1,15 @@
 # Running sysc-shell from systemd
 
-`niri --session` starts `graphical-session.target` and exports
+`niri-session` and `sysc-compositor-session` start `graphical-session.target` and export
 `WAYLAND_DISPLAY` and `NIRI_SOCKET` into the systemd user environment, so a
 user unit ordered after that target starts with everything the shell needs.
 
-Prefer this over niri's `spawn-at-startup`:
+Use the service instead of `spawn-at-startup` in either compositor's config:
 
 - a crash is restarted, instead of leaving the session with no bar until the
   user notices and runs the binary by hand;
 - `journalctl --user -u sysc-shell` holds the output, instead of it going to
-  whatever niri's stdout happens to be;
+  the compositor's stdout;
 - `systemctl --user restart sysc-shell` is one command during development;
 - startup is ordered against the session rather than racing it.
 
@@ -20,7 +20,7 @@ Prefer this over niri's `spawn-at-startup`:
     systemctl --user daemon-reload
     systemctl --user enable --now sysc-shell.service
 
-Then remove niri's own launch, or the session starts two shells:
+Then remove any `spawn-at-startup` for the shell from the compositor config:
 
     # config.kdl
     - spawn-at-startup "/home/nomadx/.local/bin/sysc-shell"
