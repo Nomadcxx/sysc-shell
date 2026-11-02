@@ -453,12 +453,30 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 	switch child.Kind {
 	case KindRow:
 		// A section can grant a capsule less than it measured when the band is
-		// tight. The row is then laid out at its natural width and clipped by
-		// the capsule rather than failing the whole surface: a squeezed bar
-		// should degrade, not refuse to configure.
+		// tight. A row with one capped text gives up the shortfall from that
+		// text alone, so the members beside it, such as the media widget's
+		// play button, keep their size. Any other row is laid out at its
+		// natural width and clipped by the capsule rather than failing the
+		// whole surface: a squeezed bar should degrade, not refuse to
+		// configure.
 		w, h, err := measureNode(child, inner.H, measure)
 		if err != nil {
 			return err
+		}
+		if text := rowCappedText(child); text != nil && w > inner.W {
+			textW, _, err := measureNode(text, inner.H, measure)
+			if err != nil {
+				return err
+			}
+			// The cap is borrowed for this layout only: it is the widget's
+			// own setting, and the next pass may grant more room. Zero would
+			// mean uncapped, so the narrowest borrowed cap is one pixel.
+			configured := text.MaxWidth
+			text.MaxWidth = max(textW-(w-inner.W), 1)
+			defer func() { text.MaxWidth = configured }()
+			if w, h, err = measureNode(child, inner.H, measure); err != nil {
+				return err
+			}
 		}
 		box := inner
 		if w > box.W {
