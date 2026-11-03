@@ -65,6 +65,12 @@ type Window struct {
 	// does not mean the window is outside the workspace view: the
 	// wallpaper evaluator falls back to the tile size there.
 	TileInView bool
+	// Fullscreen reports the compositor's fullscreen state. HasFullscreen
+	// is false when the compositor sends no such field, which is the case
+	// for Niri 26.04 and for the compositor's own window record before the
+	// field was added.
+	Fullscreen    bool
+	HasFullscreen bool
 }
 
 // KeyboardLayouts is niri's configured keyboard layout list and active index.
@@ -179,8 +185,12 @@ type wireWindow struct {
 		Secs  uint64 `json:"secs"`
 		Nanos uint64 `json:"nanos"`
 	} `json:"focus_timestamp"`
-	IsFloating *bool             `json:"is_floating"`
-	Layout     *wireWindowLayout `json:"layout"`
+	IsFloating *bool `json:"is_floating"`
+	// IsFullscreen is the compositor's own answer to "does this window cover
+	// its output". Niri 26.04 sends no such field, so it stays absent there
+	// and the shell falls back to comparing the tile size with the output.
+	IsFullscreen *bool             `json:"is_fullscreen"`
+	Layout       *wireWindowLayout `json:"layout"`
 }
 
 // wireWindowLayout decodes the slice of the compositor layout the shell
@@ -231,6 +241,9 @@ func (w wireWindow) project() (Window, error) {
 	}
 	if w.IsFloating != nil {
 		out.Floating = *w.IsFloating
+	}
+	if w.IsFullscreen != nil {
+		out.Fullscreen, out.HasFullscreen = *w.IsFullscreen, true
 	}
 	applyWindowLayout(&out, w.Layout)
 	return out, nil
