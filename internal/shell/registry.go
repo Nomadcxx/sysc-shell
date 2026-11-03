@@ -62,7 +62,11 @@ type Registry struct {
 	cfg          config.Config
 	outputs      map[string]outputState
 	bars         map[uint32]*Bar
-	fontCatalog  registryFontCatalog
+	// barHidden remembers the bars this registry last asked the Wayland owner
+	// to hide. A bar is hidden while the compositor reports that the focused
+	// window covers the focused output.
+	barHidden   map[uint32]bool
+	fontCatalog registryFontCatalog
 	// onboardingPending keeps the first-start offer until an interactive,
 	// focused output can host it. Output loss restores the offer and its small
 	// view state for the next usable output.
@@ -542,6 +546,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		now:                      time.Now(),
 		outputs:                  make(map[string]outputState),
 		bars:                     make(map[uint32]*Bar),
+		barHidden:                make(map[uint32]bool),
 		leases:                   make(map[uint32][]*services.Lease),
 		clock:                    services.NewClock(),
 		metrics:                  services.NewMetrics(),
@@ -1838,6 +1843,62 @@ func (r *Registry) publish(globals []uint32) {
 	}
 }
 
+// publishVisibility tells the Wayland owner which bars must be shown or hidden.
+func (r *Registry) publishVisibility(changes []wayland.Invalidation) {
+	for _, change := range changes {
+		select {
+		case r.invalidations <- change:
+		case <-r.closed:
+			return
+		}
+	}
+}
+
+// focusedWindowFullscreenLocked reports what the compositor says about the
+// focused window, and whether it said anything at all. Niri 26.04 sends no
+// such answer, so the second value can be false.
+func (r *Registry) focusedWindowFullscreenLocked() (fullscreen bool, known bool) {
+	for _, window := range r.niriSnapshot.Windows {
+		if !window.Focused {
+			continue
+		}
+		if window.HasFullscreen {
+			return window.Fullscreen, true
+		}
+		return false, false
+	}
+	return false, false
+}
+
+// barVisibilityLocked returns the visibility changes the current Niri state
+// asks for. The bar of the focused output goes down while the focused window
+// covers that output: the compositor counts an exclusive zone only while the
+// bar's surface is mapped, so a hidden bar gives the whole output to the
+// window and a fullscreen window is not drawn under the bar.
+func (r *Registry) barVisibilityLocked() []wayland.Invalidation {
+	if len(r.bars) == 0 {
+		return nil
+	}
+	if r.barHidden == nil {
+		r.barHidden = make(map[uint32]bool)
+	}
+	fullscreen := r.toasts != nil && r.toasts.focusedWindowFillsOutput()
+	if value, known := r.focusedWindowFullscreenLocked(); known {
+		fullscreen = value
+	}
+	var changes []wayland.Invalidation
+	for global, bar := range r.bars {
+		hidden := fullscreen && bar.connector() == r.focused
+		if r.barHidden[global] == hidden {
+			continue
+		}
+		r.barHidden[global] = hidden
+		value := hidden
+		changes = append(changes, wayland.Invalidation{Global: global, Hidden: &value})
+	}
+	return changes
+}
+
 // NewHost builds the hooks for one output's bar and acquires its services.
 func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
 	r.mu.Lock()
@@ -2016,6 +2077,9 @@ func (r *Registry) adoptBar(
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
+	// A replacement bar starts visible in the Wayland owner, so the next Niri
+	// state has to state the visibility again.
+	delete(r.barHidden, global)
 	r.shutdown.bars.store(r.barListLocked())
 	// Route this bar's invalidations -- animation frames included -- to the
 	// owner through the registry. Without this the frame loop writes a
@@ -2623,6 +2687,7 @@ func (r *Registry) DropHost(global uint32) {
 	}
 	delete(r.bars, global)
 	delete(r.leases, global)
+	delete(r.barHidden, global)
 	if bar != nil && bar.lockKeysWidget {
 		r.releaseLockKeysBarLocked()
 	}
@@ -3073,6 +3138,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 		// Layout events can change the toast policy without changing bar text.
 		r.toasts.recompute()
 	}
+	barVisibility := r.barVisibilityLocked()
 	r.tryOpenOnboardingLocked(0)
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
@@ -3120,6 +3186,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.mu.Unlock()
 
 	r.publish(changed)
+	r.publishVisibility(barVisibility)
 	if runningMenuUpdated {
 		r.publishSurface(runningMenuOutput, runningAppMenuSurfaceID)
 	}

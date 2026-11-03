@@ -1281,6 +1281,17 @@ func (h *toastHost) focusedWindowFillsOutput() bool {
 	if snapshot.FocusedOutput == "" {
 		return false
 	}
+	// The compositor's own fullscreen bit wins when it sends one. Niri 26.04
+	// sends no such field, so the tile size stays the fallback below.
+	for _, window := range snapshot.Windows {
+		if !window.Focused {
+			continue
+		}
+		if window.HasFullscreen {
+			return window.Fullscreen
+		}
+		break
+	}
 	geometry, known := h.geometryFor(snapshot.FocusedOutput)
 	if !known || geometry.OutputW <= 0 || geometry.OutputH <= 0 {
 		return false
