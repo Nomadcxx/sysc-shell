@@ -252,8 +252,12 @@ type PanelHost struct {
 	// pluginName resolves a plugin ID to its catalogue name for the bar
 	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
 	// falls back to the plugin ID.
-	pluginName func(id string) string
-	pressed    string
+	pluginName         func(id string) string
+	focusVisible       bool
+	pointerX, pointerY float64
+	pointerKnown       bool
+	sliderDragged      bool
+	pressed            string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
 	pointer                  interaction
@@ -2761,6 +2765,7 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 	}
 	h.applyEditorView(root)
 	h.pointer.apply(root, h.anim)
+	h.applyFocusView(root)
 	if h.menu != nil && h.menu.Opened() && h.menuPath != "" {
 		markMenuRowHover(root, h.menuPath, h.menu, h.hoverX, h.hoverY)
 	}
@@ -2792,29 +2797,12 @@ func (h *PanelHost) render(blurBehind bool, pixels []byte, width, height, stride
 		wash.A = uint8(math.Round(float64(wash.A) * (1 - pageProgress)))
 		c.FillRounded(scale.PhysicalRect(viewport.Bounds), 0, wash)
 	}
-	if h.roving.Count > 0 {
-		n := h.focus[h.roving.Index()]
-		if n != nil && n.Bounds.W > 0 {
-			// The ring follows the node's own silhouette rather than boxing a
-			// stadium in square corners, and stays independent of hover: a
-			// focused control that is not hovered still shows it.
-			ring := scale.PhysicalRect(n.Bounds)
-			radius := min(scale.Physical(h.theme.Radius), min(ring.W, ring.H)/2)
-			if n.Kind == ui.KindTextField {
-				// A field carries the focus itself, so the ring takes the
-				// well's own corners: a pill for a search field, a 12px page
-				// for a multiline one, never a stadium as tall as the page.
-				radius = render.FieldRadius(n, ring, scale)
-			}
-			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
-		}
-	}
 	c.ApplySurfaceTransform(opacity, scale.Physical(offsetX), scale.Physical(offsetY))
 	return nil
 }
 
 func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
-	return func(e wayland.Event) bool {
+	return func(e wayland.Event) (changed bool) {
 		held := r.lockPanelOwner()
 		defer func() {
 			if r.onboardingPending && r.panelHosts[PanelOnboarding] == nil {
@@ -2822,6 +2810,28 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			r.unlockPanelOwner(held)
 		}()
+		wasVisible := h.focusVisible
+		switch e.Kind {
+		case wayland.EventPointerPress:
+			h.focusVisible = false
+			h.pointerX, h.pointerY, h.pointerKnown = e.X, e.Y, true
+		case wayland.EventPointerAxis:
+			if e.AxisValue != 0 || e.AxisDiscrete != 0 || e.AxisValue120 != 0 {
+				h.focusVisible = false
+			}
+		case wayland.EventPointerMotion, wayland.EventPointerEnter:
+			moved := !h.pointerKnown || e.X != h.pointerX || e.Y != h.pointerY
+			if e.Kind == wayland.EventPointerMotion && moved {
+				h.focusVisible = false
+				if h.sliderDrag != nil && e.X != h.pointerX {
+					h.sliderDragged = true
+				}
+			}
+			h.pointerX, h.pointerY, h.pointerKnown = e.X, e.Y, true
+		case wayland.EventPointerLeave:
+			h.pointerKnown = false
+		}
+		defer func() { changed = changed || wasVisible != h.focusVisible && h.focused() != nil }()
 		switch e.Kind {
 		case wayland.EventKeyPress, wayland.EventPointerPress:
 			h.inputSerial = e.Serial
@@ -2887,6 +2897,8 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			r.dwell.leave()
 			h.pressed = ""
 			h.sliderDrag = nil
+			h.sliderDragged = false
+			h.drag.Cancel()
 			h.scrollDrag = nil
 			h.fieldDrag = nil
 			return h.pointerChanged(r, h.pointer.clear())
@@ -2940,6 +2952,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				if n.Kind == ui.KindSlider {
 					ui.SliderAt(n, h.hoverX)
 					h.sliderDrag = n
+					h.sliderDragged = false
 				}
 				if n.Kind == ui.KindTextField && !n.Multiline && (e.Button == btnLeft || e.Button == 0) {
 					h.pressField(n, e.Mods)
@@ -2959,8 +2972,11 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				n := h.sliderDrag
 				ui.SliderAt(n, h.hoverX)
 				h.sliderDrag = nil
+				h.sliderDragged = false
+				h.pointerChanged(r, h.pointer.setPress(""))
 				h.pressed = ""
-				return h.commitSlider(r, n)
+				h.commitSlider(r, n)
+				return true // Repaint the released capture even without a receiver.
 			}
 			if h.scrollDrag != nil {
 				h.scrollDrag = nil
@@ -3066,7 +3082,11 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	return h.keyInput(r, ui.FallbackKey(key, h.mods))
 }
 
-func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
+func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) (changed bool) {
+	if focusInput(k) && !h.focusVisible {
+		h.focusVisible = true
+		defer func() { changed = changed || h.focused() != nil }()
+	}
 	key := k.Code
 	if h.id == PanelOnboarding && h.onbMoveMode {
 		dx, dy := 0, 0
@@ -4252,6 +4272,7 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 	if h.id == PanelFiles {
 		h.revealFocusedRow()
 	}
+	h.revealFocusRing()
 }
 
 func (h *PanelHost) revealFocusedSettingsSection() {
@@ -4369,6 +4390,7 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	// Tree replacement ends transient gestures; focus, editors and scroll
 	// positions are restored independently below.
 	h.sliderDrag, h.scrollDrag, h.fieldDrag = nil, nil, nil
+	h.sliderDragged = false
 	h.drag.Cancel()
 	h.pressed = ""
 	h.pointer.setPress("")
@@ -5413,4 +5435,125 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 		return h.onboardingTreeScale, true
 	}
 	return 0, false
+}
+
+// applyFocusView adds transient decoration only to the paint copy. Positional
+// identity covers unkeyed fields; virtual focus entries need their stable key.
+func (h *PanelHost) applyFocusView(root *ui.Node) {
+	if h.focusVisible {
+		if n := h.paintTarget(root, h.focused()); n != nil && n.Focusable &&
+			(!n.State.Has(ui.StateDisabled) || n.AriaDisabled) {
+			n.State |= ui.StateFocused
+		}
+	}
+	var dragged *ui.Node
+	if h.drag.Active() {
+		dragged = h.drag.Source
+	} else if h.sliderDragged {
+		dragged = h.sliderDrag
+	}
+	if n := h.paintTarget(root, dragged); n != nil && !n.State.Has(ui.StateDisabled) {
+		n.State |= ui.StateDragged
+	}
+}
+
+func (h *PanelHost) paintTarget(root, target *ui.Node) *ui.Node {
+	if target == nil {
+		return nil
+	}
+	if n := mirrorNode(h.root, root, target); n != nil {
+		if n.Kind == target.Kind && n.Bounds.W > 0 && n.Bounds.H > 0 {
+			return n
+		}
+		return nil // A pruned placeholder is not a paint target.
+	}
+	key := target.StableKey()
+	if key == "" {
+		return nil
+	}
+	var find func(*ui.Node) *ui.Node
+	find = func(n *ui.Node) *ui.Node {
+		if n == nil {
+			return nil
+		}
+		if n.Kind == target.Kind && n.StableKey() == key && n.Bounds.W > 0 && n.Bounds.H > 0 {
+			return n
+		}
+		for _, child := range n.Children {
+			if found := find(child); found != nil {
+				return found
+			}
+		}
+		return nil
+	}
+	return find(root)
+}
+
+func focusInput(k ui.KeyInput) bool {
+	if k.Sym == 0 && k.Text == "" {
+		k = ui.FallbackKey(k.Code, k.Mods)
+	}
+	if k.Text != "" || k.Sym >= 32 && k.Sym < 0xff00 {
+		return true
+	}
+	switch k.Sym {
+	case ui.SymTab, ui.SymISOLeftTab, ui.SymReturn, ui.SymKPEnter, ui.SymEscape,
+		ui.SymLeft, ui.SymRight, ui.SymUp, ui.SymDown, ui.SymHome, ui.SymEnd,
+		ui.SymPageUp, ui.SymPageDown, ui.SymBackSpace, ui.SymDelete:
+		return true
+	}
+	return false
+}
+
+// revealFocusRing uses the existing scroll clamp, with the renderer's outer
+// envelope. Virtual focus entries can be fresh nodes without arranged bounds.
+func (h *PanelHost) revealFocusRing() bool {
+	target := h.focused()
+	if !h.focusVisible || target == nil {
+		return false
+	}
+	var box ui.Rect
+	if painted := h.paintTarget(h.root, target); painted != nil {
+		box = painted.Bounds
+	}
+	changed := false
+	var reveal func(*ui.Node) bool
+	reveal = func(n *ui.Node) bool {
+		if n == nil {
+			return false
+		}
+		found := n == target || n.Kind == target.Kind && target.StableKey() != "" && n.StableKey() == target.StableKey()
+		for _, child := range n.Children {
+			if reveal(child) {
+				found = true
+				break
+			}
+		}
+		if !found && n.Kind == ui.KindVirtualList && n.Item != nil && n.ItemHeight > 0 {
+			// ponytail: scan virtual identities only on keyboard focus moves;
+			// index them if a real list makes this O(n) scan measurable.
+			for i := 0; i < n.ItemCount; i++ {
+				if nodeContains(n.Item(i), target) {
+					box = ui.Rect{X: n.Bounds.X + n.Padding, Y: n.Bounds.Y + n.Padding + i*n.ItemHeight - n.ScrollOffset, W: n.Bounds.W - 2*n.Padding, H: n.ItemHeight}
+					found = true
+					break
+				}
+			}
+		}
+		if found && (n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList) && box.H > 0 {
+			old := n.ScrollOffset
+			envelope := &ui.Node{Bounds: ui.Rect{X: box.X - render.FocusOutset, Y: box.Y - render.FocusOutset, W: box.W + 2*render.FocusOutset, H: box.H + 2*render.FocusOutset}}
+			if scrollNodeIntoView(n, envelope) {
+				h.notePluginStoreScroll(n)
+				box.Y -= n.ScrollOffset - old
+				changed = true
+			}
+		}
+		return found
+	}
+	reveal(h.root)
+	if changed && h.logicalW > 0 && h.logicalH > 0 {
+		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+	}
+	return changed
 }

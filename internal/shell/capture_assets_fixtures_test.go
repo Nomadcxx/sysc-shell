@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-metrics"
+	"github.com/Nomadcxx/sysc-shell/internal/fakebin"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 )
 
@@ -45,7 +46,7 @@ var assetMedia = services.MediaState{
 func stubWpctl(t *testing.T, reg *Registry, volume string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "wpctl")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'Volume: "+volume+"'\n"), 0o755); err != nil {
+	if err := fakebin.Write(path, "#!/bin/sh\necho 'Volume: "+volume+"'\n", 0o755); err != nil {
 		t.Fatal(err)
 	}
 	audio := services.NewAudio(time.Hour, path)

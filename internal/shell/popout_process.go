@@ -423,7 +423,7 @@ func nodeContains(root, target *ui.Node) bool {
 	if root == nil || target == nil {
 		return false
 	}
-	if root == target {
+	if root == target || root.Kind == target.Kind && target.StableKey() != "" && root.StableKey() == target.StableKey() {
 		return true
 	}
 	for _, child := range root.Children {

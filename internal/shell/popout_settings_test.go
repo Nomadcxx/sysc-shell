@@ -3160,7 +3160,7 @@ func TestFieldsFillTheirColumn(t *testing.T) {
 	h.section = "Session"
 	h.root = settingsTree(nil, h)
 
-	field := findKind(h.root, ui.KindTextField)
+	field := findKind(keyedScroll(h.root, settingsBodyKey), ui.KindTextField)
 	if field == nil {
 		t.Fatal("no field rendered")
 	}

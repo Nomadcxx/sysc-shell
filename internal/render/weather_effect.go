@@ -161,6 +161,13 @@ func blendWeatherRow(c *Canvas, box ui.Rect, mask *image.Alpha, y, x0, x1 int, c
 		}
 		lo, hi = max(lo, c.restrict.X), min(hi, restrictRight)
 	}
+	if c.contentClip != nil {
+		left, top, right, bottom := c.clip(ui.Rect{X: lo, Y: y, W: max(hi-lo, 0), H: 1})
+		if top >= bottom {
+			return
+		}
+		lo, hi = left, right
+	}
 	b := mask.Bounds()
 	my, yOK := checkedEffectAdd(b.Min.Y, y-box.Y)
 	if !yOK || my < b.Min.Y || my >= b.Max.Y {
