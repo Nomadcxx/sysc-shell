@@ -153,7 +153,7 @@ func monitorOptionsColumn(h *PanelHost, in monitorView) *ui.Node {
 	toggle := func(action, label string, on bool) *ui.Node {
 		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, CenterY: true, PinEnd: true, Width: monitorOptionW, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: label, Tone: ui.ToneSubtle},
-			{Kind: ui.KindToggle, Width: ui.ToggleWidth, Height: ui.ToggleHeight, Action: action, Name: label,
+			{Kind: ui.KindToggle, Action: action, Name: label,
 				Role: "switch", Focusable: true, Value: toggleValue(on)},
 		}}
 	}

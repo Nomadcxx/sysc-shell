@@ -32,6 +32,7 @@ func stripTestRegistry(t *testing.T, state services.MediaState) (*Registry, *med
 	old := r.media
 	r.media = services.NewUnavailableMedia()
 	r.mediaState = state
+	r.bars[7].apply(r.viewLocked(r.bars[7].connector()))
 	strip := newMediaStripHost(r, harness)
 	r.mediaStrip = strip
 	r.mu.Unlock()
@@ -155,4 +156,19 @@ func TestMediaStripKeysAndRelease(t *testing.T) {
 	}
 	// The lease is released off the owner; give it a moment, then expect no leak.
 	time.Sleep(10 * time.Millisecond)
+}
+
+func TestMediaStripFirstLayoutUsesMiniPanelDensity(t *testing.T) {
+	reg, strip, _ := stripTestRegistry(t, services.MediaState{})
+	reg.mu.Lock()
+	reg.cfg.Theme.Density = "mini"
+	reg.mu.Unlock()
+	slider := &ui.Node{Kind: ui.KindSlider, Width: 160, Min: 0, Max: 100}
+	strip.root = &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{slider}}
+	if err := strip.configure(372, 200, 120); err != nil {
+		t.Fatal(err)
+	}
+	if slider.Bounds.H != 28 {
+		t.Fatalf("first mini layout height %d, want 28", slider.Bounds.H)
+	}
 }

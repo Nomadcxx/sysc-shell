@@ -2407,7 +2407,9 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 						r.dwell.leave()
 						for global := range geometryOutputs {
 							r.closeTrayOutputLocked(global)
-							r.mediaStrip.outputLostLocked(global)
+							if disabledOutputs[global] || !r.mediaStrip.pinned {
+								r.mediaStrip.outputLostLocked(global)
+							}
 							if h := r.runningMenu; h != nil && h.open_ && h.output == global {
 								h.closeLocked()
 							}
@@ -2503,7 +2505,6 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 					if r.previewing {
 						r.previewPrevErr = r.themeErr
 					}
-					surfacePubs = r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
 					if launcherConfigChanged {
 						if h := r.panelHosts[PanelLauncher]; h != nil {
 							h.launcherAttempt++
@@ -2518,6 +2519,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 						depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
 					}
 					r.bars = bars
+					surfacePubs = append(surfacePubs, r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)...)
 					r.leases = leases
 					r.shutdown.bars.store(r.barListLocked())
 					panelOutputs := make(map[uint32]bool)
@@ -3345,6 +3347,14 @@ func weatherUnit(name string) services.Unit {
 }
 
 func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks) wayland.HostCallbacks {
+	innerRender := hooks.Render
+	hooks.Render = func(pixels []byte, width, height, stride int) error {
+		if err := innerRender(pixels, width, height, stride); err != nil {
+			return err
+		}
+		r.refreshMediaStripPlacement(global, bar)
+		return nil
+	}
 	innerHandle := hooks.Handle
 	hooks.Handle = func(event wayland.Event) bool {
 		changed := innerHandle(event)
@@ -3419,9 +3429,11 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 			continue
 		}
 		next := r.panelThemeForState(h.output, cfg, tokens)
+		metricsChanged := h.theme.Metrics != next.Metrics
 		h.retheme(withPanelRadius(next, h))
-		if h.id == PanelOnboarding {
-			// The wordmark is a raster painted in the palette.
+		if metricsChanged || h.id == PanelOnboarding {
+			// Density changes control geometry; onboarding also rebuilds its
+			// palette-coloured wordmark when the colours change.
 			r.rebuildPanel(h)
 		}
 		r.startSurfaceFrames(h)
@@ -3445,6 +3457,11 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 	if h := r.polkitHost; h != nil && h.open_ {
 		h.retheme(r.panelThemeForState(h.output, cfg, tokens))
 		pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: polkitSurfaceID})
+	}
+	if h := r.mediaStrip; h != nil && h.open_ {
+		if h.rethemeLocked(r.panelThemeForState(h.output, cfg, tokens), cfg.Bar.FontFamily) {
+			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: mediaStripSurfaceID})
+		}
 	}
 	if r.osd != nil {
 		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)

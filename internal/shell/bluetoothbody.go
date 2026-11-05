@@ -72,7 +72,7 @@ func bluetoothAdapterCard(state services.BluetoothState, h *PanelHost, m theme.M
 	}
 
 	power := &ui.Node{
-		Kind: ui.KindToggle, Width: ui.ToggleWidth, Height: ui.ToggleHeight,
+		Kind:   ui.KindToggle,
 		Value:  toggleValue(state.Available && state.Adapter.Powered),
 		Action: bluetoothPowerAction, Name: cardT(tr, "bt.power_switch", "Bluetooth power"), Role: "switch", Focusable: true,
 	}
@@ -254,7 +254,7 @@ func bluetoothDeviceDetails(device services.BluetoothDevice, state services.Blue
 	if device.RSSI != nil {
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf(cardT(tr, "bt.signal", "Signal  %d dBm"), *device.RSSI), TextRole: theme.RoleCaption, Tabular: true})
 	}
-	trusted := &ui.Node{Kind: ui.KindToggle, Width: ui.ToggleWidth, Height: ui.ToggleHeight,
+	trusted := &ui.Node{Kind: ui.KindToggle,
 		Value: toggleValue(device.Trusted), Action: "bluetooth-trust:" + string(device.ID),
 		Name: cardT(tr, "bt.trusted", "Trusted"), Role: "switch", Focusable: true}
 	if !state.Available || !state.Adapter.Powered || device.Action != services.BluetoothActionNone {

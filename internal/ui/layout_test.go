@@ -52,14 +52,14 @@ func TestLayoutArrangesRow(t *testing.T) {
 	}
 }
 
-func TestToggleUsesSlightlyLargerDefaultSize(t *testing.T) {
+func TestToggleUsesM3DefaultSize(t *testing.T) {
 	t.Parallel()
 	toggle := &Node{Kind: KindToggle}
 	root := &Node{Kind: KindRow, Children: []*Node{toggle}}
-	if err := Layout(root, Rect{W: 40, H: 24}, fakeMeasure); err != nil {
+	if err := Layout(root, Rect{W: 60, H: 40}, fakeMeasure); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := (Rect{W: toggle.Bounds.W, H: toggle.Bounds.H}), (Rect{W: 36, H: 22}); got != want {
+	if got, want := (Rect{W: toggle.Bounds.W, H: toggle.Bounds.H}), (Rect{W: 52, H: 32}); got != want {
 		t.Errorf("toggle bounds = %+v, want %dx%d", got, want.W, want.H)
 	}
 }

@@ -394,11 +394,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		if n.Absent {
 			return nil
 		}
-		box := style.Scale120.PhysicalRect(n.Bounds)
-		fillRect(c, box, style.Track)
-		filled := box
-		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
-		fillRect(c, filled, toneColor(style, n.Tone, style.accent()))
+		paintMeter(c, n, style)
 		return nil
 
 	case ui.KindCapsule:
@@ -690,29 +686,58 @@ func dimmedControl(n *ui.Node, style Style) Style {
 }
 
 func paintToggle(c *Canvas, n *ui.Node, style Style) {
-	style = dimmedControl(n, style)
 	if n.Role == "checkbox" {
-		paintCheckbox(c, n, style)
+		paintCheckbox(c, n, dimmedControl(n, style))
 		return
 	}
 	box := style.Scale120.PhysicalRect(n.Bounds)
-	track := style.Track
-	knob := style.Foreground
-	if n.Value != 0 {
-		track = style.accent()
-		knob = style.onAccent()
+	if box.W <= 0 || box.H <= 0 {
+		return
 	}
-	c.FillRounded(box, min(box.H/2, style.Scale120.Physical(10)), track)
-	knobH := style.Scale120.Physical(ui.ToggleKnob)
-	if knobH > box.H {
-		knobH = box.H
+	width, height := ui.ToggleDimensions(style.Metrics)
+	height = min(box.H, style.Scale120.Physical(height))
+	width = min(box.W, style.Scale120.Physical(width), int(math.Round(float64(height)*ui.ToggleWidth/ui.ToggleHeight)))
+	height = min(height, int(math.Round(float64(width)*ui.ToggleHeight/ui.ToggleWidth)))
+	box = ui.Rect{X: box.X + (box.W-width)/2, Y: box.Y + (box.H-height)/2, W: width, H: height}
+	track, knob, outline := style.containerHighest(), style.outline(), style.outline()
+	diameter := 16
+	on := n.Value != 0
+	if on {
+		track, knob = style.accent(), style.onAccent()
+		diameter = ui.ToggleKnob
 	}
-	pad := (box.H - knobH) / 2
-	x := box.X + pad
-	if n.Value != 0 {
-		x = box.X + box.W - pad - knobH
+	if n.State.Has(ui.StateHovered) || n.State.Has(ui.StatePressed) {
+		if on {
+			knob = resolvePaintRole(style, ui.PaintPrimaryContainer)
+		} else {
+			knob = style.Track
+		}
 	}
-	c.FillRounded(ui.Rect{X: x, Y: box.Y + pad, W: knobH, H: knobH}, knobH/2, knob)
+	if n.State.Has(ui.StatePressed) {
+		diameter = 28
+	}
+	if n.State.Has(ui.StateDisabled) {
+		if on {
+			track, knob = withAlpha(style.Foreground, 0.12), style.Background
+		} else {
+			track, knob, outline = withAlpha(style.containerHighest(), 0.12), withAlpha(style.Foreground, 0.38), withAlpha(style.Foreground, 0.12)
+		}
+		if on {
+			diameter = ui.ToggleKnob
+		} else {
+			diameter = 16
+		}
+	}
+	c.FillRounded(box, box.H/2, track)
+	if !on {
+		c.StrokeRounded(box, box.H/2, max(1, int(math.Round(float64(box.H)*2/ui.ToggleHeight))), outline)
+	}
+	knobH := max(1, min(box.H, int(math.Round(float64(box.H)*float64(diameter)/ui.ToggleHeight))))
+	cx := box.X + box.H/2
+	if on {
+		cx = box.X + box.W - box.H/2
+	}
+	c.FillRounded(ui.Rect{X: cx - knobH/2, Y: box.Y + (box.H-knobH)/2, W: knobH, H: knobH}, knobH/2, knob)
 }
 
 func paintCheckbox(c *Canvas, n *ui.Node, style Style) {
@@ -731,35 +756,65 @@ func paintCheckbox(c *Canvas, n *ui.Node, style Style) {
 }
 
 func paintSlider(c *Canvas, n *ui.Node, style Style) {
-	style = dimmedControl(n, style)
 	box := style.Scale120.PhysicalRect(n.Bounds)
-	trackH := max(style.Scale120.Physical(ui.SliderTrack), 1)
-	y := box.Y + (box.H-trackH)/2
-	c.FillRounded(ui.Rect{X: box.X, Y: y, W: box.W, H: trackH}, trackH/2, style.Track)
-	span := n.Max - n.Min
+	if box.W <= 0 || box.H <= 0 {
+		return
+	}
+	trackH, handleW, handleH, gap := ui.SliderDimensions(style.Metrics, n.State.Has(ui.StatePressed) && !n.State.Has(ui.StateDisabled))
+	trackH = min(box.H, max(1, style.Scale120.Physical(trackH)))
+	handleW = min(box.W, max(1, style.Scale120.Physical(handleW)))
+	handleH = min(box.H, max(1, style.Scale120.Physical(handleH)))
+	gap = style.Scale120.Physical(gap)
+	active, inactive, handle := style.accent(), resolvePaintRole(style, ui.PaintSecondaryContainer), style.accent()
+	if n.State.Has(ui.StateDisabled) {
+		active, inactive, handle = withAlpha(style.Foreground, 0.38), withAlpha(style.Foreground, 0.12), withAlpha(style.Foreground, 0.38)
+	}
 	frac := 0.0
-	if span > 0 {
-		frac = (n.Value - n.Min) / span
+	if span := n.Max - n.Min; span > 0 {
+		frac = min(max((n.Value-n.Min)/span, 0), 1)
 	}
-	frac = min(max(frac, 0), 1)
-	fillW := int(float64(box.W) * frac)
-	if fillW > 0 {
-		c.FillRounded(ui.Rect{X: box.X, Y: y, W: fillW, H: trackH}, trackH/2, style.accent())
+	kx := min(max(box.X+int(math.Round(float64(box.W)*frac))-handleW/2, box.X), box.X+box.W-handleW)
+	y := box.Y + (box.H-trackH)/2
+	if width := kx - gap - box.X; width > 0 {
+		c.FillRounded(ui.Rect{X: box.X, Y: y, W: width, H: trackH}, trackH/2, active)
 	}
-	knob := style.Scale120.Physical(ui.SliderKnob)
-	if knob > box.H {
-		knob = box.H
+	if x := kx + handleW + gap; x < box.X+box.W {
+		c.FillRounded(ui.Rect{X: x, Y: y, W: box.X + box.W - x, H: trackH}, trackH/2, inactive)
 	}
-	kx := box.X + fillW - knob/2
-	if kx < box.X {
-		kx = box.X
+	handleBox := ui.Rect{X: kx, Y: box.Y + (box.H-handleH)/2, W: handleW, H: handleH}
+	c.FillRounded(handleBox, handleW/2, handle)
+	paintInteraction(c, n, handleBox, handleW/2, style.onAccent(), style)
+}
+
+func paintMeter(c *Canvas, n *ui.Node, style Style) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	if box.W <= 0 || box.H <= 0 {
+		return
 	}
-	if kx+knob > box.X+box.W {
-		kx = box.X + box.W - knob
+	thickness := ui.MeterHeight
+	if n.Height > 0 {
+		thickness = n.Height
 	}
-	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob},
-		ui.MorphRadius(knob/2, n.PressProgress), style.accent())
-	paintInteraction(c, n, box, box.H/2, style.Foreground, style)
+	height := min(box.H, max(1, style.Scale120.Physical(thickness)))
+	box.Y += (box.H - height) / 2
+	box.H = height
+
+	active := toneColor(style, n.Tone, style.accent())
+	filled := min(max(int(math.Round(float64(box.W)*n.Value)), 0), box.W)
+	gap := style.Scale120.Physical(ui.MeterHeight)
+	if filled > 0 {
+		c.FillRounded(ui.Rect{X: box.X, Y: box.Y, W: filled, H: box.H}, box.H/2, active)
+	}
+	start := filled
+	if filled > 0 {
+		start += gap
+	}
+	if start < box.W {
+		track := ui.Rect{X: box.X + start, Y: box.Y, W: box.W - start, H: box.H}
+		c.FillRounded(track, box.H/2, resolvePaintRole(style, ui.PaintSecondaryContainer))
+		stop := min(gap, track.W, track.H)
+		c.FillRounded(ui.Rect{X: box.X + box.W - stop, Y: box.Y + (box.H-stop)/2, W: stop, H: stop}, stop/2, active)
+	}
 }
 
 func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {

@@ -32,6 +32,7 @@ type mediaStripHost struct {
 	open_, pinned bool
 	output        uint32
 	rootGen       uint64
+	anchor        ui.Rect
 	place         ui.Rect
 	placed        bool
 
@@ -77,16 +78,20 @@ func (h *mediaStripHost) openLocked(output uint32, local ui.Rect, pinned bool) b
 		return true
 	}
 	h.closeLocked()
-	h.open_, h.pinned, h.output = true, pinned, output
-	edge, anchor, body, out := h.r.barGeometryOnOutputLocked(output, local)
-	connector := ""
-	if bar := h.r.bars[output]; bar != nil {
-		connector = bar.connector()
+	text, err := h.r.textRenderer(h.r.cfg.Bar.FontFamily)
+	if err != nil {
+		log.Printf("media strip font: %v", err)
+		return false
 	}
-	work := barWorkArea(h.r.cfg.ForConnector(connector), out)
-	h.place = mediaStripPlacement(edge, anchor, body, work)
-	h.placed = h.place.W > 0 && h.place.H > 0
+	h.text = text
+	h.style = h.r.surfaceTheme().PanelStyle()
+	h.open_, h.pinned, h.output = true, pinned, output
+	h.anchor = local
+	h.place = ui.Rect{}
 	h.rebuildLocked()
+	if !h.open_ {
+		return false
+	}
 	h.rootGen = h.r.roots.openRoot(mediaStripRoot(output))
 	h.r.roots.onClose(h.rootGen, h.releaseForChainClose)
 	h.r.dwell.leave()
@@ -204,12 +209,53 @@ func (h *mediaStripHost) rebuildLocked() {
 		position = *h.seekPending
 	}
 	art := mediaArtImageLocked(h.r, h.output, state.ArtKey, mediaStripArt)
+	h.pressed = nil
+	h.pointer.setPress("")
 	h.root = mediaStripTree(state, players, position, art)
+	ui.SizeControls(h.root, h.style.Metrics)
+	connector := ""
+	if bar := h.r.bars[h.output]; bar != nil {
+		connector = bar.connector()
+	}
+	edge, anchor, body, out := h.r.barGeometryOnOutputLocked(h.output, h.anchor)
+	height, err := ui.ContentHeight(h.root, mediaStripW, h.measureText)
+	if err != nil {
+		log.Printf("media strip layout: %v", err)
+		h.closeLocked()
+		return
+	}
+	work := barWorkArea(h.r.cfg.ForConnector(connector), out)
+	old := h.place
+	h.place = mediaStripPlacement(edge, anchor, body, work, max(mediaStripH, height))
+	h.placed = h.place.W > 0 && h.place.H > 0
+	if !h.placed {
+		h.place = ui.Rect{W: mediaStripW, H: max(mediaStripH, height)}
+	}
+	if old.W > 0 && old != h.place {
+		spec := h.spec()
+		width, height := uint32(spec.Width), uint32(spec.Height)
+		top, left := spec.MarginTop, spec.MarginLeft
+		h.request(wayland.AuxRequest{Output: h.output, ID: mediaStripSurfaceID,
+			Update: &wayland.AuxUpdate{Width: &width, Height: &height, MarginTop: &top, MarginLeft: &left}})
+	}
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
-	if h.logicalW > 0 {
-		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+	if err := h.configure(h.place.W, h.place.H, max(h.scale120, 120)); err != nil {
+		log.Printf("media strip layout: %v", err)
+		h.closeLocked()
 	}
+}
+
+func (h *mediaStripHost) rethemeLocked(next Theme, fontFamily string) bool {
+	text, err := h.r.textRenderer(fontFamily)
+	if err != nil {
+		log.Printf("media strip font: %v", err)
+		h.closeLocked()
+		return false
+	}
+	h.text, h.style = text, next.PanelStyle()
+	h.rebuildLocked()
+	return h.open_
 }
 
 // startTickLocked advances the position once a second while playing.
@@ -248,7 +294,7 @@ func (h *mediaStripHost) spec() *wayland.AuxSpec {
 		ID: mediaStripSurfaceID, Namespace: mediaStripNamespace,
 		Layer:  layerOverlay,
 		Anchor: anchor, MarginTop: int32(h.place.Y), MarginLeft: int32(h.place.X),
-		Width: int32(max(h.place.W, mediaStripW)), Height: int32(max(h.place.H, mediaStripH)),
+		Width: int32(h.place.W), Height: int32(h.place.H),
 		ExclusiveZone: -1, Keyboard: keyboardOnDemand,
 		Callbacks: wayland.HostCallbacks{
 			Configure: h.configureLocking, Render: h.renderLocking, Handle: h.handleLocking,
@@ -299,20 +345,32 @@ func (h *mediaStripHost) handleLocking(event wayland.Event) bool {
 
 func (h *mediaStripHost) configure(width, height, scale120 int) error {
 	h.logicalW, h.logicalH, h.scale120 = width, height, scale120
+	if h.style.Metrics.ToggleBase <= 0 && h.r != nil {
+		h.style = h.r.surfaceTheme().PanelStyle()
+	}
 	h.style.Scale120 = ui.Scale120(scale120)
 	h.style.Body = ui.Rect{W: width, H: height}
 	if h.root == nil {
 		return nil
 	}
-	measure := func(text string, attrs ui.TextAttrs) (int, int) {
-		if h.text != nil {
-			if w, th, err := h.text.Measure(text, render.SpecFor(h.style, attrs), attrs.Tabular); err == nil {
-				return w, th
-			}
-		}
-		return len([]rune(text)) * 8, 16
+	ui.SizeControls(h.root, h.style.Metrics)
+	return ui.LayoutColumn(h.root, ui.Rect{W: width, H: height}, h.measureText)
+}
+
+func (h *mediaStripHost) measureText(text string, attrs ui.TextAttrs) (int, int) {
+	scale := ui.Scale120(h.scale120)
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
 	}
-	return ui.LayoutColumn(h.root, ui.Rect{W: width, H: height}, measure)
+	style := h.style
+	style.Scale120 = scale
+	if h.text != nil {
+		if w, height, err := h.text.Measure(text, render.SpecFor(style, attrs), attrs.Tabular); err == nil {
+			return scale.Logical(w), scale.Logical(height)
+		}
+	}
+	// ponytail: the fallback assumes 8px cells; the text shaper owns actual widths.
+	return len([]rune(text)) * 8, 16
 }
 
 func (h *mediaStripHost) render(pixels []byte, width, height, stride int) error {
@@ -458,4 +516,35 @@ func (h *mediaStripHost) activate(n *ui.Node) bool {
 		}
 	}()
 	return true
+}
+
+// refreshMediaStripPlacement follows a replacement bar after its owner paints
+// the new arrangement. Unchanged bar frames do not rebuild or repaint the strip.
+func (r *Registry) refreshMediaStripPlacement(global uint32, bar *Bar) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.mediaStrip
+	if r.bars[global] != bar || h == nil || !h.open_ || h.output != global {
+		return
+	}
+	width, height := bar.configuredSize()
+	if width <= 0 || height <= 0 {
+		return
+	}
+	anchor := bar.actionBounds(panelMediaAction)
+	if anchor.W <= 0 || anchor.H <= 0 {
+		h.closeLocked()
+		return
+	}
+	edge, onOutput, body, out := r.barGeometryOnOutputLocked(global, anchor)
+	work := barWorkArea(r.cfg.ForConnector(bar.connector()), out)
+	place := mediaStripPlacement(edge, onOutput, body, work, h.place.H)
+	scale := bar.scale120()
+	if h.anchor == anchor && h.scale120 == scale && h.place == place {
+		return
+	}
+	h.anchor, h.scale120 = anchor, scale
+	if _, open := h.refreshLocked(); open {
+		r.publishSurfaceAsync(global, mediaStripSurfaceID)
+	}
 }

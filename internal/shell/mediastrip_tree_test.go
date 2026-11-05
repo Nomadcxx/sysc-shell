@@ -36,11 +36,11 @@ func TestMediaStripPlacementFollowsTheBarEdgeAndClamps(t *testing.T) {
 		if tc.edge == "left" || tc.edge == "right" {
 			w = ui.Rect{W: 1536, H: 864}
 		}
-		if got := mediaStripPlacement(tc.edge, tc.anchor, tc.body, w); got != tc.want {
+		if got := mediaStripPlacement(tc.edge, tc.anchor, tc.body, w, mediaStripH); got != tc.want {
 			t.Errorf("%s: placement = %+v, want %+v", tc.name, got, tc.want)
 		}
 	}
-	if got := mediaStripPlacement("top", ui.Rect{}, ui.Rect{}, ui.Rect{}); got != (ui.Rect{}) {
+	if got := mediaStripPlacement("top", ui.Rect{}, ui.Rect{}, ui.Rect{}, mediaStripH); got != (ui.Rect{}) {
 		t.Errorf("empty work area placed the strip at %+v", got)
 	}
 }

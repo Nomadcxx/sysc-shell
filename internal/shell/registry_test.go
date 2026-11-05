@@ -1267,3 +1267,28 @@ func TestFrameCapDoesNotSuppressClockInvalidation(t *testing.T) {
 		t.Fatalf("clock revision under a 60 fps cap changed %v, want bar 7", changed)
 	}
 }
+
+func TestDensityReloadRelaysOutAnOpenAudioPanel(t *testing.T) {
+	reg := newPanelRegistry(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	cfg := reg.cfg
+	cfg.Theme.Density = theme.DensityDefault
+	h := &PanelHost{id: PanelAudio, theme: reg.panelThemeForState(0, cfg, reg.tokens), stopAnim: make(chan struct{})}
+	h.place.Panel = ui.Rect{W: 700, H: 700}
+	reg.panelHosts[PanelAudio] = h
+	h.root = reg.panelTree(h)
+	if err := h.configure(700, 700, 120); err != nil {
+		t.Fatal(err)
+	}
+	slider := findKind(h.root, ui.KindSlider)
+	if slider == nil || slider.Bounds.H != 44 {
+		t.Fatalf("default slider: %+v", slider)
+	}
+	cfg.Theme.Density = theme.DensitySpacious
+	reg.retheThemeOpenSurfacesLocked(cfg, reg.tokens)
+	slider = findKind(h.root, ui.KindSlider)
+	if slider == nil || slider.Bounds.H != 68 {
+		t.Fatalf("spacious slider retained old layout: %+v", slider)
+	}
+}
