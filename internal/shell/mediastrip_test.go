@@ -32,6 +32,7 @@ func stripTestRegistry(t *testing.T, state services.MediaState) (*Registry, *med
 	old := r.media
 	r.media = services.NewUnavailableMedia()
 	r.mediaState = state
+	r.bars[7].apply(r.viewLocked(r.bars[7].connector()))
 	strip := newMediaStripHost(r, harness)
 	r.mediaStrip = strip
 	r.mu.Unlock()

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -184,5 +185,99 @@ func TestMediaStripMeasuresLogicalTextBeforeOpenAndReload(t *testing.T) {
 				t.Errorf("scale %d: %s at %+v clips", scale, n.Action, n.Bounds)
 			}
 		}
+	}
+}
+
+func TestMediaStripPinnedDensitySurvivesConfigAdoption(t *testing.T) {
+	r, h, _ := stripTestRegistry(t, services.MediaState{Available: true, Identity: "mpv", Title: "Track", Status: services.PlaybackPaused, CanSeek: true, CanPause: true, LengthUS: 300000000})
+	keepInvalidationsDrained(t, r)
+	r.mu.Lock()
+	bar := r.bars[7]
+	connector := bar.connector()
+	bar.setOutputSize(1536, 864)
+	if err := bar.Configure(1536, r.cfg.Bar.SurfaceExtent(), 120); err != nil {
+		r.mu.Unlock()
+		t.Fatal(err)
+	}
+	openStripForTest(t, h, ui.Rect{X: 800, W: 160, H: 32}, true)
+	generation := h.rootGen
+	r.mu.Unlock()
+	for _, tc := range []struct {
+		density    theme.Density
+		height     int
+		removeLeft bool
+	}{{theme.DensityDefault, 44, false}, {theme.DensityMini, 28, false}, {theme.DensitySpacious, 68, false}, {theme.DensitySpacious, 68, true}} {
+		r.mu.Lock()
+		before := r.cfg.Clone()
+		candidate := before.Clone()
+		r.mu.Unlock()
+		candidate.Theme.Density = tc.density
+		if tc.removeLeft {
+			candidate.Bar.Left = nil
+		}
+		config.RebaseDerivedBar(&candidate, before.Theme, before.Bar)
+		prepared, err := r.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: connector}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The owner configures the replacement before publishing the commit.
+		hooks := prepared.Hosts[7]
+		hooks.OutputSize(1536, 864)
+		if err := hooks.Configure(1536, candidate.ForConnector(connector).SurfaceExtent(), 120); err != nil {
+			t.Fatal(err)
+		}
+		prepared.Commit()
+		hooks.OutputSize(1536, 864)
+		r.mu.Lock()
+		retained := h.open_ && h.pinned && h.rootGen == generation
+		r.mu.Unlock()
+		if !retained {
+			t.Fatalf("%s adoption lost pinned root before first paint", tc.density)
+		}
+		width, height := 1536, candidate.ForConnector(connector).SurfaceExtent()
+		if err := hooks.Render(make([]byte, width*height*4), width, height, width*4); err != nil {
+			t.Fatal(err)
+		}
+		r.mu.Lock()
+		open, pinned, sameGeneration := h.open_, h.pinned, h.rootGen == generation
+		slider := findKind(h.root, ui.KindSlider)
+		sliderHeight := slider.Bounds.H
+		anchor := r.bars[7].actionBounds(panelMediaAction)
+		followsAnchor := h.anchor == anchor
+		r.mu.Unlock()
+		if !open || !pinned || !sameGeneration {
+			t.Fatalf("%s adoption lost pinned root: open=%v pinned=%v sameRoot=%v", tc.density, open, pinned, sameGeneration)
+		}
+		if sliderHeight != tc.height || !followsAnchor {
+			t.Errorf("%s: height %d want %d; follows new pill=%v", tc.density, sliderHeight, tc.height, followsAnchor)
+		}
+		r.mu.Lock()
+		retainedTree := h.root
+		r.mu.Unlock()
+		if err := hooks.Render(make([]byte, width*height*4), width, height, width*4); err != nil {
+			t.Fatal(err)
+		}
+		r.mu.Lock()
+		unchanged := h.root == retainedTree
+		r.mu.Unlock()
+		if !unchanged {
+			t.Error("unchanged bar frame rebuilt the strip")
+		}
+
+	}
+	r.mu.Lock()
+	disabled := r.cfg.Clone()
+	r.mu.Unlock()
+	disabled.Bar.Enabled = false
+	prepared, err := r.PrepareConfig(disabled, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+	r.mu.Lock()
+	open := h.open_
+	r.mu.Unlock()
+	if open {
+		t.Error("disabled output bar retained its strip")
 	}
 }

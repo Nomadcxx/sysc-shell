@@ -213,16 +213,16 @@ func (h *mediaStripHost) rebuildLocked() {
 	h.pointer.setPress("")
 	h.root = mediaStripTree(state, players, position, art)
 	ui.SizeControls(h.root, h.style.Metrics)
+	connector := ""
+	if bar := h.r.bars[h.output]; bar != nil {
+		connector = bar.connector()
+	}
+	edge, anchor, body, out := h.r.barGeometryOnOutputLocked(h.output, h.anchor)
 	height, err := ui.ContentHeight(h.root, mediaStripW, h.measureText)
 	if err != nil {
 		log.Printf("media strip layout: %v", err)
 		h.closeLocked()
 		return
-	}
-	edge, anchor, body, out := h.r.barGeometryOnOutputLocked(h.output, h.anchor)
-	connector := ""
-	if bar := h.r.bars[h.output]; bar != nil {
-		connector = bar.connector()
 	}
 	work := barWorkArea(h.r.cfg.ForConnector(connector), out)
 	old := h.place
@@ -516,4 +516,35 @@ func (h *mediaStripHost) activate(n *ui.Node) bool {
 		}
 	}()
 	return true
+}
+
+// refreshMediaStripPlacement follows a replacement bar after its owner paints
+// the new arrangement. Unchanged bar frames do not rebuild or repaint the strip.
+func (r *Registry) refreshMediaStripPlacement(global uint32, bar *Bar) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.mediaStrip
+	if r.bars[global] != bar || h == nil || !h.open_ || h.output != global {
+		return
+	}
+	width, height := bar.configuredSize()
+	if width <= 0 || height <= 0 {
+		return
+	}
+	anchor := bar.actionBounds(panelMediaAction)
+	if anchor.W <= 0 || anchor.H <= 0 {
+		h.closeLocked()
+		return
+	}
+	edge, onOutput, body, out := r.barGeometryOnOutputLocked(global, anchor)
+	work := barWorkArea(r.cfg.ForConnector(bar.connector()), out)
+	place := mediaStripPlacement(edge, onOutput, body, work, h.place.H)
+	scale := bar.scale120()
+	if h.anchor == anchor && h.scale120 == scale && h.place == place {
+		return
+	}
+	h.anchor, h.scale120 = anchor, scale
+	if _, open := h.refreshLocked(); open {
+		r.publishSurfaceAsync(global, mediaStripSurfaceID)
+	}
 }
