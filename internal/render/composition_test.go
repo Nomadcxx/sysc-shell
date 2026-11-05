@@ -11,6 +11,7 @@ import (
 // in one mode even when it happens to be right in the other.
 func lightStyle() Style {
 	s := testStyle
+	s.Roles[ui.PaintPrimaryContainer] = Color{R: 0xd6, G: 0xe3, B: 0xff, A: 0xff}
 	s.Roles[ui.PaintSecondaryContainer] = Color{R: 0xe8, G: 0xde, B: 0xf8, A: 0xff}
 	s.Roles[ui.PaintOnSecondaryContainer] = Color{R: 0x1d, G: 0x19, B: 0x2b, A: 0xff}
 	s.Background = Color{R: 0xfa, G: 0xf9, B: 0xfd, A: 0xff}

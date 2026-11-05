@@ -188,8 +188,20 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (height int, err
 		if n.Role == "checkbox" {
 			return CheckboxSize, nil
 		}
+		if n.Height > 0 {
+			return n.Height, nil
+		}
+		if n.ControlH > 0 {
+			return n.ControlH, nil
+		}
 		return ToggleHeight, nil
 	case KindSlider:
+		if n.Height > 0 {
+			return n.Height, nil
+		}
+		if n.ControlH > 0 {
+			return n.ControlH, nil
+		}
 		return SliderKnob, nil
 	case KindMenu:
 		_, labelHeight := measure(n.Text, TextAttrsOf(n))

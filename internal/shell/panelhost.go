@@ -2567,6 +2567,7 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	if err := h.ensureText(); err != nil {
 		return err
 	}
+	ui.SizeControls(h.root, h.metrics())
 	box := h.surfaceBody(w, height)
 	if h.id == PanelOnboarding && h.root != nil {
 		if err := onbFitFrame(h, box); err != nil {
@@ -4365,6 +4366,12 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 			focusedKind = focused.Kind
 		}
 	}
+	// Tree replacement ends transient gestures; focus, editors and scroll
+	// positions are restored independently below.
+	h.sliderDrag, h.scrollDrag, h.fieldDrag = nil, nil, nil
+	h.drag.Cancel()
+	h.pressed = ""
+	h.pointer.setPress("")
 	h.root = r.panelTree(h)
 	if h.id == PanelFiles {
 		h.filesOwner = r.files
@@ -4483,7 +4490,8 @@ func (h *PanelHost) resolveEffectMotionLocked(root *ui.Node) error {
 	return nil
 }
 
-func (r *Registry) panelTree(h *PanelHost) *ui.Node {
+func (r *Registry) panelTree(h *PanelHost) (root *ui.Node) {
+	defer func() { ui.SizeControls(root, h.metrics()) }()
 	switch h.id {
 	case PanelClock:
 		now := r.now

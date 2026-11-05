@@ -1,20 +1,24 @@
 package ui
 
-import "math"
+import (
+	"math"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+)
 
 // Control sizes are logical pixels, matching the settings catalog tokens.
 const (
-	ToggleWidth  = 36
-	ToggleHeight = 22
-	ToggleKnob   = 18
+	ToggleWidth  = 52
+	ToggleHeight = 32
+	ToggleKnob   = 24
 	CheckboxSize = 18
-	SliderTrack  = 4
-	SliderKnob   = 14
+	SliderTrack  = 16
+	SliderKnob   = 44
 
-	// MeterHeight and GraphHeight are the heights a meter and a graph take
-	// in a column. In a row each fills the content band instead and Width is
-	// the measured width, so neither dimension can be reused here.
-	MeterHeight = 8
+	// MeterHeight owns the default painted thickness and column height.
+	// A row reserves its content band; explicit Height overrides thickness.
+	// GraphHeight is the default height of a graph in a column.
+	MeterHeight = 4
 	GraphHeight = 64
 
 	KeyHome  = 102
@@ -23,6 +27,51 @@ const (
 	KeyEnd   = 107
 	KeySpace = 57
 )
+
+// ToggleDimensions returns the M3 track size at the requested density.
+func ToggleDimensions(m theme.Metrics) (width, height int) {
+	base, _ := theme.MetricsFor(theme.DensityDefault)
+	size := m.ToggleBase
+	if size <= 0 {
+		size = base.ToggleBase
+	}
+	return int(math.Round(float64(ToggleWidth*size) / float64(base.ToggleBase))), int(math.Round(float64(ToggleHeight*size) / float64(base.ToggleBase)))
+}
+
+// SliderDimensions returns the track height, handle width/height and gap.
+func SliderDimensions(m theme.Metrics, pressed bool) (track, width, height, gap int) {
+	base, _ := theme.MetricsFor(theme.DensityDefault)
+	size := m.SliderKnob
+	if size <= 0 {
+		size = base.SliderKnob
+	}
+	scaled := func(v int) int { return max(1, int(math.Round(float64(v*size)/float64(base.SliderKnob)))) }
+	width = 4
+	if pressed {
+		width = 2
+	}
+	return scaled(SliderTrack), scaled(width), scaled(SliderKnob), scaled(6)
+}
+
+// SizeControls supplies density defaults before measurement. Explicit sizes
+// stay with their owner; checkboxes use their own size and paint recipe.
+func SizeControls(n *Node, m theme.Metrics) {
+	if n == nil {
+		return
+	}
+	switch n.Kind {
+	case KindToggle:
+		if n.Role != "checkbox" {
+			n.ControlW, n.ControlH = ToggleDimensions(m)
+		}
+	case KindSlider:
+		_, _, n.ControlH, _ = SliderDimensions(m, false)
+	}
+
+	for _, child := range n.Children {
+		SizeControls(child, m)
+	}
+}
 
 // Activate flips a toggle. Other kinds are handled by their own key paths.
 func Activate(n *Node) bool {

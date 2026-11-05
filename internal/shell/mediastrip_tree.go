@@ -9,8 +9,8 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// The media strip is a fixed card: art and text over a seek row and the
-// transport. TestMediaStripTreeStates holds the content inside it.
+// The media strip has a fixed width and a minimum height. The host measures
+// its density-sized seek row before placing the surface.
 const (
 	mediaStripW     = 372
 	mediaStripH     = 200
@@ -22,11 +22,11 @@ const (
 
 // mediaStripPlacement puts the strip off the bar's inner edge, centred on the
 // pill along the bar, and clamps it inside the work area.
-func mediaStripPlacement(edge string, anchor, body, work ui.Rect) ui.Rect {
+func mediaStripPlacement(edge string, anchor, body, work ui.Rect, height int) ui.Rect {
 	if work.W <= 0 || work.H <= 0 {
 		return ui.Rect{}
 	}
-	w, h := min(mediaStripW, work.W), min(mediaStripH, work.H)
+	w, h := min(mediaStripW, work.W), min(height, work.H)
 	cx, cy := anchor.X+anchor.W/2, anchor.Y+anchor.H/2
 	x, y := cx-w/2, body.Y+body.H+mediaStripGap
 	switch edge {

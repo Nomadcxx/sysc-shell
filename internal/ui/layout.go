@@ -685,13 +685,40 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (w, h int, err
 		if n.Role == "checkbox" {
 			return CheckboxSize, CheckboxSize, nil
 		}
-		return ToggleWidth, ToggleHeight, nil
+		w, h := n.Width, n.Height
+		if w <= 0 {
+			w = n.ControlW
+		}
+		if w <= 0 {
+			w = ToggleWidth
+		}
+		if h <= 0 {
+			h = n.ControlH
+		}
+		if h <= 0 {
+			h = ToggleHeight
+		}
+		if contentHeight > 0 {
+			h = min(h, contentHeight)
+		}
+		return w, h, nil
 	case KindSlider:
 		w := n.Width
 		if w <= 0 {
 			w = 160
 		}
-		return w, SliderKnob, nil
+		h := n.Height
+		if h <= 0 {
+			h = n.ControlH
+		}
+		if h <= 0 {
+			h = SliderKnob
+		}
+		// A fixed-height row owns the band; a taller handle must fit inside it.
+		if contentHeight > 0 {
+			h = min(h, contentHeight)
+		}
+		return w, h, nil
 	case KindMenu:
 		w, labelHeight := measure(n.Text, TextAttrsOf(n))
 		w += 2 * n.Padding

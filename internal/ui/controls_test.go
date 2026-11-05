@@ -1,6 +1,10 @@
 package ui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+)
 
 func TestToggleActivatesOnSpaceAndClick(t *testing.T) {
 	t.Parallel()
@@ -144,5 +148,59 @@ func TestMenuGeometryHonorsPaddingAndDeclaredSize(t *testing.T) {
 	}
 	if rowMenu.Bounds.W != 220 || rowMenu.Bounds.H != 36 {
 		t.Errorf("row menu bounds = %+v, want 220×36 padded control", rowMenu.Bounds)
+	}
+}
+
+func TestControlDimensionsFollowDensityAndRespectExplicitSizes(t *testing.T) {
+	for i, density := range theme.Densities() {
+		t.Run(string(density), func(t *testing.T) {
+			m, _ := theme.MetricsFor(density)
+			want := [][3]int{{36, 22, 28}, {44, 27, 36}, {52, 32, 44}, {60, 37, 52}, {80, 49, 68}}[i]
+			toggle := &Node{Kind: KindToggle}
+			slider := &Node{Kind: KindSlider, Min: 0, Max: 100, Width: 160}
+			explicit := &Node{Kind: KindSlider, Width: 90, Height: 20}
+			checkbox := &Node{Kind: KindToggle, Role: "checkbox"}
+			root := &Node{Kind: KindColumn, Children: []*Node{toggle, slider, explicit, checkbox}}
+			SizeControls(root, m)
+			row := &Node{Kind: KindRow, Children: []*Node{toggle, slider}}
+			if err := Layout(row, Rect{W: 400, H: 100}, fakeMeasure); err != nil {
+				t.Fatal(err)
+			}
+			if toggle.Bounds.W != want[0] || toggle.Bounds.H != want[1] || slider.Bounds.H != want[2] {
+				t.Fatalf("toggle %v slider %v, want %v", toggle.Bounds, slider.Bounds, want)
+			}
+			if explicit.Width != 90 || explicit.Height != 20 || checkbox.Width != 0 || checkbox.Height != 0 {
+				t.Fatal("sizing changed an explicit size or checkbox")
+			}
+			row = &Node{Kind: KindRow, Children: []*Node{slider}}
+			if err := Layout(row, Rect{W: 180, H: 20}, func(string, TextAttrs) (int, int) { return 8, 16 }); err != nil {
+				t.Fatal(err)
+			}
+			if slider.Bounds.H != 20 {
+				t.Fatalf("slider height %d, want row clamp 20", slider.Bounds.H)
+			}
+		})
+	}
+}
+
+func TestControlSizingTracksDensityChangesOnRetainedNodes(t *testing.T) {
+	toggle := &Node{Kind: KindToggle}
+	slider := &Node{Kind: KindSlider, Min: 0, Max: 100, Width: 160}
+	root := &Node{Kind: KindRow, Children: []*Node{toggle, slider}}
+	for _, test := range []struct {
+		density          theme.Density
+		toggleH, sliderH int
+	}{{theme.DensityMini, 22, 28}, {theme.DensitySpacious, 49, 68}} {
+		m, _ := theme.MetricsFor(test.density)
+		SizeControls(root, m)
+		if err := Layout(root, Rect{W: 400, H: 100}, fakeMeasure); err != nil {
+			t.Fatal(err)
+		}
+		if toggle.Bounds.H != test.toggleH || slider.Bounds.H != test.sliderH {
+			t.Errorf("%s: toggle height %d slider height %d", test.density, toggle.Bounds.H, slider.Bounds.H)
+		}
+	}
+	if toggle.Width != 0 || toggle.Height != 0 || slider.Height != 0 {
+		t.Error("inferred size overwrote a declared dimension")
 	}
 }

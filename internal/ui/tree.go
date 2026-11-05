@@ -220,8 +220,8 @@ type GradientPaint struct {
 	From, To float64
 }
 
-// Node is one retained element. Layout fills Bounds; every other field is
-// supplied by the caller.
+// Node is one retained element. Layout fills Bounds; SizeControls resolves
+// control dimensions. Callers supply the remaining fields.
 type Node struct {
 	Kind Kind
 	Text string
@@ -272,6 +272,9 @@ type Node struct {
 	// MinWidth and MinHeight reserve space without replacing intrinsic size.
 	// The bar uses them for pointer slots; zero leaves other surfaces unchanged.
 	MinWidth, MinHeight int
+	// ControlW/H are density defaults refreshed by SizeControls. Keeping them
+	// separate lets retained trees change density without altering explicit sizes.
+	ControlW, ControlH int
 	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
 	IconSize int
 	// IconProjectFirst resolves Icon in the project catalogue before the

@@ -3419,9 +3419,11 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 			continue
 		}
 		next := r.panelThemeForState(h.output, cfg, tokens)
+		metricsChanged := h.theme.Metrics != next.Metrics
 		h.retheme(withPanelRadius(next, h))
-		if h.id == PanelOnboarding {
-			// The wordmark is a raster painted in the palette.
+		if metricsChanged || h.id == PanelOnboarding {
+			// Density changes control geometry; onboarding also rebuilds its
+			// palette-coloured wordmark when the colours change.
 			r.rebuildPanel(h)
 		}
 		r.startSurfaceFrames(h)
@@ -3445,6 +3447,11 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 	if h := r.polkitHost; h != nil && h.open_ {
 		h.retheme(r.panelThemeForState(h.output, cfg, tokens))
 		pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: polkitSurfaceID})
+	}
+	if h := r.mediaStrip; h != nil && h.open_ {
+		if h.rethemeLocked(r.panelThemeForState(h.output, cfg, tokens), cfg.Bar.FontFamily) {
+			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: mediaStripSurfaceID})
+		}
 	}
 	if r.osd != nil {
 		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)

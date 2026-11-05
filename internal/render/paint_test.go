@@ -20,6 +20,7 @@ const (
 
 var testStyle = Style{
 	Roles: [ui.PaintRoleCount]Color{
+		ui.PaintPrimaryContainer:     {R: 0x30, G: 0x45, B: 0x60, A: 0xff},
 		ui.PaintSecondaryContainer:   {R: 0x4a, G: 0x44, B: 0x58, A: 0xff},
 		ui.PaintOnSecondaryContainer: {R: 0xe8, G: 0xde, B: 0xf8, A: 0xff},
 	},
@@ -199,7 +200,7 @@ func TestPaintKeepsChildrenInsideTheRoundedBody(t *testing.T) {
 	if got := pixelAt(t, c, 4, 4); got != (Color{}) {
 		t.Fatalf("child repainted rounded corner %+v, want transparent", got)
 	}
-	if got := pixelAt(t, c, 16, 4); got != style.Accent {
+	if got := pixelAt(t, c, 16, 24); got != style.Accent {
 		t.Fatalf("child inside rounded body = %+v, want accent %+v", got, style.Accent)
 	}
 }
@@ -657,11 +658,11 @@ func TestPaintMeterTrackAndFill(t *testing.T) {
 	root := paintTree(t, c, testStyle)
 	meter := root.Children[1].Bounds
 
-	if got := pixelAt(t, c, meter.X+2, meter.Y+2); got != testStyle.Accent {
+	if got := pixelAt(t, c, meter.X+4, meter.Y+meter.H/2); got != testStyle.Accent {
 		t.Errorf("filled meter pixel = %+v, want the accent %+v", got, testStyle.Accent)
 	}
-	if got := pixelAt(t, c, meter.X+meter.W-2, meter.Y+2); got != testStyle.Track {
-		t.Errorf("unfilled meter pixel = %+v, want the track %+v", got, testStyle.Track)
+	if got := pixelAt(t, c, meter.X+meter.W-8, meter.Y+meter.H/2); got != testStyle.Roles[ui.PaintSecondaryContainer] {
+		t.Errorf("unfilled meter pixel = %+v, want the tonal track", got)
 	}
 }
 
@@ -694,7 +695,7 @@ func TestPaintToggleKnobUsesAccentForeground(t *testing.T) {
 	style.Accent = Color{R: 0xf0, G: 0x60, B: 0x9f, A: 0xff}
 	style.AccentOn = style.Accent // The palette's error and primary colors can match.
 	style.OnAccent = Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
-	n := &ui.Node{Kind: ui.KindToggle, Value: 1, Bounds: ui.Rect{X: 20, Y: 8, W: 48, H: 24}}
+	n := &ui.Node{Kind: ui.KindToggle, Value: 1, Bounds: ui.Rect{X: 20, Y: 8, W: 52, H: 32}}
 	c := newTestCanvas(t, 88, 48)
 	paintToggle(c, n, style)
 
@@ -888,11 +889,12 @@ func TestPaintScalesToPhysicalPixels(t *testing.T) {
 	meter := root.Children[0].Bounds
 	// The meter's logical right edge maps to 1.5x in buffer pixels.
 	physicalRight := (meter.X+meter.W)*180/120 - 1
-	if got := pixelAt(t, c, physicalRight, meter.Y*180/120+2); got != testStyle.Accent {
+	// Read inside the rounded cap, clear of its antialiased edge.
+	if got := pixelAt(t, c, physicalRight-2, (meter.Y+meter.H/2)*180/120); got != testStyle.Accent {
 		t.Errorf("scaled meter pixel at x=%d = %+v, want the accent %+v", physicalRight, got, testStyle.Accent)
 	}
 	// One pixel past the scaled edge must still be background.
-	if got := pixelAt(t, c, physicalRight+1, meter.Y*180/120+2); got != testStyle.Background {
+	if got := pixelAt(t, c, physicalRight+1, (meter.Y+meter.H/2)*180/120); got != testStyle.Background {
 		t.Errorf("pixel past the scaled meter = %+v, want the background", got)
 	}
 }
@@ -1126,7 +1128,7 @@ func TestAnAbsentMeterPaintsNothing(t *testing.T) {
 	}
 
 	box := ui.Rect{X: 0, Y: 0, W: w, H: h}
-	if got := accentPixels(c, style.Track, box); got != 0 {
+	if got := accentPixels(c, style.Roles[ui.PaintSecondaryContainer], box); got != 0 {
 		t.Errorf("an absent meter painted %d track pixels, want none", got)
 	}
 	if got := accentPixels(c, style.Accent, box); got != 0 {
@@ -1138,7 +1140,7 @@ func TestAnAbsentMeterPaintsNothing(t *testing.T) {
 	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
 		t.Fatalf("Paint: %v", err)
 	}
-	if got := accentPixels(c, style.Track, box); got == 0 {
+	if got := accentPixels(c, style.Roles[ui.PaintSecondaryContainer], box); got == 0 {
 		t.Error("a zero meter painted no track, so absent and zero look alike")
 	}
 }

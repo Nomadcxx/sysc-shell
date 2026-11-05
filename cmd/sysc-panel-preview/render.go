@@ -76,6 +76,7 @@ func renderPanel(root *v1.Node, width, height, scale120 int, family string) (*im
 		}
 		return len(s) * 8, 16
 	}
+	ui.SizeControls(tree, style.Metrics)
 	if tree.Kind == ui.KindRow {
 		err = ui.Layout(tree, body, measure)
 	} else {
