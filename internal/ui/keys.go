@@ -79,6 +79,7 @@ const (
 	SymPageDown   uint32 = 0xff56
 	SymEnd        uint32 = 0xff57
 	SymKPEnter    uint32 = 0xff8d
+	SymF2         uint32 = 0xffbf
 	SymISOLeftTab uint32 = 0xfe20
 	SymDelete     uint32 = 0xffff
 )
@@ -87,6 +88,35 @@ var fallbackSyms = map[uint32]uint32{
 	1: SymEscape, 14: SymBackSpace, 15: SymTab, 28: SymReturn, 96: SymKPEnter,
 	102: SymHome, 103: SymUp, 104: SymPageUp, 105: SymLeft, 106: SymRight,
 	107: SymEnd, 108: SymDown, 109: SymPageDown, 111: SymDelete,
+}
+
+// navCodes names each navigation keysym by the US evdev code the shell's key
+// handlers switch on. KP_Enter and ISO_Left_Tab share their main keys' codes.
+var navCodes = map[uint32]uint32{
+	SymEscape: 1, SymBackSpace: 14, SymTab: 15, SymISOLeftTab: 15, SymReturn: 28,
+	SymKPEnter: 28, ' ': 57, SymF2: 60, SymHome: 102, SymUp: 103, SymPageUp: 104,
+	SymLeft: 105, SymRight: 106, SymEnd: 107, SymDown: 108, SymPageDown: 109,
+	SymDelete: 111,
+}
+
+// NavCode is the code a key navigates as. The layout decides: a key that
+// resolves to Tab is Tab whatever its evdev code, and a navigation code the
+// layout gives another symbol navigates as nothing (0), so a virtual keyboard
+// that sends Tab on code 1 does not act as Escape. Other keys keep their code,
+// as does any key with no resolved symbol.
+func (k KeyInput) NavCode() uint32 {
+	if code, ok := navCodes[k.Sym]; ok {
+		return code
+	}
+	if k.Sym == 0 {
+		return k.Code
+	}
+	for _, code := range navCodes {
+		if code == k.Code {
+			return 0
+		}
+	}
+	return k.Code
 }
 
 // FallbackKey resolves an evdev code through the US table. It is the whole

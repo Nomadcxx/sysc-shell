@@ -484,13 +484,14 @@ func (h *runningAppMenuHost) handle(event wayland.Event) bool {
 			}
 			return false
 		}
-		if !h.menu.Handle(event.Key) {
+		key := navKey(event)
+		if !h.menu.Handle(key) {
 			return false
 		}
 		h.keyed = true
 		h.pointer = ""
 		if !h.menu.Opened() {
-			if event.Key == keyEsc {
+			if key == keyEsc {
 				h.closeLocked()
 				return true
 			}
@@ -580,7 +581,7 @@ func (h *runningAppMenuHost) handle(event wayland.Event) bool {
 }
 
 func runningAppMenuCloseShortcut(event wayland.Event) bool {
-	if event.Key == keyDelete && event.Mods == 0 {
+	if navKey(event) == keyDelete && event.Mods == 0 {
 		return true
 	}
 	return (event.Sym == uint32('x') && event.Mods == 0) ||

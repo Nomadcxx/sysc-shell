@@ -319,7 +319,7 @@ func (h *trayDrawerHost) render(pixels []byte, width, height, stride int) error 
 func (h *trayDrawerHost) handle(event wayland.Event) bool {
 	switch event.Kind {
 	case wayland.EventKeyPress:
-		switch event.Key {
+		switch navKey(event) {
 		case keyEsc:
 			h.close()
 			return true

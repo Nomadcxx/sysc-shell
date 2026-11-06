@@ -3167,6 +3167,12 @@ func (h *PanelHost) keyEvent(r *Registry, e wayland.Event) bool {
 	return h.keyInput(r, ui.KeyInput{Code: e.Key, Sym: e.Sym, Text: e.Text, Mods: e.Mods, Serial: e.Serial})
 }
 
+// navKey is the code a live key event navigates as; see ui.KeyInput.NavCode.
+// Every surface's key switch takes it, never the raw code.
+func navKey(e wayland.Event) uint32 {
+	return ui.KeyInput{Code: e.Key, Sym: e.Sym}.NavCode()
+}
+
 // keyPress resolves a raw evdev code through the US fallback. Tests and any
 // caller holding only a code use it.
 func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
@@ -3181,7 +3187,7 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) (changed bool) {
 	if h.id == PanelPower {
 		return h.powerKeyInput(r, k)
 	}
-	key := k.Code
+	key := k.NavCode()
 	if h.id == PanelOnboarding && h.onbMoveMode {
 		dx, dy := 0, 0
 		switch key {
@@ -3332,7 +3338,7 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) (changed bool) {
 		r.closePanelLocked(h.id)
 		return true
 	case keyTab:
-		if h.mods.Has(ui.ModShift) {
+		if h.mods.Has(ui.ModShift) || k.Sym == ui.SymISOLeftTab {
 			h.roving.Prev()
 		} else {
 			h.roving.Next()
