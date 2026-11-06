@@ -553,6 +553,7 @@ func (o *owner) removeAux(h *OutputHost, id string) bool {
 	if o.focus.unit == u {
 		o.clearFocus()
 	}
+	o.touchUnitGone(u)
 	if o.keyFocus.unit == u {
 		o.keyboardGone()
 	}
