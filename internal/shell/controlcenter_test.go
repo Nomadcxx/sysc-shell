@@ -393,7 +393,8 @@ func TestControlCentreHeaderAndBodyComposition(t *testing.T) {
 	if len(root.Children) != 2 || len(root.Children[1].Children) != 2 {
 		t.Fatalf("control centre composition = %+v, want rail beside header and body", root)
 	}
-	header := root.Children[1].Children[0]
+	// The header sits in a wrapper that pads it by the focus ring's reach.
+	header := root.Children[1].Children[0].Children[0]
 	if header.Height != 40 || len(header.Children) != 2 || header.Children[0].Text != "Audio" {
 		t.Fatalf("header = %+v, want a 40px Audio header", header)
 	}

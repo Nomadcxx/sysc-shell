@@ -44,6 +44,9 @@ func focusGeometry(style Style, n *ui.Node) (ui.Rect, int) {
 		radius = chromeRadius(style, nodeRadius(style, n, capsuleInherit(style, n)), box)
 		radius = ui.MorphRadius(radius, n.PressProgress)
 	}
+	if n.FocusInward {
+		return box, radius
+	}
 	outer := logical
 	outer.X -= FocusOutset
 	outer.Y -= FocusOutset
@@ -59,16 +62,37 @@ func focusGeometry(style Style, n *ui.Node) (ui.Rect, int) {
 	return expanded, min(radius+style.Scale120.Physical(FocusOutset), min(expanded.W, expanded.H)/2)
 }
 
+// focusRing is a ring waiting for the end of the tree, with the clip that
+// was in force where its node painted.
+type focusRing struct {
+	box, restrict ui.Rect
+	radius, width int
+	colour        Color
+}
+
 func paintFocus(c *Canvas, n *ui.Node, style Style) {
 	if !n.State.Has(ui.StateFocused) || n.State.Has(ui.StateDisabled) && !n.AriaDisabled {
 		return
 	}
 	box, radius := focusGeometry(style, n)
-	ring := *c
+	ring := focusRing{box: box, restrict: c.restrict, radius: radius, width: max(1, style.Scale120.Physical(3)), colour: style.Secondary}
+	// An outward ring reaches past its control, where the next item would
+	// paint over it, so the surface strokes it after the whole tree. An
+	// opacity group's ring stays in its frame so the group's alpha applies.
+	if c.rings != nil {
+		*c.rings = append(*c.rings, ring)
+		return
+	}
+	ring.stroke(c)
+}
+
+func (r focusRing) stroke(c *Canvas) {
+	canvas := *c
 	// Opacity groups clip ordinary content to their allocation. The ring alone
 	// may use the extended scratch frame; scroll, explicit and damage clips stay.
-	ring.contentClip = nil
-	ring.StrokeRounded(box, radius, max(1, style.Scale120.Physical(3)), style.Secondary)
+	canvas.contentClip = nil
+	canvas.restrict = r.restrict
+	canvas.StrokeRounded(r.box, r.radius, r.width, r.colour)
 }
 
 // focusPaintBounds extends only the focused subtree's bounded scratch/cull

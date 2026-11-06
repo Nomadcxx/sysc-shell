@@ -293,3 +293,50 @@ func TestM3FocusRingUsesResolvedShape(t *testing.T) {
 		})
 	}
 }
+
+// A ring reaches FocusOutset past its control. Rails stack items closer than
+// that, and the item painted next must not cover the focused item's ring.
+func TestM3FocusRingPaintsAboveLaterSiblings(t *testing.T) {
+	style := testStyle
+	style.Secondary = Color{R: 227, G: 41, B: 119, A: 255}
+	focused := &ui.Node{Kind: ui.KindButton, Bounds: ui.Rect{X: 35, Y: 25, W: 60, H: 30}, State: ui.StateFocused}
+	next := &ui.Node{Kind: ui.KindButton, Fill: ui.FillAccent, Bounds: ui.Rect{X: 35, Y: 57, W: 60, H: 30}}
+	for name, root := range map[string]*ui.Node{
+		"siblings": {Kind: ui.KindColumn, Children: []*ui.Node{focused, next}},
+		"cousins": {Kind: ui.KindColumn, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Bounds: focused.Bounds, Children: []*ui.Node{focused}},
+			{Kind: ui.KindColumn, Bounds: next.Bounds, Children: []*ui.Node{next}},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := focusCanvas(t, root, style)
+			for y := 57; y < 60; y++ {
+				if got := pixelAt(t, c, 65, y); got != style.Secondary {
+					t.Fatalf("ring at y=%d = %+v, covered by the next item", y, got)
+				}
+			}
+		})
+	}
+}
+
+// Stacked navigation items take Material's inward ring: the stroke lies
+// inside the item's own shape, so it needs no gap around the item.
+func TestM3FocusRingInward(t *testing.T) {
+	style := testStyle
+	style.Secondary = Color{R: 227, G: 41, B: 119, A: 255}
+	n := &ui.Node{Kind: ui.KindButton, Bounds: ui.Rect{X: 35, Y: 25, W: 60, H: 30}, State: ui.StateFocused, FocusInward: true}
+	c := focusCanvas(t, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{n}}, style)
+	for y := 25; y < 28; y++ {
+		if got := pixelAt(t, c, 65, y); got != style.Secondary {
+			t.Fatalf("inward ring at y=%d = %+v want Secondary", y, got)
+		}
+	}
+	for y := 20; y < 25; y++ {
+		if got := pixelAt(t, c, 65, y); got == style.Secondary {
+			t.Fatalf("inward ring painted outside the item at y=%d", y)
+		}
+	}
+	if got := focusPaintBounds(n, style); got != style.Scale120.PhysicalRect(n.Bounds) {
+		t.Fatalf("inward ring paint bounds = %+v, want the item's own box", got)
+	}
+}

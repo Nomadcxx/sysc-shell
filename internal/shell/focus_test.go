@@ -393,7 +393,9 @@ func TestSettingsFocusHasViewportRoom(t *testing.T) {
 					}
 					y := n.Bounds.Y - 3
 					if name == "Sounds" {
-						y = n.Bounds.Y + n.Bounds.H + 3
+						// A rail tab's ring is inward: its lower stroke lies
+						// inside the tab's own edge (sysc-2259).
+						y = n.Bounds.Y + n.Bounds.H - 2
 					}
 					x := scale.Physical(n.Bounds.X + n.Bounds.W/2)
 					at := scale.Physical(y)*pw*4 + x*4

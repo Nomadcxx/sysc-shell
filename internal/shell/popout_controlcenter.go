@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
@@ -121,11 +122,19 @@ func controlCentreTree(r *Registry, h *PanelHost) *ui.Node {
 	bodyHeight := max(panel.H-2*ccPanelPad-ccHeaderSize-ccBodyGap, 0)
 	page := ccPage(r, h)
 	page.Key = controlCentrePageKey
-	return &ui.Node{Kind: ui.KindRow, Gap: ccGap, Padding: ccPanelPad, Children: []*ui.Node{
-		ccRail(h),
-		{Kind: ui.KindColumn, Width: bodyWidth, Gap: ccBodyGap, Children: []*ui.Node{
-			ccHeader(h),
-			{Kind: ui.KindScroll, Key: controlCentreViewportKey, Height: bodyHeight, Children: []*ui.Node{page}},
+	// The page viewport clips, and a focus ring reaches render.FocusOutset past
+	// its control: a tile at the page's edge lost its ring's outer side. The
+	// rail, header and viewport each grow by the outset into the gutters and
+	// pad it back, so every control keeps its place and the clip clears the
+	// ring.
+	out := render.FocusOutset
+	rail := ccRail(h)
+	rail.Width, rail.Padding = ccRailWidth+2*out, out
+	return &ui.Node{Kind: ui.KindRow, Gap: ccGap - 2*out, Padding: ccPanelPad - out, Children: []*ui.Node{
+		rail,
+		{Kind: ui.KindColumn, Width: bodyWidth + 2*out, Gap: ccBodyGap - 2*out, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Padding: out, Children: []*ui.Node{ccHeader(h)}},
+			{Kind: ui.KindScroll, Key: controlCentreViewportKey, Height: bodyHeight + 2*out, Padding: out, Children: []*ui.Node{page}},
 		}},
 	}}
 }
@@ -243,7 +252,7 @@ func ccRail(h *PanelHost) *ui.Node {
 		}
 		entry := &ui.Node{
 			Kind: ui.KindButton, Width: ccRailItem, Height: ccRailItem,
-			Action: action, Name: name, Role: "tab", Focusable: true,
+			Action: action, Name: name, Role: "tab", Focusable: true, FocusInward: true,
 			AriaDisabled: !section.Enabled, State: state, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: section.Icon}},
 		}
