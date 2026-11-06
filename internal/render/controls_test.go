@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/color"
@@ -110,13 +111,13 @@ func TestM3ControlContactSheet(t *testing.T) {
 		for _, scale := range []ui.Scale120{120, 150} {
 			style := mode.style
 			style.Scale120 = scale
-			c := newTestCanvas(t, scale.Physical(1100), scale.Physical(650))
+			c := newTestCanvas(t, scale.Physical(1500), scale.Physical(650))
 			fillRect(c, ui.Rect{W: c.Width, H: c.Height}, style.Background)
 			for row, density := range theme.Densities() {
 				style.Metrics, _ = theme.MetricsFor(density)
 				y := row * 130
-				// Columns: off/on, pressed off/on, disabled off/on, then 0/50/100 sliders.
-				for col := 0; col < 6; col++ {
+				// Columns: off/on, press, disabled, focus, drag; then 0/50/100 sliders.
+				for col := 0; col < 10; col++ {
 					n := &ui.Node{Kind: ui.KindToggle, Bounds: ui.Rect{X: 15 + col*95, Y: y + 20, W: 80, H: 60}}
 					if col%2 == 1 {
 						n.Value = 1
@@ -127,10 +128,16 @@ func TestM3ControlContactSheet(t *testing.T) {
 					if col/2 == 2 {
 						n.State = ui.StateDisabled
 					}
+					if col/2 == 3 {
+						n.State = ui.StateFocused
+					}
+					if col/2 == 4 {
+						n.State = ui.StateDragged | ui.StatePressed
+					}
 					paintToggle(c, n, style)
 				}
 				for col, v := range []float64{0, 50, 100} {
-					n := &ui.Node{Kind: ui.KindSlider, Min: 0, Max: 100, Value: v, Bounds: ui.Rect{X: 600 + col*165, Y: y + 10, W: 145, H: 76}}
+					n := &ui.Node{Kind: ui.KindSlider, Min: 0, Max: 100, Value: v, Bounds: ui.Rect{X: 1000 + col*165, Y: y + 10, W: 145, H: 76}}
 					paintSlider(c, n, style)
 					n.Kind = ui.KindMeter
 					n.Value = v / 100
@@ -287,6 +294,116 @@ func TestMeterEndpointsGapStopAndSemanticTones(t *testing.T) {
 						}
 					}
 				}
+			}
+		}
+	}
+}
+
+func TestM3FocusedControlPixels(t *testing.T) {
+	for _, mode := range compositionModes() {
+		for _, scale := range []ui.Scale120{120, 150} {
+			for _, density := range theme.Densities() {
+				style := mode.style
+				style.Scale120 = scale
+				style.Metrics, _ = theme.MetricsFor(density)
+				for _, state := range []ui.Interaction{ui.StateFocused, ui.StateFocused | ui.StateHovered, ui.StateFocused | ui.StatePressed, ui.StateFocused | ui.StateDisabled} {
+					for _, on := range []bool{false, true} {
+						n := &ui.Node{Kind: ui.KindToggle, State: state, Bounds: ui.Rect{X: 15, Y: 15, W: 104, H: 80}}
+						if on {
+							n.Value = 1
+						}
+						box := toggleBounds(n, style)
+						cx := box.X + box.H/2
+						if on {
+							cx = box.X + box.W - box.H/2
+						}
+						c := newTestCanvas(t, scale.Physical(150), scale.Physical(120))
+						paintToggle(c, n, style)
+						want := style.Track
+						if on {
+							want = resolvePaintRole(style, ui.PaintPrimaryContainer)
+						}
+						if state.Has(ui.StateDisabled) {
+							plain := *n
+							plain.State = ui.StateDisabled
+							baseline := newTestCanvas(t, c.Width, c.Height)
+							paintToggle(baseline, &plain, style)
+							if !bytes.Equal(c.Pix, baseline.Pix) {
+								t.Fatal("focus changed disabled switch")
+							}
+							continue
+						}
+						if got := pixelAt(t, c, cx, box.Y+box.H/2); !nearColour(got, premul(want), 1) {
+							t.Fatalf("%s/%d/%s on%v state%d switch=%+v want%+v", mode.name, scale, density, on, state, got, want)
+						}
+					}
+				}
+				for _, state := range []ui.Interaction{0, ui.StateHovered, ui.StateFocused, ui.StatePressed | ui.StateFocused, ui.StateFocused | ui.StateDisabled} {
+					n := &ui.Node{Kind: ui.KindSlider, Min: 10, Max: 110, Value: 60, State: state, Bounds: ui.Rect{X: 15, Y: 15, W: 200, H: 100}}
+					c := newTestCanvas(t, scale.Physical(240), scale.Physical(130))
+					paintSlider(c, n, style)
+					_, width, height, _ := ui.SliderDimensions(style.Metrics, (state.Has(ui.StateFocused) || state.Has(ui.StatePressed)) && !state.Has(ui.StateDisabled))
+					y := scale.Physical(65) - scale.Physical(height)/3
+					count := 0
+					for x := 0; x < c.Width; x++ {
+						if pixelAt(t, c, x, y).A != 0 {
+							count++
+						}
+					}
+					if count != scale.Physical(width) {
+						t.Fatalf("%s/%d/%s state%d slider width=%d want%d", mode.name, scale, density, state, count, scale.Physical(width))
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestM3SliderEndpointStop(t *testing.T) {
+	for _, mode := range compositionModes() {
+		for _, density := range theme.Densities() {
+			for _, scale := range []ui.Scale120{120, 150} {
+				style := mode.style
+				style.Scale120 = scale
+				style.Metrics, _ = theme.MetricsFor(density)
+				for _, state := range []ui.Interaction{0, ui.StateHovered, ui.StateFocused, ui.StatePressed, ui.StateDragged, ui.StateDisabled} {
+					for _, value := range []float64{10, 60, 110} {
+						for _, step := range []float64{.01, 100} {
+							n := &ui.Node{Kind: ui.KindSlider, Min: 10, Max: 110, Value: value, Step: step, State: state, Bounds: ui.Rect{X: 15, Y: 15, W: 200, H: 100}}
+							c := newTestCanvas(t, scale.Physical(240), scale.Physical(130))
+							paintSlider(c, n, style)
+							track, _, _, _ := ui.SliderDimensions(style.Metrics, false)
+							x := scale.Physical(n.Bounds.X+n.Bounds.W) - scale.Physical(track)/2
+							y := scale.Physical(65)
+							want := style.accent()
+							if state.Has(ui.StateDisabled) {
+								want = withAlpha(style.Foreground, .38)
+							}
+							got := pixelAt(t, c, x, y)
+							inactive := resolvePaintRole(style, ui.PaintSecondaryContainer)
+							if state.Has(ui.StateDisabled) {
+								inactive = withAlpha(style.Foreground, .12)
+							}
+							distance := func(a, b Color) int {
+								return abs(int(a.R)-int(b.R)) + abs(int(a.G)-int(b.G)) + abs(int(a.B)-int(b.B)) + abs(int(a.A)-int(b.A))
+							}
+							if value < 110 && distance(got, premul(want)) >= distance(premul(inactive), premul(want)) {
+								t.Fatalf("%s/%s/%d state%d value%g endpoint=%+v want%+v", mode.name, density, scale, state, value, got, want)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	// A tiny track cannot contain both a handle gap and an endpoint stop.
+	n := &ui.Node{Kind: ui.KindSlider, Min: 0, Max: 100, Value: 0, Bounds: ui.Rect{X: 5, Y: 5, W: 8, H: 44}}
+	c := newTestCanvas(t, 30, 60)
+	paintSlider(c, n, testStyle)
+	for y := 0; y < c.Height; y++ {
+		for x := 13; x < c.Width; x++ {
+			if pixelAt(t, c, x, y).A != 0 {
+				t.Fatal("tiny slider painted beyond its allocation")
 			}
 		}
 	}

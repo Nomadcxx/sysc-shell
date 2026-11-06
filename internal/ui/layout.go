@@ -864,13 +864,17 @@ func MenuPopupBounds(n *Node) Rect {
 }
 
 // MayDrawOutsideBox reports whether the subtree holds a node whose paint can
-// reach outside its own box: a menu's open option list is an overlay that
+// reach outside its own box: a focus ring sits beyond the control, a menu's
+// open option list is an overlay that
 // floats over later rows, and a scroll with a gap scrollbar paints its bar in
 // the parent's padding. A walker that skips subtrees by their box has to keep
 // these whole.
 func MayDrawOutsideBox(n *Node) bool {
 	if n == nil {
 		return false
+	}
+	if n.State.Has(StateFocused) {
+		return true
 	}
 	switch n.Kind {
 	case KindMenu, KindScroll, KindVirtualList:

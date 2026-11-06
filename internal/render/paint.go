@@ -322,13 +322,19 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		defer func() { c.restrict = previous }()
 	}
 	if n.Opacity > 0 && n.Opacity < 100 {
-		x0, y0, x1, y1 := c.clip(style.Scale120.PhysicalRect(n.Bounds))
+		scope := *c
+		scope.contentClip = nil
+		x0, y0, x1, y1 := scope.clip(focusPaintBounds(n, style))
 		if x0 >= x1 || y0 >= y1 {
 			return nil
 		}
 		return paintNodeOpacity(c, n, text, style, size, x0, y0, x1, y1)
 	}
-	return paintNodeContent(c, n, text, style, size)
+	if err := paintNodeContent(c, n, text, style, size); err != nil {
+		return err
+	}
+	paintFocus(c, n, style)
+	return nil
 }
 
 // paintNodeOpacity renders one subtree into a transparent frame and applies
@@ -341,7 +347,8 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 // whose damage missed the node. Painting the subtree into a box-sized buffer
 // with an origin produces the same pixels because the composite below only ever
 // reads that box, so anything the subtree painted elsewhere was discarded
-// anyway. Group opacity consequently clips to the node's box.
+// anyway. Ordinary content keeps that clip; a focus ring extends the frame
+// while retaining the content clip, so only its outward stroke can escape.
 func paintNodeOpacity(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size, x0, y0, x1, y1 int) error {
 	w, h := x1-x0, y1-y0
 	offscreen, err := text.takeScratch(w, h)
@@ -352,10 +359,20 @@ func paintNodeOpacity(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	// works exactly as it would have on the surface: only the byte offset moved.
 	offscreen.Ox, offscreen.Oy = x0, y0
 	offscreen.restrict = c.restrict
+	contentBox := style.Scale120.PhysicalRect(n.Bounds)
+	if c.contentClip != nil {
+		if c.contentClip.W <= 0 || c.contentClip.H <= 0 {
+			contentBox = ui.Rect{}
+		} else {
+			contentBox = intersectClip(*c.contentClip, contentBox)
+		}
+	}
+	offscreen.contentClip = &contentBox
 	if err := paintNodeContent(offscreen, n, text, style, size); err != nil {
 		text.putScratch(offscreen)
 		return err
 	}
+	paintFocus(offscreen, n, style)
 	opacity := uint32(n.Opacity)
 	stride := offscreen.Stride
 	for y := y0; y < y1; y++ {
@@ -453,7 +470,11 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 
 	case ui.KindScheduleGrid:
 		prev := c.restrict
-		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+		c.restrict = intersectClip(c.restrict, style.Scale120.PhysicalRect(n.Bounds))
+		if c.restrict.W <= 0 || c.restrict.H <= 0 {
+			c.restrict = prev
+			return nil
+		}
 		defer func() { c.restrict = prev }()
 		if err := paintScheduleGrid(c, n, text, style); err != nil {
 			return err
@@ -487,7 +508,11 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 
 	case ui.KindScroll, ui.KindVirtualList:
 		prev := c.restrict
-		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+		c.restrict = intersectClip(c.restrict, style.Scale120.PhysicalRect(n.Bounds))
+		if c.restrict.W <= 0 || c.restrict.H <= 0 {
+			c.restrict = prev
+			return nil
+		}
 		defer func() { c.restrict = prev }()
 		for i, child := range n.Children {
 			if child == nil {
@@ -685,20 +710,28 @@ func dimmedControl(n *ui.Node, style Style) Style {
 	return style
 }
 
-func paintToggle(c *Canvas, n *ui.Node, style Style) {
-	if n.Role == "checkbox" {
-		paintCheckbox(c, n, dimmedControl(n, style))
-		return
-	}
+func toggleBounds(n *ui.Node, style Style) ui.Rect {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	if box.W <= 0 || box.H <= 0 {
-		return
+		return ui.Rect{}
 	}
 	width, height := ui.ToggleDimensions(style.Metrics)
 	height = min(box.H, style.Scale120.Physical(height))
 	width = min(box.W, style.Scale120.Physical(width), int(math.Round(float64(height)*ui.ToggleWidth/ui.ToggleHeight)))
 	height = min(height, int(math.Round(float64(width)*ui.ToggleHeight/ui.ToggleWidth)))
 	box = ui.Rect{X: box.X + (box.W-width)/2, Y: box.Y + (box.H-height)/2, W: width, H: height}
+	return box
+}
+
+func paintToggle(c *Canvas, n *ui.Node, style Style) {
+	if n.Role == "checkbox" {
+		paintCheckbox(c, n, dimmedControl(n, style))
+		return
+	}
+	box := toggleBounds(n, style)
+	if box.W <= 0 || box.H <= 0 {
+		return
+	}
 	track, knob, outline := style.containerHighest(), style.outline(), style.outline()
 	diameter := 16
 	on := n.Value != 0
@@ -706,7 +739,7 @@ func paintToggle(c *Canvas, n *ui.Node, style Style) {
 		track, knob = style.accent(), style.onAccent()
 		diameter = ui.ToggleKnob
 	}
-	if n.State.Has(ui.StateHovered) || n.State.Has(ui.StatePressed) {
+	if n.State.Has(ui.StateHovered) || n.State.Has(ui.StatePressed) || n.State.Has(ui.StateFocused) {
 		if on {
 			knob = resolvePaintRole(style, ui.PaintPrimaryContainer)
 		} else {
@@ -760,7 +793,7 @@ func paintSlider(c *Canvas, n *ui.Node, style Style) {
 	if box.W <= 0 || box.H <= 0 {
 		return
 	}
-	trackH, handleW, handleH, gap := ui.SliderDimensions(style.Metrics, n.State.Has(ui.StatePressed) && !n.State.Has(ui.StateDisabled))
+	trackH, handleW, handleH, gap := ui.SliderDimensions(style.Metrics, (n.State.Has(ui.StatePressed) || n.State.Has(ui.StateFocused)) && !n.State.Has(ui.StateDisabled))
 	trackH = min(box.H, max(1, style.Scale120.Physical(trackH)))
 	handleW = min(box.W, max(1, style.Scale120.Physical(handleW)))
 	handleH = min(box.H, max(1, style.Scale120.Physical(handleH)))
@@ -780,6 +813,15 @@ func paintSlider(c *Canvas, n *ui.Node, style Style) {
 	}
 	if x := kx + handleW + gap; x < box.X+box.W {
 		c.FillRounded(ui.Rect{X: x, Y: y, W: box.X + box.W - x, H: trackH}, trackH/2, inactive)
+		// The continuous endpoint uses active ink on the inactive track. Step
+		// controls snapping, not visual ticks. The round end centres the stop.
+		_, stop, _, _ := ui.SliderDimensions(style.Metrics, false)
+		stop = min(trackH, max(1, style.Scale120.Physical(stop)))
+		cx := box.X + box.W - trackH/2
+		stopBox := ui.Rect{X: cx - stop/2, Y: box.Y + (box.H-stop)/2, W: stop, H: stop}
+		if stopBox.X >= x && stopBox.X+stopBox.W <= box.X+box.W {
+			c.FillRounded(stopBox, stop/2, active)
+		}
 	}
 	handleBox := ui.Rect{X: kx, Y: box.Y + (box.H-handleH)/2, W: handleW, H: handleH}
 	c.FillRounded(handleBox, handleW/2, handle)
@@ -853,7 +895,11 @@ func paintMenuOverlays(c *Canvas, n *ui.Node, text *TextRenderer, style Style, s
 	}
 	prev := c.restrict
 	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
-		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+		c.restrict = intersectClip(c.restrict, style.Scale120.PhysicalRect(n.Bounds))
+		if c.restrict.W <= 0 || c.restrict.H <= 0 {
+			c.restrict = prev
+			return nil
+		}
 	}
 	defer func() { c.restrict = prev }()
 	for i, child := range n.Children {
@@ -1444,6 +1490,8 @@ func paintTextMarquee(c *Canvas, s string, box ui.Rect, text *TextRenderer, styl
 // light and dark palettes without inventing hover RGB.
 const (
 	hoverLayerAlpha    = 0.08
+	focusLayerAlpha    = 0.10
+	draggedLayerAlpha  = 0.16
 	pressedLayerAlpha  = 0.12
 	disabledForeground = 0.38
 	// scrimAlpha dims the content behind a modal surface enough to push it
@@ -1596,8 +1644,12 @@ func stateLayer(fg Color, state ui.Interaction) Color {
 	switch {
 	case state.Has(ui.StateDisabled):
 		return Color{}
+	case state.Has(ui.StateDragged):
+		alpha = draggedLayerAlpha
 	case state.Has(ui.StatePressed):
 		alpha = pressedLayerAlpha
+	case state.Has(ui.StateFocused):
+		alpha = focusLayerAlpha
 	case state.Has(ui.StateHovered):
 		alpha = hoverLayerAlpha
 	default:
@@ -1614,6 +1666,12 @@ func interactionLayer(fg Color, n *ui.Node) Color {
 		return Color{}
 	}
 	alpha := 0.0
+	if n.State.Has(ui.StateFocused) {
+		alpha = focusLayerAlpha
+	}
+	if n.State.Has(ui.StateDragged) {
+		alpha = draggedLayerAlpha
+	}
 	if n.State.Has(ui.StateHovered) {
 		p := min(max(n.HoverProgress, 0), 1)
 		if p == 0 {

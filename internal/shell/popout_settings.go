@@ -189,7 +189,7 @@ func settingsBodyWidth(h *PanelHost) int {
 	if h != nil {
 		pad = h.metrics().PanelPadding
 	}
-	return max(panelWidth-2*pad-settingsRailWidth-theme.MarginXL, 0)
+	return max(panelWidth-2*pad-settingsRailWidth-theme.MarginXL-2*render.FocusOutset, 0)
 }
 
 // settingsBodyKey and settingsRailKey name the pane's two independent scrolls.
@@ -208,7 +208,7 @@ func settingsBody(h *PanelHost, gap int, children ...*ui.Node) *ui.Node {
 		key, offset = settingsSearchBodyKey, h.settingsSearchScroll
 	}
 	return &ui.Node{
-		Kind: ui.KindScroll, Key: key, Width: settingsBodyWidth(h), Gap: gap,
+		Kind: ui.KindScroll, Key: key, Width: settingsBodyWidth(h) + 2*render.FocusOutset, Padding: render.FocusOutset, Gap: gap,
 		ScrollOffset: offset, Children: children,
 	}
 }
@@ -255,7 +255,7 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 		h.search = ui.NewField("")
 	}
 	search := h.search.Node("Search")
-	search.Width = settingsRailWidth
+	search.Width = settingsRailWidth - 2*render.FocusOutset
 	settingsFieldInset(h, search)
 	search.Placeholder = "Search settings…"
 	if section == "Applications" {
@@ -264,7 +264,7 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 	// Bounded like the content column: a tall font, a short pane or a long
 	// section list scrolls the rail instead of pushing its last tab past the
 	// pane's content edge.
-	rail := &ui.Node{Kind: ui.KindScroll, Key: settingsRailKey, Width: settingsRailWidth, Height: settingsContentHeight(h, head), Gap: settingsRailGap(), ScrollOffset: h.settingsRailScroll, Children: []*ui.Node{search}}
+	rail := &ui.Node{Kind: ui.KindScroll, Key: settingsRailKey, Width: settingsRailWidth, Padding: render.FocusOutset, Height: settingsContentHeight(h, head), Gap: settingsRailGap(), ScrollOffset: h.settingsRailScroll, Children: []*ui.Node{search}}
 	item, itemPad := settingsRailItemHeight(h, search)
 	locale := settingsLocale(h)
 	for _, c := range settings.SectionClusters() {
@@ -274,7 +274,7 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 		})
 		for _, name := range c.Sections {
 			entry := &ui.Node{
-				Kind: ui.KindButton, Width: settingsRailWidth, Height: item,
+				Kind: ui.KindButton, Width: settingsRailWidth - 2*render.FocusOutset, Height: item,
 				Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
 				// A rail tab is a list row, not a push button: the button
 				// padding (18 at spacious) would make twelve of them overrun
@@ -333,7 +333,7 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 	_, lineH := measure(" ", ui.TextAttrsOf(search))
 	searchH := max(search.Height, lineH+2*search.Padding)
 	children := 1 + len(clusters) + len(settingsSections)
-	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*settingsRailGap()
+	room := ph - 2*m.PanelPadding - 2*render.FocusOutset - searchH - len(clusters)*captionH - (children-1)*settingsRailGap()
 	per := room / max(len(settingsSections), 1)
 	pad = theme.MarginS
 	for _, tighter := range []int{theme.MarginXS, theme.MarginXXS} {

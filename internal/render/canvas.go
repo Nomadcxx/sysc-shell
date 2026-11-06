@@ -56,6 +56,8 @@ type Canvas struct {
 	// Ox, Oy are the surface coordinates of Pix's first pixel.
 	Ox, Oy   int
 	restrict ui.Rect
+	// contentClip retains opacity-group bounds while focus uses its outer frame.
+	contentClip *ui.Rect
 }
 
 // extent is the rectangle the buffer covers in surface coordinates.
@@ -63,9 +65,11 @@ func (c *Canvas) extent() ui.Rect {
 	return ui.Rect{X: c.Ox, Y: c.Oy, W: c.Width, H: c.Height}
 }
 
-// contains reports whether a surface pixel lies inside the buffer.
+// contains reports whether a surface pixel lies inside the buffer and the
+// opacity content clip. Direct pixel painters use it before addressing Pix.
 func (c *Canvas) contains(x, y int) bool {
-	return x >= c.Ox && x < c.Ox+c.Width && y >= c.Oy && y < c.Oy+c.Height
+	return x >= c.Ox && x < c.Ox+c.Width && y >= c.Oy && y < c.Oy+c.Height &&
+		(c.contentClip == nil || c.contentClip.Contains(x, y))
 }
 
 // at is the byte offset of surface pixel (x, y). The caller has checked that
@@ -172,6 +176,13 @@ func NewCanvas(pix []byte, width, height, stride int) (*Canvas, error) {
 // coordinates, so callers keep painting in absolute space whichever part of the
 // surface this buffer covers.
 func (c *Canvas) clip(r ui.Rect) (x0, y0, x1, y1 int) {
+	if c.contentClip != nil {
+		clip := *c.contentClip
+		if clip.W <= 0 || clip.H <= 0 {
+			return 0, 0, 0, 0
+		}
+		r = intersectClip(clip, r)
+	}
 	if c.restrict.W > 0 && c.restrict.H > 0 {
 		x0n := max(r.X, c.restrict.X)
 		y0n := max(r.Y, c.restrict.Y)

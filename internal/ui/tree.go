@@ -520,6 +520,8 @@ const (
 	StatePressed
 	StateSelected
 	StateDisabled
+	StateFocused
+	StateDragged
 )
 
 // Has reports whether a state bit is set.

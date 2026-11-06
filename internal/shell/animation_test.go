@@ -86,8 +86,12 @@ func TestStateLayerPolicyGatesHoverOnly(t *testing.T) {
 			root := tree()
 			pol := tc.pol
 			pol.hover, pol.press = "b", "b"
+			root.Children[0].State = ui.StateFocused | ui.StateDragged
 			pol.apply(root, nil)
 			n := root.Children[0]
+			if !n.State.Has(ui.StateFocused) || !n.State.Has(ui.StateDragged) {
+				t.Fatal("pointer resolution discarded focus/drag")
+			}
 			if !n.State.Has(tc.want) || n.State.Has(tc.notWn) {
 				t.Fatalf("state = %v, want %v without %v", n.State, tc.want, tc.notWn)
 			}
