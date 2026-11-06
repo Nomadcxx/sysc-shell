@@ -480,6 +480,10 @@ type Node struct {
 
 	// Name and Role are required on every Focusable node.
 	Focusable bool
+	// FocusInward draws the focus ring inside the node's own shape, as
+	// Material does for list and navigation items stacked closer than the
+	// outward ring's reach.
+	FocusInward bool
 	// AriaDisabled keeps a disabled destination in keyboard traversal so its
 	// accessible name can explain why it is unavailable. Activation remains
 	// blocked by StateDisabled.

@@ -58,6 +58,8 @@ type Canvas struct {
 	restrict ui.Rect
 	// contentClip retains opacity-group bounds while focus uses its outer frame.
 	contentClip *ui.Rect
+	// rings collects focus rings during a surface paint; nil strokes them in place.
+	rings *[]focusRing
 }
 
 // extent is the rectangle the buffer covers in surface coordinates.

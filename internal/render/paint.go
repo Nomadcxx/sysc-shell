@@ -194,6 +194,11 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 		return fmt.Errorf("render: body %dx%d has a non-positive dimension", style.Body.W, style.Body.H)
 	}
 
+	// A private copy holds this paint's ring list without touching the caller's canvas.
+	surface := *c
+	c = &surface
+	var rings []focusRing
+	c.rings = &rings
 	if damage == nil {
 		clear(c.Pix)
 	} else {
@@ -201,11 +206,9 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 		if region.W <= 0 || region.H <= 0 {
 			return nil
 		}
-		// Scope root-level paint and direct-pixel helpers to the damage. A
-		// private canvas copy keeps the caller's existing clip unchanged.
-		clipped := *c
-		clipped.restrict = region
-		c = &clipped
+		// Scope root-level paint and direct-pixel helpers to the damage; the
+		// private copy keeps the caller's existing clip unchanged.
+		c.restrict = region
 		x0, y0, x1, y1 := c.clip(region)
 		for y := y0; y < y1; y++ {
 			at := (y-c.Oy)*c.Stride + (x0-c.Ox)*4
@@ -250,6 +253,10 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 				return fmt.Errorf("render: child %d: %w", i, err)
 			}
 		}
+	}
+	// Rings go over every item but under open menu lists, which float above all.
+	for _, ring := range rings {
+		ring.stroke(c)
 	}
 	if err := paintMenuOverlays(c, root, text, style, size); err != nil {
 		return err

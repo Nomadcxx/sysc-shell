@@ -276,6 +276,8 @@ func settingsRail(h *PanelHost, section string, head []*ui.Node) *ui.Node {
 			entry := &ui.Node{
 				Kind: ui.KindButton, Width: settingsRailWidth - 2*render.FocusOutset, Height: item,
 				Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
+				// Tabs sit settingsRailGap apart, inside the outward ring's reach.
+				FocusInward: true,
 				// A rail tab is a list row, not a push button: the button
 				// padding (18 at spacious) would make twelve of them overrun
 				// a short pane.
