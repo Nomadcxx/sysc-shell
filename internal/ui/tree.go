@@ -311,8 +311,12 @@ type Node struct {
 	ScrollbarEnds int
 	ItemCount     int
 	ItemHeight    int
-	ContentH      int
-	Item          func(int) *Node
+	// ItemExtent, when set, gives each virtual-list item its own height, as a
+	// menu's separators are thinner than its rows. ItemHeight stands in for a
+	// non-positive extent.
+	ItemExtent func(int) int
+	ContentH   int
+	Item       func(int) *Node
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.
 	Values []float64

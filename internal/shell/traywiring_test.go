@@ -160,13 +160,15 @@ func TestTrayMenuSurfaceHoldsTheWidestLevel(t *testing.T) {
 		parent.Children = append(parent.Children, tray.MenuNode{
 			ID: int32(10 + i), Label: "Deep", Enabled: true, Visible: true})
 	}
+	parent.Children = append(parent.Children, tray.MenuNode{ID: 20, Separator: true, Visible: true})
 	menu := newTrayMenu(tray.Menu{Revision: 1,
 		Root: tray.MenuNode{ID: 0, Visible: true, Children: []tray.MenuNode{parent}}})
 	if got := menu.len(); got != 1 {
 		t.Fatalf("root level rows = %d", got)
 	}
-	if got := menu.widestLevel(); got != 6 {
-		t.Fatalf("widest level = %d, want the submenu's 6 rows", got)
+	// Rows take the row height and a separator the thinner divider.
+	if got, want := menu.tallestLevel(48, ui.MenuDivider), 6*48+ui.MenuDivider; got != want {
+		t.Fatalf("tallest level = %d, want the submenu's six rows and a divider, %d", got, want)
 	}
 }
 

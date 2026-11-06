@@ -167,6 +167,9 @@ type Metrics struct {
 	// row's 19 px capsule held a 20 px body line, so its labels spilled past
 	// the bar.
 	BarText TextRole
+	// MenuItem is one menu row: Material's 48 at default, moving 4 px a
+	// density step, the steps Material's own density scale takes.
+	MenuItem int
 }
 
 // metrics is the density table, re-based onto the reference's five rows.
@@ -198,6 +201,7 @@ var metrics = map[Density]Metrics{
 		IconHero:    56,
 		IconProfile: 16,
 		BarText:     RoleCaption,
+		MenuItem:    40,
 	},
 	DensityCompact: {
 		BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2, BarItemMin: 26,
@@ -210,6 +214,7 @@ var metrics = map[Density]Metrics{
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
 		IconHero:    64,
 		IconProfile: 18,
+		MenuItem:    44,
 	},
 	DensityDefault: {
 		BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4, BarItemMin: 30,
@@ -222,6 +227,7 @@ var metrics = map[Density]Metrics{
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
 		IconHero:    80,
 		IconProfile: 18,
+		MenuItem:    48,
 	},
 	DensityComfortable: {
 		BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6, BarItemMin: 32,
@@ -234,6 +240,7 @@ var metrics = map[Density]Metrics{
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
 		IconHero:    92,
 		IconProfile: 20,
+		MenuItem:    52,
 	},
 	DensitySpacious: {
 		BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9, BarItemMin: 34,
@@ -246,6 +253,7 @@ var metrics = map[Density]Metrics{
 		IconSmall: 20, IconNormal: 24, IconLarge: 32,
 		IconHero:    104,
 		IconProfile: 22,
+		MenuItem:    56,
 	},
 }
 

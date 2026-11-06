@@ -100,3 +100,61 @@ func TestScrollBarPlacement(t *testing.T) {
 		t.Fatalf("gutter track = %+v, want it to share the bar's right edge and span", got)
 	}
 }
+
+// A menu's separators are thinner than its rows, so a virtual list can take
+// each item's own extent and still place, cull and reveal by index.
+func TestVirtualListItemExtents(t *testing.T) {
+	t.Parallel()
+	const n = 40
+	extent := func(i int) int {
+		if i%5 == 2 {
+			return 17
+		}
+		return 48
+	}
+	top := func(i int) int {
+		y := 0
+		for j := 0; j < i; j++ {
+			y += extent(j)
+		}
+		return y
+	}
+	rows := make([]*Node, n)
+	for i := range rows {
+		rows[i] = &Node{Kind: KindRow}
+	}
+	v := &Node{
+		Kind: KindVirtualList, ItemCount: n, ItemHeight: 48, ItemExtent: extent,
+		Item: func(i int) *Node { return rows[i] },
+	}
+	measure := func(string, TextAttrs) (int, int) { return 8, 16 }
+	if err := LayoutColumn(v, Rect{W: 200, H: 300}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if v.ContentH != top(n) {
+		t.Fatalf("content = %d, want %d", v.ContentH, top(n))
+	}
+	for _, i := range []int{1, 2, 3} {
+		if want := (Rect{Y: top(i), W: 200, H: extent(i)}); rows[i].Bounds != want {
+			t.Fatalf("row %d = %+v, want %+v", i, rows[i].Bounds, want)
+		}
+	}
+	ScrollBy(v, top(23)+10)
+	if err := LayoutColumn(v, Rect{W: 200, H: 300}, measure); err != nil {
+		t.Fatal(err)
+	}
+	lo, hi := VisibleRange(v)
+	// Rows 23 through 30 are in view; two rows of overscan either side.
+	if lo != 21 || hi != 33 {
+		t.Fatalf("scrolled range %d..%d, want 21..33", lo, hi)
+	}
+	if want := (Rect{Y: -10, W: 200, H: extent(23)}); rows[23].Bounds != want {
+		t.Fatalf("row 23 = %+v, want %+v", rows[23].Bounds, want)
+	}
+	if y, h := ItemSpan(v, 22); y != top(22) || h != extent(22) {
+		t.Fatalf("span 22 = %d,%d, want %d,%d", y, h, top(22), extent(22))
+	}
+	if y, h := ItemSpan(&Node{Kind: KindVirtualList, ItemCount: 3, ItemHeight: 40}, 2); y != 80 || h != 40 {
+		t.Fatalf("uniform span = %d,%d, want 80,40", y, h)
+	}
+}

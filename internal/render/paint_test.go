@@ -3439,3 +3439,54 @@ func TestPointerSlotsKeepFixedChromeDimensions(t *testing.T) {
 		}
 	}
 }
+
+// A Material menu sheet sits on SurfaceContainer, and its padding above the
+// first row paints as sheet.
+func TestPaintMenuSheetUsesSurfaceContainer(t *testing.T) {
+	t.Parallel()
+	const width, height = 140, 100
+	c := newTestCanvas(t, width, height)
+	style := testStyle
+	style.Body = ui.Rect{W: width, H: height}
+	sheet := Color{R: 41, G: 44, B: 52, A: 255}
+	style.Roles[ui.PaintSurfaceContainer] = sheet
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Text: "Theme", Padding: 4, ItemHeight: 48,
+		Bounds: ui.Rect{X: 8, Y: 8, W: 120, H: 24},
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "Option",
+			Bounds: ui.Rect{X: 8, Y: 32 + ui.MenuSheetPadding, W: 120, H: 48}}},
+	}
+	root := &ui.Node{Kind: ui.KindColumn, Bounds: style.Body, Children: []*ui.Node{menu}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	for _, y := range []int{34, 90} {
+		if got := pixelAt(t, c, 120, y); got != sheet {
+			t.Fatalf("sheet at y=%d = %+v, want SurfaceContainer %+v", y, got, sheet)
+		}
+	}
+}
+
+// An open list floats over the panel: the scroll viewport holding its trigger
+// does not cut it off, as it does not stop the list taking presses.
+func TestPaintMenuPopupEscapesItsScrollViewport(t *testing.T) {
+	t.Parallel()
+	const width, height = 140, 120
+	c := newTestCanvas(t, width, height)
+	style := testStyle
+	style.Body = ui.Rect{W: width, H: height}
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Text: "Theme", Padding: 4, ItemHeight: 48,
+		Bounds: ui.Rect{X: 8, Y: 8, W: 120, H: 24},
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "Option",
+			Bounds: ui.Rect{X: 8, Y: 32 + ui.MenuSheetPadding, W: 120, H: 48}}},
+	}
+	scroll := &ui.Node{Kind: ui.KindScroll, Bounds: ui.Rect{X: 0, Y: 0, W: width, H: 40}, Children: []*ui.Node{menu}}
+	root := &ui.Node{Kind: ui.KindColumn, Bounds: style.Body, Children: []*ui.Node{scroll}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := pixelAt(t, c, 120, 80), style.MenuSheet(); got != want {
+		t.Fatalf("popup below its viewport = %+v, want the sheet %+v", got, want)
+	}
+}

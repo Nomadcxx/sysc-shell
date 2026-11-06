@@ -8,7 +8,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
-	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
@@ -23,10 +22,8 @@ const (
 	// The menu surface is sized from its own rows. A layer surface with no
 	// size takes the whole anchored edge, which a tray menu must not do; the
 	// height is capped and the list scrolls past the cap.
-	trayMenuRowHeight = 28
 	trayMenuWidth     = 280
 	trayMenuMaxHeight = 480
-	trayMenuPadding   = 6
 )
 
 // trayMenuActionPrefix marks a row action. The suffix is the protocol entry
@@ -349,12 +346,17 @@ func (r *Registry) drawerMenuPlacementLocked(output uint32, width, height int) t
 // submenu must not clip rows the parent level had no room for. A level with
 // fewer rows leaves the surplus empty.
 func (h *trayMenuHost) size() (int, int) {
-	rows := 0
+	row, height := h.rowHeight(), 0
 	if h.menu != nil {
-		rows = h.menu.widestLevel()
+		height = h.menu.tallestLevel(row, ui.MenuDivider)
 	}
-	height := rows*trayMenuRowHeight + 2*trayMenuPadding
-	return trayMenuWidth, min(max(height, trayMenuRowHeight+2*trayMenuPadding), trayMenuMaxHeight)
+	height += 2 * ui.MenuSheetPadding
+	return trayMenuWidth, min(max(height, row+2*ui.MenuSheetPadding), trayMenuMaxHeight)
+}
+
+// rowHeight is the density's menu row, from the theme the surface paints with.
+func (h *trayMenuHost) rowHeight() int {
+	return h.r.surfaceTheme().Metrics.MenuItem
 }
 
 // The three Wayland callbacks take the registry lock, because the same host
@@ -381,16 +383,25 @@ func (h *trayMenuHost) configure(width, height, scale120 int) error {
 	h.logicalW, h.logicalH, h.scale120 = width, height, scale120
 	h.style.Scale120 = ui.Scale120(scale120)
 	h.style.Body = ui.Rect{W: width, H: height}
-	measure := func(text string, attrs ui.TextAttrs) (int, int) {
+	return ui.LayoutColumn(h.root, ui.Rect{W: width, H: height}, h.measure())
+}
+
+// measure sizes text in the logical pixels the layout works in: the renderer
+// measures at the surface's scale.
+func (h *trayMenuHost) measure() ui.MeasureText {
+	scale := h.style.Scale120
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
+	return func(text string, attrs ui.TextAttrs) (int, int) {
 		if h.text != nil {
 			spec := render.SpecFor(h.style, attrs)
 			if w, textHeight, err := h.text.Measure(text, spec, attrs.Tabular); err == nil {
-				return w, textHeight
+				return scale.Logical(w), scale.Logical(textHeight)
 			}
 		}
 		return len([]rune(text)) * 8, 16
 	}
-	return ui.LayoutColumn(h.root, ui.Rect{W: width, H: height}, measure)
 }
 
 func (h *trayMenuHost) render(pixels []byte, width, height, stride int) error {
@@ -405,6 +416,7 @@ func (h *trayMenuHost) render(pixels []byte, width, height, stride int) error {
 		theme := h.r.surfaceTheme()
 		scale, body := h.style.Scale120, h.style.Body
 		h.style = theme.OverlayStyle()
+		h.style.Background = h.style.MenuSheet()
 		h.style.Scale120, h.style.Body = scale, body
 	}
 	if createdText && h.logicalW > 0 {
@@ -503,7 +515,7 @@ func (h *trayMenuHost) handle(event wayland.Event) bool {
 	case wayland.EventPointerAxis:
 		delta := int(event.AxisValue)
 		if event.AxisDiscrete != 0 {
-			delta = int(event.AxisDiscrete) * trayMenuRowHeight
+			delta = int(event.AxisDiscrete) * h.rowHeight()
 		}
 		ui.ScrollBy(h.root, delta)
 		h.relayout()
@@ -515,7 +527,7 @@ func (h *trayMenuHost) handle(event wayland.Event) bool {
 // rebuild reprojects the visible level and restores the roving index from the
 // model's own focus, which replaceTree already carried across revisions.
 func (h *trayMenuHost) rebuild() {
-	h.root = trayMenuTree(h.menu)
+	h.root = trayMenuTree(h.menu, h.rowHeight())
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.syncRovingFromModel()
@@ -547,6 +559,27 @@ func (h *trayMenuHost) moveFocus(delta int) {
 	}
 	h.menu.move(delta)
 	h.syncRovingFromModel()
+	h.revealFocus()
+}
+
+// revealFocus scrolls the focused row into the list's view. Keyboard travel
+// otherwise walks past the rows on screen, leaving focus on a row the pointer
+// cannot find.
+func (h *trayMenuHost) revealFocus() {
+	if h.menu == nil || h.root == nil || h.logicalH <= 0 {
+		return
+	}
+	top, height := ui.ItemSpan(h.root, h.menu.top().focus)
+	view := h.root.Bounds.H - 2*h.root.Padding
+	switch {
+	case top < h.root.ScrollOffset:
+		h.root.ScrollOffset = top
+	case top+height > h.root.ScrollOffset+view:
+		h.root.ScrollOffset = top + height - view
+	default:
+		return
+	}
+	h.relayout()
 }
 
 func (h *trayMenuHost) focusNode(node *ui.Node) {
@@ -638,18 +671,32 @@ func (h *trayMenuHost) relayout() {
 // trayMenuTree projects the visible level into rows. Separators and disabled
 // entries render but never take focus, so keyboard travel skips exactly what
 // a pointer cannot press.
-func trayMenuTree(m *trayMenu) *ui.Node {
-	root := &ui.Node{Kind: ui.KindVirtualList, ItemHeight: trayMenuRowHeight, Padding: trayMenuPadding}
+func trayMenuTree(m *trayMenu, rowHeight int) *ui.Node {
+	root := &ui.Node{Kind: ui.KindVirtualList, ItemHeight: rowHeight, Padding: ui.MenuSheetPadding}
 	if m == nil {
 		root.Item = func(int) *ui.Node { return nil }
 		return root
 	}
 	visible := m.visible()
-	rows := make([]*ui.Node, 0, len(visible))
+	toggles := false
 	for i := range visible {
-		rows = append(rows, trayMenuRowNode(m.row(i)))
+		role := m.row(i).role
+		toggles = toggles || role == "checkmenuitem" || role == "radiomenuitem"
+	}
+	rows := make([]*ui.Node, 0, len(visible))
+	separators := make([]bool, 0, len(visible))
+	for i := range visible {
+		row := m.row(i)
+		rows = append(rows, trayMenuRowNode(row, rowHeight, toggles))
+		separators = append(separators, row.role == "separator")
 	}
 	root.ItemCount = len(rows)
+	root.ItemExtent = func(i int) int {
+		if i >= 0 && i < len(separators) && separators[i] {
+			return ui.MenuDivider
+		}
+		return rowHeight
+	}
 	root.Item = func(i int) *ui.Node {
 		if i < 0 || i >= len(rows) {
 			return nil
@@ -659,9 +706,12 @@ func trayMenuTree(m *trayMenu) *ui.Node {
 	return root
 }
 
-func trayMenuRowNode(row trayMenuRow) *ui.Node {
+// trayMenuRowNode is one entry. A checked toggle leads with a check and a
+// submenu ends in a chevron; toggles reserves the leading slot on every row
+// of a level that has a toggle, so the labels line up.
+func trayMenuRowNode(row trayMenuRow, height int, toggles bool) *ui.Node {
 	if row.role == "separator" {
-		return &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{Kind: ui.KindSeparator}}}
+		return ui.MenuDividerNode()
 	}
 	label := strings.TrimSpace(row.name)
 	if label == "" {
@@ -674,28 +724,19 @@ func trayMenuRowNode(row trayMenuRow) *ui.Node {
 	case row.submenu:
 		name = label + " (submenu)"
 	}
-	entry := &ui.Node{
-		Kind: ui.KindButton, Text: trayMenuRowText(row, label), Padding: theme.MarginXS,
-		Action: trayMenuAction(row.id), Name: name, Role: row.role,
-		Focusable: row.enabled,
+	spec := ui.MenuRow{
+		Label: label, Action: trayMenuAction(row.id), Name: name, Role: row.role,
+		LeadingSlot: toggles, Disabled: !row.enabled,
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{entry}}
-}
-
-// trayMenuRowText folds toggle and submenu state into the text. The fallback
-// surface paints one button per row, so state a native menu would draw as a
-// glyph has to live in the label and the accessible name alike.
-func trayMenuRowText(row trayMenuRow, label string) string {
-	switch {
-	case row.role == "checkmenuitem" || row.role == "radiomenuitem":
-		if row.checked {
-			return "\u2713 " + label
-		}
-		return "  " + label
-	case row.submenu:
-		return label + " \u203a"
+	if row.checked {
+		// The subset font has no radio glyph; a checked radio item takes the
+		// check, and its role tells it from a checkbox.
+		spec.Leading = "check"
 	}
-	return label
+	if row.submenu {
+		spec.Trailing = &ui.Node{Kind: ui.KindIcon, Icon: "chevron_right"}
+	}
+	return ui.MenuRowNode(spec, height)
 }
 
 // closeSurface requests the compositor close exactly once.

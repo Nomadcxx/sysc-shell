@@ -91,10 +91,50 @@ func ScrollSetFromY(n *Node, y int) {
 	clampScroll(n)
 }
 
+// itemExtent is one virtual-list item's height.
+func itemExtent(n *Node, i int) int {
+	if n.ItemExtent != nil {
+		if h := n.ItemExtent(i); h > 0 {
+			return h
+		}
+	}
+	return max(n.ItemHeight, 1)
+}
+
+// ItemSpan is a virtual-list item's top within the list's content and its
+// height.
+func ItemSpan(n *Node, i int) (top, height int) {
+	if n == nil {
+		return 0, 0
+	}
+	if n.ItemExtent == nil {
+		return i * n.ItemHeight, n.ItemHeight
+	}
+	for j := 0; j < i; j++ {
+		top += itemExtent(n, j)
+	}
+	return top, itemExtent(n, i)
+}
+
+// virtualContentHeight is the height of every item together.
+func virtualContentHeight(n *Node) int {
+	if n.ItemExtent == nil {
+		return n.ItemCount * n.ItemHeight
+	}
+	h := 0
+	for i := 0; i < n.ItemCount; i++ {
+		h += itemExtent(n, i)
+	}
+	return h
+}
+
 // VisibleRange returns [lo, hi) of virtual-list indices in view plus 2 overscan.
 func VisibleRange(n *Node) (lo, hi int) {
 	if n == nil || n.ItemHeight <= 0 {
 		return 0, 0
+	}
+	if n.ItemExtent != nil {
+		return visibleExtentRange(n)
 	}
 	view := n.Bounds.H
 	if view <= 0 {
@@ -120,4 +160,23 @@ func VisibleRange(n *Node) (lo, hi int) {
 		lo = hi
 	}
 	return lo, hi
+}
+
+// visibleExtentRange is VisibleRange for items of their own heights: a walk
+// down the list, which is fine for the menus that use it.
+func visibleExtentRange(n *Node) (lo, hi int) {
+	view := max(n.Bounds.H, 0)
+	first, last, top := n.ItemCount, n.ItemCount, 0
+	for i := 0; i < n.ItemCount; i++ {
+		h := itemExtent(n, i)
+		if first == n.ItemCount && top+h > n.ScrollOffset {
+			first = i
+		}
+		if top >= n.ScrollOffset+view {
+			last = i
+			break
+		}
+		top += h
+	}
+	return max(first-2, 0), min(last+2, n.ItemCount)
 }

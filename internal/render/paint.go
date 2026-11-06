@@ -50,6 +50,16 @@ func (s Style) containerHighest() Color {
 	return s.ContainerHighest
 }
 
+// MenuSheet is a Material menu's container, SurfaceContainer. A style that
+// predates the role keeps the old ContainerHighest list. Every menu surface
+// paints its sheet with it.
+func (s Style) MenuSheet() Color {
+	if c := s.Roles[ui.PaintSurfaceContainer]; c.A > 0 {
+		return c
+	}
+	return s.containerHighest()
+}
+
 // rootFill is the surface's own background at the opacity the theme chose.
 // Only the root takes it: a nested card composites over the painted root, so a
 // translucent panel must not drag its cards toward the wallpaper with it.
@@ -904,15 +914,9 @@ func paintMenuOverlays(c *Canvas, n *ui.Node, text *TextRenderer, style Style, s
 	if n == nil || n.Kind == ui.KindEffect {
 		return nil
 	}
-	prev := c.restrict
-	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
-		c.restrict = intersectClip(c.restrict, style.Scale120.PhysicalRect(n.Bounds))
-		if c.restrict.W <= 0 || c.restrict.H <= 0 {
-			c.restrict = prev
-			return nil
-		}
-	}
-	defer func() { c.restrict = prev }()
+	// An open list floats over the whole panel, as it takes presses there: a
+	// scroll viewport does not clip it. The panel keeps the list on its
+	// surface (PanelHost.fitOpenMenu).
 	for i, child := range n.Children {
 		if child == nil {
 			return fmt.Errorf("render: nil menu overlay child %d", i)
@@ -937,7 +941,9 @@ func paintMenuPopup(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		return nil
 	}
 	radius := style.Scale120.Physical(6)
-	surface := style.containerHighest()
+	// A Material menu sheet sits on SurfaceContainer and lifts off the panel
+	// with its shadow.
+	surface := style.MenuSheet()
 	if ink, ok := style.shadowInk(); ok {
 		c.DrawShadow(list, style.Scale120.Physical(6), style.shadowSpreadFor(), ink)
 	}
@@ -960,14 +966,14 @@ func paintMenuPopup(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		foreground := textColor(style, child.Tone)
 		if child.Value != 0 {
 			fill, ink := chromeFill(style, &ui.Node{State: ui.StateSelected}, surface)
-			c.FillRounded(cb, style.Scale120.Physical(4), fill)
+			c.FillRounded(cb, style.Scale120.Physical(ui.MenuRowRadius), fill)
 			foreground = ink
 		}
 		if child.State != 0 {
-			paintInteraction(c, child, cb, style.Scale120.Physical(4), foreground, style)
+			paintInteraction(c, child, cb, style.Scale120.Physical(ui.MenuRowRadius), foreground, style)
 		}
-		pad := style.Scale120.Physical(n.Padding)
-		option := ui.Rect{X: cb.X + pad, Y: cb.Y, W: max(cb.W-2*pad, 0), H: cb.H}
+		pad := style.Scale120.Physical(ui.MenuRowInset)
+		option := centreLine(ui.Rect{X: cb.X + pad, Y: cb.Y, W: max(cb.W-2*pad, 0), H: cb.H}, text, style, child)
 		_ = paintTextColor(c, child.Text, option, text, style, textSpec(style, child), child.Tabular, foreground, child.Underline)
 	}
 	return nil

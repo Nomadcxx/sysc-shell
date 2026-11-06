@@ -39,8 +39,8 @@ func TestRunningAppsMenuWindowRowsExposeAccessibleNames(t *testing.T) {
 	if row.Name != "Library full accessible title — Build" || row.Role != "menuitem" || !row.Focusable {
 		t.Fatalf("window row accessibility = %+v", row)
 	}
-	if len(row.Children) != 1 || !strings.HasPrefix(row.Children[0].Text, "● ") {
-		t.Fatalf("focused window marker = %+v", row.Children)
+	if label := menuRowLabel(row); !strings.HasPrefix(label.Text, "● ") {
+		t.Fatalf("focused window marker = %+v", label)
 	}
 	close := findAction(host.root, "running-app-close:81")
 	if close == nil {
@@ -515,7 +515,7 @@ func separatorInFrontOf(root *ui.Node, action string) bool {
 		if child.Action != action {
 			continue
 		}
-		return i > 0 && root.Children[i-1].Kind == ui.KindSeparator
+		return i > 0 && isMenuDivider(root.Children[i-1])
 	}
 	return false
 }
@@ -1146,8 +1146,10 @@ func TestRunningAppsMenuScrollKeepsDynamicChromeWithinSurface(t *testing.T) {
 	if findText(host.root, "Games") == nil {
 		t.Fatal("Games heading is not visible at the end of the list")
 	}
-	if host.logicalH <= initialHeight {
-		t.Fatalf("surface height stayed at %d despite extra viewport rows", initialHeight)
+	// The end of the list shows other chrome (the Games heading), and the
+	// surface follows it.
+	if host.logicalH == initialHeight {
+		t.Fatalf("surface height stayed at %d despite different viewport chrome", initialHeight)
 	}
 	if len(updates) == 0 || updates[len(updates)-1].Update == nil || updates[len(updates)-1].Update.Height == nil {
 		t.Fatalf("scrolled surface was not resized: %+v", updates)
