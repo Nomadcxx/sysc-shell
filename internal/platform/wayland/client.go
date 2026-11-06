@@ -316,6 +316,7 @@ type owner struct {
 	wake         *wakePipe
 	pointer      *client.Pointer
 	keyboard     *client.Keyboard
+	touchInput   *client.Touch
 
 	textInputMgr *textinput.ZwpTextInputManagerV3
 	textInput    *textinput.ZwpTextInputV3
@@ -331,6 +332,8 @@ type owner struct {
 	// focus identifies the surface the pointer is on and the latest logical
 	// coordinates, replacing the single boolean the proof used.
 	focus pointerFocus
+	// touch is the finger turned into pointer events, apart from the pointer.
+	touch touchFocus
 	// keyFocus is the surface that currently has keyboard enter.
 	keyFocus keyFocus
 	// repeat is the client-side key repeat timer, driven by the loop's poll
@@ -705,6 +708,10 @@ func (o *owner) destroyGlobals() error {
 		errs = append(errs, o.keyboard.Release())
 		o.keyboard = nil
 	}
+	if o.touchInput != nil {
+		errs = append(errs, o.touchInput.Release())
+		o.touchInput = nil
+	}
 	if o.cursorDevice != nil {
 		errs = append(errs, o.cursorDevice.Destroy())
 		o.cursorDevice = nil
@@ -835,6 +842,33 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		o.setRepeatInfo(0, 0)
 		o.fail(o.keyboard.Release())
 		o.keyboard = nil
+	}
+
+	hasTouch := e.Capabilities&uint32(client.SeatCapabilityTouch) != 0
+	switch {
+	case hasTouch && o.touchInput == nil:
+		touch, err := o.seat.GetTouch()
+		if err != nil {
+			o.fail(fmt.Errorf("wayland: get touch: %w", err))
+			return
+		}
+		o.touchInput = touch
+		touch.SetDownHandler(func(e client.TouchDownEvent) {
+			o.touchDown(e.Surface, e.Id, e.X, e.Y, e.Serial)
+		})
+		touch.SetMotionHandler(func(e client.TouchMotionEvent) {
+			o.touchMotion(e.Id, e.X, e.Y)
+		})
+		touch.SetUpHandler(func(e client.TouchUpEvent) {
+			o.touchUp(e.Id, e.Serial)
+		})
+		touch.SetCancelHandler(func(client.TouchCancelEvent) {
+			o.endTouch()
+		})
+	case !hasTouch && o.touchInput != nil:
+		o.endTouch()
+		o.fail(o.touchInput.Release())
+		o.touchInput = nil
 	}
 }
 
@@ -1468,6 +1502,7 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 	if o.focus.unit == h.bar {
 		o.clearFocus()
 	}
+	o.touchUnitGone(h.bar)
 	// Unwind viewport, fractional-scale, layer surface and wl_surface; the
 	// output step stays so the host keeps its wl_output. The surface goes
 	// before the generations are freed, matching teardownUnit: a wl_buffer
@@ -1657,6 +1692,7 @@ func (o *owner) teardownHost(h *OutputHost) error {
 	if o.focus.unit == h.bar {
 		o.clearFocus()
 	}
+	o.touchUnitGone(h.bar)
 	if o.keyFocus.host == h {
 		o.keyboardGone()
 	}
