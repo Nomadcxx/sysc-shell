@@ -399,7 +399,8 @@ func (h *mediaStripHost) render(pixels []byte, width, height, stride int) error 
 func (h *mediaStripHost) handle(event wayland.Event) bool {
 	switch event.Kind {
 	case wayland.EventKeyPress:
-		switch event.Key {
+		key := navKey(event)
+		switch key {
 		case keyEsc:
 			h.closeLocked()
 			return true
@@ -421,7 +422,7 @@ func (h *mediaStripHost) handle(event wayland.Event) bool {
 			if h.seekPending != nil {
 				position = *h.seekPending
 			}
-			if event.Key == keyLeft {
+			if key == keyLeft {
 				position = max(position-mediaStripSeekStep, 0)
 			} else {
 				position = min(position+mediaStripSeekStep, state.LengthUS)

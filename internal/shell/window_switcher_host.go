@@ -239,7 +239,8 @@ func (h *windowSwitcherHost) handle(event wayland.Event) bool {
 	}
 	switch event.Kind {
 	case wayland.EventKeyPress:
-		switch event.Key {
+		key := navKey(event)
+		switch key {
 		case keyEsc:
 			h.closeLocked()
 			return true
@@ -248,7 +249,7 @@ func (h *windowSwitcherHost) handle(event wayland.Event) bool {
 			return true
 		case keyTab, keyDown, keyRight:
 			direction := 1
-			if event.Key == keyTab && event.Mods&ui.ModShift != 0 {
+			if key == keyTab && (event.Mods&ui.ModShift != 0 || event.Sym == ui.SymISOLeftTab) {
 				direction = -1
 			}
 			return h.cycleLocked(direction)

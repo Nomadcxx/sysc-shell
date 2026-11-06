@@ -460,13 +460,14 @@ func (h *polkitHost) handleLocked(event wayland.Event) bool {
 			fallback := ui.FallbackKey(key, event.Mods)
 			sym, text = fallback.Sym, fallback.Text
 		}
-		if sym == ui.SymEscape || key == keyEsc {
+		nav := ui.KeyInput{Code: key, Sym: sym}.NavCode()
+		if nav == keyEsc {
 			h.finishLocked(true)
 			return true
 		}
-		if sym == ui.SymTab || key == keyTab {
+		if nav == keyTab {
 			direction := 1
-			if event.Mods.Has(ui.ModShift) {
+			if event.Mods.Has(ui.ModShift) || sym == ui.SymISOLeftTab {
 				direction = -1
 			}
 			h.cycleFocus(direction)

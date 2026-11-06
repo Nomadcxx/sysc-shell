@@ -54,3 +54,29 @@ func TestFallbackKey(t *testing.T) {
 		}
 	}
 }
+
+func TestNavCodeFollowsTheResolvedSymbol(t *testing.T) {
+	cases := []struct {
+		name string
+		k    KeyInput
+		want uint32
+	}{
+		{"Tab on the Escape code", KeyInput{Code: 1, Sym: SymTab}, 15},
+		{"Escape on the Tab code", KeyInput{Code: 15, Sym: SymEscape}, 1},
+		{"ISO_Left_Tab is Tab", KeyInput{Code: 23, Sym: SymISOLeftTab}, 15},
+		{"KP_Enter activates as Enter", KeyInput{Code: 96, Sym: SymKPEnter}, 28},
+		{"Space by symbol", KeyInput{Code: 30, Sym: ' ', Text: " "}, 57},
+		{"F2 by symbol", KeyInput{Code: 2, Sym: SymF2}, 60},
+		{"arrow by symbol", KeyInput{Code: 30, Sym: SymDown}, 108},
+		{"a letter on the Escape code is not Escape", KeyInput{Code: 1, Sym: 'a', Text: "a"}, 0},
+		{"a letter keeps its code", KeyInput{Code: 30, Sym: 'q', Text: "q"}, 30},
+		{"a modifier keeps its code", KeyInput{Code: 42, Sym: 0xffe1}, 42},
+		{"no keymap keeps the raw code", KeyInput{Code: 1}, 1},
+		{"US fallback round-trips", FallbackKey(15, ModShift), 15},
+	}
+	for _, tc := range cases {
+		if got := tc.k.NavCode(); got != tc.want {
+			t.Errorf("%s: NavCode(%+v) = %d, want %d", tc.name, tc.k, got, tc.want)
+		}
+	}
+}

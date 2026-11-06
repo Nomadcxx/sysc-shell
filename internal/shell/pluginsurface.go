@@ -473,7 +473,7 @@ func (p *pluginSurfaceHost) outputSize(width, height int) {
 }
 
 func (p *pluginSurfaceHost) handle(e wayland.Event) bool {
-	if e.Kind == wayland.EventKeyPress && e.Key == keyEsc {
+	if e.Kind == wayland.EventKeyPress && navKey(e) == keyEsc {
 		p.host.r.mu.Lock()
 		left := p.panel.leaveTextField()
 		p.host.r.mu.Unlock()

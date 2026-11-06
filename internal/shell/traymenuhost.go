@@ -428,7 +428,7 @@ func (h *trayMenuHost) handle(event wayland.Event) bool {
 	switch event.Kind {
 	case wayland.EventKeyPress:
 		h.noteInteraction()
-		switch event.Key {
+		switch navKey(event) {
 		case keyEsc, keyLeft:
 			if h.menu != nil && h.menu.back() {
 				h.rebuild()
