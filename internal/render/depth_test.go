@@ -122,3 +122,29 @@ func TestDisabledControlsPaintFaded(t *testing.T) {
 		}
 	}
 }
+
+// TestRootScrimDimsWithTheModalScrim checks a full-screen surface paints its
+// root as the shield's scrim while a nested surface-role sheet keeps the
+// surface colour: the scrim replaces the root fill, not the Background token.
+func TestRootScrimDimsWithTheModalScrim(t *testing.T) {
+	t.Parallel()
+	style := darkStyle()
+	style.RootScrim = true
+	style.Radius = 0
+
+	c := newTestCanvas(t, canvasW, canvasH)
+	r := NewTextRenderer(mustTestFace(t))
+	sheet := &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillRole, FillRole: ui.PaintSurface,
+		Bounds: ui.Rect{X: 10, Y: 10, W: 60, H: 30}, Width: 60, Height: 30}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{sheet}}
+	if err := Paint(c, root, r, style); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := fillPair(style, ui.FillScrim, Color{})
+	if got := pixelAt(t, c, 2, 2); got != premul(want) {
+		t.Errorf("root = %+v, want the modal scrim %+v", got, premul(want))
+	}
+	if got := pixelAt(t, c, 40, 25); got != style.Background {
+		t.Errorf("sheet = %+v, want the surface %+v", got, style.Background)
+	}
+}

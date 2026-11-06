@@ -119,6 +119,9 @@ type Style struct {
 	// NoGround leaves the root unfilled: an islands bar, whose capsules carry
 	// the bar. SurfaceOpacity cannot say so, because zero there means unset.
 	NoGround bool
+	// RootScrim paints the root as the modal scrim instead of the surface: a
+	// full-screen surface dims the desktop and carries its content on a sheet.
+	RootScrim bool
 	// Backdrop is a blurred capture of what sat behind this surface when it
 	// opened, held at reduced resolution and scaled during the blit. Nil is
 	// today's paint: an opaque root over whatever the compositor shows.

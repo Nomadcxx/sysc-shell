@@ -21,6 +21,7 @@ var materialInventory = []string{
 	"location_on", "security", "flag", "download", "upload", "swap_vert",
 	"language", "gpp_bad",
 	"memory", "developer_board", "disabled_by_default", "skull", "cancel",
+	"fullscreen", "fullscreen_exit", "warning",
 	"lock", "logout", "bedtime", "restart_alt", "power_settings_new",
 	"speed", "balance", "energy_savings_leaf", "check", "send",
 	"content_paste", "content_copy",

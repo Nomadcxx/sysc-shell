@@ -103,7 +103,7 @@ The head table's creation and modification timestamps are pinned, so a rebuild
 from the same source reproduces the committed file byte for byte:
 
 ```
-bcfc664b675ebb5510abb476ad7754fa97919e7c0aabcebc82a7284619ea3ced
+185ce93f6cc8cf369a2feabc97c3b83acf6fa7fabb0a88f5a3bfdfb0b7e77ef6
 ```
 
 Built with fontTools 4.68.0. 4.66.0, 4.66.1 and 4.68.0 produce the same bytes

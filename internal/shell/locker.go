@@ -244,6 +244,10 @@ func (r *Registry) lockerLocked() *lockerManager {
 				r.mu.Lock()
 				r.lockerRunning, r.lockerAcquired = running, false
 				r.polkitHoldLocked(running)
+				if h := r.panelHosts[PanelPower]; h != nil {
+					r.rebuildPanel(h)
+					r.publishSurface(h.output, panelSurfaceID(h.id))
+				}
 				if h := r.panelHosts[PanelControlCenter]; h != nil {
 					r.rebuildPanel(h)
 					r.publishSurface(h.output, panelSurfaceID(h.id))
@@ -330,7 +334,7 @@ func (r *Registry) SuspendTracked() error {
 	managed, run := r.managedLock, r.runArgv
 	managedLocker := managed != nil && isManagedLocker(sessionArgv("session-lock", r.cfg.Session.Locker))
 	r.mu.Unlock()
-	suspend := func() error { return run([]string{"loginctl", "suspend"}) }
+	suspend := func() error { return run(sessionArgv("session-suspend", "")) }
 	if !managedLocker {
 		return suspend()
 	}

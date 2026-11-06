@@ -8,6 +8,11 @@ import (
 	"net"
 )
 
+// Quit ends the current compositor session after the shell confirmation.
+type Quit struct {
+	SkipConfirmation bool `json:"skip_confirmation"`
+}
+
 // Spawn starts a command in the compositor session.
 type Spawn struct {
 	Command []string `json:"command"`
@@ -146,6 +151,8 @@ func Action(ctx context.Context, socketPath string, body any) error {
 func marshalAction(body any) ([]byte, error) {
 	var inner map[string]any
 	switch v := body.(type) {
+	case Quit:
+		inner = map[string]any{"Quit": v}
 	case Spawn:
 		inner = map[string]any{"Spawn": v}
 	case FocusWindow:

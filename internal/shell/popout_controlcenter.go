@@ -333,7 +333,7 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	case "cc:settings":
 		target = PanelSettings
 	case "cc:power":
-		target = PanelSession
+		target = PanelPower
 	case "cc:wallpaper":
 		target = PanelWallpaper
 	case "cc:terminal-art":
@@ -415,14 +415,7 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		r.scheduleControl(h, func() error { return brightness.Set(level) })
 		return true
 	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
-		argv := sessionArgv(n.Action, r.cfg.Session.Locker)
-		run := r.runArgv
-		if n.Action == "session-lock" {
-			run = func([]string) error { return r.LockTracked() }
-		} else if n.Action == "session-suspend" {
-			run = func([]string) error { return r.SuspendTracked() }
-		}
-		r.scheduleControl(h, func() error { return run(argv) })
+		r.scheduleControl(h, r.sessionActionRunnerLocked(n.Action))
 		return true
 	default:
 		name, ok := strings.CutPrefix(n.Action, "cc:profile:")
@@ -443,7 +436,18 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		})
 		return true
 	}
-	r.switchPanelLocked(h, target)
+	if target == PanelPower {
+		section := h.section
+		trig := h.place
+		power := r.switchPanelLocked(h, target)
+		if power != nil {
+			power.powerReturnSection = section
+			power.powerReturnName = n.Name
+			power.powerTrigger = Trigger{BarEdge: trig.BarEdge, BarZone: trig.BarZone, OutW: trig.Output.W, OutH: trig.Output.H}
+		}
+	} else {
+		r.switchPanelLocked(h, target)
+	}
 	return true
 }
 

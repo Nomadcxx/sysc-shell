@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
 
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -29,7 +31,9 @@ func sessionTree(h *PanelHost, snap services.Snapshot, locker string) *ui.Node {
 	if h.profilesOK && len(h.profiles) > 0 {
 		children = append(children, sessionProfileCard(h))
 	}
-	children = append(children, sessionActionsCard(h.theme, h.tr, locker))
+	if len(children) == 0 {
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.tr("session.no_battery", "No battery or power profiles available.")})
+	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: monitorCardGap, Padding: h.theme.Metrics.PanelPadding, Children: children}
 }
 
@@ -148,49 +152,22 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 	})
 }
 
-func sessionActionsCard(th Theme, tr func(string, string) string, locker string) *ui.Node {
-	// destructive marks the two actions that end the session without warning.
-	// They take the error-toned outline from the catalogue rather than a solid
-	// red block: a permanent red slab reads as an alarm, not as a control.
-	acts := sessionActionOptions()
-	if locker == "" {
-		acts = acts[1:]
-	}
-	rows := []*ui.Node{monitorCardTitle(tr("session.actions_title", "Session"), 0)}
-	for _, a := range acts {
-		name := tr("session.action."+a.name, a.name)
-		node := &ui.Node{
-			Kind: ui.KindButton, Action: a.id,
-			Name: name, Role: "button", Focusable: true,
-			Gap: th.Metrics.ButtonPadding / 2, Padding: th.Metrics.ButtonPadding,
-			Height: th.Metrics.StandardControl,
-			Children: []*ui.Node{
-				{Kind: ui.KindIcon, Icon: a.icon, IconSize: th.Metrics.IconNormal},
-				{Kind: ui.KindText, Text: a.name},
-			},
-		}
-		if a.destructive {
-			node.Fill = ui.FillOutline
-			node.Tone = ui.ToneError
-		}
-		rows = append(rows, node)
-	}
-	return monitorCard(th.Metrics, rows)
-}
-
+// sessionAction is one session action. key names its catalog entry, which
+// predates the English label: Reboot's translations now read as Restart.
+// destructive actions end the session and ask for confirmation first.
 type sessionAction struct {
-	name, id, icon string
-	destructive    bool
+	name, key, id, icon string
+	destructive         bool
 }
 
 func sessionActionOptions() []sessionAction {
 	return []sessionAction{
-		{name: "Lock", id: "session-lock", icon: "lock"},
-		{name: "Log out", id: "session-logout", icon: "logout"},
-		{name: "Suspend", id: "session-suspend", icon: "bedtime"},
-		{name: "Screen off", id: "session-display-off", icon: "visibility_off"},
-		{name: "Reboot", id: "session-reboot", icon: "restart_alt", destructive: true},
-		{name: "Power off", id: "session-poweroff", icon: "power_settings_new", destructive: true},
+		{name: "Lock", key: "Lock", id: "session-lock", icon: "lock"},
+		{name: "Suspend", key: "Suspend", id: "session-suspend", icon: "bedtime"},
+		{name: "Screen off", key: "Screen off", id: "session-display-off", icon: "visibility_off"},
+		{name: "Log out", key: "Log out", id: "session-logout", icon: "logout", destructive: true},
+		{name: "Restart", key: "Reboot", id: "session-reboot", icon: "restart_alt", destructive: true},
+		{name: "Power off", key: "Power off", id: "session-poweroff", icon: "power_settings_new", destructive: true},
 	}
 }
 
@@ -198,17 +175,12 @@ func sessionArgv(action, locker string) []string {
 	switch action {
 	case "session-lock":
 		return strings.Fields(locker)
-	case "session-logout":
-		return []string{"loginctl", "terminate-session", "self"}
 	case "session-suspend":
-		return []string{"loginctl", "suspend"}
-	// DPMS off; the compositor powers the outputs back on at input.
-	case "session-display-off":
-		return []string{"niri", "msg", "action", "power-off-monitors"}
+		return []string{"systemctl", "--no-block", "suspend"}
 	case "session-reboot":
-		return []string{"loginctl", "reboot"}
+		return []string{"systemctl", "--no-block", "reboot"}
 	case "session-poweroff":
-		return []string{"loginctl", "poweroff"}
+		return []string{"systemctl", "--no-block", "poweroff"}
 	}
 	return nil
 }
@@ -321,10 +293,9 @@ func runArgvDefault(argv []string) error {
 	if err != nil {
 		return err
 	}
-	if argv[0] == "loginctl" || argv[0] == "powerprofilesctl" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return exec.CommandContext(ctx, path, argv[1:]...).Run()
+	if argv[0] == "systemctl" || argv[0] == "loginctl" || argv[0] == "powerprofilesctl" {
+		_, err := runArgvOutputDefault(argv)
+		return err
 	}
 	return startArgvDetached(path, argv[1:])
 }
@@ -374,12 +345,101 @@ func runArgvOutputDefault(argv []string) (string, error) {
 	if len(argv) == 0 {
 		return "", errors.New("empty command")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return runArgvOutputContext(ctx, argv)
+}
+
+func runArgvOutputContext(ctx context.Context, argv []string) (string, error) {
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, path, argv[1:]...).Output()
-	return string(out), err
+	cmd := exec.CommandContext(ctx, path, argv[1:]...)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("%s: %w", argv[0], ctx.Err())
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return "", &commandError{name: argv[0], detail: stderrDetail(exit.Stderr), err: err}
+		}
+		return "", fmt.Errorf("%s: %w", argv[0], err)
+	}
+	return string(out), nil
+}
+
+// commandError is a native command that ran and refused. detail is its own
+// explanation, bounded and on one line, which the power menu shows on its own;
+// Error keeps the command name and exit status for the journal.
+type commandError struct {
+	name, detail string
+	err          error
+}
+
+func (e *commandError) Error() string {
+	if e.detail == "" {
+		return fmt.Sprintf("%s: %v", e.name, e.err)
+	}
+	return fmt.Sprintf("%s: %s (%v)", e.name, e.detail, e.err)
+}
+
+func (e *commandError) Unwrap() error { return e.err }
+
+// stderrDetail flattens stderr to one bounded line of printable text.
+func stderrDetail(stderr []byte) string {
+	detail := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, string(stderr))
+	detail = strings.Join(strings.Fields(detail), " ")
+	if runes := []rune(detail); len(runes) > 400 {
+		detail = string(runes[:400]) + "…"
+	}
+	return detail
+}
+
+// sessionFailureDetail says why a session action failed in the user's words:
+// the command's own explanation when it gave one, otherwise the cause.
+func sessionFailureDetail(h *PanelHost, err error) string {
+	var refused *commandError
+	var missing *exec.Error
+	switch {
+	case errors.As(err, &refused) && refused.detail != "":
+		return refused.detail
+	case errors.Is(err, context.DeadlineExceeded):
+		return h.tr("power.timeout", "The request timed out.")
+	case errors.As(err, &missing) && errors.Is(missing.Err, exec.ErrNotFound):
+		return fmt.Sprintf(h.tr("power.missing", "%s is not installed."), missing.Name)
+	}
+	return err.Error()
+}
+
+// sessionActionRunnerLocked captures fixed intent and the current compositor socket.
+// The caller invokes the returned request off Registry.mu.
+func (r *Registry) sessionActionRunnerLocked(action string) func() error {
+	switch action {
+	case "session-lock":
+		return r.LockTracked
+	case "session-suspend":
+		return r.SuspendTracked
+	case "session-logout", "session-display-off":
+		if r.niriSend == nil && testing.Testing() {
+			return func() error { return errors.New("refusing session IPC from a test binary: replace Registry.niriSend") }
+		}
+		var body any = niri.PowerOffMonitors{}
+		if action == "session-logout" {
+			body = niri.Quit{SkipConfirmation: true}
+		}
+		return r.niriActionLocked(body)
+	case "session-reboot", "session-poweroff":
+		run, argv := r.runArgv, sessionArgv(action, "")
+		return func() error { return run(argv) }
+	default:
+		return func() error { return errors.New("unknown session action") }
+	}
 }

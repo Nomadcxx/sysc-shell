@@ -24,6 +24,9 @@ func panelAtDensity(t *testing.T, id PanelID, d theme.Density) (*Registry, *Pane
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	reg.runArgv = func([]string) error { return nil }
+	if id == PanelSession {
+		reg.sample = assetSample()
+	}
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(id, 7, Trigger{}); err != nil {
 		t.Fatal(err)

@@ -37,6 +37,7 @@ var materialIcons = map[string]struct{}{
 	"shield": {}, "verified_user": {}, "vpn_key": {}, "vpn_key_off": {},
 	"bolt": {}, "dns": {}, "location_on": {}, "security": {}, "flag": {},
 	"download": {}, "upload": {}, "swap_vert": {}, "language": {}, "gpp_bad": {},
+	"fullscreen": {}, "fullscreen_exit": {}, "warning": {},
 	"lock": {}, "logout": {}, "bedtime": {}, "restart_alt": {}, "power_settings_new": {},
 	"speed": {}, "balance": {}, "energy_savings_leaf": {}, "check": {}, "send": {},
 	"content_paste": {}, "content_copy": {},

@@ -880,12 +880,15 @@ func TestLauncherSessionProviderSearchesNonLockActions(t *testing.T) {
 
 	p := r.sessionProvider()
 	rows := p.Query("reboot")
-	if len(rows) != 1 || rows[0].Entry.ID != "session-reboot" || rows[0].Entry.Name != "Reboot" {
+	if len(rows) != 1 || rows[0].Entry.ID != "session-reboot" || rows[0].Entry.Name != "Restart" {
 		t.Fatalf("reboot rows = %+v", rows)
+	}
+	if rows = p.Query("restart"); len(rows) != 1 || rows[0].Entry.ID != "session-reboot" {
+		t.Fatalf("restart rows = %+v", rows)
 	}
 
 	rows = p.Query("")
-	want := []string{"session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff"}
+	want := []string{"session-suspend", "session-display-off", "session-logout", "session-reboot", "session-poweroff"}
 	if len(rows) != len(want) {
 		t.Fatalf("session rows = %+v, want %v", rows, want)
 	}
@@ -915,7 +918,7 @@ func TestLauncherSearchFindsBareSessionAction(t *testing.T) {
 	select {
 	case rows := <-svc.Results():
 		for _, row := range rows.Results {
-			if row.Entry.ID == "session-reboot" && row.Entry.Name == "Reboot" {
+			if row.Entry.ID == "session-reboot" && row.Entry.Name == "Restart" {
 				return
 			}
 		}
@@ -951,12 +954,12 @@ func TestLauncherSessionActivationUsesExistingActionPath(t *testing.T) {
 	if p.Activate == nil {
 		t.Fatal("session provider has no activation handler")
 	}
-	if err := p.Activate("reboot", "session-reboot", ""); err != nil {
+	if err := p.Activate("suspend", "session-suspend", ""); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case argv := <-started:
-		if strings.Join(argv, "\x00") != strings.Join([]string{"loginctl", "reboot"}, "\x00") {
+		if strings.Join(argv, "\x00") != strings.Join([]string{"systemctl", "--no-block", "suspend"}, "\x00") {
 			t.Fatalf("session activation argv = %q", argv)
 		}
 	case <-time.After(2 * time.Second):

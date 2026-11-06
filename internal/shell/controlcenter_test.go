@@ -1146,7 +1146,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		{section: "audio", want: []string{"Volume", "Mute"}},
 		{section: "monitor", want: []string{"CPU", "Memory", "Temperature", "GPU", "Storage", "Network", "Disk I/O"}},
 		{section: "network", want: []string{"Network", "Wi-Fi", "Ethernet"}},
-		{section: "power", want: []string{"Battery", "Power profile", "Session"}},
+		{section: "power", want: []string{"Battery", "Power profile", "Power menu"}},
 		{section: "calendar", want: []string{"September 2026", "Previous month", "Next month"}},
 		{section: "notifications", want: []string{"Do not disturb", "Clear all", "No notifications"}},
 	} {
@@ -1283,41 +1283,6 @@ func TestControlCentreLoadsPowerProfilesForItsOwnHost(t *testing.T) {
 	}
 }
 
-func TestControlCentreSessionActionRunsWithoutRegistryLock(t *testing.T) {
-	r := &Registry{panelHosts: map[PanelID]*PanelHost{}, closed: make(chan struct{})}
-	h := &PanelHost{id: PanelControlCenter, section: "power", theme: DefaultTheme()}
-	r.panelHosts[PanelControlCenter] = h
-	unlocked := make(chan bool, 1)
-	r.runArgv = func([]string) error {
-		ok := r.mu.TryLock()
-		if ok {
-			r.mu.Unlock()
-		}
-		unlocked <- ok
-		return nil
-	}
-	r.mu.Lock()
-	if !h.activateControlCentre(r, &ui.Node{Action: "session-display-off"}) {
-		r.mu.Unlock()
-		t.Fatal("control centre did not handle the session action")
-	}
-	select {
-	case ok := <-unlocked:
-		r.mu.Unlock()
-		t.Fatalf("session command ran before the handler released Registry.mu (lock available: %v)", ok)
-	case <-time.After(10 * time.Millisecond):
-	}
-	r.mu.Unlock()
-	select {
-	case ok := <-unlocked:
-		if !ok {
-			t.Fatal("session command ran while Registry.mu was held")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("session command did not run")
-	}
-}
-
 func TestNotificationUpdateRebuildsAnOpenControlCentre(t *testing.T) {
 	r := newPanelRegistry(t)
 	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
@@ -1429,7 +1394,7 @@ func TestControlCentreHeaderRoutesPanelsAndClose(t *testing.T) {
 		closed bool
 	}{
 		{name: "settings", action: "cc:settings", want: PanelSettings},
-		{name: "power", action: "cc:power", want: PanelSession},
+		{name: "power", action: "cc:power", want: PanelPower},
 		{name: "close", action: "cc:close", closed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

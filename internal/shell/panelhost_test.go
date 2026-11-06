@@ -317,15 +317,16 @@ func TestEscapeClosesPanel(t *testing.T) {
 func TestTabMovesRovingFocus(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+	if err := reg.OpenPanel(PanelPower, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
 	handle := reqs[1].Open.Callbacks.Handle
-	h := reg.panelHosts[PanelSession]
-	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
-	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
-	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab, Mods: ui.ModShift})
+	h := reg.panelHosts[PanelPower]
+	h.roving.Set(0)
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab, Sym: ui.SymTab})
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab, Sym: ui.SymTab})
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab, Sym: ui.SymTab, Mods: ui.ModShift})
 	if h.roving.Index() != 1 {
 		t.Fatalf("focus index = %d, want 1", h.roving.Index())
 	}
@@ -335,12 +336,12 @@ func TestSpaceActivatesFocusedButton(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
 	reg.runArgv = func([]string) error { return nil }
-	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+	if err := reg.OpenPanel(PanelPower, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
-	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keySpace})
-	waitSessionPanelClosed(t, reg)
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keySpace, Sym: 32})
+	waitFor(t, func() bool { reg.mu.Lock(); defer reg.mu.Unlock(); return reg.panelHosts[PanelPower] == nil })
 }
 
 func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
@@ -681,10 +682,10 @@ func TestTogglePanelByNameOpensSession(t *testing.T) {
 	}
 }
 
-func TestPowerIsAnAliasForSession(t *testing.T) {
+func TestPowerHasDedicatedPanel(t *testing.T) {
 	t.Parallel()
 	id, err := parsePanelName("power")
-	if err != nil || id != PanelSession {
+	if err != nil || id != PanelPower {
 		t.Fatalf("parsePanelName(power) = %v, %v", id, err)
 	}
 }
@@ -847,14 +848,14 @@ func TestNotificationsCentreConfiguresAtTargetWidth(t *testing.T) {
 	}
 }
 
-func TestTogglePanelByNamePowerOpensSession(t *testing.T) {
+func TestTogglePanelByNamePowerOpensPower(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
 	if err := reg.TogglePanelByName("power"); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
-	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:power") {
 		t.Fatalf("opened %q", reqs[1].Open.ID)
 	}
 }
@@ -1529,11 +1530,11 @@ func openSessionPanel(t *testing.T) (*Registry, *PanelHost, func(wayland.Event) 
 	// pointer on one activates it. Record the argv instead: the default
 	// launcher would ask logind to end the session running the test.
 	reg.runArgv = func([]string) error { return nil }
-	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40, Align: "center"}); err != nil {
+	if err := reg.OpenPanel(PanelPower, 7, Trigger{BarEdge: "top", BarZone: 40, Align: "center"}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
-	h := reg.panelHosts[PanelSession]
+	h := reg.panelHosts[PanelPower]
 	if h == nil {
 		t.Fatal("session panel host is missing")
 	}

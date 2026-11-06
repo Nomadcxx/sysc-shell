@@ -50,7 +50,6 @@ const (
 	ccAvatarIconSize = 28
 	ccTodayH         = 336
 	ccForecastH      = 132
-	ccSessionCardH   = 232
 	ccCalendarRowMin = 32
 	// ccCalendarWeekdayH is the weekday header band: one label line and the
 	// small gap Noctalia leaves under it.
@@ -793,10 +792,8 @@ func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
 	tr := ccT(h, r)
 	var snap services.Snapshot
-	locker := ""
 	if r != nil {
 		snap = r.sample
-		locker = r.cfg.Session.Locker
 	}
 	errLabel := ""
 	if h != nil {
@@ -804,7 +801,7 @@ func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	}
 	battery := ccPowerBattery(m, snap, errLabel, tr)
 	profiles := ccPowerProfiles(m, h)
-	actions := ccSessionActions(m, locker, r.lockActionLabel(), tr)
+	actions := monitorCard(m, []*ui.Node{{Kind: ui.KindButton, Action: "cc:power", Name: cardT(tr, "power.menu", "Power menu"), Text: cardT(tr, "power.menu", "Power menu"), Focusable: true, Height: m.StandardControl}})
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginM,
 		Children: []*ui.Node{battery, profiles, actions}}
 }
@@ -863,39 +860,6 @@ func ccPowerProfiles(m theme.Metrics, h *PanelHost) *ui.Node {
 	}
 	card := monitorCard(m, rows)
 	card.Height = 112
-	return card
-}
-
-func ccSessionActions(m theme.Metrics, locker, lockLabel string, tr translateFunc) *ui.Node {
-	actions := []struct{ name, action, icon string }{
-		{lockLabel, "session-lock", "lock"},
-		{"Log out", "session-logout", "logout"},
-		{"Suspend", "session-suspend", "bedtime"},
-		{"Screen off", "session-display-off", "visibility_off"},
-		{"Reboot", "session-reboot", "restart_alt"},
-		{"Power off", "session-poweroff", "power_settings_new"},
-	}
-	if locker == "" {
-		actions = actions[1:]
-	}
-	rows := []*ui.Node{monitorCardTitle(cardT(tr, "section.Session", "Session"), 0)}
-	for _, action := range actions {
-		name := cardT(tr, "session.action."+action.name, action.name)
-		n := &ui.Node{
-			Kind: ui.KindButton, Action: action.action, Name: name, Role: "button", Focusable: true,
-			Height: m.CompactControl, Gap: theme.MarginM, Padding: m.CardPadding,
-			Children: []*ui.Node{
-				{Kind: ui.KindIcon, Icon: action.icon, IconSize: m.IconNormal},
-				{Kind: ui.KindText, Text: name},
-			},
-		}
-		if action.action == "session-reboot" || action.action == "session-poweroff" {
-			n.Fill, n.Tone = ui.FillOutline, ui.ToneError
-		}
-		rows = append(rows, n)
-	}
-	card := monitorCard(m, rows)
-	card.Height = ccSessionCardH
 	return card
 }
 

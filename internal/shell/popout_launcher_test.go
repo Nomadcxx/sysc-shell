@@ -1005,26 +1005,26 @@ func TestLauncherSessionFailureRemainsVisible(t *testing.T) {
 	started := make(chan []string, 1)
 	reg.runArgv = func(argv []string) error {
 		started <- argv
-		return errors.New("loginctl refused")
+		return errors.New("systemctl refused")
 	}
-	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "reboot"})
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "suspend"})
 	waitForLauncherState(t, reg, func(h *PanelHost) bool {
 		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(row launcher.Result) bool {
-			return row.Entry.ID == "session-reboot"
+			return row.Entry.ID == "session-suspend"
 		})
 	})
 	pressLauncherKey(reqs, keyEnter)
 
 	select {
 	case argv := <-started:
-		if !slices.Equal(argv, []string{"loginctl", "reboot"}) {
+		if !slices.Equal(argv, []string{"systemctl", "--no-block", "suspend"}) {
 			t.Fatalf("session action argv = %v", argv)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("session action did not start")
 	}
 	waitForLauncherState(t, reg, func(h *PanelHost) bool {
-		return h != nil && h.errLabel == "loginctl refused"
+		return h != nil && h.errLabel == "Suspend failed: systemctl refused"
 	})
 }
 
@@ -1400,18 +1400,18 @@ func TestLauncherLateSessionFailureDoesNotReplaceNewSearch(t *testing.T) {
 	reg.runArgv = func(argv []string) error {
 		started <- argv
 		<-release
-		return errors.New("loginctl refused")
+		return errors.New("systemctl refused")
 	}
-	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "reboot"})
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "suspend"})
 	waitForLauncherState(t, reg, func(h *PanelHost) bool {
 		return h != nil && !h.launcherAwaiting && slices.ContainsFunc(h.launcherResults, func(row launcher.Result) bool {
-			return row.Entry.ID == "session-reboot"
+			return row.Entry.ID == "session-suspend"
 		})
 	})
 	pressLauncherKey(reqs, keyEnter)
 	select {
 	case argv := <-started:
-		if !slices.Equal(argv, []string{"loginctl", "reboot"}) {
+		if !slices.Equal(argv, []string{"systemctl", "--no-block", "suspend"}) {
 			t.Fatalf("session action argv = %v", argv)
 		}
 	case <-time.After(2 * time.Second):
@@ -1420,7 +1420,7 @@ func TestLauncherLateSessionFailureDoesNotReplaceNewSearch(t *testing.T) {
 
 	reg.mu.Lock()
 	h := reg.panelHosts[PanelLauncher]
-	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("suspend")) {
+	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("power off")) {
 		reg.mu.Unlock()
 		t.Fatal("new session query was not handled")
 	}
@@ -1437,7 +1437,7 @@ func TestLauncherLateSessionFailureDoesNotReplaceNewSearch(t *testing.T) {
 			query, awaiting = h.query, h.launcherAwaiting
 			for _, row := range h.launcherResults {
 				ids = append(ids, row.Entry.ID)
-				found = found || row.Entry.ID == "session-suspend"
+				found = found || row.Entry.ID == "session-poweroff"
 			}
 		}
 		reg.mu.Unlock()

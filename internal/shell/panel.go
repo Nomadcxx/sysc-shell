@@ -25,6 +25,7 @@ const (
 	PanelTerminalArt
 	PanelOnboarding
 	PanelKeyboardLayout
+	PanelPower
 )
 
 func (p PanelID) String() string {
@@ -33,6 +34,8 @@ func (p PanelID) String() string {
 		return "clock"
 	case PanelMonitor:
 		return "system-monitor"
+	case PanelPower:
+		return "power"
 	case PanelSession:
 		return "session"
 	case PanelSettings:
