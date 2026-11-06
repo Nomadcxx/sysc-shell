@@ -172,3 +172,18 @@ func TestMarshalSpawn(t *testing.T) {
 		t.Fatalf("action = %s, want %s", got, want)
 	}
 }
+
+func TestQuitWire(t *testing.T) {
+	for _, tc := range []struct {
+		skip bool
+		want string
+	}{
+		{true, `{"Action":{"Quit":{"skip_confirmation":true}}}`},
+		{false, `{"Action":{"Quit":{"skip_confirmation":false}}}`},
+	} {
+		got, err := marshalAction(Quit{SkipConfirmation: tc.skip})
+		if err != nil || string(got) != tc.want {
+			t.Fatalf("%s, %v; want %s", got, err, tc.want)
+		}
+	}
+}

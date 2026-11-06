@@ -61,6 +61,10 @@ func (s Style) rootFill() Color {
 	if s.NoGround {
 		return Color{}
 	}
+	if s.RootScrim {
+		dim, _ := fillPair(s, ui.FillScrim, Color{})
+		return dim
+	}
 	a := s.SurfaceOpacity
 	if a == 0 || a == 0xff {
 		return s.Background

@@ -517,9 +517,11 @@ func (r *Registry) sessionProvider() launcher.Provider {
 				if action.id == "session-lock" {
 					continue
 				}
-				name := i18n.T(locale, "session.action."+action.name, action.name)
+				name := i18n.T(locale, "session.action."+action.key, action.name)
+				// The catalog key stays searchable: "reboot" still finds Restart.
 				if query != "" && !strings.Contains(strings.ToLower(name), query) &&
-					!strings.Contains(strings.ToLower(action.name), query) {
+					!strings.Contains(strings.ToLower(action.name), query) &&
+					!strings.Contains(strings.ToLower(action.key), query) {
 					continue
 				}
 				rows = append(rows, launcher.Result{Entry: launcher.Entry{
@@ -529,7 +531,7 @@ func (r *Registry) sessionProvider() launcher.Provider {
 			return rows
 		},
 		Activate: func(_, id, _ string) error {
-			if id == "session-lock" || sessionArgv(id, "") == nil {
+			if id == "session-lock" || !slices.ContainsFunc(sessionActionOptions(), func(a sessionAction) bool { return a.id == id }) {
 				return errors.New("launcher: unsupported session action")
 			}
 			r.mu.Lock()
@@ -541,6 +543,20 @@ func (r *Registry) sessionProvider() launcher.Provider {
 			attempt := h.launcherPendingAttempt
 			if attempt == 0 || h.launcherAttempt != attempt {
 				return errors.New("launcher: session activation is stale")
+			}
+			for _, a := range sessionActionOptions() {
+				if a.id == id && a.destructive {
+					power := r.switchPanelLocked(h, PanelPower)
+					if power == nil {
+						return errors.New("could not open power confirmation")
+					}
+					power.powerConfirm = id
+					r.rebuildPanel(power)
+					power.focusPowerAction("power:cancel")
+					power.focusVisible = h.focusVisible
+					r.publishSurface(power.output, panelSurfaceID(power.id))
+					return nil
+				}
 			}
 			r.runSessionActionAtAttempt(h, id, attempt)
 			return nil

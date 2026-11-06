@@ -977,34 +977,44 @@ func (r *Registry) handleRunningAppClick(output uint32, key string, button uint3
 }
 
 func (r *Registry) sendNiriLocked(body any) {
-	if r.niriSend != nil {
-		if err := r.niriSend(body); err != nil {
+	send := r.niriActionLocked(body)
+	report := func(err error) {
+		if err != nil {
 			log.Print("niri action: ", err)
 		}
+	}
+	if r.niriSend != nil {
+		report(send())
 		return
 	}
-	socket := os.Getenv("NIRI_SOCKET")
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := niri.Action(ctx, socket, body); err != nil {
-			log.Print("niri action: ", err)
-		}
-	}()
+	go func() { report(send()) }()
 }
 
 func (r *Registry) sendNiriResultLocked(body any, complete func(error)) {
+	send := r.niriActionLocked(body)
 	if r.niriSend != nil {
-		err := r.niriSend(body)
+		err := send()
 		go complete(err)
 		return
 	}
-	socket := os.Getenv("NIRI_SOCKET")
-	go func() {
+	go func() { complete(send()) }()
+}
+
+// niriActionLocked captures the action seam and the current compositor socket.
+// The returned send runs off Registry.mu.
+func (r *Registry) niriActionLocked(body any) func() error {
+	send, socket := r.niriSend, os.Getenv("NIRI_SOCKET")
+	return func() error {
+		if send != nil {
+			return send(body)
+		}
+		if socket == "" {
+			return errors.New("no compositor IPC socket: NIRI_SOCKET is unset")
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		complete(niri.Action(ctx, socket, body))
-	}()
+		return niri.Action(ctx, socket, body)
+	}
 }
 
 func (r *Registry) queryNiriWindows() ([]niri.Window, error) {

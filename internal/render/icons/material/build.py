@@ -33,6 +33,9 @@ AXES = {"FILL": 1, "wght": 400, "GRAD": 0, "opsz": 24}
 # The exact inventory the shell may name. Adding a glyph here is a deliberate
 # act: the subset grows, and materialfont.go must accept the name too.
 ICONS = [
+    "fullscreen",
+    "fullscreen_exit",
+    "warning",
     "lock",
     "logout",
     "bedtime",

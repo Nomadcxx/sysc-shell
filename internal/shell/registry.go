@@ -2617,6 +2617,9 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 // connector with a reconnected one cannot remove it.
 func (r *Registry) DropHost(global uint32) {
 	r.mu.Lock()
+	if h := r.panelHosts[PanelPower]; h != nil && h.output == global {
+		r.closePanelLocked(PanelPower)
+	}
 	leases := r.leases[global]
 	gone := ""
 	bar := r.bars[global]

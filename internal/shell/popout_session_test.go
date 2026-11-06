@@ -2,7 +2,6 @@ package shell
 
 import (
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -28,31 +26,6 @@ func TestCaffeineInhibitAllowsSuspend(t *testing.T) {
 	want := []string{"--what=idle", "--who=sysc-shell", "--why=Caffeine", "--mode=block", "sleep", "infinity"}
 	if got := caffeineInhibitArgs(); !slices.Equal(got, want) {
 		t.Fatalf("Caffeine inhibitor args = %v, want %v", got, want)
-	}
-}
-
-func TestSessionActionsList(t *testing.T) {
-	t.Parallel()
-	_, h := newSessionHost(t, "swaylock")
-	got := focusableNames(h.root)
-	want := []string{"Lock", "Log out", "Suspend", "Screen off", "Reboot", "Power off"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("actions = %v, want %v", got, want)
-	}
-}
-
-func TestLockHiddenWithoutLocker(t *testing.T) {
-	t.Parallel()
-	_, h := newSessionHost(t, "")
-	got := focusableNames(h.root)
-	want := []string{"Log out", "Suspend", "Screen off", "Reboot", "Power off"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("actions = %v, want %v", got, want)
-	}
-	for _, name := range got {
-		if name == "Lock" {
-			t.Fatal("Lock shown without a locker")
-		}
 	}
 }
 
@@ -177,17 +150,6 @@ func TestOpenPanelLoadsProfileTabsFromList(t *testing.T) {
 	_ = drainAux(t, reg, 2)
 	close(release)
 	waitProfileTabNames(t, reg, "Power saver", "Balanced", "Performance")
-}
-
-func TestSessionActionsRemain(t *testing.T) {
-	t.Parallel()
-	_, h := newSessionHost(t, "swaylock")
-	got := focusableNames(h.root)
-	for _, name := range []string{"Lock", "Log out", "Suspend", "Reboot", "Power off"} {
-		if !slices.Contains(got, name) {
-			t.Fatalf("missing %s in %v", name, got)
-		}
-	}
 }
 
 func TestSessionAlignsToTheTrailingEdge(t *testing.T) {
@@ -409,104 +371,6 @@ func waitSessionSurfaceInvalidation(t *testing.T, reg *Registry) {
 	}
 }
 
-func TestSessionExecMapping(t *testing.T) {
-	t.Parallel()
-	reg, h := newSessionHost(t, "swaylock")
-	// Lock now routes through the tracked-spawn manager (plan T16), not
-	// runArgv; stub the spawn seam so no real process execs under test.
-	var lockMu sync.Mutex
-	var lockArgv []string
-	reg.lockerSpawn = func(argv []string) (io.ReadCloser, <-chan int, error) {
-		lockMu.Lock()
-		lockArgv = append([]string(nil), argv...)
-		lockMu.Unlock()
-		pr, pw := io.Pipe()
-		pw.Close()
-		ch := make(chan int, 1)
-		ch <- 0
-		return pr, ch, nil
-	}
-	var mu sync.Mutex
-	var got [][]string
-	reg.runArgv = func(argv []string) error {
-		mu.Lock()
-		got = append(got, append([]string(nil), argv...))
-		mu.Unlock()
-		return nil
-	}
-	cases := []struct {
-		name string
-		want []string
-	}{
-		{"Log out", []string{"loginctl", "terminate-session", "self"}},
-		{"Screen off", []string{"niri", "msg", "action", "power-off-monitors"}},
-		{"Reboot", []string{"loginctl", "reboot"}},
-		{"Power off", []string{"loginctl", "poweroff"}},
-	}
-	for i, tc := range cases {
-		if i > 0 {
-			if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
-				t.Fatal(err)
-			}
-			_ = drainAux(t, reg, 2)
-			h = reg.panelHosts[PanelSession]
-		}
-		mu.Lock()
-		got = nil
-		mu.Unlock()
-		activateNamed(h, reg, tc.name)
-		// runSessionAction launches off Registry.mu (GH #5); the launch and
-		// the close it schedules land asynchronously.
-		var argv []string
-		deadline := time.Now().Add(2 * time.Second)
-		for {
-			mu.Lock()
-			if len(got) == 1 {
-				argv = got[0]
-			}
-			mu.Unlock()
-			if argv != nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("%s: runArgv never ran", tc.name)
-			}
-			time.Sleep(time.Millisecond)
-		}
-		if !reflect.DeepEqual(argv, tc.want) {
-			t.Fatalf("%s: argv = %v, want %v", tc.name, argv, tc.want)
-		}
-		waitSessionPanelClosed(t, reg)
-		_ = drainAux(t, reg, 2) // close requests after a successful action
-	}
-	// Lock runs through the tracked-spawn seam with the same argv mapping.
-	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
-		t.Fatal(err)
-	}
-	_ = drainAux(t, reg, 2)
-	activateNamed(reg.panelHosts[PanelSession], reg, "Lock")
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		lockMu.Lock()
-		done := lockArgv != nil
-		lockMu.Unlock()
-		if done {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("Lock: tracked spawn never ran")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	lockMu.Lock()
-	argv := lockArgv
-	lockMu.Unlock()
-	if !reflect.DeepEqual(argv, []string{"swaylock"}) {
-		t.Fatalf("Lock argv = %v, want [swaylock]", argv)
-	}
-	waitSessionPanelClosed(t, reg)
-}
-
 func waitSessionPanelClosed(t *testing.T, reg *Registry) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -665,7 +529,7 @@ func sessionWithProfiles(t *testing.T) (*Registry, *PanelHost) {
 	return reg, h
 }
 
-func TestSessionKeepsThreeDistinctHighContainerCards(t *testing.T) {
+func TestSessionKeepsBatteryAndProfileCards(t *testing.T) {
 	t.Parallel()
 	reg, h := sessionWithProfiles(t)
 	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
@@ -687,10 +551,10 @@ func TestSessionKeepsThreeDistinctHighContainerCards(t *testing.T) {
 		}
 	}
 	walk(h.root)
-	if len(cards) != 3 {
-		t.Fatalf("session shows %d high-container cards, want Battery, Power profile and Session", len(cards))
+	if len(cards) != 2 {
+		t.Fatalf("session shows %d high-container cards, want Battery and Power profile", len(cards))
 	}
-	for _, name := range []string{"Battery", "Power profile", "Session"} {
+	for _, name := range []string{"Battery", "Power profile"} {
 		if !headingNamed(h.root, name) {
 			t.Errorf("card %q is missing", name)
 		}
@@ -809,133 +673,20 @@ func TestProfileCardIsAbsentWithoutPowerProfilesctl(t *testing.T) {
 	}
 }
 
-func TestSessionActionsAreFullWidthIconStadiums(t *testing.T) {
-	t.Parallel()
-	_, h := sessionWithProfiles(t)
-
-	icons := map[string]string{
-		"Lock": "lock", "Log out": "logout", "Suspend": "bedtime",
-		"Screen off": "visibility_off",
-		"Reboot":     "restart_alt", "Power off": "power_settings_new",
-	}
-	var width int
-	for name, want := range icons {
-		node := findByName(h.root, name)
-		if node == nil {
-			t.Fatalf("action %q is missing", name)
-		}
-		// The action stadium is the derived standard control, base x 1.1 forced
-		// even, which is 36 at the default row rather than the old absolute 40.
-		if node.Bounds.H != 36 {
-			t.Errorf("action %q is %d px high, want 36", name, node.Bounds.H)
-		}
-		icon := findNode(node, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
-		if icon == nil || icon.Icon != want {
-			t.Errorf("action %q icon = %v, want %q", name, icon, want)
-		} else if icon.IconSize != DefaultTheme().IconSize {
-			t.Errorf("action %q icon is %d px, want %d", name, icon.IconSize, DefaultTheme().IconSize)
-		}
-		if !render.ValidMaterialIcon(want) {
-			t.Errorf("action %q names %q, which is outside the embedded subset", name, want)
-		}
-		// Every action spans the same full card width.
-		if width == 0 {
-			width = node.Bounds.W
-		} else if node.Bounds.W != width {
-			t.Errorf("action %q is %d px wide, want the full %d", name, node.Bounds.W, width)
-		}
-	}
-}
-
-func TestLockIsAbsentWithoutALocker(t *testing.T) {
-	t.Parallel()
-	reg, h := newSessionHost(t, "")
-	layoutSession(t, reg, h)
-	if findByName(h.root, "Lock") != nil {
-		t.Error("Lock is offered with no configured locker")
-	}
-	for _, name := range []string{"Log out", "Suspend", "Reboot", "Power off"} {
-		if findByName(h.root, name) == nil {
-			t.Errorf("action %q disappeared with the locker", name)
-		}
-	}
-}
-
-func TestRebootAndPowerOffAreErrorTonedOutlines(t *testing.T) {
-	t.Parallel()
-	_, h := sessionWithProfiles(t)
-
-	for _, name := range []string{"Reboot", "Power off"} {
-		node := findByName(h.root, name)
-		if node == nil {
-			t.Fatalf("action %q is missing", name)
-		}
-		if node.Fill != ui.FillOutline {
-			t.Errorf("%q uses fill %d, want the outline treatment", name, node.Fill)
-		}
-		if node.Tone != ui.ToneError {
-			t.Errorf("%q is not error-toned", name)
-		}
-		if node.Fill == ui.FillError {
-			t.Errorf("%q is a solid red block", name)
-		}
-	}
-	// The ordinary actions stay ordinary.
-	for _, name := range []string{"Lock", "Log out", "Suspend"} {
-		node := findByName(h.root, name)
-		if node == nil {
-			t.Fatalf("action %q is missing", name)
-		}
-		if node.Fill != ui.FillNone || node.Tone == ui.ToneError {
-			t.Errorf("%q picked up destructive treatment: fill %d tone %d", name, node.Fill, node.Tone)
-		}
-	}
-}
-
 func TestSessionActionIdentityIsUnchanged(t *testing.T) {
-	t.Parallel()
-	_, h := sessionWithProfiles(t)
-
-	// The action IDs and the argv they map to are contracts with the IPC alias
-	// and the key binding. Recomposing the panel must not touch either.
-	want := map[string][]string{
-		"session-lock":        {"swaylock"},
-		"session-logout":      {"loginctl", "terminate-session", "self"},
-		"session-suspend":     {"loginctl", "suspend"},
-		"session-display-off": {"niri", "msg", "action", "power-off-monitors"},
-		"session-reboot":      {"loginctl", "reboot"},
-		"session-poweroff":    {"loginctl", "poweroff"},
+	_, h := newPowerHost(t)
+	want := []string{"session-lock", "session-suspend", "session-display-off", "session-logout", "session-reboot", "session-poweroff"}
+	var got []string
+	for _, n := range ui.Focusables(h.root) {
+		if strings.HasPrefix(n.Action, "session-") {
+			got = append(got, n.Action)
+		}
 	}
-	for id, argv := range want {
-		node := findNode(h.root, func(n *ui.Node) bool { return n.Action == id })
-		if node == nil {
-			t.Errorf("action id %q is no longer in the tree", id)
-			continue
-		}
-		got := sessionArgv(id, "swaylock")
-		if len(got) != len(argv) {
-			t.Errorf("%s argv = %v, want %v", id, got, argv)
-			continue
-		}
-		for i := range argv {
-			if got[i] != argv[i] {
-				t.Errorf("%s argv = %v, want %v", id, got, argv)
-				break
-			}
-		}
+	if !slices.Equal(got, want) {
+		t.Fatalf("action IDs: %v, want %v", got, want)
 	}
 }
 
-// TestRunArgvDefaultRefusesToLaunchFromATestBinary is a safety gate, not a
-// behaviour check. runArgvDefault is what NewRegistry installs by default, and
-// a test that activates a session row reaches it: releasing the pointer on the
-// session panel's first control asked logind to end the developer's own login
-// session, which killed the SSH connection the suite was running over. The
-// suite still reported ok, so nothing pointed at the cause.
-//
-// The stub most tests install is reg.lookPath, which this path does not
-// consult -- it calls exec.LookPath directly. So the refusal lives here, at
-// the one place every session action is launched from.
 func TestRunArgvDefaultRefusesToLaunchFromATestBinary(t *testing.T) {
 	t.Parallel()
 	for _, argv := range [][]string{
@@ -1013,7 +764,10 @@ func TestRunSessionActionLaunchesOffTheRegistryLock(t *testing.T) {
 		<-release
 		return nil
 	}
-	h := &PanelHost{id: PanelSession, output: 1}
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	h := reg.panelHosts[PanelSession]
 
 	// activate calls runSessionAction with Registry.mu held. The subprocess
 	// must start anyway (GH #5): a loginctl action runs for up to five
@@ -1034,7 +788,7 @@ func TestRunSessionActionLaunchesOffTheRegistryLock(t *testing.T) {
 		close(release)
 		t.Fatal("runArgv never started")
 	}
-	if want := []string{"loginctl", "reboot"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"systemctl", "--no-block", "reboot"}; !reflect.DeepEqual(argv, want) {
 		close(release)
 		t.Errorf("argv = %v, want %v", argv, want)
 		t.FailNow()

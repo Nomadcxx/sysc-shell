@@ -18,7 +18,7 @@ func TestGateAccessibleNamesAndRoles(t *testing.T) {
 	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
-	for _, id := range []PanelID{PanelClock, PanelMonitor, PanelSession} {
+	for _, id := range []PanelID{PanelClock, PanelMonitor, PanelSession, PanelPower} {
 		if err := reg.OpenPanel(id, 7, Trigger{}); err != nil {
 			t.Fatal(err)
 		}
@@ -43,16 +43,16 @@ func TestGateKeyboardOnlyCoversControls(t *testing.T) {
 	keepInvalidationsDrained(t, reg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
-	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+	if err := reg.OpenPanel(PanelPower, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
-	h := reg.panelHosts[PanelSession]
+	h := reg.panelHosts[PanelPower]
 	want := h.roving.Count
 	seen := map[int]bool{h.roving.Index(): true}
 	handle := reqs[1].Open.Callbacks.Handle
 	for i := 0; i < want+1; i++ {
-		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
+		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab, Sym: ui.SymTab})
 		seen[h.roving.Index()] = true
 	}
 	if len(seen) != want {

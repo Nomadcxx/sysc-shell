@@ -269,23 +269,23 @@ func TestCustomLockerRemainsUnverified(t *testing.T) {
 	}
 }
 
-func TestControlCentreLockRowFollowsHandshake(t *testing.T) {
+func TestPowerMenuLockRowFollowsHandshake(t *testing.T) {
 	cfg := config.Default()
 	cfg.Session.Locker = "sysc-lock"
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	withTestBar(t, reg, 1, cfg)
-	if err := reg.OpenPanelByName("control-center"); err != nil {
+	if err := reg.OpenPanelByName("power"); err != nil {
 		t.Fatal(err)
 	}
 	reg.mu.Lock()
-	h := reg.panelHosts[PanelControlCenter]
+	h := reg.panelHosts[PanelPower]
 	if h == nil {
 		reg.mu.Unlock()
 		t.Fatal("no control centre")
 	}
-	h.selectControlCentreSection(reg, "power")
+	reg.rebuildPanel(h)
 	reg.mu.Unlock()
 
 	pr, pw := io.Pipe()
@@ -302,7 +302,7 @@ func TestControlCentreLockRowFollowsHandshake(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		reg.mu.Lock()
-		h = reg.panelHosts[PanelControlCenter]
+		h = reg.panelHosts[PanelPower]
 		name := ""
 		if h != nil {
 			if n := findNode(h.root, func(n *ui.Node) bool { return n.Action == "session-lock" }); n != nil {

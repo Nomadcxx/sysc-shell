@@ -92,8 +92,26 @@ type PanelHost struct {
 	// Registry.settingsWriteMu.
 	settingsWriteRevision uint64
 	settingsWriteChanges  []settingsWriteChange
-	id                    PanelID
-	output                uint32
+	// powerGroundFallback drops the captured backdrop: full screen dims the
+	// live desktop instead, and a resized compact view would stretch a capture
+	// of its original region. powerOpenSize is that region's size.
+	powerGroundFallback bool
+	powerOpenSize       ui.Rect
+	powerLockAvailable  bool
+	powerLockLabel      string
+	powerFullscreen     bool
+	powerConfirm        string
+	// powerFitScale is the scale the compact size was measured at.
+	powerFitScale int
+	// powerFailed is the action whose dispatch failed; errLabel holds why.
+	powerFailed        string
+	powerReturnSection string
+	powerReturnName    string
+	powerTrigger       Trigger
+	sessionPending     bool
+	sessionAttempt     uint64
+	id                 PanelID
+	output             uint32
 	// filesOwner is the files session whose tree this host currently renders
 	// (PanelFiles only, set at spawn and on rebuild). Teardown cancels a
 	// pending pick only while the host belongs to the current session, so
@@ -458,8 +476,10 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelClock, nil
 	case "system-monitor":
 		return PanelMonitor, nil
-	case "session", "power":
+	case "session":
 		return PanelSession, nil
+	case "power", "power-fullscreen":
+		return PanelPower, nil
 	case "settings":
 		return PanelSettings, nil
 	case "launcher":
@@ -544,10 +564,16 @@ func (r *Registry) HandlePanelByName(action, name, section string) error {
 			r.closePanelLocked(id)
 			return nil
 		}
+		if id == PanelPower {
+			r.setPowerPresentationLocked(r.panelHosts[id], name == "power-fullscreen")
+		}
 		return r.selectPanelSectionLocked(id, section)
 	}
 	if err := r.openPanelRootLocked(id, out, trig); err != nil {
 		return err
+	}
+	if id == PanelPower {
+		r.setPowerPresentationLocked(r.panelHosts[id], name == "power-fullscreen")
 	}
 	return r.selectPanelSectionLocked(id, section)
 }
@@ -1116,8 +1142,10 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelClock, true
 	case "system-monitor":
 		return PanelMonitor, true
-	case "session", "power":
+	case "session":
 		return PanelSession, true
+	case "power":
+		return PanelPower, true
 	case "settings":
 		return PanelSettings, true
 	case "launcher":
@@ -1290,6 +1318,12 @@ func (r *Registry) repositionPanelsLocked(output uint32) {
 		place := r.panelPlacementLocked(h.id, output, trigger, size)
 		r.panelOverlapLocked(output, &place)
 		place.Panel.W, place.Panel.H = place.FittedSize()
+		if h.id == PanelPower {
+			h.powerTrigger = trigger
+			h.place = place
+			h.fitPowerPlacement()
+			place = h.place
+		}
 		h.place, h.rect = place, place.Rect()
 		h.preferredMain = place.mainStart(h.rect)
 	}
@@ -1537,13 +1571,21 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.clipboardThumbnails = make(map[string]*ui.Image)
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
-	if id == PanelOnboarding || id == PanelLauncher {
+	if id == PanelPower {
+		h.powerTrigger = trig
+	}
+	if id == PanelPower || id == PanelOnboarding || id == PanelLauncher {
 		// These trees derive geometry from text before Configure runs: onboarding
 		// wraps its copy, and the launcher sizes its result viewport. Use real
 		// metrics before either initial tree is built.
 		if err := h.ensureText(); err != nil {
 			return err
 		}
+	}
+	if id == PanelPower {
+		h.fitPowerPlacement()
+		// The backdrop is captured from the compact rect this opens at.
+		h.powerOpenSize = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
 	}
 	h.root = r.panelTree(h)
 	r.queueFilesPanelImages(h)
@@ -1567,6 +1609,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	resolveSpriteMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
+	if id == PanelPower {
+		h.focusPowerAction("session-lock")
+		if r.cfg.Session.Locker == "" {
+			h.focusPowerAction("session-suspend")
+		}
+	}
 	if id == PanelWallpaper {
 		// The picker opens on its search box rather than on the Close button
 		// that happens to be first in the tree.
@@ -1705,6 +1753,10 @@ func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger,
 		place.Gap = 0
 		place.CenterY = true
 		place.Align = "center"
+	}
+	if id == PanelPower {
+		place.BarZone, place.Gap = 0, 0
+		place.Align, place.CenterY = "center", true
 	}
 	if id == PanelClipboard {
 		// Clipboard is a true modal centred on the whole output.
@@ -1925,7 +1977,11 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 						log.Printf("shell: dismiss onboarding: %v", err)
 					}
 				}
-				r.closePanelLocked(newest.id)
+				if newest.id == PanelPower {
+					r.dismissPowerLocked(newest)
+				} else {
+					r.closePanelLocked(newest.id)
+				}
 				return true
 			},
 		},
@@ -1952,6 +2008,9 @@ const lensSampleRows = 8
 // replaces, so wantsLens does not distinguish the tones: the gate is the
 // ladder's, and a frame that changes nothing is dropped on arrival.
 func (h *PanelHost) wantsLens(t Theme) bool {
+	if h.id == PanelPower && h.powerGroundFallback {
+		return false
+	}
 	m := materialFor(t, true)
 	if m.Tone == render.ToneNone || m.Intensity == 0 || h.lensOursFrame == nil {
 		return false
@@ -1983,6 +2042,9 @@ func (h *PanelHost) lensRung(now time.Time) render.LensRung {
 // what makes the ground track the content as the panel appears; afterwards the
 // cadence applies, and never more than one capture is in flight.
 func (h *PanelHost) maybeRecapture(r *Registry, t Theme, now time.Time) {
+	if h.id == PanelPower && h.powerGroundFallback {
+		return
+	}
 	// A request that never came back is a failure. The owner has no channel to
 	// report a dropped capture, and the age bound is the same fact either way:
 	// the frame did not arrive.
@@ -2020,6 +2082,9 @@ func lensInterval(revealing bool) time.Duration {
 // path rather than painting a guess. Its strength is bounded by the text floor,
 // not by taste.
 func (h *PanelHost) backdropFor(t Theme) *ui.Image {
+	if h.id == PanelPower && h.powerGroundFallback {
+		return nil
+	}
 	m := materialFor(t, h.backdrop != nil)
 	if m.Tone == render.ToneNone || m.Intensity == 0 {
 		return h.backdrop
@@ -2183,6 +2248,19 @@ func (h *PanelHost) rootStyle(t Theme, blurBehind bool) render.Style {
 	// against the surface's own boundary.
 	if t.Glass == theme.GlassFull {
 		s.RimWidth = 2
+	}
+	if h.id == PanelPower {
+		if h.powerGroundFallback {
+			s.SurfaceOpacity = 255
+		}
+		if h.powerFullscreen {
+			// The surface is the scrim over the live desktop; the sheet inside
+			// it carries the panel fill.
+			s.RootScrim = true
+			s.Radius = 0
+			s.Rim = Color{}
+			s.RimWidth = 0
+		}
 	}
 	return s
 }
@@ -2567,9 +2645,22 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 			focusKey, focusName, focusKind = focused.StableKey(), focused.Name, focused.Kind
 		}
 	}
+	if h.id == PanelPower {
+		h.syncPowerGround(w, height)
+	}
 	h.logicalW, h.logicalH, h.scale120 = w, height, scale120
 	if err := h.ensureText(); err != nil {
 		return err
+	}
+	if h.id == PanelPower {
+		action := ""
+		if n := h.focused(); n != nil {
+			action = n.Action
+		}
+		h.root = powerTree(h)
+		h.focus = ui.Focusables(h.root)
+		h.roving.Count = len(h.focus)
+		h.focusPowerAction(action)
 	}
 	ui.SizeControls(h.root, h.metrics())
 	box := h.surfaceBody(w, height)
@@ -3086,6 +3177,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) (changed bool) {
 	if focusInput(k) && !h.focusVisible {
 		h.focusVisible = true
 		defer func() { changed = changed || h.focused() != nil }()
+	}
+	if h.id == PanelPower {
+		return h.powerKeyInput(r, k)
 	}
 	key := k.Code
 	if h.id == PanelOnboarding && h.onbMoveMode {
@@ -3891,6 +3985,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if n == nil || n.State.Has(ui.StateDisabled) {
 		return false
 	}
+	if h.id == PanelPower {
+		return h.activatePower(r, n)
+	}
 	if h.id == PanelAudio && strings.HasPrefix(n.Action, "audio-route:") {
 		return h.activateAudioRoute(r, n)
 	}
@@ -4350,6 +4447,16 @@ func (r *Registry) queueFilesPanelImages(h *PanelHost) {
 }
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
+	if h.id == PanelPower {
+		old := h.rect
+		h.fitPowerPlacement()
+		h.rect = h.place.Rect()
+		h.logicalW, h.logicalH = h.place.Panel.W, h.place.Panel.H
+		if old != h.rect && r.panelHosts[h.id] == h {
+			h.syncPowerGround(h.rect.W, h.rect.H)
+			r.sendPanelPlacementLocked(h)
+		}
+	}
 	idx := h.roving.Index()
 	if h.id == PanelSettings {
 		if offset, ok := settingsScrollOffsetFor(h.root, settingsRailKey); ok {
@@ -4380,7 +4487,7 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	// Settings rebuilds after config adoption, and plugin panels rebuild on
 	// pushed views. Restoring only the roving index can move focus to another
 	// control when the tree changes, so carry the focused node's identity.
-	if h.id == PanelSettings || h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
+	if h.id == PanelPower || h.id == PanelSettings || h.id == PanelClipboard || h.id == PanelPluginStore || h.id == PanelPlugin {
 		if focused := h.focused(); focused != nil {
 			focusedKey = focused.StableKey()
 			focusedName = focused.Name
@@ -4523,6 +4630,10 @@ func (r *Registry) panelTree(h *PanelHost) (root *ui.Node) {
 		return clockTree(now, h.monthDelta, h.theme)
 	case PanelMonitor:
 		return monitorPanelTree(h, r.monitorViewLocked(h))
+	case PanelPower:
+		h.powerLockAvailable = r.cfg.Session.Locker != ""
+		h.powerLockLabel = r.lockActionLabel()
+		return powerTree(h)
 	case PanelSession:
 		return sessionTree(h, r.sample, r.cfg.Session.Locker)
 	case PanelSettings:
@@ -4567,6 +4678,8 @@ func (r *Registry) panelTree(h *PanelHost) (root *ui.Node) {
 
 func panelTargetSize(id PanelID) ui.Rect {
 	switch id {
+	case PanelPower:
+		return ui.Rect{W: 420, H: 400}
 	case PanelClock:
 		return ui.Rect{W: 360, H: 420}
 	case PanelMonitor:
@@ -5292,32 +5405,45 @@ func (r *Registry) runSessionAction(h *PanelHost, action string) {
 }
 
 func (r *Registry) runSessionActionAtAttempt(h *PanelHost, action string, launcherAttempt uint64) {
-	argv := sessionArgv(action, r.cfg.Session.Locker)
-	run := r.runArgv
-	if action == "session-lock" {
-		// Tracked spawn: handshake, wallpaper pause, respawn policy
-		// (docs/plans/2026-10-03-sysc-lock.md T16).
-		run = func([]string) error { return r.LockTracked() }
-	} else if action == "session-suspend" {
-		run = func([]string) error { return r.SuspendTracked() }
+	if h.sessionPending || r.panelHosts[h.id] != h || h.id == PanelLauncher && h.launcherAttempt != launcherAttempt {
+		return
 	}
-	// loginctl actions run under a 5-second timeout; holding Registry.mu
-	// across them stalls every relay and the Wayland owner (GH #5). Launch
-	// off the lock and commit the panel result after re-acquiring it, the
-	// same prepare/commit shape scheduleControl uses.
+	run := r.sessionActionRunnerLocked(action)
+	h.sessionPending = true
+	h.sessionAttempt++
+	attempt := h.sessionAttempt
+	// Execute off Registry.mu; holding it across a native request stalls
+	// every relay and the Wayland owner (GH #5). Commit only to this host
+	// and attempt.
 	go func() {
-		err := run(argv)
 		r.mu.Lock()
-		defer r.mu.Unlock()
-		if r.panelHosts[h.id] != h {
+		current := r.panelHosts[h.id] == h && h.sessionAttempt == attempt && (h.id != PanelLauncher || h.launcherAttempt == launcherAttempt)
+		r.mu.Unlock()
+		if !current {
 			return
 		}
+		err := run()
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.panelHosts[h.id] != h || h.sessionAttempt != attempt {
+			return
+		}
+		h.sessionPending = false
 		if h.id == PanelLauncher && h.launcherAttempt != launcherAttempt {
 			return
 		}
 		if err != nil {
-			h.errLabel = err.Error()
+			log.Printf("shell: %s: %v", action, err)
+			h.errLabel = sessionFailureDetail(h, err)
+			if h.id == PanelPower {
+				h.powerConfirm, h.powerFailed = "", action
+			} else {
+				h.errLabel = fmt.Sprintf(h.tr("power.failed", "%s failed"), h.sessionActionLabel(action)) + ": " + h.errLabel
+			}
 			r.rebuildPanel(h)
+			if h.id == PanelPower {
+				h.focusPowerAction("power:back")
+			}
 			r.publishSurface(h.output, panelSurfaceID(h.id))
 			return
 		}
@@ -5433,6 +5559,8 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 		return h.wallpaperTreeScale, true
 	case PanelOnboarding:
 		return h.onboardingTreeScale, true
+	case PanelPower:
+		return h.powerFitScale, true
 	}
 	return 0, false
 }
