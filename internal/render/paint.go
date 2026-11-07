@@ -2001,9 +2001,15 @@ func resolveGradient(n *ui.Node, style Style) []gradientStop {
 }
 
 // A button is a stadium unless it carries an explicit card radius.
-// A button is a stadium unless it carries an explicit card radius.
+//
+// An unfilled icon-only button is Material's standard icon button: no
+// container at rest and an on-surface-variant glyph, with the state layers
+// as its only chrome. A caller that wants the chip declares a fill. Bare
+// keeps its own glyph colour, and an error tone keeps the chip that
+// carries it.
 func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
-	if n.Tone == ui.ToneSubtle && n.Fill == ui.FillNone {
+	standardIcon := isIconOnly(n) && !n.Bare && n.Tone != ui.ToneError
+	if (n.Tone == ui.ToneSubtle || standardIcon) && n.Fill == ui.FillNone {
 		ghostStyle := style
 		ghostStyle.Foreground = style.Subtle
 		return paintChrome(c, n, text, ghostStyle, size, Color{}, 0)
@@ -2012,6 +2018,12 @@ func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		return paintChrome(c, n, text, style, size, Color{}, 0)
 	}
 	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
+}
+
+// isIconOnly reports a button whose whole content is one glyph: no label of
+// its own and a sole icon child. Its accessible name lives on Name.
+func isIconOnly(n *ui.Node) bool {
+	return n.Text == "" && len(n.Children) == 1 && n.Children[0] != nil && n.Children[0].Kind == ui.KindIcon
 }
 
 func paintDragHandle(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {

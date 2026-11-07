@@ -119,8 +119,9 @@ func TestCentreHeaderCarriesFiveCircularButtons(t *testing.T) {
 		if n.Shape != ui.ShapeCircle {
 			t.Fatalf("%s shape = %v, want circle", action, n.Shape)
 		}
-		if n.Fill != ui.FillContainerHighest {
-			t.Fatalf("%s fill = %v, want ContainerHighest", action, n.Fill)
+		// Unfilled, so the renderer paints Material's standard icon button.
+		if n.Fill != ui.FillNone {
+			t.Fatalf("%s fill = %v, want none", action, n.Fill)
 		}
 		if n.Name == "" || n.Role != "button" {
 			t.Fatalf("%s is not addressable: name=%q role=%q", action, n.Name, n.Role)

@@ -69,6 +69,9 @@ func mediaTransportButtons(state services.MediaState, modes bool) []*ui.Node {
 		mediaButton(playIcon, "media:playpause", "Play or pause", !mediaPlayDisabled(state)),
 		mediaButton("skip_next", "media:next", "Next", state.CanNext),
 	}
+	// Play/pause is the transport's primary action, so it keeps the chip the
+	// standard icon buttons beside it rest without.
+	buttons[1].Fill = ui.FillContainerHighest
 	if !modes {
 		return buttons
 	}
