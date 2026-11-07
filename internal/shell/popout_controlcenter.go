@@ -256,6 +256,9 @@ func ccRail(h *PanelHost) *ui.Node {
 			AriaDisabled: !section.Enabled, State: state, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: section.Icon}},
 		}
+		// The rail keeps a chip on every destination; it is a navigation
+		// rail, not a row of standard icon buttons.
+		entry.Fill = ui.FillContainerHighest
 		if section.ID == h.section {
 			entry.Fill = ui.FillAccent
 		}

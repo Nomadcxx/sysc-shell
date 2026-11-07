@@ -77,7 +77,7 @@ func monitorHeader(h *PanelHost, page string) *ui.Node {
 			{Kind: ui.KindIcon, Icon: "search", IconSize: centreIconSize},
 			field,
 			{Kind: ui.KindButton, Action: "monitor:clear", Name: "Clear search", Role: "button", Focusable: true,
-				Width: monitorHeaderH, Height: monitorHeaderH, Fill: ui.FillContainerHighest, Shape: ui.ShapeSmall,
+				Width: monitorHeaderH, Height: monitorHeaderH, Shape: ui.ShapeSmall,
 				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: monitorFactIcon}}},
 		}})
 	}
