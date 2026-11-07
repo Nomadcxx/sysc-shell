@@ -376,7 +376,9 @@ func TestRunningAppsMenuClickOutsideCloses(t *testing.T) {
 	}
 }
 
-func TestRunningAppsMenuRowsAreCapsules(t *testing.T) {
+// Rows are Material menu rows: no chrome at rest, the density's height, and
+// the hover layer on the row the keyboard or pointer is on.
+func TestRunningAppsMenuRowsAreMenuRows(t *testing.T) {
 	t.Parallel()
 	reg, bar := steamMenuReg(t)
 	bar.onAction("running-app:steam", buttonRight)
@@ -385,14 +387,14 @@ func TestRunningAppsMenuRowsAreCapsules(t *testing.T) {
 	if row == nil {
 		t.Fatal("no window row")
 	}
-	if row.Kind != ui.KindCapsule || row.Radius != host.style.Shapes.Small {
-		t.Fatalf("row = kind %d radius %d, want KindCapsule radius %d", row.Kind, row.Radius, host.style.Shapes.Small)
+	if row.Kind != ui.KindButton || !row.Bare || row.Height != host.rowHeight() {
+		t.Fatalf("row = kind %d bare %t height %d, want a bare %dpx menu row", row.Kind, row.Bare, row.Height, host.rowHeight())
 	}
-	if row.Fill != ui.FillSoft {
-		t.Fatalf("initial MRU fill = %v, want keyboard selection FillSoft", row.Fill)
+	if !row.State.Has(ui.StateHovered) {
+		t.Fatal("initial MRU row does not carry the keyboard highlight")
 	}
-	if host.root == nil || host.root.Gap <= 0 {
-		t.Fatal("menu column should use theme spacing between rows")
+	if host.root == nil || host.root.Padding != ui.MenuSheetPadding {
+		t.Fatal("menu column should pad its rows as a menu sheet")
 	}
 }
 
@@ -415,8 +417,8 @@ func TestRunningAppsMenuHighlightsOnMotion(t *testing.T) {
 	}
 	got := findAction(host.root, "running-app-action:Store")
 	window := findAction(host.root, "running-app-window:80")
-	if got.Fill != ui.FillSoft || window.Fill != ui.FillNone {
-		t.Fatalf("fills = action %v window %v, want hover on action only", got.Fill, window.Fill)
+	if !got.State.Has(ui.StateHovered) || window.State.Has(ui.StateHovered) {
+		t.Fatalf("hover = action %t window %t, want hover on action only", got.State.Has(ui.StateHovered), window.State.Has(ui.StateHovered))
 	}
 }
 
@@ -427,7 +429,7 @@ func TestRunningAppsMenuSeparatesCloseAll(t *testing.T) {
 	root := reg.runningMenu.root
 	var sawSep bool
 	for _, c := range root.Children {
-		if c != nil && c.Kind == ui.KindSeparator {
+		if c != nil && isMenuDivider(c) {
 			sawSep = true
 		}
 	}
@@ -435,7 +437,7 @@ func TestRunningAppsMenuSeparatesCloseAll(t *testing.T) {
 		t.Fatal("no separator before app close")
 	}
 	close := findAction(root, "running-app-force-quit")
-	if close == nil || len(close.Children) != 1 || close.Children[0].Tone != ui.ToneError {
+	if close == nil || menuRowLabel(close).Tone != ui.ToneError {
 		t.Fatalf("app close action = %+v, want ToneError", close)
 	}
 }

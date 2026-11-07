@@ -384,6 +384,13 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 		_, labelHeight := measure(n.Text, TextAttrsOf(n))
 		headHeight := max(n.Height, labelHeight+2*n.Padding)
 		y := box.Y + headHeight
+		// A sheet insets its rows by its padding on every side, the anatomy
+		// every menu surface shares.
+		x, w := box.X, box.W
+		if n.ItemHeight > 0 && len(n.Children) > 0 {
+			y += MenuSheetPadding
+			x, w = box.X+MenuSheetPadding, max(box.W-2*MenuSheetPadding, 0)
+		}
 		for _, c := range n.Children {
 			if c == nil {
 				continue
@@ -392,7 +399,12 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 			if err != nil {
 				return err
 			}
-			c.Bounds = Rect{X: box.X, Y: y, W: box.W, H: h}
+			// Options take the menu's row height; a picker's filter well
+			// keeps its own.
+			if n.ItemHeight > 0 && c.Kind == KindText {
+				h = max(h, n.ItemHeight)
+			}
+			c.Bounds = Rect{X: x, Y: y, W: w, H: h}
 			y += h
 		}
 		return nil
@@ -414,36 +426,46 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		if root.ItemHeight <= 0 {
 			root.ItemHeight = 1
 		}
-		root.ContentH = root.ItemCount * root.ItemHeight
+		root.ContentH = virtualContentHeight(root)
 		clampScroll(root)
 		lo, hi := VisibleRange(root)
-		if root.Item != nil {
-			for _, child := range root.Children {
-				clearLayoutBounds(child)
-			}
-			root.Children = root.Children[:0]
-			for i := lo; i < hi; i++ {
-				child := root.Item(i)
-				if child == nil {
-					continue
-				}
-				root.Children = append(root.Children, child)
-			}
-		}
-		y := content.Y - (root.ScrollOffset - lo*root.ItemHeight)
-		for i, child := range root.Children {
-			if child == nil {
-				return fmt.Errorf("ui: nil child %d", i)
-			}
-			box := Rect{X: content.X, Y: y, W: content.W, H: root.ItemHeight}
+		top, _ := ItemSpan(root, lo)
+		y := content.Y - (root.ScrollOffset - top)
+		place := func(child *Node, h int) error {
+			box := Rect{X: content.X, Y: y, W: content.W, H: h}
 			if child.Height > 0 && child.Height < box.H {
 				box.Y += (box.H - child.Height) / 2
 				box.H = child.Height
 			}
-			if err := placeColumnChild(child, box, measure); err != nil {
-				return err
+			return placeColumnChild(child, box, measure)
+		}
+		if root.Item == nil {
+			for i, child := range root.Children {
+				if child == nil {
+					return fmt.Errorf("ui: nil child %d", i)
+				}
+				h := itemExtent(root, lo+i)
+				if err := place(child, h); err != nil {
+					return err
+				}
+				y += h
 			}
-			y += root.ItemHeight
+			return nil
+		}
+		for _, child := range root.Children {
+			clearLayoutBounds(child)
+		}
+		root.Children = root.Children[:0]
+		for i := lo; i < hi; i++ {
+			h := itemExtent(root, i)
+			// A nil item keeps its slot, so later items stay at their index.
+			if child := root.Item(i); child != nil {
+				root.Children = append(root.Children, child)
+				if err := place(child, h); err != nil {
+					return err
+				}
+			}
+			y += h
 		}
 		return nil
 	}

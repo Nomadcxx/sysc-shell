@@ -78,7 +78,7 @@ func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anch
 		h.fontFamily = h.r.cfg.Bar.FontFamily
 	}
 	h.style = h.r.surfaceTheme().OverlayStyle()
-	h.style.Background = h.style.Capsule
+	h.style.Background = h.style.MenuSheet()
 	h.scale120 = 120
 	if bar := h.r.bars[output]; bar != nil {
 		if scale := bar.scale120(); scale > 0 {
@@ -253,7 +253,7 @@ func (h *runningAppMenuHost) menuWidth() int {
 			maxW = w
 		}
 	}
-	width := maxW + 2*theme.MarginS + 2*theme.MarginS
+	width := maxW + 2*ui.MenuSheetPadding + 2*ui.MenuRowInset
 	_, _, _, output := h.r.barGeometryOnOutputLocked(h.output, h.anchor)
 	maxWidth := 420
 	if output.W > 0 {
@@ -264,6 +264,22 @@ func (h *runningAppMenuHost) menuWidth() int {
 		width = min(width, output.W)
 	}
 	return max(width, 1)
+}
+
+// rowHeight is the density's menu row, grown for a label font too large
+// for it.
+func (h *runningAppMenuHost) rowHeight() int {
+	_, line := h.measureText("Ag", ui.TextAttrs{})
+	return max(h.style.Metrics.MenuItem, line+2*ui.MenuSheetPadding)
+}
+
+// menuCaption is a header or section title, inset to line up with the row
+// labels below it.
+func menuCaption(text string, role theme.TextRole) *ui.Node {
+	return &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Width: ui.MenuRowInset},
+		{Kind: ui.KindText, Text: text, TextRole: role},
+	}}
 }
 
 func (h *runningAppMenuHost) closeButtonWidth() int {
@@ -335,10 +351,16 @@ func (h *runningAppMenuHost) refreshLocked(slot runningAppSlot, snapshot niri.Sn
 	return true
 }
 
+// measureText sizes text in the logical pixels the layout works in: the
+// renderer measures at the surface's scale.
 func (h *runningAppMenuHost) measureText(text string, attrs ui.TextAttrs) (int, int) {
 	if h.text != nil {
 		if width, height, err := h.text.Measure(text, render.SpecFor(h.style, attrs), attrs.Tabular); err == nil {
-			return width, height
+			scale := h.style.Scale120
+			if !scale.Valid() {
+				scale = ui.ScaleUnit
+			}
+			return scale.Logical(width), scale.Logical(height)
 		}
 	}
 	return len([]rune(text)) * 8, 16
@@ -348,7 +370,12 @@ func (h *runningAppMenuHost) truncate(text string, width int, attrs ui.TextAttrs
 	if h.text == nil || width <= 0 {
 		return text
 	}
-	fitted, _, err := h.text.Truncate(text, render.SpecFor(h.style, attrs), width, attrs.Tabular)
+	// width is logical; the renderer truncates at the surface's scale.
+	scale := h.style.Scale120
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
+	fitted, _, err := h.text.Truncate(text, render.SpecFor(h.style, attrs), scale.Physical(width), attrs.Tabular)
 	if err != nil {
 		return text
 	}
@@ -404,7 +431,7 @@ func (h *runningAppMenuHost) rethemeLocked(next Theme, fontFamily string) bool {
 	scale := h.style.Scale120
 	h.style = next.OverlayStyle()
 	h.style.Scale120 = scale
-	h.style.Background = h.style.Capsule
+	h.style.Background = h.style.MenuSheet()
 	oldWidth, oldHeight := h.logicalW, h.logicalH
 	width, height, err := h.remeasureLocked()
 	if err != nil {
@@ -661,7 +688,7 @@ func (h *runningAppMenuHost) highlightAction() string {
 }
 
 func (h *runningAppMenuHost) rebuild() {
-	col := &ui.Node{Kind: ui.KindColumn, Padding: theme.MarginS, Gap: theme.MarginXS}
+	col := &ui.Node{Kind: ui.KindColumn, Padding: ui.MenuSheetPadding}
 	h.hitRows = make(map[string]int)
 	h.hitCloses = make(map[string]uint64)
 	visible := make(map[int]bool)
@@ -678,47 +705,35 @@ func (h *runningAppMenuHost) rebuild() {
 	for index, row := range h.rows {
 		switch row.Kind {
 		case runningAppMenuHeader:
-			col.Children = append(col.Children, &ui.Node{
-				Kind: ui.KindText, Text: h.truncate(row.Label, max(h.logicalW-2*theme.MarginS, 0), ui.TextAttrs{Role: theme.RoleTitle}),
-				TextRole: theme.RoleTitle,
-			})
+			width := max(h.logicalW-2*ui.MenuSheetPadding-2*ui.MenuRowInset, 0)
+			col.Children = append(col.Children, menuCaption(
+				h.truncate(row.Label, width, ui.TextAttrs{Role: theme.RoleTitle}), theme.RoleTitle))
 		case runningAppMenuSection:
 			if h.sectionVisible(index, visible) {
-				col.Children = append(col.Children, &ui.Node{Kind: ui.KindText, Text: row.Label,
-					TextRole: theme.RoleCaption})
+				col.Children = append(col.Children, menuCaption(row.Label, theme.RoleCaption))
 			}
 		default:
 			if !visible[index] {
 				continue
 			}
 			if len(visible) > 1 && h.startsAppLevelCloseGroup(index, visible) {
-				col.Children = append(col.Children, &ui.Node{Kind: ui.KindSeparator})
+				col.Children = append(col.Children, ui.MenuDividerNode())
 			}
 			action := h.actionForRow(row)
 			h.hitRows[action] = index
-			fill := ui.FillNone
-			if action == on {
-				fill = ui.FillSoft
-			}
 			if row.Kind == runningAppMenuWindow {
-				col.Children = append(col.Children, h.windowRowNode(row, action, fill))
+				col.Children = append(col.Children, h.windowRowNode(row, action, action == on))
 				continue
 			}
-			attrs := ui.TextAttrs{}
-			text := row.Label
+			tone := ui.ToneNormal
 			if row.Kind == runningAppMenuForceQuit || row.Kind == runningAppMenuForceQuitConfirm {
-				attrs.Role = theme.RoleLabel
+				tone = ui.ToneError
 			}
-			contentWidth := max(h.logicalW-2*theme.MarginS-2*theme.MarginS, 0)
-			label := &ui.Node{Kind: ui.KindText, Text: h.truncate(text, contentWidth, attrs), Tone: ui.ToneNormal}
-			if row.Kind == runningAppMenuForceQuit || row.Kind == runningAppMenuForceQuitConfirm {
-				label.Tone = ui.ToneError
-			}
-			col.Children = append(col.Children, &ui.Node{
-				Kind: ui.KindCapsule, Radius: h.style.Shapes.Small, Padding: theme.MarginS,
-				Fill: fill, Action: action, Name: row.Label, Focusable: true, Role: "menuitem",
-				Children: []*ui.Node{label},
-			})
+			width := max(h.logicalW-2*ui.MenuSheetPadding-2*ui.MenuRowInset, 0)
+			col.Children = append(col.Children, menuHighlight(ui.MenuRowNode(ui.MenuRow{
+				Label: h.truncate(row.Label, width, ui.TextAttrs{}), Action: action,
+				Name: row.Label, Role: "menuitem", Tone: tone,
+			}, h.rowHeight()), action == on))
 		}
 	}
 	h.root = col
@@ -774,30 +789,35 @@ func (h *runningAppMenuHost) sectionVisible(section int, visible map[int]bool) b
 	return false
 }
 
-func (h *runningAppMenuHost) windowRowNode(row runningAppMenuRow, action string, fill ui.Fill) *ui.Node {
-	contentWidth := max(h.logicalW-2*theme.MarginS, 0)
+// windowRowNode is a window's menu row with its own close button at the
+// trailing end: a separate press target and focus stop.
+func (h *runningAppMenuHost) windowRowNode(row runningAppMenuRow, action string, on bool) *ui.Node {
+	contentWidth := max(h.logicalW-2*ui.MenuSheetPadding, 0)
 	closeWidth := h.closeButtonWidth()
-	labelWidth := max(contentWidth-closeWidth-theme.MarginXS-2*theme.MarginS, 0)
-	attrs := ui.TextAttrs{}
-	label := &ui.Node{Kind: ui.KindText, Text: h.truncate(h.displayLabel(row), labelWidth, attrs)}
-	window := &ui.Node{
-		Kind: ui.KindCapsule, Radius: h.style.Shapes.Small, Padding: theme.MarginS,
-		Width: max(contentWidth-closeWidth-theme.MarginXS, 0),
-		Fill:  fill, Action: action, Name: row.Label, Focusable: true, Role: "menuitem",
-		Children: []*ui.Node{label},
-	}
+	rowWidth := max(contentWidth-closeWidth-theme.MarginXS, 0)
+	window := menuHighlight(ui.MenuRowNode(ui.MenuRow{
+		Label:  h.truncate(h.displayLabel(row), max(rowWidth-2*ui.MenuRowInset, 0), ui.TextAttrs{}),
+		Action: action, Name: row.Label, Role: "menuitem",
+	}, h.rowHeight()), on)
+	window.Width = rowWidth
 	closeAction := "running-app-close:" + strconv.FormatUint(row.WindowID, 10)
 	h.hitCloses[closeAction] = row.WindowID
-	closeFill := ui.FillNone
-	if h.highlightAction() == closeAction {
-		closeFill = ui.FillSoft
-	}
-	close := &ui.Node{
-		Kind: ui.KindButton, Width: closeWidth, Height: closeWidth, Radius: h.style.Shapes.Small,
-		Text: "×", Fill: closeFill, Action: closeAction,
+	close := menuHighlight(&ui.Node{
+		Kind: ui.KindButton, Bare: true, Width: closeWidth, Height: closeWidth, Radius: h.style.Shapes.Small,
+		Text: "×", Action: closeAction,
 		Name: "Close " + row.Label, Role: "button", Focusable: true,
+	}, h.highlightAction() == closeAction)
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, CenterY: true, Children: []*ui.Node{window, close}}
+}
+
+// menuHighlight marks the row the keyboard or pointer is on with the hover
+// layer, the only chrome a menu row shows.
+func menuHighlight(n *ui.Node, on bool) *ui.Node {
+	if on {
+		n.State |= ui.StateHovered
+		n.HoverProgress = 1
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{window, close}}
+	return n
 }
 
 func (h *runningAppMenuHost) choose(i int) {

@@ -66,6 +66,9 @@ func SizeControls(n *Node, m theme.Metrics) {
 		}
 	case KindSlider:
 		_, _, n.ControlH, _ = SliderDimensions(m, false)
+	case KindMenu:
+		// An open list lays out as a Material menu sheet at the density's row.
+		n.ItemHeight = m.MenuItem
 	}
 
 	for _, child := range n.Children {

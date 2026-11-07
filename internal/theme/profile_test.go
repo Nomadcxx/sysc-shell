@@ -137,6 +137,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconHero:    56,
 			IconProfile: 16,
 			BarText:     RoleCaption,
+			MenuItem:    40,
 		}},
 		{DensityCompact, Metrics{
 			BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2, BarItemMin: 26,
@@ -149,6 +150,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconSmall: 16, IconNormal: 18, IconLarge: 24,
 			IconHero:    64,
 			IconProfile: 18,
+			MenuItem:    44,
 		}},
 		{DensityDefault, Metrics{
 			BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4, BarItemMin: 30,
@@ -161,6 +163,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconSmall: 16, IconNormal: 20, IconLarge: 24,
 			IconHero:    80,
 			IconProfile: 18,
+			MenuItem:    48,
 		}},
 		{DensityComfortable, Metrics{
 			BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6, BarItemMin: 32,
@@ -173,6 +176,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconSmall: 18, IconNormal: 22, IconLarge: 28,
 			IconHero:    92,
 			IconProfile: 20,
+			MenuItem:    52,
 		}},
 		{DensitySpacious, Metrics{
 			BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9, BarItemMin: 34,
@@ -185,6 +189,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconSmall: 20, IconNormal: 24, IconLarge: 32,
 			IconHero:    104,
 			IconProfile: 22,
+			MenuItem:    56,
 		}},
 	} {
 		got, ok := MetricsFor(tc.density)

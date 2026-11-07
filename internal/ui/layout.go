@@ -860,6 +860,11 @@ func MenuPopupBounds(n *Node) Rect {
 	if !found {
 		return Rect{}
 	}
+	if n.ItemHeight > 0 {
+		// A sheet's padding belongs to the popup: it paints and takes hits.
+		top -= MenuSheetPadding
+		bottom += MenuSheetPadding
+	}
 	return Rect{X: n.Bounds.X, Y: top, W: n.Bounds.W, H: bottom - top}
 }
 

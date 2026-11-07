@@ -2669,14 +2669,20 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 			return err
 		}
 	}
-	var err error
-	if h.root != nil && h.root.Kind == ui.KindRow {
-		err = ui.Layout(h.root, box, h.measureText())
-	} else {
-		err = ui.LayoutColumn(h.root, box, h.measureText())
+	layout := func() error {
+		if h.root != nil && h.root.Kind == ui.KindRow {
+			return ui.Layout(h.root, box, h.measureText())
+		}
+		return ui.LayoutColumn(h.root, box, h.measureText())
 	}
-	if err != nil {
+	if err := layout(); err != nil {
 		return err
+	}
+	if h.fitOpenMenu(box) {
+		if err := layout(); err != nil {
+			return err
+		}
+		h.fitOpenMenu(box)
 	}
 	if h.id == PanelSettings {
 		if h.settingsRailRevealPending != "" {
@@ -2690,12 +2696,7 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 			}
 			if rail != nil && section != nil {
 				if scrollNodeIntoView(rail, section) {
-					if h.root != nil && h.root.Kind == ui.KindRow {
-						err = ui.Layout(h.root, box, h.measureText())
-					} else {
-						err = ui.LayoutColumn(h.root, box, h.measureText())
-					}
-					if err != nil {
+					if err := layout(); err != nil {
 						return err
 					}
 				}
@@ -2777,6 +2778,65 @@ func (h *PanelHost) revealJoints(opacity float64) (left, right, edge int) {
 	j := h.place.Joints()
 	scale := func(v int) int { return int(math.Round(float64(v) * opacity)) }
 	return scale(j.Left), scale(j.Right), scale(h.edgeExtent(j))
+}
+
+// fitOpenMenu keeps the open list on the panel. A list that does not fit
+// below its trigger opens upward when there is more room above, and one that
+// fits neither way shows the rows the roomier side holds. It reports whether
+// the number of visible rows changed, which needs another layout before the
+// list can be placed.
+func (h *PanelHost) fitOpenMenu(body ui.Rect) bool {
+	m := h.menu
+	if !m.Opened() || h.menuPath == "" {
+		return false
+	}
+	var n *ui.Node
+	var find func(*ui.Node)
+	find = func(c *ui.Node) {
+		if c == nil || n != nil {
+			return
+		}
+		if c.Kind == ui.KindMenu && (c.Action == h.menuPath || c.Action == "set:"+h.menuPath) && len(c.Children) > 0 {
+			n = c
+			return
+		}
+		for _, child := range c.Children {
+			find(child)
+		}
+	}
+	find(h.root)
+	if n == nil || n.ItemHeight <= 0 {
+		return false
+	}
+	fixed := 2 * ui.MenuSheetPadding
+	if m.filter != nil {
+		fixed += n.Children[0].Bounds.H
+	}
+	fit := func(room int) int { return max((room-fixed)/n.ItemHeight, 0) }
+	want := min(menuVisibleRows, m.optionCount())
+	below := body.Y + body.H - (n.Bounds.Y + n.Bounds.H)
+	above := n.Bounds.Y - body.Y
+	rows, up := want, false
+	switch {
+	case fit(below) >= want:
+	case fit(above) > fit(below):
+		rows, up = min(want, fit(above)), true
+	default:
+		rows = max(fit(below), 1)
+	}
+	if rows != m.visibleRows {
+		m.setVisibleRows(rows)
+		m.keepCursorVisible()
+		n.Children = m.Node().Children
+		return true
+	}
+	if up {
+		popup := ui.MenuPopupBounds(n)
+		for _, child := range n.Children {
+			offsetNodeY(child, n.Bounds.Y-(popup.Y+popup.H))
+		}
+	}
+	return false
 }
 
 // markMenuRowHover resolves the open menu's option onto the render copy.
