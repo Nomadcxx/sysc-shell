@@ -711,11 +711,11 @@ func TestSizedPluginIconKeepsTheProjectGlyph(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		plugin, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24, IconProjectFirst: true}, 24)
+		plugin, _, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24, IconProjectFirst: true}, 24)
 		if err != nil {
 			t.Fatal(err)
 		}
-		chrome, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24}, 24)
+		chrome, _, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24}, 24)
 		if err != nil {
 			t.Fatal(err)
 		}

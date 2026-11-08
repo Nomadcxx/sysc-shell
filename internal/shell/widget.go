@@ -147,6 +147,12 @@ func capsuled(w textWidget, pad int) textWidget {
 				outer.Absent = inner.Absent
 				changed = true
 			}
+			// A plugin's content, and so its action, arrives after the
+			// pill is built.
+			if outer.Action != inner.Action {
+				outer.Action = inner.Action
+				changed = true
+			}
 			return changed
 		}
 	}

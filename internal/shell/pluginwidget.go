@@ -160,6 +160,15 @@ func adoptPluginNode(dst, src *ui.Node) {
 	*dst = *src
 	dst.Children = children
 	dst.Width = 0
+	// A view that is one bare button is its pill's control, as a built-in
+	// widget is: the row repeats the button's action, which capsuled lends
+	// the pill, so hover and press light the whole pill (pillOwnsState)
+	// rather than an inner shape the size of the button.
+	if len(children) == 1 {
+		if b := children[0]; b != nil && b.Kind == ui.KindButton && b.Bare && b.Action != "" {
+			dst.Action = b.Action
+		}
+	}
 	clearPluginBounds(dst)
 }
 
