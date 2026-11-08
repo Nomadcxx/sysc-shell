@@ -67,8 +67,12 @@ const (
 	FontWeightMax = 900
 	RadiusMin     = 0
 	RadiusMax     = 32
-	SpeedMin      = 25
-	SpeedMax      = 400
+	// RadiusFloor is the smallest radius the shell paints. A config may still
+	// say less, so no file stops loading; the theme lifts it here. Below it a
+	// zero reached the painter, which reads zero as fully round.
+	RadiusFloor = 4
+	SpeedMin    = 25
+	SpeedMax    = 400
 	// OpacityMin is the floor for surfaces without a backdrop. The bar and
 	// overlay stay on this floor because they do not own a blur capture.
 	OpacityMin = 80

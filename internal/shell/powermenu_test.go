@@ -274,8 +274,8 @@ func TestPowerMenuFullscreenDimsDesktop(t *testing.T) {
 	h.backdrop = &ui.Image{Width: 1, Height: 1, Pix: []byte{0, 0, 0, 255}}
 	r.setPowerPresentationLocked(h, true)
 	s := h.rootStyle(h.theme, true)
-	if fill := s.RootFill(); fill.A == 0 || fill.A == 255 || s.Radius != 0 || s.Rim.A != 0 {
-		t.Fatalf("full screen must be a translucent scrim without frame: fill %+v radius %d rim %+v", fill, s.Radius, s.Rim)
+	if fill := s.RootFill(); fill.A == 0 || fill.A == 255 || s.Radius != 0 || s.SurfaceRadius != 0 || s.Rim.A != 0 {
+		t.Fatalf("full screen must be a translucent scrim without frame: fill %+v radius %d surface %d rim %+v", fill, s.Radius, s.SurfaceRadius, s.Rim)
 	}
 	if h.backdropFor(h.theme) != nil {
 		t.Fatal("resized surface retained old capture")

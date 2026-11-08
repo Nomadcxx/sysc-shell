@@ -361,7 +361,7 @@ func (h *polkitHost) rebuild() {
 
 	card := &ui.Node{
 		Kind: ui.KindCapsule, Width: cardWidth, Padding: theme.MarginL,
-		Shape: ui.ShapeCard, Fill: ui.FillContainerHigh, CenterX: true, CenterY: true,
+		Shape: ui.ShapeExtraLarge, Fill: ui.FillContainerHigh, CenterX: true, CenterY: true,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: children}},
 	}
 	h.root = &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{card}}

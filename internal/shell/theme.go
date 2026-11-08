@@ -221,11 +221,11 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 		m.BarItemMin, m.BarText = row.BarItemMin, row.BarText
 	}
 
-	radius := bar.Radius
+	radius := max(bar.Radius, theme.RadiusFloor)
 	t := Theme{
 		Palette:     pal,
 		Metrics:     m,
-		Shapes:      resolveShapes(radius, comp.InputRadius),
+		Shapes:      resolveShapes(radius, max(comp.InputRadius, theme.RadiusFloor)),
 		Type:        resolveType(comp, bar),
 		BarTextSize: barTextSize(comp, m, bar),
 		Surfaces:    resolveSurfaces(comp, hc),
@@ -288,6 +288,8 @@ func resolveShapes(radius, inputRadius int) render.Shapes {
 	}
 	return render.Shapes{
 		ExtraSmall: radius / 3,
+		// Material's 28 at the default 12, scaled by the radius and capped.
+		ExtraLarge: min((28*radius+6)/12, theme.RadiusMax),
 		Small:      radius / 2,
 		Medium:     radius,
 		Large:      large,
