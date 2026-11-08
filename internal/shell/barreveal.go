@@ -32,7 +32,18 @@ const (
 	revealHoldPoll = time.Second
 	// revealGlide is the return, at motion speed 1.
 	revealGlide = 1200 * time.Millisecond
+	// revealSwipe is how far, in logical pixels, a press must travel along
+	// the bar before it is a swipe rather than a click. Touch arrives as
+	// pointer press, motion and release, so a finger and a mouse drag share it.
+	revealSwipe = 24
 )
+
+// barSwipe is a press on an overflowing section that may become a swipe.
+type barSwipe struct {
+	armed, active bool
+	side          ui.Side
+	x, y          int
+}
 
 type revealPhase uint8
 
@@ -117,8 +128,10 @@ func (b *Bar) atRevealEdgeLocked(side ui.Side, x, y int) bool {
 
 // revealPointerLocked follows the pointer on the bar: it arms a section at
 // its edge, cancels one that it left before the release, and holds an open
-// one. It reports whether anything visible changed.
-func (b *Bar) revealPointerLocked(x, y int) bool {
+// one. A section gliding home springs out again only when the pointer comes
+// back onto the bar, so one closed by a swipe stays closed under a mouse that
+// never left. It reports whether anything visible changed.
+func (b *Bar) revealPointerLocked(x, y int, entered bool) bool {
 	if b.anim == nil {
 		return false
 	}
@@ -143,6 +156,9 @@ func (b *Bar) revealPointerLocked(x, y int) bool {
 				changed = true
 			}
 		case revealClosing:
+			if !entered {
+				continue
+			}
 			// Back on the bar mid-glide: spring out again.
 			b.anim.Target(revealKey(side), animReveal, float64(r.strip.MaxShift(side)))
 			r.phase = revealOpening
@@ -441,4 +457,85 @@ func (b *Bar) revealWindowLocked(section int) ui.Rect {
 		return w
 	}
 	return ui.Rect{}
+}
+
+// beginSwipeLocked starts following a press inside an overflowing section.
+func (b *Bar) beginSwipeLocked(x, y int) {
+	b.swipe = barSwipe{}
+	if b.anim == nil {
+		return
+	}
+	content := b.contentLocked(b.configured.width, b.configured.height)
+	at, start, extent := x, content.X, content.W
+	if b.barAxis() == ui.Vertical {
+		at, start, extent = y, content.Y, content.H
+	}
+	end := start + extent
+	for _, side := range revealSides() {
+		strip := b.reveal[side].strip
+		if strip == (ui.Strip{}) {
+			continue
+		}
+		lo, hi := start, start+strip.Budget
+		if side == ui.SideEnd {
+			lo, hi = end-strip.Budget, end
+		}
+		if at >= lo && at < hi {
+			b.swipe = barSwipe{armed: true, side: side, x: x, y: y}
+			return
+		}
+	}
+}
+
+// swipeMotionLocked turns a press that has travelled revealSwipe along the
+// bar into a swipe: the press is dropped, and the section opens toward the
+// main-axis start or closes away from it, on the reveal spring.
+func (b *Bar) swipeMotionLocked(x, y int) bool {
+	if !b.swipe.armed || b.swipe.active {
+		return false
+	}
+	delta := x - b.swipe.x
+	if b.barAxis() == ui.Vertical {
+		delta = y - b.swipe.y
+	}
+	if delta > -revealSwipe && delta < revealSwipe {
+		return false
+	}
+	b.swipe.active = true
+	b.pressed = ""
+	b.pointer.setPress("")
+	side := b.swipe.side
+	r := &b.reveal[side]
+	to, phase := float64(r.strip.MaxShift(side)), revealOpening
+	if delta > 0 {
+		to, phase = 0, revealClosing
+	}
+	b.anim.Target(revealKey(side), animReveal, to)
+	b.anim.TargetCurve(revealTintKey(side), animRevealTint, 0, 0, b.anim.motion.Short, smoothStep)
+	r.phase, r.armed, r.away = phase, time.Time{}, time.Time{}
+	return true
+}
+
+// barHeld reports whether anything opened from the bar on an output is
+// still open: a panel (built-in or plugin), the tray menu or drawer, the
+// running-app menu or the media strip. A tooltip does not hold the bar.
+func (r *Registry) barHeld(global uint32) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.openPanelHostsLocked(global, nil)) > 0 {
+		return true
+	}
+	if m := r.trayMenu; m != nil && m.open_ && m.output == global {
+		return true
+	}
+	if d := r.trayDrawer; d != nil && d.open_ && d.output == global {
+		return true
+	}
+	if m := r.runningMenu; m != nil && m.open_ && m.output == global {
+		return true
+	}
+	if s := r.mediaStrip; s != nil && s.open_ && s.output == global {
+		return true
+	}
+	return false
 }

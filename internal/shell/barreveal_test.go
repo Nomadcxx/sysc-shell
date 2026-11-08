@@ -366,7 +366,7 @@ func TestRevealPointerBackDuringWaitAndGlide(t *testing.T) {
 	r.at(4 * time.Second)
 	r.leave()
 	r.at(8 * time.Second)
-	r.move(r.middle())
+	r.pointer(wayland.EventPointerEnter, r.w/2, r.h/2)
 	r.at(13 * time.Second)
 	if r.phase() != revealOpen {
 		t.Fatalf("pointer back at 8 s: phase %d at 13 s, want open", r.phase())
@@ -377,7 +377,7 @@ func TestRevealPointerBackDuringWaitAndGlide(t *testing.T) {
 		t.Fatalf("at 21 s phase %d, want the glide home", r.phase())
 	}
 	r.at(21500 * time.Millisecond)
-	r.move(r.middle())
+	r.pointer(wayland.EventPointerEnter, r.w/2, r.h/2)
 	if r.phase() != revealOpening {
 		t.Fatalf("pointer back mid-glide: phase %d, want opening", r.phase())
 	}
@@ -492,5 +492,87 @@ func TestRevealIslandsBlurClipped(t *testing.T) {
 		if b.X < window.X || b.X+b.W > window.X+window.W {
 			t.Fatalf("blur rect %+v escapes the section window %+v", b, window)
 		}
+	}
+}
+
+// firstClickable is the first right item with an action that shows now.
+func (r *revealRig) firstClickable() (ui.Rect, string) {
+	r.bar.mu.Lock()
+	defer r.bar.mu.Unlock()
+	for _, n := range r.bar.sections()[2] {
+		var found *ui.Node
+		walkNodes(n, func(c *ui.Node) {
+			if found == nil && c.Action != "" && c.Bounds.W > 0 {
+				found = c
+			}
+		})
+		if found != nil {
+			return found.Bounds, found.Action
+		}
+	}
+	r.t.Fatal("no clickable right item shows")
+	return ui.Rect{}, ""
+}
+
+func (r *revealRig) drag(from ui.Rect, dx int) {
+	x, y := from.X+from.W/2, from.Y+from.H/2
+	r.pointer(wayland.EventPointerMotion, x, y)
+	r.pointer(wayland.EventPointerPress, x, y)
+	r.pointer(wayland.EventPointerMotion, x+dx, y)
+	r.pointer(wayland.EventPointerRelease, x+dx, y)
+}
+
+func TestRevealSwipeOpensAndCloses(t *testing.T) {
+	r := newRevealRig(t, revealRigOptions{})
+	item, _ := r.firstClickable()
+	r.drag(item, -30)
+	if len(r.acted) != 0 {
+		t.Fatalf("a swipe delivered %v, want no click", r.acted)
+	}
+	if r.phase() != revealOpening {
+		t.Fatalf("after swiping toward the centre: phase %d, want opening", r.phase())
+	}
+	r.at(2 * time.Second)
+	if r.phase() != revealOpen {
+		t.Fatalf("at 2 s phase %d, want open", r.phase())
+	}
+	item, _ = r.firstClickable()
+	r.drag(item, 30)
+	if len(r.acted) != 0 || r.phase() != revealClosing {
+		t.Fatalf("after swiping back: acted %v phase %d, want no click and closing", r.acted, r.phase())
+	}
+	r.move(r.middle())
+	r.at(4 * time.Second)
+	if r.phase() != revealRest || r.shift() != 0 {
+		t.Fatalf("at 4 s phase %d shift %.2f, want rest though the pointer stayed on the bar", r.phase(), r.shift())
+	}
+}
+
+func TestRevealShortDragStillClicks(t *testing.T) {
+	r := newRevealRig(t, revealRigOptions{})
+	item, action := r.firstClickable()
+	r.drag(item, -10)
+	if len(r.acted) != 1 || r.acted[0] != action || r.phase() != revealRest {
+		t.Fatalf("short drag: acted %v phase %d, want one click on %q and rest", r.acted, r.phase(), action)
+	}
+}
+
+func TestRevealHeldByOpenMenu(t *testing.T) {
+	r := newRevealRig(t, revealRigOptions{})
+	r.open()
+	r.at(4 * time.Second)
+	r.leave()
+	r.held = true
+	for s := 5; s <= 20; s++ {
+		r.at(time.Duration(s) * time.Second)
+	}
+	r.held = false
+	r.at(27 * time.Second)
+	if r.phase() != revealOpen {
+		t.Fatalf("7 s after the menu closed: phase %d, want still open", r.phase())
+	}
+	r.at(28 * time.Second)
+	if r.phase() != revealClosing {
+		t.Fatalf("8 s after the menu closed: phase %d, want the glide home", r.phase())
 	}
 }

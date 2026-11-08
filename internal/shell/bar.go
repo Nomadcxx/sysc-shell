@@ -65,10 +65,12 @@ type Bar struct {
 	holdProbe func() bool
 	// revealAfter runs the reveal's timer body after a delay.
 	revealAfter func(time.Duration, func())
-	onTray      func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
-	onPlugin    func(string, wayland.Event) bool
-	onAction    func(action string, button uint32) bool
-	onAxis      func(action string, delta int) bool
+	// swipe follows a press that may become a drag along the bar.
+	swipe    barSwipe
+	onTray   func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
+	onPlugin func(string, wayland.Event) bool
+	onAction func(action string, button uint32) bool
+	onAxis   func(action string, delta int) bool
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -1358,7 +1360,10 @@ func (b *Bar) Handle(event wayland.Event) bool {
 			b.axisValue120Remainder = 0
 		}
 		changed := b.pointer.setHover(action)
-		changed = b.revealPointerLocked(b.hoverAt.x, b.hoverAt.y) || changed
+		changed = b.swipeMotionLocked(b.hoverAt.x, b.hoverAt.y) || changed
+		if !b.swipe.active {
+			changed = b.revealPointerLocked(b.hoverAt.x, b.hoverAt.y, event.Kind == wayland.EventPointerEnter) || changed
+		}
 		b.mu.Unlock()
 		return changed
 
@@ -1368,6 +1373,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		b.axisValue120Action = ""
 		b.axisValue120Remainder = 0
 		changed := b.pointer.clear()
+		b.swipe = barSwipe{}
 		changed = b.revealLeaveLocked() || changed
 		b.mu.Unlock()
 		return changed
@@ -1382,6 +1388,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 			b.pressed = action
 			b.pointer.setPress(action)
 		}
+		b.beginSwipeLocked(b.hoverAt.x, b.hoverAt.y)
 		pluginFn := b.onPlugin
 		b.mu.Unlock()
 		if ok && pluginFn != nil {
@@ -1396,6 +1403,8 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		pluginFn := b.onPlugin
 		b.pressed = ""
 		b.pointer.setPress("")
+		// A swipe already cleared the press, so it delivers no click.
+		b.swipe = barSwipe{}
 		if pressed == "" || !b.inside {
 			b.mu.Unlock()
 			return false
