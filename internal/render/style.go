@@ -138,11 +138,14 @@ type Style struct {
 
 // Shapes are the resolved corner radii for the shape roles in design D8.
 type Shapes struct {
-	Small  int
-	Medium int
-	Large  int
-	Card   int
-	Panel  int
+	// ExtraSmall is the tightest container corner: Material's 4px step at the
+	// default radius, for a plain tooltip's short label.
+	ExtraSmall int
+	Small      int
+	Medium     int
+	Large      int
+	Card       int
+	Panel      int
 	// Input is the radius for interactive elements -- buttons, toggles, text
 	// fields -- and is resolved from its own axis rather than from the
 	// container radius. The reference carries two parallel ladders for this
