@@ -366,6 +366,10 @@ const (
 	// RolePage is the 30 logical-pixel bold page heading (22.5 pt), larger than
 	// subsection headings.
 	RolePage
+	// RoleLabelSmall is Material 3's LabelSmall, the badge count: 11 logical
+	// pixels at weight 500. Its 16 px line height is the large badge's height,
+	// which the badge painter owns.
+	RoleLabelSmall
 )
 
 // TypeSpec is one row of the type table from design D7, before font scaling.
@@ -384,16 +388,17 @@ type TypeSpec struct {
 // reference reads lighter and larger than the ladder this replaces, and that
 // single axis accounts for much of the tonal difference.
 var typeRoles = map[TextRole]TypeSpec{
-	RoleCaption:  {Size: 12, Weight: 400},
-	RoleLabel:    {Size: 15, Weight: 500},
-	RoleBody:     {Size: 15, Weight: 400},
-	RoleTitle:    {Size: 17, Weight: 600},
-	RoleHeadline: {Size: 21, Weight: 600},
-	RoleDisplay:  {Size: 24, Weight: 600},
-	RoleMono:     {Size: 13, Weight: 400, Mono: true},
-	RoleFigure:   {Size: 15, Weight: 600},
-	RoleSection:  {Size: 24, Weight: 700},
-	RolePage:     {Size: 30, Weight: 700},
+	RoleCaption:    {Size: 12, Weight: 400},
+	RoleLabel:      {Size: 15, Weight: 500},
+	RoleBody:       {Size: 15, Weight: 400},
+	RoleTitle:      {Size: 17, Weight: 600},
+	RoleHeadline:   {Size: 21, Weight: 600},
+	RoleDisplay:    {Size: 24, Weight: 600},
+	RoleMono:       {Size: 13, Weight: 400, Mono: true},
+	RoleFigure:     {Size: 15, Weight: 600},
+	RoleSection:    {Size: 24, Weight: 700},
+	RolePage:       {Size: 30, Weight: 700},
+	RoleLabelSmall: {Size: 11, Weight: 500},
 }
 
 // TypeFor returns the unscaled row for a role. An unknown role measures as
@@ -425,6 +430,8 @@ func (r TextRole) String() string {
 		return "section"
 	case RolePage:
 		return "page"
+	case RoleLabelSmall:
+		return "label-small"
 	default:
 		return "body"
 	}

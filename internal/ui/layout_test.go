@@ -1019,3 +1019,22 @@ func TestTallFontTextClipsToItsSlotInsteadOfRefusingTheRow(t *testing.T) {
 		t.Fatalf("field width = %d, want its declared 200", got)
 	}
 }
+
+// A retained tree is laid out again when the density changes. The second pass
+// must win, or a plugin's glyphs keep the size the first bar wrote; a size the
+// node declared must survive both.
+func TestSizeIconsFollowsADensityChange(t *testing.T) {
+	t.Parallel()
+	free := &Node{Kind: KindIcon, Icon: "wifi"}
+	fixed := &Node{Kind: KindIcon, Icon: "bedtime", IconSize: 16}
+	root := &Node{Kind: KindRow, Children: []*Node{free, fixed}}
+	for _, size := range []int{14, 24, 18} {
+		SizeIcons(root, size)
+		if IconSize(free) != size || IconSize(fixed) != 16 {
+			t.Fatalf("after sizing at %d: free %d, fixed %d", size, IconSize(free), IconSize(fixed))
+		}
+	}
+	if free.IconSize != 0 {
+		t.Fatalf("declared size = %d, want it left unset", free.IconSize)
+	}
+}

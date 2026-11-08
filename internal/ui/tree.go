@@ -275,13 +275,19 @@ type Node struct {
 	// ControlW/H are density defaults refreshed by SizeControls. Keeping them
 	// separate lets retained trees change density without altering explicit sizes.
 	ControlW, ControlH int
-	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
+	// IconSize is the logical square reserved by KindIcon. Zero defers to
+	// HostIconSize, then 20.
 	IconSize int
+	// HostIconSize is the surface's size for an icon that names none,
+	// refreshed by SizeIcons. Kept apart from IconSize like ControlW/H, so a
+	// retained plugin tree follows a density change instead of keeping the
+	// size the first bar to lay it out wrote.
+	HostIconSize int
 	// IconProjectFirst resolves Icon in the project catalogue before the
 	// Material subset: the precedence a plugin's icon names convert with.
-	// A handful of names are in both, and a plugin icon given a size must
-	// paint the glyph the same name paints without one. Shell chrome leaves
-	// it false and keeps the Material glyphs it was designed around.
+	// A handful of names are in both, and every plugin icon paints the
+	// project glyph for them. Shell chrome leaves it false and keeps the
+	// Material glyphs it was designed around.
 	IconProjectFirst bool
 	// Frames and Cycle make a KindIcon a sprite: the surface animator steps
 	// Icon through Frames, one pass every Cycle, on the render copy. Icon as

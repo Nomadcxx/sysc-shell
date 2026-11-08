@@ -235,6 +235,9 @@ func IconSize(n *Node) int {
 	if n.IconSize > 0 {
 		return n.IconSize
 	}
+	if n.HostIconSize > 0 {
+		return n.HostIconSize
+	}
 	return defaultIconSize
 }
 
@@ -950,13 +953,15 @@ func ownHeight(n *Node, contentHeight int) int {
 
 // SizeIcons gives every icon under n that names no size of its own the given
 // size. The bar uses it so built-in widgets and plugin buttons, which both
-// leave the size unset, take one glyph size derived from the pill.
+// leave the size unset, take one glyph size derived from the pill. It writes
+// HostIconSize on every pass, so a retained tree laid out again at another
+// density takes the new size; an explicit IconSize still wins.
 func SizeIcons(n *Node, size int) {
 	if n == nil {
 		return
 	}
-	if n.Kind == KindIcon && n.IconSize == 0 {
-		n.IconSize = size
+	if n.Kind == KindIcon {
+		n.HostIconSize = size
 	}
 	for _, child := range n.Children {
 		SizeIcons(child, size)

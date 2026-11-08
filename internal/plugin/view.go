@@ -235,20 +235,32 @@ const buttonGlyphGap = 4
 // and which of the two holds a given glyph is not something a plugin should
 // have to know.
 //
-// The project font is asked first, so a name both carry keeps painting the
-// glyph it always has -- the weather widget's WMO symbols are shared that
-// way. A name only the subset holds becomes a real icon node, which the
-// painter rasterises from the subset. A name in neither fails here rather
-// than painting a missing-glyph box the user would have to interpret.
+// The result is an icon node with no size, so the host sizes it the way it
+// sizes every other glyph on that surface, and a badge can anchor to its
+// edges. It resolves in the project font first, so a name both carry keeps
+// painting the glyph it always has -- the weather widget's WMO symbols are
+// shared that way -- and a sprite's later poses resolve the same way. A name
+// in neither fails here rather than painting a missing-glyph box the user
+// would have to interpret.
 func iconNode(name, path string) (*ui.Node, error) {
-	if glyph, ok := render.IconByName(name); ok {
-		return &ui.Node{Kind: ui.KindText, Text: string(glyph)}, nil
+	if _, ok := render.IconByName(name); !ok && !render.ValidMaterialIcon(name) {
+		return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v and %v",
+			path, name, render.IconNames(), render.MaterialIconNames())
 	}
-	if render.ValidMaterialIcon(name) {
-		return &ui.Node{Kind: ui.KindIcon, Icon: name}, nil
+	return &ui.Node{Kind: ui.KindIcon, Icon: name, IconProjectFirst: true}, nil
+}
+
+// barTextGlyph is the rune a bar view carries for an unsized project icon.
+// The bar keeps those glyphs as text at the type ladder's size: sized as icons
+// they grow with the pill, and on a full right section the extra width pushes
+// the tail item off the bar. That holds until overflow is handled better
+// (sysc-2270); every other view converts them to icons.
+func barTextGlyph(name string, view v1.ViewKind) (string, bool) {
+	if view != v1.ViewBar {
+		return "", false
 	}
-	return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v and %v",
-		path, name, render.IconNames(), render.MaterialIconNames())
+	glyph, ok := render.IconByName(name)
+	return string(glyph), ok
 }
 
 var wireFills = map[string]ui.Fill{
@@ -383,13 +395,10 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		out.Kind, out.Text, out.Icon = icon.Kind, icon.Text, icon.Icon
-		if n.IconSize > 0 {
-			// An explicit square needs the icon painter, which rasterises
-			// either catalogue at the measured size; a project glyph carried
-			// as text would take the type ladder's size instead.
-			out.Kind, out.Text, out.Icon, out.IconSize = ui.KindIcon, "", n.Icon, n.IconSize
-			out.IconProjectFirst = true
+		out.Kind, out.Icon, out.IconProjectFirst = icon.Kind, icon.Icon, icon.IconProjectFirst
+		out.IconSize = n.IconSize
+		if glyph, ok := barTextGlyph(n.Icon, view); ok && n.IconSize == 0 {
+			out.Kind, out.Icon, out.IconProjectFirst, out.Text = ui.KindText, "", false, glyph
 		}
 		if len(n.Frames) > 0 {
 			// Every pose must be drawable before the animator can land on
@@ -468,11 +477,15 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 			if err != nil {
 				return nil, err
 			}
+			glyph, barText := barTextGlyph(n.Icon, view)
+			if barText {
+				icon = &ui.Node{Kind: ui.KindText, Text: glyph}
+			}
 			switch {
-			case n.Text == "" && icon.Kind == ui.KindText:
-				// A project glyph is a character, so the button can carry it
-				// as its own label rather than as a child.
-				out.Text = icon.Text
+			case n.Text == "" && barText:
+				// A bar's project glyph is a character, so the button
+				// carries it as its own label rather than as a child.
+				out.Text = glyph
 			case n.Text == "":
 				// A bare button has no fill for a tone to colour, so the
 				// tone colours its glyph. A filled button keeps the fill's

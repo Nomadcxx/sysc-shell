@@ -179,7 +179,7 @@ func TestConvertMapsEveryVersionOneKind(t *testing.T) {
 		{"row", &v1.Node{Kind: v1.KindRow}, ui.KindRow},
 		{"column", &v1.Node{Kind: v1.KindColumn}, ui.KindColumn},
 		{"text", &v1.Node{Kind: v1.KindText, Text: "x"}, ui.KindText},
-		{"icon", &v1.Node{Kind: v1.KindIcon, Icon: "rain"}, ui.KindText},
+		{"icon", &v1.Node{Kind: v1.KindIcon, Icon: "rain"}, ui.KindIcon},
 		{"progress", &v1.Node{Kind: v1.KindProgress, Value: 0.5}, ui.KindMeter},
 		{"gauge", &v1.Node{Kind: v1.KindGauge, Value: 0.5, ValueText: "12:34"}, ui.KindRadialGauge},
 		{"spinner", &v1.Node{Kind: v1.KindSpinner, Key: "launching", Width: 24}, ui.KindSpinner},
@@ -207,20 +207,29 @@ func TestConvertMapsEveryVersionOneKind(t *testing.T) {
 	}
 }
 
-func TestConvertResolvesAnIconToItsGlyph(t *testing.T) {
+// A project glyph is an icon like a Material one: the host sizes it, so it
+// matches the glyphs beside it, and a badge can find its edges. Carried as a
+// text rune it took the type ladder's size at every density.
+func TestConvertResolvesAProjectIconToAnIconNode(t *testing.T) {
 	t.Parallel()
 
-	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "thunderstorm"}}}
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "thunderstorm", Tone: v1.ToneAccent}}}
 	got, err := Convert(root, v1.ViewPanel)
 	if err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
-	want, ok := render.IconByName("thunderstorm")
-	if !ok {
+	if _, ok := render.IconByName("thunderstorm"); !ok {
 		t.Fatal("the catalogue lost thunderstorm")
 	}
-	if got.Children[0].Text != string(want) {
-		t.Errorf("icon text = %q, want the catalogue glyph", got.Children[0].Text)
+	icon := got.Children[0]
+	if icon.Kind != ui.KindIcon || icon.Icon != "thunderstorm" || icon.Text != "" || !icon.IconProjectFirst {
+		t.Fatalf("icon = %+v, want a project-first icon node", icon)
+	}
+	if icon.IconSize != 0 {
+		t.Fatalf("icon size = %d, want 0 so the host sizes it", icon.IconSize)
+	}
+	if icon.Tone != ui.ToneAccent {
+		t.Fatalf("icon tone = %v, want the accent it asked for", icon.Tone)
 	}
 }
 
@@ -235,8 +244,9 @@ func TestConvertMapsAWeatherIconNameToTheWMOGlyph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
-	if got.Children[0].Text != string(render.IconRune(61)) {
-		t.Fatalf("icon = %q, want the rain glyph for WMO 61", got.Children[0].Text)
+	glyph, ok := render.IconByName(got.Children[0].Icon)
+	if got.Children[0].Kind != ui.KindIcon || !got.Children[0].IconProjectFirst || !ok || glyph != render.IconRune(61) {
+		t.Fatalf("icon = %+v, want the rain glyph for WMO 61", got.Children[0])
 	}
 }
 
@@ -1152,8 +1162,7 @@ func TestConvertScrollablePanelRoot(t *testing.T) {
 }
 
 // A sized icon must reach the icon painter with its square, whichever
-// catalogue holds the glyph: carried as text, a project glyph would take the
-// type ladder's size and the plugin's hero would paint as a label.
+// catalogue holds the glyph, and an unsized one leaves the size to the host.
 func TestConvertCarriesAnIconSizeToTheIconPainter(t *testing.T) {
 	t.Parallel()
 
@@ -1176,9 +1185,8 @@ func TestConvertCarriesAnIconSizeToTheIconPainter(t *testing.T) {
 	if material.Kind != ui.KindIcon || material.IconSize != 40 {
 		t.Fatalf("material = %+v, want a 40 px icon node", material)
 	}
-	glyph, _ := render.IconByName("cat-run-2")
-	if plain.Kind != ui.KindText || plain.Text != string(glyph) {
-		t.Fatalf("unsized = %+v, want the glyph carried as text as before", plain)
+	if plain.Kind != ui.KindIcon || plain.Icon != "cat-run-2" || plain.IconSize != 0 || !plain.IconProjectFirst {
+		t.Fatalf("unsized = %+v, want a host-sized project icon", plain)
 	}
 }
 
@@ -1365,5 +1373,81 @@ func TestConvertPlainGaugeStaysFull(t *testing.T) {
 	}
 	if gauge.Bands != nil {
 		t.Fatalf("an unadorned gauge gained bands: %+v", gauge.Bands)
+	}
+}
+
+// A row of exactly two children whose first is text is a label and value pair,
+// and layout pins the value to the far edge. A project glyph carried as text
+// tripped that rule, so a plugin's glyph and label rendered apart; as an icon
+// node the label stays beside its glyph.
+func TestConvertedProjectGlyphKeepsItsLabelBeside(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindRow, Gap: 8, Children: []*v1.Node{
+			{Kind: v1.KindIcon, Icon: "moonbit"},
+			{Kind: v1.KindText, Text: "Moonbit"},
+		}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if err := ui.LayoutColumn(got, ui.Rect{W: 320, H: 200}, measureFixed); err != nil {
+		t.Fatal(err)
+	}
+	glyph, label := got.Children[0].Children[0], got.Children[0].Children[1]
+	if want := glyph.Bounds.X + glyph.Bounds.W + 8; label.Bounds.X != want {
+		t.Fatalf("label x = %d, want %d beside the glyph %+v", label.Bounds.X, want, glyph.Bounds)
+	}
+}
+
+// The bar keeps an unsized project glyph as text, so a full bar does not grow
+// (sysc-2270); every other view converts it to an icon the host sizes. A sized
+// icon is an icon in both.
+func TestConvertKeepsBarProjectGlyphsAsText(t *testing.T) {
+	t.Parallel()
+	ev := []v1.EventKind{v1.EventActivate}
+	glyph, _ := render.IconByName("github")
+	for _, view := range []v1.ViewKind{v1.ViewBar, v1.ViewPanel} {
+		kind := v1.KindRow
+		if view == v1.ViewPanel {
+			kind = v1.KindColumn
+		}
+		root := &v1.Node{Kind: kind, Children: []*v1.Node{
+			{Kind: v1.KindIcon, Icon: "github"},
+			{Kind: v1.KindIcon, Icon: "github", IconSize: 24},
+			{Kind: v1.KindButton, ID: "only", Icon: "github", Name: "Open", Role: "button", Events: ev},
+			{Kind: v1.KindButton, ID: "both", Icon: "github", Text: "3", Name: "Open", Role: "button", Events: ev},
+		}}
+		got, err := Convert(root, view)
+		if err != nil {
+			t.Fatalf("%s: %v", view, err)
+		}
+		bare, sized, only, both := got.Children[0], got.Children[1], got.Children[2], got.Children[3]
+		if sized.Kind != ui.KindIcon || sized.IconSize != 24 {
+			t.Errorf("%s: sized = %+v, want a 24 px icon", view, sized)
+		}
+		if view == v1.ViewBar {
+			if bare.Kind != ui.KindText || bare.Text != string(glyph) {
+				t.Errorf("bar: bare = %+v, want the glyph as text", bare)
+			}
+			if only.Text != string(glyph) || len(only.Children) != 0 {
+				t.Errorf("bar: glyph-only button = %+v, want the glyph as its label", only)
+			}
+			if both.Children[0].Kind != ui.KindText || both.Children[0].Text != string(glyph) {
+				t.Errorf("bar: glyph child = %+v, want text", both.Children[0])
+			}
+			continue
+		}
+		if bare.Kind != ui.KindIcon || bare.Icon != "github" || bare.IconSize != 0 {
+			t.Errorf("panel: bare = %+v, want a host-sized icon", bare)
+		}
+		if only.Text != "" || len(only.Children) != 1 || only.Children[0].Kind != ui.KindIcon {
+			t.Errorf("panel: glyph-only button = %+v, want one icon child", only)
+		}
+		if both.Children[0].Kind != ui.KindIcon || both.Children[0].Icon != "github" {
+			t.Errorf("panel: glyph child = %+v, want an icon", both.Children[0])
+		}
 	}
 }
