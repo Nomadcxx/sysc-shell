@@ -3490,3 +3490,77 @@ func TestPaintMenuPopupEscapesItsScrollViewport(t *testing.T) {
 		t.Fatalf("popup below its viewport = %+v, want the sheet %+v", got, want)
 	}
 }
+
+// TestIconOnlyButtonRestsWithoutContainer pins the Material standard icon
+// button: an icon-only button that declares no fill paints no container and
+// an on-surface-variant glyph, while every button that asks for chrome --
+// a declared fill, a label, an error tone, selection -- keeps it.
+func TestIconOnlyButtonRestsWithoutContainer(t *testing.T) {
+	t.Parallel()
+
+	style := testStyle
+	style.Subtle = Color{R: 0x9a, G: 0xa4, B: 0xb2, A: 0xff}
+	bounds := ui.Rect{X: 10, Y: 8, W: 40, H: 40}
+	glyph := ui.Rect{X: 22, Y: 20, W: 16, H: 16}
+	iconOnly := func() ui.Node {
+		return ui.Node{Kind: ui.KindButton, Name: "Settings", Shape: ui.ShapeCircle, Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "settings", IconSize: 16, Bounds: glyph},
+		}}
+	}
+	cases := []struct {
+		name      string
+		node      func() ui.Node
+		base      Color
+		glyph     Color
+		skipGlyph bool
+	}{
+		{name: "unfilled", node: iconOnly, base: Color{}, glyph: style.Subtle},
+		{name: "declared fill", node: func() ui.Node { n := iconOnly(); n.Fill = ui.FillContainerHighest; return n },
+			base: style.ContainerHighest, glyph: style.Foreground},
+		{name: "bare", node: func() ui.Node { n := iconOnly(); n.Bare = true; return n }, base: Color{}, glyph: style.Foreground},
+		{name: "error tone", node: func() ui.Node { n := iconOnly(); n.Tone = ui.ToneError; return n },
+			base: style.ContainerHighest, skipGlyph: true},
+		{name: "selected", node: func() ui.Node { n := iconOnly(); n.State = ui.StateSelected; return n },
+			base: resolvePaintRole(style, ui.PaintSecondaryContainer), skipGlyph: true},
+		{name: "disabled", node: func() ui.Node { n := iconOnly(); n.State = ui.StateDisabled; return n }, base: Color{}, skipGlyph: true},
+		{name: "text", node: func() ui.Node { return ui.Node{Kind: ui.KindButton, Text: "OK"} },
+			base: style.ContainerHighest, skipGlyph: true},
+		{name: "icon and text", node: func() ui.Node {
+			n := iconOnly()
+			n.Children = append(n.Children, &ui.Node{Kind: ui.KindText, Text: "Settings", Bounds: ui.Rect{X: 40, Y: 20, W: 8, H: 16}})
+			return n
+		}, base: style.ContainerHighest, skipGlyph: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestCanvas(t, 60, 56)
+			n := tc.node()
+			n.Bounds = bounds
+			if err := paintNode(c, &n, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+				t.Fatal(err)
+			}
+			// Inside the circle, left of the glyph and any label.
+			if got := pixelAt(t, c, bounds.X+6, bounds.Y+bounds.H/2); got != tc.base {
+				t.Errorf("resting base = %+v, want %+v", got, tc.base)
+			}
+			if tc.skipGlyph {
+				return
+			}
+			// The fully covered glyph pixel is the one farthest from the base;
+			// edge pixels are blends of the two.
+			var ink Color
+			far := -1
+			for y := glyph.Y; y < glyph.Y+glyph.H; y++ {
+				for x := glyph.X; x < glyph.X+glyph.W; x++ {
+					p := pixelAt(t, c, x, y)
+					if d := colourDistance(p, tc.base); p.A == 0xff && d > far {
+						ink, far = p, d
+					}
+				}
+			}
+			if ink != tc.glyph {
+				t.Errorf("glyph = %+v, want %+v", ink, tc.glyph)
+			}
+		})
+	}
+}

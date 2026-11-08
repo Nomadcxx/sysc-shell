@@ -210,7 +210,7 @@ func cardT(tr translateFunc, key, english string) string {
 func centreRemoveButton(action, name string) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindButton, Action: action, Name: name, Role: "button",
-		Focusable: true, Shape: ui.ShapeCircle, Fill: ui.FillContainerHighest,
+		Focusable: true, Shape: ui.ShapeCircle,
 		Padding:  centreIconPad,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "delete", IconSize: centreIconSize}},
 	}
