@@ -97,7 +97,7 @@ func TestATooltipWithoutCompositorBlurCapturesAndKeepsTheOverlayGround(t *testin
 	}
 }
 
-func TestATooltipHasAQuietRimAndASmallCorner(t *testing.T) {
+func TestAPlainTooltipIsAnExtraSmallCardWithoutARim(t *testing.T) {
 	t.Parallel()
 	r, h, _ := newTooltipFixture(t, true)
 	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
@@ -106,12 +106,96 @@ func TestATooltipHasAQuietRimAndASmallCorner(t *testing.T) {
 	style := h.cardStyle()
 	th := r.panelThemeFor(1)
 	r.mu.Unlock()
+	if style.Rim != (Color{}) {
+		t.Fatalf("rim = %+v, want none on a plain tooltip", style.Rim)
+	}
+	if style.Radius != th.Shapes.ExtraSmall || th.Shapes.ExtraSmall >= th.Shapes.Small {
+		t.Fatalf("radius = %d, want ExtraSmall %d (small %d)", style.Radius, th.Shapes.ExtraSmall, th.Shapes.Small)
+	}
+	if style.Background != th.Palette.Surface {
+		t.Fatalf("ground = %+v, want the surface %+v", style.Background, th.Palette.Surface)
+	}
+}
+
+func TestARichTooltipIsASurfaceContainerCard(t *testing.T) {
+	t.Parallel()
+	r, h, _ := newTooltipFixture(t, true)
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Root: twoLineTooltip()})
+
+	r.mu.Lock()
+	style := h.cardStyle()
+	th := r.panelThemeFor(1)
+	r.mu.Unlock()
+	if style.Background != th.Palette.SurfaceContainer {
+		t.Fatalf("ground = %+v, want SurfaceContainer %+v", style.Background, th.Palette.SurfaceContainer)
+	}
+	if style.Radius != th.Shapes.Medium {
+		t.Fatalf("radius = %d, want Medium %d", style.Radius, th.Shapes.Medium)
+	}
 	if style.Rim != th.Palette.OutlineVariant {
 		t.Fatalf("rim = %+v, want OutlineVariant %+v", style.Rim, th.Palette.OutlineVariant)
 	}
-	if style.Radius != th.Shapes.Small || th.Shapes.Small >= th.Radius {
-		t.Fatalf("radius = %d, want ShapeSmall %d (theme radius %d)", style.Radius, th.Shapes.Small, th.Radius)
+	if style.SurfaceOpacity != th.Surfaces.Panel {
+		t.Fatalf("ground alpha = %d, want the panel alpha %d", style.SurfaceOpacity, th.Surfaces.Panel)
 	}
+}
+
+// A plugin that sends one line in a tree sent a label: it is painted as plain
+// text, so it matches the plain cards around it. A tree with an icon beside
+// its text is still rich.
+func TestAOneLineTreeIsAPlainTooltip(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		root *ui.Node
+		rich bool
+	}{
+		{"one line", &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindText, Text: "Timer 24:13"}}}, false},
+		{"two lines", twoLineTooltip(), true},
+		{"icon and text", &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindRow, Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "schedule", IconSize: 16}, {Kind: ui.KindText, Text: "Timer 24:13"},
+		}}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, h, _ := newTooltipFixture(t, true)
+			h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Root: tc.root})
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if h.open == nil || h.open.rich != tc.rich {
+				t.Fatalf("open card = %+v, want rich %v", h.open, tc.rich)
+			}
+			if !tc.rich && !treeHasText(h.open.card, "Timer 24:13") {
+				t.Fatalf("plain card lost its text: %+v", h.open.card)
+			}
+		})
+	}
+}
+
+// Sweeping from a plain widget to a rich one updates the card in place, and
+// the style follows the card that is now on screen.
+func TestAnInPlaceUpdateFollowsThePlainOrRichStyle(t *testing.T) {
+	t.Parallel()
+	r, h, hh := newTooltipFixture(t, true)
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 760, W: 30, H: 38}, Root: twoLineTooltip()})
+	if len(hh.opens) != 1 {
+		t.Fatalf("opens = %d, want the first card updated in place", len(hh.opens))
+	}
+	r.mu.Lock()
+	style := h.cardStyle()
+	th := r.panelThemeFor(1)
+	r.mu.Unlock()
+	if style.Radius != th.Shapes.Medium || style.Background != th.Palette.SurfaceContainer {
+		t.Fatalf("style after update = radius %d ground %+v, want the rich card", style.Radius, style.Background)
+	}
+}
+
+func twoLineTooltip() *ui.Node {
+	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "Notes", TextRole: theme.RoleLabel},
+		{Kind: ui.KindText, Text: "Open your Markdown library", Tone: ui.ToneSubtle},
+	}}
 }
 
 // At 1.25 the physical inset is fractional. No glyph may land in it: every
@@ -296,8 +380,8 @@ func assertInsetClear(t *testing.T, pix []byte, w, hgt int, s ui.Scale120) {
 	}
 	insetX := s.Physical(theme.MarginM) - 1
 	insetY := s.Physical(theme.MarginS) - 1
-	corner := s.Physical(8) // past the small radius and its rim
-	edge := 2               // the rim and its antialiasing
+	corner := s.Physical(14) // past a rich card's medium radius and its rim
+	edge := 2                // the rim and its antialiasing
 	for y := edge; y < hgt-edge; y++ {
 		for x := edge; x < w-edge; x++ {
 			inInset := x < insetX || x >= w-insetX || y < insetY || y >= hgt-insetY
