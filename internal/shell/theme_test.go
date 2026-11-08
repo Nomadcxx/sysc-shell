@@ -808,6 +808,18 @@ func TestInputRadiusIsIndependentOfContainerRadius(t *testing.T) {
 	}
 }
 
+// TestExtraSmallIsAThirdOfTheBaseRadius pins the step a plain tooltip uses:
+// Material's 4px extra-small corner at the default 12px radius, following the
+// theme radius rather than fixed.
+func TestExtraSmallIsAThirdOfTheBaseRadius(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ radius, want int }{{12, 4}, {16, 5}, {6, 2}, {0, 0}} {
+		if got := resolveShapes(tc.radius, tc.radius).ExtraSmall; got != tc.want {
+			t.Errorf("radius %d: extra small = %d, want %d", tc.radius, got, tc.want)
+		}
+	}
+}
+
 func TestStadiumAndCircleStayGeometricAtZeroRadius(t *testing.T) {
 	t.Parallel()
 	// Carried from the superseded D8: a pill stays a pill at radius zero.

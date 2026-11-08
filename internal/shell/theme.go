@@ -287,11 +287,12 @@ func resolveShapes(radius, inputRadius int) render.Shapes {
 		large = theme.RadiusMax
 	}
 	return render.Shapes{
-		Small:  radius / 2,
-		Medium: radius,
-		Large:  large,
-		Card:   radius,
-		Panel:  radius,
+		ExtraSmall: radius / 3,
+		Small:      radius / 2,
+		Medium:     radius,
+		Large:      large,
+		Card:       radius,
+		Panel:      radius,
 		// Interactive elements take the second ladder, so a composition can
 		// round its cards without rounding its buttons to match.
 		Input: inputRadius,

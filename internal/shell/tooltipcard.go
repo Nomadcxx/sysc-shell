@@ -74,6 +74,33 @@ func tooltipCard(text string, root *ui.Node, measure ui.MeasureText) (*ui.Node, 
 	return col, ui.Rect{W: content.W + 2*tooltipInsetX, H: content.H + 2*tooltipInsetY}
 }
 
+// plainTooltipText is the text of a tree whose only leaf is one text node.
+// A plugin that sends one line in a tree has sent a label, so it is painted as
+// a plain tooltip; any other tree is rich and keeps its own roles and tones.
+func plainTooltipText(root *ui.Node) (string, bool) {
+	var leaf *ui.Node
+	leaves := 0
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if len(n.Children) == 0 {
+			leaves++
+			leaf = n
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	if leaves != 1 || leaf.Kind != ui.KindText || leaf.Text == "" {
+		return "", false
+	}
+	return leaf.Text, true
+}
+
 // widestLine is the right edge of the furthest-reaching leaf. A column lays
 // its text out at the full content width, so a text leaf reaches only as far
 // as its own measured run; any other leaf reaches as far as it was placed.

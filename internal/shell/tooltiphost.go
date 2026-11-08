@@ -62,6 +62,8 @@ type tooltipCardState struct {
 	glass    bool
 	backdrop *ui.Image
 	scale120 ui.Scale120
+	// rich is a tree with more than one line or a glyph; plain is a label.
+	rich bool
 }
 
 func newTooltipHost(r *Registry, harness *hostHarness) *tooltipHost {
@@ -106,6 +108,10 @@ func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 	if err := h.ensureText(t.Type.Family); err != nil {
 		return h.hideLocked()
 	}
+	if text, ok := plainTooltipText(req.Root); ok {
+		req.Text, req.Root = text, nil
+	}
+	rich := req.Root != nil
 	card, size := tooltipCard(req.Text, req.Root, h.measure(t, scale))
 	if card == nil || size.W <= 0 || size.H <= 0 {
 		return h.hideLocked()
@@ -129,7 +135,7 @@ func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 	// a captured backdrop cannot move: the capture belongs to where it was,
 	// and a fresh one has to be taken before the surface maps.
 	if st := h.open; st != nil && st.global == req.Global && st.glass && glass {
-		st.card, st.place = card, place
+		st.card, st.place, st.rich = card, place, rich
 		w, hgt := uint32(place.W), uint32(place.H)
 		top, left := int32(place.Y), int32(place.X)
 		return []wayland.AuxRequest{{Output: st.global, ID: st.id, Update: &wayland.AuxUpdate{
@@ -146,6 +152,7 @@ func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 		place:    place,
 		glass:    glass,
 		scale120: scale,
+		rich:     rich,
 	}
 	h.open = st
 	return append(reqs, wayland.AuxRequest{Output: req.Global, Open: h.spec(st)})
@@ -243,9 +250,11 @@ func (h *tooltipHost) spec(st *tooltipCardState) *wayland.AuxSpec {
 	}
 }
 
-// cardStyle is the ground the card paints on (plan T2, T5): the toast card
-// rule for the ground, the small corner role, and the quieter outline for a
-// rim around a small box. Caller holds r.mu.
+// cardStyle is the ground the card paints on. The ground's opacity and blur
+// are the toast card rule (plan T2). A plain card is Material's plain tooltip
+// shape: the extra-small corner and no rim. A rich card is its rich tooltip:
+// the surface-container ground, the medium corner and the quieter outline.
+// Caller holds r.mu.
 func (h *tooltipHost) cardStyle() render.Style {
 	global := uint32(0)
 	glass := h.r.cfg.Theme.BlurBehind && h.r.caps.Blur
@@ -257,8 +266,13 @@ func (h *tooltipHost) cardStyle() render.Style {
 	if glass {
 		s = t.PanelStyle()
 	}
-	s.Radius = t.Shapes.Small
-	s.Rim = t.OutlineVariant
+	if h.open != nil && h.open.rich {
+		s.Background = t.Palette.SurfaceContainer
+		s.Radius = t.Shapes.Medium
+		s.Rim = t.OutlineVariant
+		return s
+	}
+	s.Radius = t.Shapes.ExtraSmall
 	return s
 }
 
