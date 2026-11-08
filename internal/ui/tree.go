@@ -480,6 +480,12 @@ type Node struct {
 	Bounds  Rect
 	// FadeAxis selects the trailing edge covered by a KindEdgeFade.
 	FadeAxis Axis
+	// FadeLeading turns a KindEdgeFade around: opaque at its start, for a run
+	// that continues before the box rather than after it.
+	FadeLeading bool
+	// FadeTint paints a KindEdgeFade in the accent at this strength (0..1)
+	// instead of the surface: the bar's overflow edge warming under a pointer.
+	FadeTint float64
 	// ClipBounds confines this subtree to Bounds for an oversized centre item
 	// or side-bar content that exceeds its cross-axis grant.
 	ClipBounds       bool

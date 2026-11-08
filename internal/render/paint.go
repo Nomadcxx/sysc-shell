@@ -625,7 +625,12 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		return nil
 
 	case ui.KindEdgeFade:
-		fillEdgeFade(c, style.Scale120.PhysicalRect(n.Bounds), style.rootFill(), n.FadeAxis)
+		fill := style.rootFill()
+		if n.FadeTint > 0 {
+			fill = style.accent()
+			fill.A = uint8(math.Round(float64(fill.A) * min(n.FadeTint, 1)))
+		}
+		fillEdgeFade(c, style.Scale120.PhysicalRect(n.Bounds), fill, n.FadeAxis, n.FadeLeading)
 		return nil
 
 	case ui.KindTab:
@@ -2280,7 +2285,7 @@ func textColor(style Style, tone ui.Tone) Color {
 // continuing past the cut instead of stopping there. It composites over the
 // widget beneath rather than replacing it: the fade adds no width and moves
 // nothing, which is why this treatment cannot cause the overflow it reports.
-func fillEdgeFade(c *Canvas, r ui.Rect, surface Color, axis ui.Axis) {
+func fillEdgeFade(c *Canvas, r ui.Rect, surface Color, axis ui.Axis, leading bool) {
 	if r.W <= 0 || r.H <= 0 || surface.A == 0 {
 		return
 	}
@@ -2297,6 +2302,9 @@ func fillEdgeFade(c *Canvas, r ui.Rect, surface Color, axis ui.Axis) {
 			fade := x - r.X
 			if axis == ui.Vertical {
 				fade = y - r.Y
+			}
+			if leading {
+				fade = span - fade
 			}
 			col := surface
 			if span > 0 {
