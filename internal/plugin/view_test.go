@@ -491,7 +491,12 @@ func TestConvertMapsPluginButtonToneToFill(t *testing.T) {
 		{name: "primary", node: &v1.Node{Kind: v1.KindButton, Text: "Start"}, want: ui.FillAccent},
 		{name: "destructive", node: &v1.Node{Kind: v1.KindButton, Text: "Reset", Tone: v1.ToneError}, want: ui.FillError},
 		{name: "subtle", node: &v1.Node{Kind: v1.KindButton, Text: "Close", Tone: v1.ToneSubtle}, want: ui.FillNone},
-		{name: "icon-only primary", node: &v1.Node{Kind: v1.KindButton, Icon: "camera"}, want: ui.FillAccent},
+		// Material's standard icon button rests flat, as the shell's own do
+		// (slice E); a plugin that wants the chip declares the fill.
+		{name: "icon-only rests flat", node: &v1.Node{Kind: v1.KindButton, Icon: "camera"}, want: ui.FillNone},
+		{name: "icon child rests flat", node: &v1.Node{Kind: v1.KindButton, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "settings"}}}, want: ui.FillNone},
+		{name: "icon-only declared accent", node: &v1.Node{Kind: v1.KindButton, Icon: "camera", Fill: "accent"}, want: ui.FillAccent},
+		{name: "icon-only destructive keeps its chip", node: &v1.Node{Kind: v1.KindButton, Icon: "close", Tone: v1.ToneError}, want: ui.FillError},
 		{name: "explicit surface", node: &v1.Node{Kind: v1.KindButton, Text: "Close", Fill: "surface"}, want: ui.FillNone},
 		{name: "explicit surface beats destructive tone", node: &v1.Node{Kind: v1.KindButton, Text: "Reset", Tone: v1.ToneError, Fill: "surface"}, want: ui.FillNone},
 	}

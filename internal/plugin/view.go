@@ -463,9 +463,14 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		out.Text = n.Text
 		out.StrokeColor = n.MarkerColor
 		if n.Fill == "" {
+			// An icon-only button is Material's standard icon button and
+			// rests flat, as the shell's own do; only a labelled button
+			// takes the accent chip by default.
+			iconOnly := n.Text == "" && (n.Icon != "" ||
+				len(n.Children) == 1 && n.Children[0] != nil && n.Children[0].Kind == v1.KindIcon)
 			if n.Tone == v1.ToneError && (hasPanelChrome(view) || view == v1.ViewBar && n.Text != "") {
 				out.Fill = ui.FillError
-			} else if hasPanelChrome(view) && n.Tone != v1.ToneSubtle {
+			} else if hasPanelChrome(view) && n.Tone != v1.ToneSubtle && !iconOnly {
 				out.Fill = ui.FillAccent
 			}
 		}

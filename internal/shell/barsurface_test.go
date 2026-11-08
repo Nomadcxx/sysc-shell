@@ -940,3 +940,73 @@ func TestSidePluginKeepsItsAdvertisedCrossWidth(t *testing.T) {
 		})
 	}
 }
+
+// A plugin bar view that is one bare button is its pill's control, as a
+// built-in widget is: hovering it lights the whole pill, not an inner shape
+// the size of the button. A row of several buttons keeps a target per button.
+func TestPluginBarPillLightsAsOneControl(t *testing.T) {
+	t.Parallel()
+	ev := []v1.EventKind{v1.EventActivate}
+	one := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{Kind: v1.KindButton, ID: "open", Name: "Open the cat", Role: "button",
+		Height: 28, Padding: 8, Events: ev, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "cat-sit-0", IconSize: 28}}}}}
+	two := &v1.Node{Kind: v1.KindRow, Gap: 4, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "rec", Icon: "record", Name: "Record", Role: "button", Events: ev},
+		{Kind: v1.KindButton, ID: "stop", Icon: "stop", Name: "Stop", Role: "button", Events: ev},
+	}}
+	for _, tc := range []struct {
+		name  string
+		wire  *v1.Node
+		whole bool
+	}{{"one button", one, true}, {"two buttons", two, false}} {
+		root, err := shellplugin.Convert(tc.wire, v1.ViewBar)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stampPluginActions(root, "matrix-view")
+		cfg, policy := renderMatrixPolicy("top", "frosted", "attached", "compact")
+		cfg.Accessibility.ReducedMotion = true
+		policy.Left = []config.Item{{ID: "launcher"}, {ID: "plugin", Plugin: "org.sysc.matrix", Entry: "bar", Instance: "matrix"}}
+		policy.Right = nil
+		bar := newRenderMatrixBar(t, cfg, policy, pluginFrame{Root: root, Revision: 1, ViewID: "matrix-view"}, false)
+		w, h := barSurfaceSize(policy, 1920, 1080)
+		rest := renderMatrixSurface(t, bar, policy, w, h, 120, false, false)
+		bar.mu.Lock()
+		pill := bar.sections()[0][1]
+		first := pill
+		walkNodes(pill, func(n *ui.Node) {
+			if n.Kind == ui.KindButton && first == pill {
+				first = n
+			}
+		})
+		pillBounds, button := pill.Bounds, first.Bounds
+		bar.mu.Unlock()
+		// The pill's leading padding, beside the first button.
+		px, py := pillBounds.X+2, pillBounds.Y+pillBounds.H/2
+		if px >= button.X {
+			t.Fatalf("%s: no padding between pill %+v and button %+v", tc.name, pillBounds, button)
+		}
+		hx, hy := float64(button.X+button.W/2), float64(button.Y+button.H/2)
+		bar.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: hx, Y: hy})
+		bar.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: hx, Y: hy})
+		hover := renderMatrixSurface(t, bar, policy, w, h, 120, false, false)
+		i := (py*w + px) * 4
+		lit := rest[i] != hover[i] || rest[i+1] != hover[i+1] || rest[i+2] != hover[i+2]
+		if lit != tc.whole {
+			t.Errorf("%s: pill padding lit on hover = %v, want %v", tc.name, lit, tc.whole)
+		}
+		if tc.whole {
+			// No inner shape: just inside the button's edge reads as the
+			// pill does.
+			j := (py*w + button.X + 1) * 4
+			if hover[j] != hover[i] || hover[j+1] != hover[i+1] || hover[j+2] != hover[i+2] {
+				t.Errorf("%s: button edge %v differs from the pill %v on hover", tc.name, hover[j:j+3], hover[i:i+3])
+			}
+		}
+		bar.mu.Lock()
+		action, ok := bar.hitLocked(px, py)
+		bar.mu.Unlock()
+		if tc.whole && (!ok || action != "plugin:matrix-view:open") {
+			t.Errorf("%s: a press on the pill padding hits %q %v", tc.name, action, ok)
+		}
+	}
+}

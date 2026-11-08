@@ -1908,7 +1908,7 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	if size <= 0 {
 		return fmt.Errorf("render: icon %q has no size", n.Icon)
 	}
-	mask, err := rasterIcon(text, n, size)
+	mask, project, err := rasterIcon(text, n, size)
 	if err != nil {
 		return err
 	}
@@ -1916,6 +1916,13 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	b := mask.Alpha.Bounds()
 	x := box.X + (box.W-b.Dx())/2
 	y := box.Y + (box.H-b.Dy())/2
+	if project {
+		// The project font draws flush left in an advance wider than its
+		// ink, so the advance is not what to centre.
+		if lo, hi, ok := projectInkSpan(text, n, size); ok {
+			x = box.X + (box.W-(hi-lo))/2 - lo
+		}
+	}
 	blendMask(c, mask.Alpha, x, y, textColor(style, n.Tone))
 	if n.Fill == ui.FillError {
 		badge := min(style.Scale120.Physical(6), min(box.W, box.H))
@@ -1928,17 +1935,50 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 // asks the Material subset first; a plugin icon asks the project catalogue
 // first, the order its name was converted in, so the two catalogues' shared
 // names paint the same glyph whether or not the plugin sized the icon.
-func rasterIcon(text *TextRenderer, n *ui.Node, size int) (Mask, error) {
+// It also reports whether the glyph came from the project font.
+func rasterIcon(text *TextRenderer, n *ui.Node, size int) (Mask, bool, error) {
 	if n.IconProjectFirst {
 		if _, ok := IconByName(n.Icon); ok {
-			return text.RasterProjectIconIn(n.Icon, size)
+			mask, err := text.RasterProjectIconIn(n.Icon, size)
+			return mask, true, err
 		}
 	}
 	mask, err := text.RasterMaterialIcon(n.Icon, size)
 	if err != nil && !ValidMaterialIcon(n.Icon) {
 		mask, err = text.RasterProjectIconIn(n.Icon, size)
+		return mask, true, err
 	}
-	return mask, err
+	return mask, false, err
+}
+
+// projectInkSpan is the horizontal extent, within its mask, of the ink a
+// project icon paints. A sprite reports the union over its poses, so every
+// pose takes one offset and the figure does not shift sideways as it moves.
+func projectInkSpan(text *TextRenderer, n *ui.Node, size int) (lo, hi int, ok bool) {
+	poses := n.Frames
+	if len(poses) == 0 {
+		poses = []string{n.Icon}
+	}
+	lo, hi = math.MaxInt, -1
+	for _, pose := range poses {
+		if _, project := IconByName(pose); !project {
+			continue
+		}
+		mask, err := text.RasterProjectIconIn(pose, size)
+		if err != nil {
+			continue
+		}
+		b := mask.Alpha.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			row := mask.Alpha.Pix[(y-b.Min.Y)*mask.Alpha.Stride:]
+			for x := 0; x < b.Dx(); x++ {
+				if row[x] > 0 {
+					lo, hi = min(lo, x), max(hi, x+1)
+				}
+			}
+		}
+	}
+	return lo, hi, hi > lo
 }
 
 // paintWordmark blends the embedded SYSC mark into its measured box, tinted

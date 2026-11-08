@@ -709,6 +709,7 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
+	pillOwnsState(root)
 	// Hover and press use the same state layers as the other surfaces.
 	b.resolveGradientMotionLocked(root)
 	b.resolveMediaMotionLocked(root)
@@ -716,6 +717,41 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	resolveSpriteMotion(b.anim, root)
 	b.startBarFramesLocked()
 	return root, b.style
+}
+
+// pillOwnsState leaves hover and press on a pill that carries its control's
+// action and clears them below it. The pill is the control's chrome; a
+// button inside that also painted them drew an inner shape the size of the
+// button within the lit pill.
+func pillOwnsState(root *ui.Node) {
+	var clear func(n *ui.Node, action string)
+	clear = func(n *ui.Node, action string) {
+		for _, c := range n.Children {
+			if c == nil {
+				continue
+			}
+			if c.Action == action {
+				c.State &^= ui.StateHovered | ui.StatePressed
+				c.HoverProgress, c.PressProgress = 0, 0
+				c.Ripple = ui.RipplePaint{}
+			}
+			clear(c, action)
+		}
+	}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindCapsule && n.Action != "" {
+			clear(n, n.Action)
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
 }
 
 func (b *Bar) resolveGradientMotionLocked(root *ui.Node) {
