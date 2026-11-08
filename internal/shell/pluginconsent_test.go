@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 // bindConsentPlugin places the helper plugin in a user root beside an empty
@@ -169,5 +171,42 @@ func TestTheManagerStatesTheBoundaryAPluginRunsInside(t *testing.T) {
 		if got := pluginBoundaryLine(nil, tc.b, tc.signalAny); got != tc.want {
 			t.Errorf("%q signals=%v: %q, want %q", tc.b, tc.signalAny, got, tc.want)
 		}
+	}
+}
+
+// A changed plugin's click asks for its panel and is refused; through the real
+// call environment the refusal reaches the toast, named and with the copy's
+// digest, once.
+func TestAChangedPluginsRefusedClickToasts(t *testing.T) {
+	reg, _, _, _ := bindConsentPlugin(t)
+	st := waitConsent(t, reg, plugin.ConsentChanged)
+	var got []string
+	reg.plugins.mu.Lock()
+	reg.plugins.opts.WithheldToast = func(id, name string, c plugin.Capability) {
+		got = append(got, id+"/"+name+"/"+string(c))
+	}
+	slot := reg.plugins.slots["org.sysc.timer"]
+	reg.plugins.markInputLocked("org.sysc.timer")
+	reg.plugins.mu.Unlock()
+	env := reg.plugins.callEnv("org.sysc.timer", slot.rt, slot.store)
+	open := func() v1.HostReply {
+		return plugin.NewDispatcher(env).Handle(context.Background(), &v1.HostCall{
+			ID: "1", Call: v1.CallPanelOpen, Params: json.RawMessage(`{"entry":"panel"}`),
+		})
+	}
+	if reply := open(); reply.OK {
+		t.Fatalf("a changed copy opened its panel: %+v", reply)
+	}
+	if reply := open(); reply.OK {
+		t.Fatalf("a changed copy opened its panel: %+v", reply)
+	}
+	if len(got) != 1 || got[0] != "org.sysc.timer/Timer/panels" {
+		t.Fatalf("toasts = %v, want one for Timer's panel", got)
+	}
+	reg.plugins.mu.Lock()
+	toasted := reg.plugins.withheldToasted["org.sysc.timer"]
+	reg.plugins.mu.Unlock()
+	if toasted == "" || toasted != st.Consent.Digest {
+		t.Fatalf("toasted digest %q, want the copy's %q", toasted, st.Consent.Digest)
 	}
 }

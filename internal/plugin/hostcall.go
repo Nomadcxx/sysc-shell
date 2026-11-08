@@ -38,6 +38,10 @@ type CallEnv struct {
 	// Withheld is why the host started the plugin without its declared
 	// grants, or empty when it did not.
 	Withheld Withheld
+	// WithheldCall hears a call refused because its capability is declared
+	// but withheld. The plugin may discard the refusal; the shell uses this
+	// to tell the user instead.
+	WithheldCall func(Capability)
 	// Protocol is the minor the plugin's manifest declares. It decides which
 	// names a refusal can tell the plugin to declare, and whether output
 	// context is gated at all.
@@ -142,7 +146,7 @@ func (e CallEnv) declareErr(call v1.CallKind, c Capability) string {
 	if e.Protocol.Minor < NarrowCapabilityMinor {
 		name = broadNameOf(c)
 	}
-	declared := slices.ContainsFunc(e.Declared, func(d Capability) bool { return slices.Contains(grantsOf(d), c) })
+	declared := e.declares(c)
 	switch {
 	case declared && e.Withheld == WithheldChanged:
 		return fmt.Sprintf("call %q needs capability %q, which the manifest declares; it is withheld because the plugin changed since the user approved it, and returns when they approve it again in Settings > Plugins", call, name)
@@ -150,6 +154,12 @@ func (e CallEnv) declareErr(call v1.CallKind, c Capability) string {
 		return fmt.Sprintf("call %q needs capability %q, which the manifest declares; this shell did not grant it", call, name)
 	}
 	return fmt.Sprintf(`call %q needs capability %q; declare it in manifest.json as {"capabilities":[%q]}`, call, name, name)
+}
+
+// declares reports whether the manifest asked for c, under its broad or narrow
+// name.
+func (e CallEnv) declares(c Capability) bool {
+	return slices.ContainsFunc(e.Declared, func(d Capability) bool { return slices.Contains(grantsOf(d), c) })
 }
 
 func (e CallEnv) hasPanel(id string) bool {
@@ -241,6 +251,9 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 		return failReply(call.ID, err.Error())
 	}
 	if c := classOf(call.Call); c != "" && !d.env.allows(c) {
+		if d.env.Withheld == WithheldChanged && d.env.declares(c) && d.env.WithheldCall != nil {
+			d.env.WithheldCall(c)
+		}
 		return failReply(call.ID, d.env.declareErr(call.Call, c))
 	}
 	switch call.Call {

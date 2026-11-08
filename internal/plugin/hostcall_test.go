@@ -900,3 +900,36 @@ func TestHostCallLocationRequiresGrant(t *testing.T) {
 		t.Fatalf("location.get with no provider = %+v", unavailable)
 	}
 }
+
+// TestAWithheldCallIsReported: the shell hears about a call refused because
+// the plugin changed since it was approved, so it can tell the user; the
+// plugin itself may discard the refusal. Other refusals stay the plugin's.
+func TestAWithheldCallIsReported(t *testing.T) {
+	t.Parallel()
+	narrowMinor := v1.Version{Major: 1, Minor: NarrowCapabilityMinor}
+	panel := []Panel{{ID: "panel"}}
+	call := func(env CallEnv) (v1.HostReply, []Capability) {
+		var heard []Capability
+		env.WithheldCall = func(c Capability) { heard = append(heard, c) }
+		env.DeclaredPanels = panel
+		env.OpenPanel = func(context.Context, v1.PanelParams) (v1.PanelResult, error) { return v1.PanelResult{}, nil }
+		reply := NewDispatcher(env).Handle(context.Background(), &v1.HostCall{
+			ID: "1", Call: v1.CallPanelOpen, Params: jsonOf(t, v1.PanelParams{Entry: "panel"}),
+		})
+		return reply, heard
+	}
+	reply, heard := call(CallEnv{Protocol: narrowMinor, Declared: []Capability{CapPanels}, Withheld: WithheldChanged})
+	if reply.OK || len(heard) != 1 || heard[0] != CapPanels {
+		t.Fatalf("withheld panel.open: reply %+v, heard %v; want a refusal reported as panels", reply, heard)
+	}
+	if _, heard := call(CallEnv{Protocol: narrowMinor, Withheld: WithheldChanged}); len(heard) != 0 {
+		t.Errorf("an undeclared capability was reported as withheld: %v", heard)
+	}
+	if _, heard := call(CallEnv{Protocol: narrowMinor, Declared: []Capability{CapPanels}}); len(heard) != 0 {
+		t.Errorf("an ungranted but not withheld capability was reported: %v", heard)
+	}
+	reply, heard = call(CallEnv{Protocol: narrowMinor, Declared: []Capability{CapPanels}, Granted: []Capability{CapPanels}})
+	if !reply.OK || len(heard) != 0 {
+		t.Errorf("a granted call: reply %+v, heard %v", reply, heard)
+	}
+}

@@ -198,10 +198,11 @@ func run(ctx context.Context) (err error) {
 		launcher = ""
 	}
 	_ = registry.BindPlugins(shell.PluginHostOptions{
-		Roots:    plugin.DefaultRoots("/usr/share/sysc-shell/plugins"),
-		StateDir: plugin.StateRoot(),
-		Notify:   registry.PluginNotify,
-		Launcher: launcher,
+		Roots:         plugin.DefaultRoots("/usr/share/sysc-shell/plugins"),
+		StateDir:      plugin.StateRoot(),
+		Notify:        registry.PluginNotify,
+		Launcher:      launcher,
+		WithheldToast: registry.PluginWithheldToast,
 	})
 	// Releases every service lease and stops the clock goroutine when the
 	// process unwinds, whether through cancellation or an error return.
