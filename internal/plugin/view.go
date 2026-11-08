@@ -250,6 +250,19 @@ func iconNode(name, path string) (*ui.Node, error) {
 	return &ui.Node{Kind: ui.KindIcon, Icon: name, IconProjectFirst: true}, nil
 }
 
+// barTextGlyph is the rune a bar view carries for an unsized project icon.
+// The bar keeps those glyphs as text at the type ladder's size: sized as icons
+// they grow with the pill, and on a full right section the extra width pushes
+// the tail item off the bar. That holds until overflow is handled better
+// (sysc-2270); every other view converts them to icons.
+func barTextGlyph(name string, view v1.ViewKind) (string, bool) {
+	if view != v1.ViewBar {
+		return "", false
+	}
+	glyph, ok := render.IconByName(name)
+	return string(glyph), ok
+}
+
 var wireFills = map[string]ui.Fill{
 	"surface":         ui.FillNone,
 	"accent":          ui.FillAccent,
@@ -384,6 +397,9 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		}
 		out.Kind, out.Icon, out.IconProjectFirst = icon.Kind, icon.Icon, icon.IconProjectFirst
 		out.IconSize = n.IconSize
+		if glyph, ok := barTextGlyph(n.Icon, view); ok && n.IconSize == 0 {
+			out.Kind, out.Icon, out.IconProjectFirst, out.Text = ui.KindText, "", false, glyph
+		}
 		if len(n.Frames) > 0 {
 			// Every pose must be drawable before the animator can land on
 			// it; an unknown one fails here, naming the path, rather than
@@ -461,7 +477,15 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 			if err != nil {
 				return nil, err
 			}
+			glyph, barText := barTextGlyph(n.Icon, view)
+			if barText {
+				icon = &ui.Node{Kind: ui.KindText, Text: glyph}
+			}
 			switch {
+			case n.Text == "" && barText:
+				// A bar's project glyph is a character, so the button
+				// carries it as its own label rather than as a child.
+				out.Text = glyph
 			case n.Text == "":
 				// A bare button has no fill for a tone to colour, so the
 				// tone colours its glyph. A filled button keeps the fill's

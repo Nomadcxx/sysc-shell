@@ -553,10 +553,11 @@ func matrixPluginFrame(t *testing.T) pluginFrame {
 	return pluginFrame{Root: root, Revision: 1, ViewID: "matrix-view"}
 }
 
-// A plugin's project glyph with no size takes the pill's glyph size at every
-// density, the size the Material glyphs beside it take. As a text rune it
-// stayed at the type ladder's size, 4 px short of a comfortable bar's bell.
-func TestBarSizesAPluginProjectGlyphLikeAMaterialOne(t *testing.T) {
+// A plugin's unsized Material glyph takes the pill's glyph size at every
+// density, even when one converted frame outlives a bar rebuilt at another
+// density, as a plugin view outlives a reload. Its project glyph stays text
+// in the bar, so a full bar keeps its width (sysc-2270).
+func TestBarSizesPluginGlyphsAcrossDensities(t *testing.T) {
 	t.Parallel()
 	wire := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{
 		{Kind: v1.KindButton, ID: "open", Icon: "github", Name: "Open GitHub", Role: "button",
@@ -580,18 +581,25 @@ func TestBarSizesAPluginProjectGlyphLikeAMaterialOne(t *testing.T) {
 			bar.mu.Lock()
 			defer bar.mu.Unlock()
 			want := theme.BarGlyphSize(bar.theme.Metrics.CapsuleHeight)
-			sizes := map[string]int{}
+			glyph, _ := render.IconByName("github")
+			notes, github := 0, false
 			for _, section := range bar.sections() {
 				for _, n := range section {
 					walkNodes(n, func(n *ui.Node) {
-						if n.Kind == ui.KindIcon && (n.Icon == "github" || n.Icon == "sticky_note_2") {
-							sizes[n.Icon] = ui.IconSize(n)
+						if n.Kind == ui.KindIcon && n.Icon == "sticky_note_2" {
+							notes = ui.IconSize(n)
+						}
+						if n.Kind == ui.KindButton && n.Text == string(glyph) {
+							github = true
 						}
 					})
 				}
 			}
-			if sizes["github"] != want || sizes["sticky_note_2"] != want {
-				t.Fatalf("glyph sizes = %v, want both %d", sizes, want)
+			if notes != want {
+				t.Fatalf("material glyph size = %d, want %d", notes, want)
+			}
+			if !github {
+				t.Fatal("the project glyph is no longer the button's text")
 			}
 		})
 	}
