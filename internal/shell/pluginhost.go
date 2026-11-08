@@ -32,6 +32,9 @@ type PluginHostOptions struct {
 	// Launcher is the shell binary, which applies each plugin's boundary
 	// before executing it (plugin.LaunchFlag). Empty starts plugins directly.
 	Launcher string
+	// WithheldToast tells the user a plugin's click was refused because the
+	// plugin changed since they approved it. Nil stays silent.
+	WithheldToast func(id, name string, c plugin.Capability)
 	// recordInputs keeps the test-only sent-input history. Production leaves it off.
 	recordInputs bool
 }
@@ -143,7 +146,12 @@ type pluginHost struct {
 	// lastAnchor keeps the last plugin trigger in bar-local coordinates, scoped
 	// to the output view that delivered it. Panel placement converts it once.
 	lastAnchor map[string]pluginAnchor
-	catalog    plugin.Catalog
+	// lastInput is when the user last sent input to each plugin, and
+	// withheldToasted the copy (digest) each was last toasted for; see
+	// withheldCall.
+	lastInput       map[string]time.Time
+	withheldToasted map[string]string
+	catalog         plugin.Catalog
 	// images decodes the absolute paths plugin image nodes name, off the
 	// Wayland owner and under the worker's caps and bounded cache.
 	images *icons.Worker
@@ -1411,10 +1419,17 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 		withheld = plugin.WithheldChanged
 	}
 	return plugin.CallEnv{
-		PluginID:       id,
-		Granted:        grantedCaps(rt),
-		Declared:       m.Capabilities,
-		Withheld:       withheld,
+		PluginID: id,
+		Granted:  grantedCaps(rt),
+		Declared: m.Capabilities,
+		Withheld: withheld,
+		WithheldCall: func(c plugin.Capability) {
+			name := m.Name
+			if name == "" {
+				name = id
+			}
+			h.withheldCall(id, name, rt.Status().Consent.Digest, c)
+		},
 		Protocol:       m.Protocol,
 		DeclaredPanels: m.Panels,
 		Store:          store,
@@ -1940,6 +1955,7 @@ func (h *pluginHost) deliverValue(hit pluginHit, event v1.EventKind, button v1.P
 		}
 		toSend = h.textOut.Push(ev)
 		h.noteInputsLocked(toSend)
+		h.markInputLocked(v.Plugin)
 		if event == v1.EventChange && len(toSend) == 0 {
 			h.scheduleTextFlushLocked()
 		}
@@ -2055,6 +2071,7 @@ func (h *pluginHost) deliverShortcut(key string, modifiers []string) bool {
 		Output: v.Output, Generation: v.Generation,
 	}
 	h.noteInputLocked(ev)
+	h.markInputLocked(v.Plugin)
 	h.mu.Unlock()
 	_ = slot.rt.Send(&ev)
 	return true
