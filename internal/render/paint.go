@@ -226,7 +226,11 @@ func paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style, damage *ui
 		}
 	}
 	box := style.Scale120.PhysicalRect(style.Body)
-	radius := style.Scale120.Physical(style.Radius)
+	rootRadius := style.Radius
+	if style.SurfaceRadius > 0 {
+		rootRadius = style.SurfaceRadius
+	}
+	radius := style.Scale120.Physical(rootRadius)
 	square := style.squareCorners()
 	// The silhouette is drawn from the antialiased mask, and the rim is a real
 	// stroke over it. Filling the rim colour and laying a smaller fill on top

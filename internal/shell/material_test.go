@@ -289,8 +289,8 @@ func TestRefractionComesWithTheGlassValueOnly(t *testing.T) {
 		t.Error("the glass value does not refract")
 	}
 
-	// The radius is scaled into the capture's pixels: a 12px radius on a
-	// quarter-resolution capture is 3.
+	// The radius is the panel's own corner scaled into the capture's pixels:
+	// a detached panel's 28px corner on a quarter-resolution capture is 7.
 	h := &PanelHost{
 		id:    PanelSettings,
 		place: Placement{Output: ui.Rect{W: 1920, H: 1080}, Panel: ui.Rect{W: 400, H: 300}},
@@ -302,8 +302,8 @@ func TestRefractionComesWithTheGlassValueOnly(t *testing.T) {
 	if got.W != capture.Width || got.H != capture.Height {
 		t.Errorf("refraction geometry = %dx%d, want the capture's %dx%d", got.W, got.H, capture.Width, capture.Height)
 	}
-	if want := full.Radius / 4; got.Radius < want-1 || got.Radius > want+1 {
-		t.Errorf("radius = %d, want about %d (the theme's %d at quarter resolution)", got.Radius, want, full.Radius)
+	if want := h.surfaceRadius() / 4; got.Radius < want-1 || got.Radius > want+1 {
+		t.Errorf("radius = %d, want about %d (the panel's %d at quarter resolution)", got.Radius, want, h.surfaceRadius())
 	}
 	if got.Bend == 0 || got.Fringe == 0 || got.Dome == 0 {
 		t.Errorf("glass terms are incomplete: %+v", got)

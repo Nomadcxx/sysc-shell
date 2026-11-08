@@ -2120,7 +2120,7 @@ func (h *PanelHost) refractionFor(img *ui.Image) render.Refraction {
 	if w, _ := h.surfaceSize(); w > 0 {
 		scale = float64(w) / float64(img.Width)
 	}
-	radius := int(float64(h.theme.Radius) / scale)
+	radius := int(float64(h.surfaceRadius()) / scale)
 	r := render.Refraction{
 		W: img.Width, H: img.Height,
 		Radius: radius,
@@ -2210,6 +2210,18 @@ func overlayLuma(fill render.Color, ground uint8) uint8 {
 	return uint8(l*a + float64(ground)*(1-a) + 0.5)
 }
 
+// surfaceRadius is the panel's own corner. A detached panel takes Material's
+// extra-large step; an attached one keeps the bar's radius so the join and its
+// fillet do not move. Children still inherit the theme radius.
+func (h *PanelHost) surfaceRadius() int { return h.surfaceRadiusFor(h.theme) }
+
+func (h *PanelHost) surfaceRadiusFor(t Theme) int {
+	if h.place.Attached() {
+		return t.Radius
+	}
+	return t.Shapes.ExtraLarge
+}
+
 // rootStyle picks the alpha this panel's root fill paints at.
 //
 // An attached panel normally resolves its root at the *bar's* opacity, because
@@ -2236,6 +2248,7 @@ func (h *PanelHost) rootStyle(t Theme, blurBehind bool) render.Style {
 		s = t.PanelStyle()
 		s.Rim = t.Outline
 	}
+	s.SurfaceRadius = h.surfaceRadiusFor(t)
 	if h.id == PanelSettings {
 		s.SurfaceOpacity = max(s.SurfaceOpacity, settingsOpacityFloor)
 	} else if h.id == PanelOnboarding && blurBehind && !t.Outlined {
@@ -2257,7 +2270,7 @@ func (h *PanelHost) rootStyle(t Theme, blurBehind bool) render.Style {
 			// The surface is the scrim over the live desktop; the sheet inside
 			// it carries the panel fill.
 			s.RootScrim = true
-			s.Radius = 0
+			s.Radius, s.SurfaceRadius = 0, 0
 			s.Rim = Color{}
 			s.RimWidth = 0
 		}
@@ -2398,7 +2411,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 				return h.blurShape(r)
 			},
 			OpaqueBackground: opaque,
-			Radius:           h.theme.Radius,
+			Radius:           h.surfaceRadius(),
 			Configure:        h.configureLocking(r),
 			Render:           h.renderLocking(r),
 			Handle:           h.handle(r),
@@ -2438,7 +2451,7 @@ func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
 	if w <= 0 || hgt <= 0 {
 		w, hgt = h.surfaceSize()
 	}
-	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.theme.Radius, Scale: ui.Scale120(h.scale120)}
+	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.surfaceRadius(), Scale: ui.Scale120(h.scale120)}
 	if h.place.Attached() {
 		opacity, _, _ := h.panelReveal()
 		j := h.place.Joints()

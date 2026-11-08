@@ -232,23 +232,23 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Path: "appearance.radius", Label: "Surface corner radius", Section: "Appearance", Group: "Corners & shape",
 			Describe: "Corner radius for panels and cards.",
 			Kind:     KindInt,
-			Min:      theme.RadiusMin, Max: theme.RadiusMax,
+			Min:      theme.RadiusFloor, Max: theme.RadiusMax,
 			Get: getInt(func(c config.Config) int { return c.Theme.Radius }),
 			// The bar keeps its own radius as a local override; this is the
 			// composition axis every other surface derives from.
-			Set: setInt("appearance.radius", theme.RadiusMin, theme.RadiusMax,
+			Set: setInt("appearance.radius", theme.RadiusFloor, theme.RadiusMax,
 				func(c *config.Config, n int) { c.Theme.Radius = n }),
 		},
 		{
 			Path: "appearance.input-radius", Label: "Control corner radius", Section: "Appearance", Group: "Corners & shape",
 			Describe: "Corner radius for interactive elements: fields, switches and buttons.",
 			Kind:     KindInt,
-			Min:      theme.RadiusMin, Max: theme.RadiusMax,
+			Min:      theme.RadiusFloor, Max: theme.RadiusMax,
 			Get: getInt(func(c config.Config) int { return c.Theme.InputRadius }),
 			// The parallel ladder to appearance.radius. Every preset seeds it
 			// with that preset's Radius, so inputs keep their shape until
 			// someone moves this axis on its own.
-			Set: setInt("appearance.input-radius", theme.RadiusMin, theme.RadiusMax,
+			Set: setInt("appearance.input-radius", theme.RadiusFloor, theme.RadiusMax,
 				func(c *config.Config, n int) { c.Theme.InputRadius = n }),
 		},
 		{

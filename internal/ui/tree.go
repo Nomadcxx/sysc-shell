@@ -669,6 +669,9 @@ const (
 	ShapeLarge
 	ShapeCard
 	ShapePanel
+	// ShapeExtraLarge is Material's 28px corner at the default radius, for
+	// dialogs and detached panels.
+	ShapeExtraLarge
 )
 
 // MeasureText reports the logical width and height of a shaped string. The

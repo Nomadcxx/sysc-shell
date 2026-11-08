@@ -780,9 +780,9 @@ func TestShapeRolesStayIndependentOfTheBaseRadius(t *testing.T) {
 					radius, shape, got)
 			}
 		}
-		// The derived roles do follow the base.
-		if th.Shapes.Medium != radius {
-			t.Errorf("radius %d: medium = %d", radius, th.Shapes.Medium)
+		// The derived roles follow the base, lifted to the floor.
+		if want := max(radius, theme.RadiusFloor); th.Shapes.Medium != want {
+			t.Errorf("radius %d: medium = %d, want %d", radius, th.Shapes.Medium, want)
 		}
 		if th.Shapes.Large > theme.RadiusMax {
 			t.Errorf("radius %d: large = %d, above the %d ceiling",

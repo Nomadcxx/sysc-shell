@@ -41,6 +41,10 @@ type Style struct {
 	EdgeFillet          int
 	EdgeLeft, EdgeRight bool
 
+	// SurfaceRadius, when set, rounds the root surface instead of Radius, so
+	// a panel's own corner can differ from the radius its children inherit.
+	SurfaceRadius int
+
 	Background Color
 	Foreground Color
 	// Capsule fills the pill that wraps a bar widget. Container fills a
@@ -141,6 +145,9 @@ type Shapes struct {
 	// ExtraSmall is the tightest container corner: Material's 4px step at the
 	// default radius, for a plain tooltip's short label.
 	ExtraSmall int
+	// ExtraLarge is Material's 28px step at the default radius, for dialogs
+	// and detached panels.
+	ExtraLarge int
 	Small      int
 	Medium     int
 	Large      int
@@ -175,6 +182,8 @@ func (s Shapes) For(shape ui.Shape, inherit int) int {
 		return s.Card
 	case ui.ShapePanel:
 		return s.Panel
+	case ui.ShapeExtraLarge:
+		return s.ExtraLarge
 	default:
 		return inherit
 	}

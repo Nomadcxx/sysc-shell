@@ -241,7 +241,7 @@ func TestAppearanceIntegerAxesAreBounded(t *testing.T) {
 	}{
 		{"appearance.font-scale", theme.FontScaleMin, theme.FontScaleMax},
 		{"appearance.font-weight", theme.FontWeightMin, theme.FontWeightMax},
-		{"appearance.radius", theme.RadiusMin, theme.RadiusMax},
+		{"appearance.radius", theme.RadiusFloor, theme.RadiusMax},
 		{"appearance.motion-speed", theme.SpeedMin, theme.SpeedMax},
 		{"appearance.bar-opacity", theme.OpacityMin, theme.OpacityMax},
 		{"appearance.glass-intensity", theme.GlassIntensityMin, theme.GlassIntensityMax},
@@ -1010,7 +1010,7 @@ func TestInputRadiusHasAnEntryThatWritesTheAxis(t *testing.T) {
 	if entry == nil {
 		t.Fatal("no settings entry reaches the input radius axis")
 	}
-	if entry.Kind != KindInt || entry.Min != theme.RadiusMin || entry.Max != theme.RadiusMax {
+	if entry.Kind != KindInt || entry.Min != theme.RadiusFloor || entry.Max != theme.RadiusMax {
 		t.Fatalf("entry = %+v, want an int bounded like its sibling", entry)
 	}
 	cfg := config.Default()
@@ -1022,6 +1022,23 @@ func TestInputRadiusHasAnEntryThatWritesTheAxis(t *testing.T) {
 	}
 	if got := entry.Get(cfg); got != "18" {
 		t.Fatalf("entry reads back %q, want \"18\"", got)
+	}
+}
+
+// The radius sliders start at the floor: below it the theme lifts the value
+// anyway, and zero once turned every card into a pill.
+func TestRadiusSlidersStartAtTheFloor(t *testing.T) {
+	t.Parallel()
+	r := DefaultFor(config.Default())
+	for _, path := range []string{"appearance.radius", "appearance.input-radius"} {
+		entry := r.ByPath(path)
+		if entry == nil || entry.Min != theme.RadiusFloor {
+			t.Fatalf("%s = %+v, want min %d", path, entry, theme.RadiusFloor)
+		}
+		cfg := config.Default()
+		if err := entry.Set(&cfg, "2"); err == nil {
+			t.Fatalf("%s accepted 2, below the floor", path)
+		}
 	}
 }
 
