@@ -58,10 +58,17 @@ type Bar struct {
 	trayAvailable int
 	// overflow is what the last layout could not place, per section.
 	overflow ui.BarOverflow
-	onTray   func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
-	onPlugin func(string, wayland.Event) bool
-	onAction func(action string, button uint32) bool
-	onAxis   func(action string, delta int) bool
+	// reveal is each end section's reveal (barreveal.go), indexed by ui.Side.
+	reveal [2]sectionReveal
+	// holdProbe asks whether anything opened from this bar is open; it takes
+	// the registry lock, so it is called with no bar lock held.
+	holdProbe func() bool
+	// revealAfter runs the reveal's timer body after a delay.
+	revealAfter func(time.Duration, func())
+	onTray      func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
+	onPlugin    func(string, wayland.Event) bool
+	onAction    func(action string, button uint32) bool
+	onAxis      func(action string, delta int) bool
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -164,6 +171,7 @@ func newBarWithText(theme Theme, policy config.Bar, connector string, text *rend
 		pointer:            interaction{stateLayer: true},
 		anim:               newAnimator(nil, false, theme.Motion),
 		stopAnim:           make(chan struct{}),
+		revealAfter:        func(d time.Duration, f func()) { time.AfterFunc(d, f) },
 	}
 
 	side := b.barAxis() == ui.Vertical
@@ -475,17 +483,26 @@ func (b *Bar) blurShape() []ui.Rect {
 	}
 	if b.theme.BarStyle == "islands" {
 		var out []ui.Rect
-		for _, section := range b.sections() {
+		for i, section := range b.sections() {
+			window := b.revealWindowLocked(i)
 			for _, n := range section {
 				if n.Kind != ui.KindCapsule || n.Bounds.W <= 0 || n.Bounds.H <= 0 {
 					continue
+				}
+				chrome := render.ChromeBounds(n)
+				if window.W > 0 {
+					// A shifted section shows only its window, so it blurs
+					// only there too.
+					if chrome = intersectRects(chrome, window); chrome.W <= 0 || chrome.H <= 0 {
+						continue
+					}
 				}
 				// Zero is half the shorter side, which BlurStrips clamps to.
 				radius := render.CapsuleRadius(b.style, n)
 				if radius <= 0 {
 					radius = min(n.Bounds.W, n.Bounds.H)
 				}
-				out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: render.ChromeBounds(n), Radius: radius, Scale: b.style.Scale120})...)
+				out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: chrome, Radius: radius, Scale: b.style.Scale120})...)
 			}
 		}
 		return out
@@ -504,20 +521,25 @@ func (b *Bar) blurShape() []ui.Rect {
 	return ui.BlurStrips(shape)
 }
 
-func (b *Bar) layoutLocked(width, height int) error {
-	// Shaping for paint happens at the physical size, so measuring at the
-	// logical size and scaling the result up assumes glyph advances are linear
-	// in point size. They are not: at scale 1.25 the painter shaped text wider
-	// than layout had reserved and ellipsized a clock that fits.
-	//
-	// Measure at the size the painter will actually use, then convert back up.
-	measure := func(s string, attrs ui.TextAttrs) (int, int) {
+// measureLocked measures text for layout. Shaping for paint happens at the
+// physical size, so measuring at the logical size and scaling the result up
+// assumes glyph advances are linear in point size. They are not: at scale 1.25
+// the painter shaped text wider than layout had reserved and ellipsized a
+// clock that fits. So it measures at the size the painter will actually use,
+// then converts back up. It shapes through the font map, so it runs on the
+// Wayland goroutine only.
+func (b *Bar) measureLocked() ui.MeasureText {
+	return func(s string, attrs ui.TextAttrs) (int, int) {
 		w, h, err := b.text.Measure(s, render.SpecFor(b.style, attrs), attrs.Tabular)
 		if err != nil {
 			return 0, 0
 		}
 		return b.style.Scale120.Logical(w), b.style.Scale120.Logical(h)
 	}
+}
+
+func (b *Bar) layoutLocked(width, height int) error {
+	measure := b.measureLocked()
 	b.trayNodes = nil
 	sections := b.sections()
 	content := b.contentLocked(width, height)
@@ -573,7 +595,10 @@ func (b *Bar) layoutLocked(width, height int) error {
 	// Recorded rather than drawn: sysc-313 stops the silent clip, and the
 	// chrome that shows the count belongs to the bar composition surface.
 	b.overflow = over
-	return nil
+	// Layout leaves every section at rest; a revealed one moves back to
+	// where its reveal has it.
+	b.setRevealStripsLocked(over)
+	return b.applyRevealLocked()
 }
 
 // Overflow reports what the last layout could not place, per section.
@@ -682,6 +707,11 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 	// The arrangement is brought up to date here rather than in apply, because
 	// this is the goroutine that owns the font map.
 	b.relayoutLocked()
+	b.advanceRevealLocked(b.anim.now())
+	if err := b.applyRevealLocked(); err != nil && !b.layoutFailing {
+		b.layoutFailing = true
+		fmt.Fprintf(os.Stderr, "sysc-shell: bar %s cannot place its revealed section: %v\n", b.conn, err)
+	}
 	root, style := b.renderViewLocked()
 	b.mu.Unlock()
 
@@ -696,16 +726,38 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	root := &ui.Node{Kind: ui.KindRow}
 	sections := b.sections()
-	for _, section := range sections {
+	resting := b.overflow
+	clips := map[int]*ui.Node{}
+	for _, side := range revealSides() {
+		if w := b.reveal[side].window; w.W > 0 && w.H > 0 {
+			// A shifted section paints inside its window, and its own chrome
+			// replaces the resting fade.
+			clips[revealSection(side)] = &ui.Node{Kind: ui.KindRow, Bounds: w, ClipBounds: true}
+			if side == ui.SideStart {
+				resting.Left = 0
+			} else {
+				resting.Right = 0
+			}
+		}
+	}
+	for i, section := range sections {
+		parent := root
+		if clip := clips[i]; clip != nil {
+			root.Children = append(root.Children, clip)
+			parent = clip
+		}
 		for _, n := range section {
-			root.Children = append(root.Children, copyNode(n))
+			parent.Children = append(parent.Children, copyNode(n))
 		}
 	}
 	// Last, so the fade sits over the widgets it softens. The extent comes
 	// from the control ladder rather than a literal, like every other measured
 	// piece of this bar.
 	root.Children = append(root.Children,
-		overflowFades(sections, b.overflow, b.theme.Metrics.StandardControl, b.barAxis())...)
+		overflowFades(sections, resting, b.theme.Metrics.StandardControl, b.barAxis())...)
+	for _, side := range revealSides() {
+		root.Children = append(root.Children, b.revealChromeLocked(side)...)
+	}
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
@@ -1008,6 +1060,9 @@ func (b *Bar) hitLocked(x, y int) (string, bool) {
 	body := b.bodyLocked(b.configured.width, b.configured.height)
 	sections := b.sections()
 	for i := len(sections) - 1; i >= 0; i-- {
+		if b.revealMovingLocked(i) {
+			continue
+		}
 		section := sections[i]
 		for j := len(section) - 1; j >= 0; j-- {
 			if action, ok := hitBarNode(section[j], x, y, body, b.barAxis()); ok {
@@ -1178,6 +1233,9 @@ func (b *Bar) scrollActionAtLocked(x, y int) (config.BarScrollAction, string, bo
 	body := b.bodyLocked(b.configured.width, b.configured.height)
 	sections := b.widgets()
 	for sectionIndex := len(sections) - 1; sectionIndex >= 0; sectionIndex-- {
+		if b.revealMovingLocked(sectionIndex) {
+			continue
+		}
 		section := sections[sectionIndex]
 		for widgetIndex := len(section) - 1; widgetIndex >= 0; widgetIndex-- {
 			key := fmt.Sprintf("%d:%d", sectionIndex, widgetIndex)
@@ -1226,7 +1284,10 @@ func (b *Bar) tooltipAt(x, y int) (string, *ui.Node, ui.Rect, bool) {
 
 func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
 	body, axis := b.bodyLocked(b.configured.width, b.configured.height), b.barAxis()
-	for _, section := range b.widgets() {
+	for i, section := range b.widgets() {
+		if b.revealMovingLocked(i) {
+			continue
+		}
 		for _, w := range section {
 			if w.node != nil && visibleWidgetNode(w) == nil {
 				continue
@@ -1248,6 +1309,9 @@ func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
 		}
 	}
 	for _, node := range b.trayNodes {
+		if b.revealMovingLocked(2) {
+			break
+		}
 		if node.Tooltip != "" && barTargetBounds(node.Bounds, body, axis).Contains(x, y) {
 			return node.Tooltip, nil, node.Bounds, true
 		}
@@ -1294,6 +1358,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 			b.axisValue120Remainder = 0
 		}
 		changed := b.pointer.setHover(action)
+		changed = b.revealPointerLocked(b.hoverAt.x, b.hoverAt.y) || changed
 		b.mu.Unlock()
 		return changed
 
@@ -1303,6 +1368,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		b.axisValue120Action = ""
 		b.axisValue120Remainder = 0
 		changed := b.pointer.clear()
+		changed = b.revealLeaveLocked() || changed
 		b.mu.Unlock()
 		return changed
 

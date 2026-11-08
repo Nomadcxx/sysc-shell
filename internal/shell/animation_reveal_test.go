@@ -80,11 +80,17 @@ func TestTargetCurveDelayAndEase(t *testing.T) {
 	}
 }
 
+// Reduced motion keeps a curve's delay, so a pointer passing through the
+// bar's edge still shows nothing, then snaps instead of easing.
 func TestTargetCurveReducedSnaps(t *testing.T) {
-	a, _ := newTestAnimator(true)
+	a, clock := newTestAnimator(true)
 	a.TargetCurve("tint", animRevealTint, 0.4, 250*time.Millisecond, time.Second, func(p float64) float64 { return p })
+	if v := a.Value("tint", animRevealTint); v != 0 {
+		t.Fatalf("reduced curve before its delay = %v, want 0", v)
+	}
+	clock.add(250 * time.Millisecond)
 	if v := a.Value("tint", animRevealTint); v != 0.4 || !a.Settled() {
-		t.Fatalf("reduced curve = %v settled %v, want 0.4 at once", v, a.Settled())
+		t.Fatalf("reduced curve at its delay = %v settled %v, want 0.4 at once", v, a.Settled())
 	}
 }
 

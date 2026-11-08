@@ -756,18 +756,14 @@ func (a *animator) TargetLoop(node string, channel animChannel, from, to float64
 // deliberately uses the linear loop path rather than the gradient's ping-pong
 // mode: a marquee must never scroll backward at the seam.
 // TargetCurve eases a value from wherever it is to to over dur, starting
-// delay from now; until then it holds. Reduced motion, or no duration, sets it
-// at once.
+// delay from now; until then it holds. Reduced motion, or no duration, keeps
+// the delay and then sets it at once.
 func (a *animator) TargetCurve(node string, channel animChannel, to float64, delay, dur time.Duration, ease func(float64) float64) {
 	if !finite(to) {
 		return
 	}
 	key := animKey{node: node, channel: channel}
 	now := a.now()
-	if a.reduced || dur <= 0 {
-		a.values[key] = animValue{from: to, to: to, start: now}
-		return
-	}
 	from := 0.0
 	if current, ok := a.values[key]; ok {
 		if current.spring != nil {
@@ -775,6 +771,14 @@ func (a *animator) TargetCurve(node string, channel animChannel, to float64, del
 		} else {
 			from = current.at(now)
 		}
+	}
+	if a.reduced || dur <= 0 {
+		if delay <= 0 {
+			a.values[key] = animValue{from: to, to: to, start: now}
+			return
+		}
+		// The delay still holds: a snap one nanosecond long that lands on it.
+		dur, ease, delay = time.Nanosecond, func(float64) float64 { return 1 }, delay-time.Nanosecond
 	}
 	a.values[key] = animValue{from: from, to: to, start: now.Add(delay), dur: dur, ease: ease}
 	a.nudge()
@@ -937,6 +941,21 @@ func (a *animator) Value(node string, channel animChannel) float64 {
 		return x
 	}
 	return v.at(a.now())
+}
+
+// valueSettled reports whether one value has reached its target; an absent
+// value has nothing left to do.
+func (a *animator) valueSettled(node string, channel animChannel) bool {
+	key := animKey{node: node, channel: channel}
+	v, ok := a.values[key]
+	if !ok {
+		return true
+	}
+	if v.spring != nil {
+		_, rest := a.advanceSpring(key, a.now())
+		return rest
+	}
+	return v.settled(a.now())
 }
 
 // Settled reports whether every value has reached its target. While this is
