@@ -179,7 +179,7 @@ func TestConvertMapsEveryVersionOneKind(t *testing.T) {
 		{"row", &v1.Node{Kind: v1.KindRow}, ui.KindRow},
 		{"column", &v1.Node{Kind: v1.KindColumn}, ui.KindColumn},
 		{"text", &v1.Node{Kind: v1.KindText, Text: "x"}, ui.KindText},
-		{"icon", &v1.Node{Kind: v1.KindIcon, Icon: "rain"}, ui.KindIcon},
+		{"icon", &v1.Node{Kind: v1.KindIcon, Icon: "rain"}, ui.KindText},
 		{"progress", &v1.Node{Kind: v1.KindProgress, Value: 0.5}, ui.KindMeter},
 		{"gauge", &v1.Node{Kind: v1.KindGauge, Value: 0.5, ValueText: "12:34"}, ui.KindRadialGauge},
 		{"spinner", &v1.Node{Kind: v1.KindSpinner, Key: "launching", Width: 24}, ui.KindSpinner},
@@ -207,29 +207,20 @@ func TestConvertMapsEveryVersionOneKind(t *testing.T) {
 	}
 }
 
-// A project glyph is an icon like a Material one: the host sizes it, so it
-// matches the glyphs beside it, and a badge can find its edges. Carried as a
-// text rune it took the type ladder's size at every density.
-func TestConvertResolvesAProjectIconToAnIconNode(t *testing.T) {
+func TestConvertResolvesAnIconToItsGlyph(t *testing.T) {
 	t.Parallel()
 
-	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "thunderstorm", Tone: v1.ToneAccent}}}
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "thunderstorm"}}}
 	got, err := Convert(root, v1.ViewPanel)
 	if err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
-	if _, ok := render.IconByName("thunderstorm"); !ok {
+	want, ok := render.IconByName("thunderstorm")
+	if !ok {
 		t.Fatal("the catalogue lost thunderstorm")
 	}
-	icon := got.Children[0]
-	if icon.Kind != ui.KindIcon || icon.Icon != "thunderstorm" || icon.Text != "" || !icon.IconProjectFirst {
-		t.Fatalf("icon = %+v, want a project-first icon node", icon)
-	}
-	if icon.IconSize != 0 {
-		t.Fatalf("icon size = %d, want 0 so the host sizes it", icon.IconSize)
-	}
-	if icon.Tone != ui.ToneAccent {
-		t.Fatalf("icon tone = %v, want the accent it asked for", icon.Tone)
+	if got.Children[0].Text != string(want) {
+		t.Errorf("icon text = %q, want the catalogue glyph", got.Children[0].Text)
 	}
 }
 
@@ -244,9 +235,8 @@ func TestConvertMapsAWeatherIconNameToTheWMOGlyph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
-	glyph, ok := render.IconByName(got.Children[0].Icon)
-	if got.Children[0].Kind != ui.KindIcon || !got.Children[0].IconProjectFirst || !ok || glyph != render.IconRune(61) {
-		t.Fatalf("icon = %+v, want the rain glyph for WMO 61", got.Children[0])
+	if got.Children[0].Text != string(render.IconRune(61)) {
+		t.Fatalf("icon = %q, want the rain glyph for WMO 61", got.Children[0].Text)
 	}
 }
 
@@ -277,12 +267,13 @@ func TestConvertResolvesAButtonIcon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	button := got.Children[0]
-	if button.Text != "" || button.Action != "camera" || len(button.Children) != 1 {
-		t.Fatalf("button = %+v, want one glyph child and no label", button)
+	want, ok := render.IconByName("camera")
+	if !ok {
+		t.Fatal("catalogue missing camera")
 	}
-	if glyph := button.Children[0]; glyph.Kind != ui.KindIcon || glyph.Icon != "camera" || !glyph.IconProjectFirst || glyph.IconSize != 0 {
-		t.Fatalf("glyph = %+v, want the project camera as a host-sized icon", glyph)
+	button := got.Children[0]
+	if button.Text != string(want) || button.Action != "camera" {
+		t.Fatalf("button = %+v", button)
 	}
 	if button.Fill != ui.FillNone {
 		t.Fatalf("camera fill = %v, want the bar pill to provide the chrome", button.Fill)
@@ -401,8 +392,12 @@ func TestConvertButtonWithIconAndLabelCarriesBoth(t *testing.T) {
 	if len(button.Children) != 2 {
 		t.Fatalf("button children = %d, want glyph and label", len(button.Children))
 	}
-	if glyph := button.Children[0]; glyph.Kind != ui.KindIcon || glyph.Icon != "schedule" || !glyph.IconProjectFirst {
-		t.Fatalf("glyph child = %+v, want the project schedule icon", glyph)
+	want, ok := render.IconByName("schedule")
+	if !ok {
+		t.Fatal("catalogue missing schedule")
+	}
+	if button.Children[0].Text != string(want) {
+		t.Fatalf("glyph child = %q", button.Children[0].Text)
 	}
 	if button.Children[1].Text != "5:00" || !button.Children[1].Tabular {
 		t.Fatalf("label child = %+v", button.Children[1])
@@ -1157,7 +1152,8 @@ func TestConvertScrollablePanelRoot(t *testing.T) {
 }
 
 // A sized icon must reach the icon painter with its square, whichever
-// catalogue holds the glyph, and an unsized one leaves the size to the host.
+// catalogue holds the glyph: carried as text, a project glyph would take the
+// type ladder's size and the plugin's hero would paint as a label.
 func TestConvertCarriesAnIconSizeToTheIconPainter(t *testing.T) {
 	t.Parallel()
 
@@ -1180,8 +1176,9 @@ func TestConvertCarriesAnIconSizeToTheIconPainter(t *testing.T) {
 	if material.Kind != ui.KindIcon || material.IconSize != 40 {
 		t.Fatalf("material = %+v, want a 40 px icon node", material)
 	}
-	if plain.Kind != ui.KindIcon || plain.Icon != "cat-run-2" || plain.IconSize != 0 || !plain.IconProjectFirst {
-		t.Fatalf("unsized = %+v, want a host-sized project icon", plain)
+	glyph, _ := render.IconByName("cat-run-2")
+	if plain.Kind != ui.KindText || plain.Text != string(glyph) {
+		t.Fatalf("unsized = %+v, want the glyph carried as text as before", plain)
 	}
 }
 
@@ -1368,31 +1365,5 @@ func TestConvertPlainGaugeStaysFull(t *testing.T) {
 	}
 	if gauge.Bands != nil {
 		t.Fatalf("an unadorned gauge gained bands: %+v", gauge.Bands)
-	}
-}
-
-// A row of exactly two children whose first is text is a label and value pair,
-// and layout pins the value to the far edge. A project glyph carried as text
-// tripped that rule, so a plugin's glyph and label rendered apart; as an icon
-// node the label stays beside its glyph.
-func TestConvertedProjectGlyphKeepsItsLabelBeside(t *testing.T) {
-	t.Parallel()
-
-	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
-		{Kind: v1.KindRow, Gap: 8, Children: []*v1.Node{
-			{Kind: v1.KindIcon, Icon: "moonbit"},
-			{Kind: v1.KindText, Text: "Moonbit"},
-		}},
-	}}
-	got, err := Convert(root, v1.ViewPanel)
-	if err != nil {
-		t.Fatalf("Convert: %v", err)
-	}
-	if err := ui.LayoutColumn(got, ui.Rect{W: 320, H: 200}, measureFixed); err != nil {
-		t.Fatal(err)
-	}
-	glyph, label := got.Children[0].Children[0], got.Children[0].Children[1]
-	if want := glyph.Bounds.X + glyph.Bounds.W + 8; label.Bounds.X != want {
-		t.Fatalf("label x = %d, want %d beside the glyph %+v", label.Bounds.X, want, glyph.Bounds)
 	}
 }

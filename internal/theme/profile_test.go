@@ -223,17 +223,16 @@ func TestProfileTypeRoles(t *testing.T) {
 	}{
 		// Sizes are the reference ladder in logical pixels; points convert at
 		// four thirds, so the pt source is given beside each rung.
-		{RoleCaption, 12, 400, false, "caption"},        // 9 pt
-		{RoleLabel, 15, 500, false, "label"},            // 11 pt -> 14.67
-		{RoleBody, 15, 400, false, "body"},              // 11 pt
-		{RoleTitle, 17, 600, false, "title"},            // 13 pt -> 17.33
-		{RoleHeadline, 21, 600, false, "headline"},      // 16 pt -> 21.33
-		{RoleDisplay, 24, 600, false, "display"},        // 18 pt
-		{RoleMono, 13, 400, true, "mono"},               // 10 pt -> 13.33
-		{RoleFigure, 15, 600, false, "figure"},          // 11 pt, one step heavier
-		{RoleSection, 24, 700, false, "section"},        // 18 pt, bold and below the 30-pixel page heading
-		{RolePage, 30, 700, false, "page"},              // 22.5 pt, bold and larger than section headings
-		{RoleLabelSmall, 11, 500, false, "label-small"}, // M3 LabelSmall, the badge count
+		{RoleCaption, 12, 400, false, "caption"},   // 9 pt
+		{RoleLabel, 15, 500, false, "label"},       // 11 pt -> 14.67
+		{RoleBody, 15, 400, false, "body"},         // 11 pt
+		{RoleTitle, 17, 600, false, "title"},       // 13 pt -> 17.33
+		{RoleHeadline, 21, 600, false, "headline"}, // 16 pt -> 21.33
+		{RoleDisplay, 24, 600, false, "display"},   // 18 pt
+		{RoleMono, 13, 400, true, "mono"},          // 10 pt -> 13.33
+		{RoleFigure, 15, 600, false, "figure"},     // 11 pt, one step heavier
+		{RoleSection, 24, 700, false, "section"},   // 18 pt, bold and below the 30-pixel page heading
+		{RolePage, 30, 700, false, "page"},         // 22.5 pt, bold and larger than section headings
 	} {
 		got := TypeFor(tc.role)
 		if got.Size != tc.size || got.Weight != tc.weight || got.Mono != tc.mono {

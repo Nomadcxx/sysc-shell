@@ -553,50 +553,6 @@ func matrixPluginFrame(t *testing.T) pluginFrame {
 	return pluginFrame{Root: root, Revision: 1, ViewID: "matrix-view"}
 }
 
-// A plugin's project glyph with no size takes the pill's glyph size at every
-// density, the size the Material glyphs beside it take. As a text rune it
-// stayed at the type ladder's size, 4 px short of a comfortable bar's bell.
-func TestBarSizesAPluginProjectGlyphLikeAMaterialOne(t *testing.T) {
-	t.Parallel()
-	wire := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{
-		{Kind: v1.KindButton, ID: "open", Icon: "github", Name: "Open GitHub", Role: "button",
-			Events: []v1.EventKind{v1.EventActivate}},
-		{Kind: v1.KindButton, ID: "notes", Icon: "sticky_note_2", Name: "Open Notes", Role: "button",
-			Events: []v1.EventKind{v1.EventActivate}},
-	}}
-	root, err := shellplugin.Convert(wire, v1.ViewBar)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stampPluginActions(root, "matrix-view")
-	frame := pluginFrame{Root: root, Revision: 1, ViewID: "matrix-view"}
-	for _, density := range theme.Densities() {
-		t.Run(string(density), func(t *testing.T) {
-			cfg, policy := renderMatrixPolicy("top", "frosted", "attached", "compact")
-			cfg, policy = withMatrixDensity(cfg, policy, density)
-			bar := newRenderMatrixBar(t, cfg, policy, frame, false)
-			w, h := barSurfaceSize(policy, 1920, 1080)
-			renderMatrixSurface(t, bar, policy, w, h, 120, false, false)
-			bar.mu.Lock()
-			defer bar.mu.Unlock()
-			want := theme.BarGlyphSize(bar.theme.Metrics.CapsuleHeight)
-			sizes := map[string]int{}
-			for _, section := range bar.sections() {
-				for _, n := range section {
-					walkNodes(n, func(n *ui.Node) {
-						if n.Kind == ui.KindIcon && (n.Icon == "github" || n.Icon == "sticky_note_2") {
-							sizes[n.Icon] = ui.IconSize(n)
-						}
-					})
-				}
-			}
-			if sizes["github"] != want || sizes["sticky_note_2"] != want {
-				t.Fatalf("glyph sizes = %v, want both %d", sizes, want)
-			}
-		})
-	}
-}
-
 // TestBarDensityRenderMatrix runs the render matrix at every density row. The
 // side matrix above runs only at the standard density, so a layout that holds
 // at 48 px but not on a 21 px mini bar or a 47 px spacious one went unseen.

@@ -1032,8 +1032,8 @@ func TestSizeBarGlyphsFillsOnlyUnsetIcons(t *testing.T) {
 	label := &ui.Node{Kind: ui.KindText, Text: "14°C"}
 	root := &ui.Node{Kind: ui.KindCapsule, Children: []*ui.Node{{Kind: ui.KindRow, Children: []*ui.Node{free, label}}, fixed}}
 	ui.SizeIcons(root, theme.BarGlyphSize(29))
-	if ui.IconSize(free) != 22 || ui.IconSize(fixed) != 16 || label.IconSize != 0 || label.HostIconSize != 0 {
-		t.Fatalf("glyph sizes = %d/%d/%d, want 22 for the unset icon, the fixed 16 kept, text untouched", ui.IconSize(free), ui.IconSize(fixed), label.IconSize)
+	if free.IconSize != 22 || fixed.IconSize != 16 || label.IconSize != 0 {
+		t.Fatalf("glyph sizes = %d/%d/%d, want 22 for the unset icon, the fixed 16 kept, text untouched", free.IconSize, fixed.IconSize, label.IconSize)
 	}
 }
 

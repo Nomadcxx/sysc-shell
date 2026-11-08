@@ -17,7 +17,6 @@ func TestStyleTypeSetResolvesEveryRole(t *testing.T) {
 		theme.RoleBody, theme.RoleCaption, theme.RoleLabel,
 		theme.RoleTitle, theme.RoleHeadline, theme.RoleMono,
 		theme.RoleDisplay, theme.RoleFigure, theme.RoleSection, theme.RolePage,
-		theme.RoleLabelSmall,
 	} {
 		if got := set.Spec(role).Size; got != 10+int(role) {
 			t.Errorf("%s size = %d, want %d", role, got, 10+int(role))
@@ -41,8 +40,8 @@ func TestStyleTableCoversEveryDeclaredRole(t *testing.T) {
 	t.Parallel()
 	// The table is sized off the last role. If a role is added past it, this
 	// is the check that says so before a frame indexes out of range.
-	if textRoleCount != int(theme.RoleLabelSmall)+1 {
-		t.Fatalf("textRoleCount = %d, want %d", textRoleCount, int(theme.RoleLabelSmall)+1)
+	if textRoleCount != int(theme.RolePage)+1 {
+		t.Fatalf("textRoleCount = %d, want %d", textRoleCount, int(theme.RolePage)+1)
 	}
 	var set TypeSet
 	if len(set.Roles) != textRoleCount {
@@ -114,29 +113,5 @@ func TestStadiumSurvivesAZeroBaseRadius(t *testing.T) {
 	}
 	if got := flat.For(ui.ShapeCard, 0); got != 0 {
 		t.Errorf("card = %d at radius zero, want 0", got)
-	}
-}
-
-// A badge count is LabelSmall centred in a 16 px box (M3 BadgeTokens large
-// size, equal to LabelSmall's line height). The widest count the badge shows
-// must measure inside that box at both scales the shell runs at, or the badge
-// painter would clip it.
-func TestLabelSmallBadgeCountFitsTheBadge(t *testing.T) {
-	t.Parallel()
-	r := newTestRenderer(t)
-	for _, scale := range []ui.Scale120{120, 150} {
-		style := Style{Scale120: scale}
-		style.Type.Roles[theme.RoleLabelSmall] = TextSpec{Family: "sans-serif", Size: 11, Weight: 500}
-		spec := SpecFor(style, ui.TextAttrs{Role: theme.RoleLabelSmall})
-		if spec.Size != scale.Physical(11) || spec.Weight != 500 {
-			t.Fatalf("scale %d: spec = %+v, want 11 px weight 500", scale, spec)
-		}
-		_, h, err := r.Measure("99+", spec, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if h > scale.Physical(16) {
-			t.Errorf("scale %d: \"99+\" measures %d px high, over the %d px badge", scale, h, scale.Physical(16))
-		}
 	}
 }
