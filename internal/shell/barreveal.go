@@ -28,7 +28,7 @@ const (
 	// revealGrace is the wait before going back, counted from the later of
 	// the pointer leaving the bar and the last bar surface closing, which is
 	// polled every revealHoldPoll.
-	revealGrace    = 4 * time.Second
+	revealGrace    = 2 * time.Second
 	revealHoldPoll = time.Second
 	// revealGlide is the return, at motion speed 1.
 	revealGlide = 1200 * time.Millisecond

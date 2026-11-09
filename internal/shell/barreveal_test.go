@@ -362,21 +362,21 @@ func TestRevealGraceThenGlide(t *testing.T) {
 	if len(r.timers) == 0 || r.timers[len(r.timers)-1] != revealHoldPoll {
 		t.Fatalf("timers after leaving = %v, want a %v poll", r.timers, revealHoldPoll)
 	}
-	r.at(7900 * time.Millisecond)
+	r.at(5900 * time.Millisecond)
 	if r.phase() != revealOpen || r.shift() != r.maxShift() {
-		t.Fatalf("at 7.9 s phase %d shift %.2f, want still open", r.phase(), r.shift())
+		t.Fatalf("at 5.9 s phase %d shift %.2f, want still open", r.phase(), r.shift())
 	}
-	r.at(8 * time.Second)
+	r.at(6 * time.Second)
 	if r.phase() != revealClosing {
-		t.Fatalf("at 8 s phase %d, want the glide home", r.phase())
+		t.Fatalf("at 6 s phase %d, want the glide home", r.phase())
 	}
-	r.at(8600 * time.Millisecond)
+	r.at(6600 * time.Millisecond)
 	if s := r.shift(); s <= 0 || s >= r.maxShift() {
-		t.Fatalf("at 8.6 s shift %.2f, want part way home", s)
+		t.Fatalf("at 6.6 s shift %.2f, want part way home", s)
 	}
-	r.at(9300 * time.Millisecond)
+	r.at(7300 * time.Millisecond)
 	if r.phase() != revealRest || r.shift() != 0 {
-		t.Fatalf("at 9.3 s phase %d shift %.2f, want rest", r.phase(), r.shift())
+		t.Fatalf("at 7.3 s phase %d shift %.2f, want rest", r.phase(), r.shift())
 	}
 }
 
@@ -385,25 +385,25 @@ func TestRevealPointerBackDuringWaitAndGlide(t *testing.T) {
 	r.open()
 	r.at(4 * time.Second)
 	r.leave()
-	r.at(6 * time.Second)
+	r.at(5 * time.Second)
 	r.pointer(wayland.EventPointerEnter, r.w/2, r.h/2)
-	r.at(9 * time.Second)
+	r.at(7 * time.Second)
 	if r.phase() != revealOpen {
-		t.Fatalf("pointer back at 6 s: phase %d at 9 s, want open", r.phase())
+		t.Fatalf("pointer back at 5 s: phase %d at 7 s, want open", r.phase())
 	}
 	r.leave()
-	r.at(13 * time.Second)
+	r.at(9 * time.Second)
 	if r.phase() != revealClosing {
-		t.Fatalf("at 13 s phase %d, want the glide home", r.phase())
+		t.Fatalf("at 9 s phase %d, want the glide home", r.phase())
 	}
-	r.at(13500 * time.Millisecond)
+	r.at(9500 * time.Millisecond)
 	r.pointer(wayland.EventPointerEnter, r.w/2, r.h/2)
 	if r.phase() != revealOpening {
 		t.Fatalf("pointer back mid-glide: phase %d, want opening", r.phase())
 	}
-	r.at(15500 * time.Millisecond)
+	r.at(11500 * time.Millisecond)
 	if r.phase() != revealOpen || r.shift() != r.maxShift() {
-		t.Fatalf("at 15.5 s phase %d shift %.2f, want open again", r.phase(), r.shift())
+		t.Fatalf("at 11.5 s phase %d shift %.2f, want open again", r.phase(), r.shift())
 	}
 }
 
@@ -485,7 +485,7 @@ func TestRevealReducedMotion(t *testing.T) {
 	}
 	r.at(3 * time.Second)
 	r.leave()
-	r.at(7 * time.Second)
+	r.at(5 * time.Second)
 	if r.shift() != 0 {
 		t.Fatalf("reduced at the end of the grace: shift %.2f, want home at once", r.shift())
 	}
@@ -587,13 +587,13 @@ func TestRevealHeldByOpenMenu(t *testing.T) {
 		r.at(time.Duration(s) * time.Second)
 	}
 	r.held = false
-	r.at(23 * time.Second)
+	r.at(21 * time.Second)
 	if r.phase() != revealOpen {
-		t.Fatalf("3 s after the menu closed: phase %d, want still open", r.phase())
+		t.Fatalf("1 s after the menu closed: phase %d, want still open", r.phase())
 	}
-	r.at(24 * time.Second)
+	r.at(22 * time.Second)
 	if r.phase() != revealClosing {
-		t.Fatalf("4 s after the menu closed: phase %d, want the glide home", r.phase())
+		t.Fatalf("2 s after the menu closed: phase %d, want the glide home", r.phase())
 	}
 }
 
