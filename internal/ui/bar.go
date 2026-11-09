@@ -1,6 +1,9 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // BarOverflow counts the items each section could not place. The shell decides
 // what to show for them; layout only reports the number, the way arrangeTray
@@ -9,6 +12,39 @@ type BarOverflow struct {
 	Left   int
 	Center int
 	Right  int
+	// LeftStrip and RightStrip describe an end section that dropped items,
+	// so the shell can reveal its tail; zero when the section fits.
+	LeftStrip, RightStrip Strip
+}
+
+// Side names a bar's end section by where it sits on the main axis: the
+// start (left or upper) section or the end (right or lower) one.
+type Side uint8
+
+const (
+	SideStart Side = iota
+	SideEnd
+)
+
+// Strip is an overflowing end section seen as one run of whole items at
+// their natural extents, in declaration order. When a section overflows
+// every item it places already has its natural extent and the dropped items
+// are exactly its tail, so the resting layout is this run's prefix.
+type Strip struct {
+	// Total is the whole run; Budget the room the section was granted.
+	Total, Budget int
+	// Rest is the prefix placed at rest; Tail the longest whole-item suffix
+	// that fits the budget.
+	Rest, Tail int
+}
+
+// MaxShift is how far the run moves toward the main-axis start to show its
+// tail flush to the section's outer edge.
+func (s Strip) MaxShift(side Side) int {
+	if side == SideEnd {
+		return s.Total - s.Rest
+	}
+	return s.Total - s.Tail
 }
 
 // Any reports whether any section dropped an item.
@@ -90,6 +126,11 @@ func ArrangeBar(content Rect, axis Axis, left, center, right []*Node, spacing in
 	if over.Left, err = placeSection(left, axis, mainOrigin, content, min(wL, leftMax), 0, spacing, measure); err != nil {
 		return over, fmt.Errorf("ui: left section: %w", err)
 	}
+	if over.Left > 0 {
+		if over.LeftStrip, err = sectionStrip(left, axis, content, min(wL, leftMax), spacing, measure); err != nil {
+			return over, fmt.Errorf("ui: left section: %w", err)
+		}
+	}
 	rightMax := max(0, mainOrigin+mainExtent-end-spacing)
 	granted := min(wR, rightMax)
 	used, err := fittedExtent(right, content, axis, granted, 0, spacing, measure)
@@ -98,6 +139,11 @@ func ArrangeBar(content Rect, axis Axis, left, center, right []*Node, spacing in
 	}
 	if over.Right, err = placeSection(right, axis, mainOrigin+mainExtent-used, content, granted, 0, spacing, measure); err != nil {
 		return over, fmt.Errorf("ui: right section: %w", err)
+	}
+	if over.Right > 0 {
+		if over.RightStrip, err = sectionStrip(right, axis, content, granted, spacing, measure); err != nil {
+			return over, fmt.Errorf("ui: right section: %w", err)
+		}
 	}
 	return over, nil
 }
@@ -721,4 +767,76 @@ func fittedExtent(items []*Node, content Rect, axis Axis, budget, reserve, spaci
 		used += w
 	}
 	return used, nil
+}
+
+// sectionStrip measures a section that dropped items as one run. It is zero
+// when not even one whole item fits the budget.
+func sectionStrip(items []*Node, axis Axis, content Rect, budget, spacing int, measure MeasureText) (Strip, error) {
+	_, crossExtent := axis.crossOf(content)
+	main, _, err := measureSection(items, crossExtent, axis, measure)
+	if err != nil {
+		return Strip{}, err
+	}
+	s := Strip{Budget: budget}
+	for i, m := range main {
+		if i > 0 {
+			s.Total += spacing
+		}
+		s.Total += m
+	}
+	for i, m := range main[:fitCount(main, budget, spacing)] {
+		if i > 0 {
+			s.Rest += spacing
+		}
+		s.Rest += m
+	}
+	run := 0
+	for i := len(main) - 1; i >= 0; i-- {
+		next := run + main[i]
+		if run > 0 {
+			next += spacing
+		}
+		if next > budget {
+			break
+		}
+		run = next
+	}
+	if run == 0 {
+		// No whole item fits at any shift, so there is no tail to reveal.
+		return Strip{}, nil
+	}
+	s.Tail = run
+	return s, nil
+}
+
+// PlaceStrip places an overflowing end section shifted toward the main-axis
+// start by shift (0 is the resting layout, MaxShift the revealed tail) and
+// returns the window the section shows. The window opens to the whole budget
+// while the run leans and closes on the whole-item tail as it arrives, so both
+// resting states show whole items. An item wholly outside the window gets
+// zero bounds; one partly inside keeps its bounds for the painter to clip.
+func PlaceStrip(items []*Node, axis Axis, content Rect, side Side, s Strip, shift float64, spacing int, measure MeasureText) (Rect, error) {
+	mainOrigin, mainExtent := axis.mainOf(content)
+	end := mainOrigin + mainExtent
+	e := 0.0
+	if full := s.MaxShift(side); full > 0 {
+		p := min(max(shift/float64(full), 0), 1)
+		e = p * p
+	}
+	lerp := func(a, b int) int { return int(math.Round(float64(a) + float64(b-a)*e)) }
+	offset := int(math.Round(shift))
+	origin, lo, hi := mainOrigin-offset, mainOrigin, mainOrigin+lerp(s.Rest, s.Tail)
+	if side == SideEnd {
+		origin, lo, hi = end-s.Rest-offset, end-lerp(s.Budget, s.Tail), end
+	}
+	if _, err := placeSection(items, axis, origin, content, s.Total, 0, spacing, measure); err != nil {
+		return Rect{}, err
+	}
+	for _, n := range items {
+		if p, extent := axis.mainOf(n.Bounds); extent > 0 && (p+extent <= lo || p >= hi) {
+			clearLayoutBounds(n)
+		}
+	}
+	crossOrigin, crossExtent := axis.crossOf(content)
+	return axis.rect(lo, hi-lo, crossOrigin, crossExtent, crossExtent), nil
 }

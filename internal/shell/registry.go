@@ -2081,6 +2081,10 @@ func (r *Registry) withLock(fn func()) {
 // is called without the bar lock, matching the tray path, because TogglePanel
 // takes the registry lock and then the bar lock.
 func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
+	// A revealed overflow section waits for whatever the bar opened to close
+	// before it goes back (sysc-2270). The bar asks from its timer, holding
+	// no lock, so barHeld may take the registry lock.
+	bar.setHoldProbe(func() bool { return r.barHeld(global) })
 	bar.setActionHandler(func(action string, button uint32) bool {
 		if key, ok := runningAppKey(action); ok {
 			return r.handleRunningAppClick(global, key, button)

@@ -98,6 +98,21 @@ const (
 	animStackY
 	animStackW
 	animStackH
+	// animReveal is how far an overflowing bar section has moved toward its
+	// tail, in logical pixels: an elastic spring out, an eased glide home.
+	animReveal
+	// animRevealTint is the strength of the accent warming the bar's edge
+	// while the pointer rests there.
+	animRevealTint
+)
+
+// The reveal spring is the one underdamped channel: it passes its mark by
+// under a tenth and settles, so a section arriving at its tail reads as
+// released rather than placed. Omega is at motion speed 1 and scales with the
+// speed setting through the Long token.
+const (
+	revealSpringZeta  = 0.6
+	revealSpringOmega = 10.5
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -367,7 +382,7 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 func springCapable(channel animChannel) bool {
 	switch channel {
 	case animHover, animSelect, animVisible, animProgress,
-		animStackX, animStackY, animStackW, animStackH:
+		animStackX, animStackY, animStackW, animStackH, animReveal:
 		return true
 	}
 	return false
@@ -399,6 +414,18 @@ func badgeProgress(node string, channel animChannel) bool {
 func (a *animator) springFor(channel animChannel, rising bool) *ui.Spring {
 	if a.reduced {
 		return nil
+	}
+	if channel == animReveal {
+		if a.motion.Long <= 0 {
+			return nil
+		}
+		omega := revealSpringOmega * theme.BaseMotion.Long.Seconds() / a.motion.Long.Seconds()
+		return &ui.Spring{
+			Stiffness:       omega * omega,
+			Damping:         2 * revealSpringZeta * omega,
+			PositionEpsilon: 0.1,
+			VelocityEpsilon: 1,
+		}
 	}
 	t := a.duration(channel, rising)
 	if t <= 0 {
@@ -728,6 +755,44 @@ func (a *animator) TargetLoop(node string, channel animChannel, from, to float64
 // TargetSweep runs a linear 0-to-1 phase until the node leaves the tree. It
 // deliberately uses the linear loop path rather than the gradient's ping-pong
 // mode: a marquee must never scroll backward at the seam.
+// TargetCurve eases a value from wherever it is to to over dur, starting
+// delay from now; until then it holds. Reduced motion, or no duration, keeps
+// the delay and then sets it at once.
+func (a *animator) TargetCurve(node string, channel animChannel, to float64, delay, dur time.Duration, ease func(float64) float64) {
+	if !finite(to) {
+		return
+	}
+	key := animKey{node: node, channel: channel}
+	now := a.now()
+	from := 0.0
+	if current, ok := a.values[key]; ok {
+		if current.spring != nil {
+			from, _ = a.advanceSpring(key, now)
+		} else {
+			from = current.at(now)
+		}
+	}
+	if a.reduced || dur <= 0 {
+		if delay <= 0 {
+			a.values[key] = animValue{from: to, to: to, start: now}
+			return
+		}
+		// The delay still holds: a snap one nanosecond long that lands on it.
+		dur, ease, delay = time.Nanosecond, func(float64) float64 { return 1 }, delay-time.Nanosecond
+	}
+	a.values[key] = animValue{from: from, to: to, start: now.Add(delay), dur: dur, ease: ease}
+	a.nudge()
+}
+
+// motionScaled converts a duration given at motion speed 1 to the current
+// speed, through the same Long token the reveal spring scales by.
+func (a *animator) motionScaled(d time.Duration) time.Duration {
+	if theme.BaseMotion.Long <= 0 {
+		return d
+	}
+	return time.Duration(float64(d) * float64(a.motion.Long) / float64(theme.BaseMotion.Long))
+}
+
 func (a *animator) TargetSweep(node string, channel animChannel, dur time.Duration) {
 	key := animKey{node: node, channel: channel}
 	if current, ok := a.values[key]; ok && current.from == 0 && current.to == 1 &&
@@ -876,6 +941,21 @@ func (a *animator) Value(node string, channel animChannel) float64 {
 		return x
 	}
 	return v.at(a.now())
+}
+
+// valueSettled reports whether one value has reached its target; an absent
+// value has nothing left to do.
+func (a *animator) valueSettled(node string, channel animChannel) bool {
+	key := animKey{node: node, channel: channel}
+	v, ok := a.values[key]
+	if !ok {
+		return true
+	}
+	if v.spring != nil {
+		_, rest := a.advanceSpring(key, a.now())
+		return rest
+	}
+	return v.settled(a.now())
 }
 
 // Settled reports whether every value has reached its target. While this is
