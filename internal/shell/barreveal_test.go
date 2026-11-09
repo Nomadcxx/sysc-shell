@@ -2,6 +2,7 @@ package shell
 
 import (
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,6 +62,25 @@ func revealPolicy(edge, style string) (config.Config, config.Bar) {
 	return cfg, policy
 }
 
+// rigClock is a fake clock the bar's own frame loop may read while the test
+// moves it.
+type rigClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *rigClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *rigClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
+}
+
 type revealRigOptions struct {
 	edge, style string
 	outW, outH  int
@@ -74,7 +94,7 @@ type revealRig struct {
 	t      *testing.T
 	bar    *Bar
 	policy config.Bar
-	clock  *fakeClock
+	clock  *rigClock
 	start  time.Time
 	w, h   int
 	timers []time.Duration
@@ -113,8 +133,8 @@ func newRevealRig(t *testing.T, o revealRigOptions) *revealRig {
 	}
 	bar.apply(revealView(frames, 7))
 	bar.stopAnimation()
-	r := &revealRig{t: t, bar: bar, policy: policy, clock: &fakeClock{t: time.Unix(1000, 0)}, frames: frames}
-	r.start = r.clock.t
+	r := &revealRig{t: t, bar: bar, policy: policy, clock: &rigClock{t: time.Unix(1000, 0)}, frames: frames}
+	r.start = r.clock.now()
 	bar.mu.Lock()
 	bar.anim = newAnimator(r.clock.now, o.reduced, bar.theme.Motion)
 	bar.revealAfter = func(d time.Duration, _ func()) { r.timers = append(r.timers, d) }
@@ -155,7 +175,7 @@ func (r *revealRig) frame() {
 // due timer would, and renders.
 func (r *revealRig) at(d time.Duration) {
 	r.t.Helper()
-	r.clock.t = r.start.Add(d)
+	r.clock.set(r.start.Add(d))
 	r.bar.revealCheck()
 	r.frame()
 }
@@ -574,5 +594,64 @@ func TestRevealHeldByOpenMenu(t *testing.T) {
 	r.at(28 * time.Second)
 	if r.phase() != revealClosing {
 		t.Fatalf("8 s after the menu closed: phase %d, want the glide home", r.phase())
+	}
+}
+
+// Leaving and coming back while a check is pending must not start a second
+// polling chain: a timer that fires reschedules itself, so every extra chain
+// would poll for the rest of the reveal.
+func TestRevealTimersDoNotMultiply(t *testing.T) {
+	r := newRevealRig(t, revealRigOptions{})
+	r.open()
+	var queue []time.Time
+	r.bar.mu.Lock()
+	r.bar.revealAfter = func(d time.Duration, _ func()) { queue = append(queue, r.clock.now().Add(d)) }
+	r.bar.mu.Unlock()
+	for i := 0; i < 5; i++ {
+		r.leave()
+		r.pointer(wayland.EventPointerEnter, r.w/2, r.h/2)
+	}
+	r.leave()
+	for s := 5; s <= 9; s++ {
+		r.clock.set(r.start.Add(time.Duration(s) * time.Second))
+		due := queue
+		queue = nil
+		for _, at := range due {
+			if at.After(r.clock.now()) {
+				queue = append(queue, at)
+				continue
+			}
+			r.bar.revealCheck()
+		}
+		if len(queue) > 1 {
+			t.Fatalf("%d checks pending at %d s, want one", len(queue), s)
+		}
+	}
+}
+
+// A relayout while the section is still springing open retargets the
+// spring at the new tail.
+func TestRevealRelayoutWhileOpening(t *testing.T) {
+	r := newRevealRig(t, revealRigOptions{})
+	r.move(r.edge())
+	r.at(2 * time.Second)
+	r.at(2100 * time.Millisecond)
+	before := r.maxShift()
+	wire := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{Kind: v1.KindButton, ID: "open", Role: "button",
+		Name: "Phone", Icon: "smartphone", Text: "Pixel 8 Pro", Events: []v1.EventKind{v1.EventActivate}}}}
+	root, err := shellplugin.Convert(wire, v1.ViewBar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stampPluginActions(root, "kdeconnect-1")
+	r.frames["kdeconnect-1"] = pluginFrame{Root: root, Revision: 2, ViewID: "kdeconnect-1"}
+	r.bar.apply(revealView(r.frames, 7))
+	r.frame()
+	if r.maxShift() == before {
+		t.Fatal("relayout did not move the tail")
+	}
+	r.at(4 * time.Second)
+	if r.phase() != revealOpen || r.shift() != r.maxShift() {
+		t.Fatalf("after a relayout mid-release: phase %d shift %.2f, want open at the new %.0f", r.phase(), r.shift(), r.maxShift())
 	}
 }

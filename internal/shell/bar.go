@@ -65,6 +65,9 @@ type Bar struct {
 	holdProbe func() bool
 	// revealAfter runs the reveal's timer body after a delay.
 	revealAfter func(time.Duration, func())
+	// revealDue is when the one outstanding reveal check fires; zero when none
+	// is.
+	revealDue time.Time
 	// swipe follows a press that may become a drag along the bar.
 	swipe    barSwipe
 	onTray   func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool

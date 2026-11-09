@@ -107,7 +107,15 @@ func (b *Bar) setHoldProbe(fn func() bool) {
 	b.holdProbe = fn
 }
 
+// scheduleRevealLocked asks for a check after d. One check is outstanding at
+// a time: every check reschedules what it still waits for, so a second timer
+// would poll beside the first for the rest of the reveal.
 func (b *Bar) scheduleRevealLocked(d time.Duration) {
+	due := b.anim.now().Add(d)
+	if !b.revealDue.IsZero() && !due.Before(b.revealDue) {
+		return
+	}
+	b.revealDue = due
 	if b.revealAfter != nil {
 		b.revealAfter(d, b.revealCheck)
 	}
@@ -257,6 +265,10 @@ func (b *Bar) revealCheck() {
 
 	b.mu.Lock()
 	now := b.anim.now()
+	if !now.Before(b.revealDue) {
+		// The outstanding check is this one (or one it superseded).
+		b.revealDue = time.Time{}
+	}
 	b.advanceRevealLocked(now)
 	for _, side := range revealSides() {
 		r := &b.reveal[side]
@@ -285,7 +297,7 @@ func (b *Bar) revealCheck() {
 
 // setRevealStripsLocked takes the strips a fresh layout reported. A section
 // that now fits is put back at rest at once; an open one follows its new
-// tail without animating.
+// tail without animating, and an opening one springs on toward it.
 func (b *Bar) setRevealStripsLocked(over ui.BarOverflow) {
 	if b.anim == nil {
 		return
@@ -306,8 +318,11 @@ func (b *Bar) setRevealStripsLocked(over ui.BarOverflow) {
 			r.window = ui.Rect{}
 			continue
 		}
-		if r.phase == revealOpen {
+		switch r.phase {
+		case revealOpen:
 			b.anim.TargetCurve(revealKey(side), animReveal, float64(strip.MaxShift(side)), 0, 0, nil)
+		case revealOpening:
+			b.anim.Target(revealKey(side), animReveal, float64(strip.MaxShift(side)))
 		}
 	}
 }
