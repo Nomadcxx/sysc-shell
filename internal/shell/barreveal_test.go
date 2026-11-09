@@ -362,21 +362,21 @@ func TestRevealGraceThenGlide(t *testing.T) {
 	if len(r.timers) == 0 || r.timers[len(r.timers)-1] != revealHoldPoll {
 		t.Fatalf("timers after leaving = %v, want a %v poll", r.timers, revealHoldPoll)
 	}
-	r.at(11900 * time.Millisecond)
+	r.at(7900 * time.Millisecond)
 	if r.phase() != revealOpen || r.shift() != r.maxShift() {
-		t.Fatalf("at 11.9 s phase %d shift %.2f, want still open", r.phase(), r.shift())
+		t.Fatalf("at 7.9 s phase %d shift %.2f, want still open", r.phase(), r.shift())
 	}
-	r.at(12 * time.Second)
+	r.at(8 * time.Second)
 	if r.phase() != revealClosing {
-		t.Fatalf("at 12 s phase %d, want the glide home", r.phase())
+		t.Fatalf("at 8 s phase %d, want the glide home", r.phase())
 	}
-	r.at(12600 * time.Millisecond)
+	r.at(8600 * time.Millisecond)
 	if s := r.shift(); s <= 0 || s >= r.maxShift() {
-		t.Fatalf("at 12.6 s shift %.2f, want part way home", s)
+		t.Fatalf("at 8.6 s shift %.2f, want part way home", s)
 	}
-	r.at(13300 * time.Millisecond)
+	r.at(9300 * time.Millisecond)
 	if r.phase() != revealRest || r.shift() != 0 {
-		t.Fatalf("at 13.3 s phase %d shift %.2f, want rest", r.phase(), r.shift())
+		t.Fatalf("at 9.3 s phase %d shift %.2f, want rest", r.phase(), r.shift())
 	}
 }
 
@@ -385,25 +385,25 @@ func TestRevealPointerBackDuringWaitAndGlide(t *testing.T) {
 	r.open()
 	r.at(4 * time.Second)
 	r.leave()
-	r.at(8 * time.Second)
+	r.at(6 * time.Second)
 	r.pointer(wayland.EventPointerEnter, r.w/2, r.h/2)
-	r.at(13 * time.Second)
+	r.at(9 * time.Second)
 	if r.phase() != revealOpen {
-		t.Fatalf("pointer back at 8 s: phase %d at 13 s, want open", r.phase())
+		t.Fatalf("pointer back at 6 s: phase %d at 9 s, want open", r.phase())
 	}
 	r.leave()
-	r.at(21 * time.Second)
+	r.at(13 * time.Second)
 	if r.phase() != revealClosing {
-		t.Fatalf("at 21 s phase %d, want the glide home", r.phase())
+		t.Fatalf("at 13 s phase %d, want the glide home", r.phase())
 	}
-	r.at(21500 * time.Millisecond)
+	r.at(13500 * time.Millisecond)
 	r.pointer(wayland.EventPointerEnter, r.w/2, r.h/2)
 	if r.phase() != revealOpening {
 		t.Fatalf("pointer back mid-glide: phase %d, want opening", r.phase())
 	}
-	r.at(23500 * time.Millisecond)
+	r.at(15500 * time.Millisecond)
 	if r.phase() != revealOpen || r.shift() != r.maxShift() {
-		t.Fatalf("at 23.5 s phase %d shift %.2f, want open again", r.phase(), r.shift())
+		t.Fatalf("at 15.5 s phase %d shift %.2f, want open again", r.phase(), r.shift())
 	}
 }
 
@@ -485,7 +485,7 @@ func TestRevealReducedMotion(t *testing.T) {
 	}
 	r.at(3 * time.Second)
 	r.leave()
-	r.at(11 * time.Second)
+	r.at(7 * time.Second)
 	if r.shift() != 0 {
 		t.Fatalf("reduced at the end of the grace: shift %.2f, want home at once", r.shift())
 	}
@@ -587,13 +587,13 @@ func TestRevealHeldByOpenMenu(t *testing.T) {
 		r.at(time.Duration(s) * time.Second)
 	}
 	r.held = false
-	r.at(27 * time.Second)
+	r.at(23 * time.Second)
 	if r.phase() != revealOpen {
-		t.Fatalf("7 s after the menu closed: phase %d, want still open", r.phase())
+		t.Fatalf("3 s after the menu closed: phase %d, want still open", r.phase())
 	}
-	r.at(28 * time.Second)
+	r.at(24 * time.Second)
 	if r.phase() != revealClosing {
-		t.Fatalf("8 s after the menu closed: phase %d, want the glide home", r.phase())
+		t.Fatalf("4 s after the menu closed: phase %d, want the glide home", r.phase())
 	}
 }
 
@@ -653,5 +653,32 @@ func TestRevealRelayoutWhileOpening(t *testing.T) {
 	r.at(4 * time.Second)
 	if r.phase() != revealOpen || r.shift() != r.maxShift() {
 		t.Fatalf("after a relayout mid-release: phase %d shift %.2f, want open at the new %.0f", r.phase(), r.shift(), r.maxShift())
+	}
+}
+
+// A pointer flung into the screen corner the bar touches is parked, not
+// asking for anything: the corner never arms a reveal.
+func TestRevealCornerDoesNotTrigger(t *testing.T) {
+	for _, edge := range []string{"top", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			opts := revealRigOptions{edge: edge}
+			if edge == "right" {
+				opts.outH = 800
+			}
+			r := newRevealRig(t, opts)
+			if r.maxShift() <= 0 {
+				t.Fatal("the rig's end section does not overflow")
+			}
+			// The bar's far end where it meets the screen edge it is anchored to.
+			x, y := r.w-1, 0
+			if edge == "right" {
+				x, y = r.w-1, r.h-1
+			}
+			r.move(x, y)
+			r.at(3 * time.Second)
+			if r.phase() != revealRest || r.shift() != 0 || r.tint() != 0 {
+				t.Fatalf("corner (%d,%d): phase %d shift %.2f tint %.2f, want rest", x, y, r.phase(), r.shift(), r.tint())
+			}
+		})
 	}
 }

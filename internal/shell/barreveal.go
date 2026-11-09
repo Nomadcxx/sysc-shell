@@ -28,7 +28,7 @@ const (
 	// revealGrace is the wait before going back, counted from the later of
 	// the pointer leaving the bar and the last bar surface closing, which is
 	// polled every revealHoldPoll.
-	revealGrace    = 8 * time.Second
+	revealGrace    = 4 * time.Second
 	revealHoldPoll = time.Second
 	// revealGlide is the return, at motion speed 1.
 	revealGlide = 1200 * time.Millisecond
@@ -122,11 +122,32 @@ func (b *Bar) scheduleRevealLocked(d time.Duration) {
 }
 
 // atRevealEdgeLocked reports whether a surface point is at the given end of
-// the bar's main axis.
+// the bar's main axis. The corner where that end meets the screen edge the bar
+// is anchored to does not count: a pointer flung there is parked out of the
+// way, not asking for the section.
 func (b *Bar) atRevealEdgeLocked(side ui.Side, x, y int) bool {
-	at, extent := x, b.configured.width
+	w, h := b.configured.width, b.configured.height
+	switch b.theme.BarEdge {
+	case "bottom":
+		if y >= h-revealEdge {
+			return false
+		}
+	case "left":
+		if x < revealEdge {
+			return false
+		}
+	case "right":
+		if x >= w-revealEdge {
+			return false
+		}
+	default:
+		if y < revealEdge {
+			return false
+		}
+	}
+	at, extent := x, w
 	if b.barAxis() == ui.Vertical {
-		at, extent = y, b.configured.height
+		at, extent = y, h
 	}
 	if side == ui.SideStart {
 		return at < revealEdge
