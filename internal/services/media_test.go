@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,6 +26,9 @@ type fakeBus struct {
 	nameCh chan nameChange
 	// overflow stands in for the real bus's dropped-event flag.
 	overflow atomic.Bool
+	// block names one bus name whose Get waits for the context to end, like a
+	// client that owns an MPRIS name but never answers.
+	block string
 }
 
 type fakeSet struct {
@@ -52,8 +56,13 @@ func (f *fakeBus) enumerations() int {
 	return f.lists
 }
 
-func (f *fakeBus) Get(busName, iface, prop string) (any, error) {
+func (f *fakeBus) Get(ctx context.Context, busName, iface, prop string) (any, error) {
 	f.mu.Lock()
+	if f.block == busName {
+		f.mu.Unlock()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	defer f.mu.Unlock()
 	if m, ok := f.props[busName]; ok {
 		return m[prop], nil
@@ -133,6 +142,27 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal("condition did not hold in time")
+}
+
+// A bus client can own an MPRIS name and never answer Properties.Get. The
+// probe must give up at its deadline and leave that player out, or NewMedia
+// blocks registry construction and shell startup (GH #607).
+func TestMediaProbeSkipsAnUnresponsivePlayer(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.hung", "org.mpris.MediaPlayer2.good")
+	b.block = "org.mpris.MediaPlayer2.hung"
+	b.setProps("org.mpris.MediaPlayer2.good", map[string]any{"Identity": "Good"})
+
+	start := time.Now()
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("discovery took %v with one unresponsive player", elapsed)
+	}
+	players := m.Players()
+	if len(players) != 1 || players[0].Bus != "org.mpris.MediaPlayer2.good" {
+		t.Fatalf("players = %+v, want only the responsive one", players)
+	}
 }
 
 func TestMediaWithNoPlayersIsUnavailable(t *testing.T) {
