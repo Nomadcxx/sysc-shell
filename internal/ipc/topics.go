@@ -185,13 +185,29 @@ func (c *session) isEvents() bool {
 	return c.events
 }
 
+// queueReplyLocked appends one reply to an event connection's queue. It
+// reports false when the queue is at its limit: the peer has stopped reading,
+// so the caller closes the connection instead of growing the queue until the
+// write deadline expires.
+func (c *session) queueReplyLocked(b []byte) bool {
+	if len(c.replies) >= maxQueuedReplies {
+		return false
+	}
+	c.replies = append(c.replies, b)
+	return true
+}
+
 // reply sends a reply in order: directly on a command connection, through the
 // writer on an event connection.
 func (c *session) reply(b []byte) {
 	c.mu.Lock()
 	if c.events {
-		c.replies = append(c.replies, b)
+		queued := c.queueReplyLocked(b)
 		c.mu.Unlock()
+		if !queued {
+			_ = c.nc.Close()
+			return
+		}
 		c.poke()
 		return
 	}
@@ -312,13 +328,17 @@ func (c *session) subscribe(req request) []byte {
 	for _, h := range fresh {
 		c.topics[h.name] = true
 	}
-	c.replies = append(c.replies, resultEnvelope(req.ID, topicsResult{c.topicList()}))
+	queued := c.queueReplyLocked(resultEnvelope(req.ID, topicsResult{c.topicList()}))
 	c.hold = false
 	if becoming {
 		c.events = true
 		go c.writeLoop()
 	}
 	c.mu.Unlock()
+	if !queued {
+		_ = c.nc.Close()
+		return nil
+	}
 	c.poke()
 	return nil
 }
