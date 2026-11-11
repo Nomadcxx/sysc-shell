@@ -33,6 +33,7 @@ const (
 	maxConsumers       = 32
 	maxTopicsPerConn   = 16
 	pendingBytes       = 2 << 20
+	maxQueuedReplies   = 256
 	writeTimeoutMillis = int(writeTimeout / time.Millisecond)
 )
 
@@ -76,6 +77,7 @@ type limits struct {
 	Consumers           int `json:"consumers"`
 	TopicsPerConnection int `json:"topics_per_connection"`
 	PendingBytes        int `json:"pending_bytes"`
+	QueuedReplies       int `json:"queued_replies"`
 	WriteTimeoutMillis  int `json:"write_timeout_ms"`
 }
 
@@ -114,6 +116,7 @@ func (s *Server) capabilities(raw json.RawMessage) (any, error) {
 			Consumers:           maxConsumers,
 			TopicsPerConnection: maxTopicsPerConn,
 			PendingBytes:        pendingBytes,
+			QueuedReplies:       maxQueuedReplies,
 			WriteTimeoutMillis:  writeTimeoutMillis,
 		},
 	}, nil

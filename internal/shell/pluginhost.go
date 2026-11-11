@@ -1458,7 +1458,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 			if err := ctx.Err(); err != nil {
 				return v1.PanelResizeResult{}, err
 			}
-			return h.resizePanel(p)
+			return h.resizePanel(id, p)
 		},
 		ViewFocus: func(ctx context.Context, p v1.ViewFocusParams) error {
 			if err := ctx.Err(); err != nil {
@@ -1820,7 +1820,7 @@ func (h *pluginHost) panelPlacementChangedLocked(output uint32, size ui.Rect) {
 // to the output as view.open's is (sysc-578), and the tree re-lays-out at the
 // granted bounds at once; the reply reports the fitted size and the
 // compositor's configure completes the surface.
-func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
+func (h *pluginHost) resizePanel(pluginID string, p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
 	requested := ui.Rect{W: p.Width, H: p.Height}
 	h.r.mu.Lock()
 	global, open := h.r.panels.Output(PanelPlugin)
@@ -1828,6 +1828,21 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, 
 	if !open || host == nil {
 		h.r.mu.Unlock()
 		return v1.PanelResizeResult{}, errors.New("panel surface is not open")
+	}
+	// The caller may only retarget the panel it owns. The check runs under the
+	// same r.mu then h.mu order closePanelOwned uses, before host geometry or
+	// view state changes.
+	h.mu.Lock()
+	if h.panel == nil {
+		h.mu.Unlock()
+		h.r.mu.Unlock()
+		return v1.PanelResizeResult{}, errors.New("no open panel to resize")
+	}
+	if h.panel.Plugin != pluginID {
+		owner := h.panel.Plugin
+		h.mu.Unlock()
+		h.r.mu.Unlock()
+		return v1.PanelResizeResult{}, fmt.Errorf("panel belongs to %s, not %s", owner, pluginID)
 	}
 	place := host.place
 	place.Panel = requested
@@ -1842,12 +1857,6 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, 
 	var input []ui.Rect
 	if joints != (Joints{}) {
 		input = []ui.Rect{host.surfaceBody(sw, sh)}
-	}
-	h.mu.Lock()
-	if h.panel == nil {
-		h.mu.Unlock()
-		h.r.mu.Unlock()
-		return v1.PanelResizeResult{}, errors.New("no open panel to resize")
 	}
 	h.panel.Width, h.panel.Height = p.Width, p.Height
 	h.panel.RequestedWidth, h.panel.RequestedHeight = requested.W, requested.H

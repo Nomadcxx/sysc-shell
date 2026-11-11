@@ -2331,7 +2331,7 @@ func TestPluginSidePanelResize(t *testing.T) {
 			}
 
 			beforeAnchor := host.place.AnchorY
-			got, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 2000, Height: 2000})
+			got, err := reg.plugins.resizePanel("org.sysc.timer", v1.PanelResizeParams{Width: 2000, Height: 2000})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2367,7 +2367,7 @@ func TestPluginSidePanelResize(t *testing.T) {
 			} else if req.Update.SetInputRegion {
 				t.Fatalf("resized panel added an input region without joints: %+v", req.Update.InputRects)
 			}
-			if _, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 80, Height: 60}); err != nil {
+			if _, err := reg.plugins.resizePanel("org.sysc.timer", v1.PanelResizeParams{Width: 80, Height: 60}); err != nil {
 				t.Fatal(err)
 			}
 			reg.mu.Lock()
@@ -2572,7 +2572,7 @@ func TestPluginPanelReceivesResizeOnOutputSizeChanges(t *testing.T) {
 				t.Fatalf("expanded panel = %dx%d, want restored manifest request 640x720", expanded.W, expanded.H)
 			}
 
-			requested, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 520, Height: 480})
+			requested, err := reg.plugins.resizePanel(pluginID, v1.PanelResizeParams{Width: 520, Height: 480})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2754,7 +2754,7 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if _, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
+		if _, err := reg.plugins.resizePanel("org.sysc.timer", v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
 			lastErr = nil
 			break
 		} else {
@@ -2795,6 +2795,51 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	}
 }
 
+// A plugin with the panels grant must not retarget another plugin's open panel
+// (GH #601). The call env carries the caller's id; the host compares it with
+// the plugin that owns h.panel.
+func TestPluginPanelResizeRejectsAnotherPluginsPanel(t *testing.T) {
+	const pluginID = "org.sysc.timer"
+	reg := bindTestPlugin(t, "call-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	// The helper's own panel.open may still be in flight.
+	deadline := time.Now().Add(5 * time.Second)
+	for reg.plugins.panelSize().W == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("helper plugin never opened its panel")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	reg.plugins.mu.Lock()
+	slot := reg.plugins.slots[pluginID]
+	reg.plugins.mu.Unlock()
+	if slot == nil {
+		t.Fatal("the plugin is not running")
+	}
+	before := reg.plugins.panelSize()
+
+	ctx := context.Background()
+	intruder := reg.plugins.callEnv("org.sysc.other", slot.rt, slot.store)
+	if _, err := intruder.PanelResize(ctx, v1.PanelResizeParams{Width: 200, Height: 160}); err == nil {
+		t.Fatal("another plugin resized the open panel")
+	}
+	if after := reg.plugins.panelSize(); after != before {
+		t.Fatalf("rejected resize changed the panel from %+v to %+v", before, after)
+	}
+
+	owner := reg.plugins.callEnv(pluginID, slot.rt, slot.store)
+	if _, err := owner.PanelResize(ctx, v1.PanelResizeParams{Width: 200, Height: 160}); err != nil {
+		t.Fatalf("owner PanelResize: %v", err)
+	}
+	if after := reg.plugins.panelSize(); after.W != 200 || after.H != 160 {
+		t.Fatalf("owner resize = %+v, want 200x160", after)
+	}
+}
+
 // TestPluginPanelResizeFitsTheOutput: panel.resize is fitted to the output as
 // view.open is (sysc-578). The KDE Connect panel asked for 400x760 on the
 // laptop; the unfitted size and its input region overran the surface, and the
@@ -2823,7 +2868,7 @@ func TestPluginPanelResizeFitsTheOutput(t *testing.T) {
 	}
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if _, lastErr = reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 2000}); lastErr == nil {
+		if _, lastErr = reg.plugins.resizePanel("org.sysc.timer", v1.PanelResizeParams{Width: 400, Height: 2000}); lastErr == nil {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -2868,7 +2913,7 @@ func TestPluginPanelResizeFitsTheOutput(t *testing.T) {
 	if fitH >= 900 {
 		t.Fatalf("fixture does not constrain the panel: fitted %dx%d", fitW, fitH)
 	}
-	fitted, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 900})
+	fitted, err := reg.plugins.resizePanel("org.sysc.timer", v1.PanelResizeParams{Width: 400, Height: 900})
 	if err != nil {
 		t.Fatal(err)
 	}

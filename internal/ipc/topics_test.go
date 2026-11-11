@@ -459,6 +459,65 @@ func TestStalledWriterIsClosed(t *testing.T) {
 	}
 }
 
+// TestQueuedRepliesAreBounded blocks the writer on one reply, then fills the
+// queue. The connection must close at the limit rather than keep appending
+// while the peer is not reading.
+func TestQueuedRepliesAreBounded(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+	nc := newBlockingConn(server)
+	c := newSession(&Server{writeTimeout: 10 * time.Second}, nc)
+	c.mu.Lock()
+	c.events = true
+	c.mu.Unlock()
+	go c.writeLoop()
+
+	c.reply([]byte(`{"id":1}`))
+	select {
+	case <-nc.wrote:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not start")
+	}
+
+	for i := 0; i <= maxQueuedReplies; i++ {
+		c.reply([]byte(`{"id":2}`))
+	}
+	select {
+	case <-nc.closed:
+	case <-time.After(time.Second):
+		t.Fatal("a stalled peer kept the connection after the reply queue filled")
+	}
+	select {
+	case <-c.writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not stop after the queue limit closed the connection")
+	}
+}
+
+// blockingConn signals when a write starts and when the connection closes.
+// net.Pipe writes block until a read, which holds the writer off the queue.
+type blockingConn struct {
+	net.Conn
+	wroteOnce sync.Once
+	wrote     chan struct{}
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func newBlockingConn(conn net.Conn) *blockingConn {
+	return &blockingConn{Conn: conn, wrote: make(chan struct{}), closed: make(chan struct{})}
+}
+
+func (c *blockingConn) Write(p []byte) (int, error) {
+	c.wroteOnce.Do(func() { close(c.wrote) })
+	return c.Conn.Write(p)
+}
+
+func (c *blockingConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }

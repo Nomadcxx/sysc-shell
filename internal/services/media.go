@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"path/filepath"
@@ -34,6 +35,13 @@ const (
 	// player was last active. Neither is playback on this machine.
 	mprisKDEConnectPrefix = "org.mpris.MediaPlayer2.kdeconnect."
 	mprisPlayerctld       = "org.mpris.MediaPlayer2.playerctld"
+	// mprisProbeTimeout bounds one player's property batch. A client can own
+	// an MPRIS name and never answer, and a property read must not hold
+	// registry construction or a refresh indefinitely.
+	mprisProbeTimeout = 250 * time.Millisecond
+	// mprisDiscoveryTimeout bounds one full enumeration, so many unresponsive
+	// names cannot add up to an unbounded startup delay.
+	mprisDiscoveryTimeout = time.Second
 )
 
 // localPlayer reports whether busName plays on this machine rather than
@@ -354,12 +362,14 @@ func (m *Media) enumerate() {
 	if err != nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), mprisDiscoveryTimeout)
+	defer cancel()
 	var found []*mediaPlayer
 	for _, name := range names {
 		if !strings.HasPrefix(name, mprisPrefix) {
 			continue
 		}
-		if p := m.probePlayer(name); p != nil {
+		if p := m.probePlayer(ctx, name); p != nil {
 			found = append(found, p)
 		}
 	}
@@ -408,7 +418,7 @@ func (m *Media) handleNameChange(ch nameChange) {
 		m.mu.Unlock()
 		return
 	}
-	p := m.probePlayer(ch.Name)
+	p := m.probePlayer(context.Background(), ch.Name)
 	if p == nil {
 		return
 	}
@@ -432,10 +442,14 @@ func (m *Media) handleNameChange(ch nameChange) {
 }
 
 // probePlayer reads one player's properties off the bus. It performs I/O and
-// must not run under m.mu. A player that vanished between listing and reading
-// yields nil and stays unknown until its next event.
-func (m *Media) probePlayer(name string) *mediaPlayer {
-	v, err := m.b.Get(name, mprisIface, "Identity")
+// must not run under m.mu. The batch shares one deadline: a player that owns
+// its bus name but never answers cannot hold discovery or a refresh. A player
+// that vanished between listing and reading yields nil and stays unknown until
+// its next event.
+func (m *Media) probePlayer(parent context.Context, name string) *mediaPlayer {
+	ctx, cancel := context.WithTimeout(parent, mprisProbeTimeout)
+	defer cancel()
+	v, err := m.b.Get(ctx, name, mprisIface, "Identity")
 	if err != nil {
 		return nil
 	}
@@ -443,38 +457,38 @@ func (m *Media) probePlayer(name string) *mediaPlayer {
 	p.Bus = name
 	p.Identity, _ = v.(string)
 
-	if v, err := m.b.Get(name, mprisPlayerIface, "Metadata"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "Metadata"); err == nil {
 		p.title, p.artist, p.album, p.artKey, p.lengthUS, p.trackID = decodeMetadata(v)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "PlaybackStatus"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "PlaybackStatus"); err == nil {
 		p.status = decodeStatus(v)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "Rate"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "Rate"); err == nil {
 		p.rate = decodeRate(v)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "Position"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "Position"); err == nil {
 		p.positionUS = decodePosition(v)
 		p.positionAt = m.now()
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "CanGoNext"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "CanGoNext"); err == nil {
 		p.canNext, _ = v.(bool)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "CanGoPrevious"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "CanGoPrevious"); err == nil {
 		p.canPrev, _ = v.(bool)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "CanPlay"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "CanPlay"); err == nil {
 		p.canPlay, _ = v.(bool)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "CanPause"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "CanPause"); err == nil {
 		p.canPause, _ = v.(bool)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "CanSeek"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "CanSeek"); err == nil {
 		p.canSeek, _ = v.(bool)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "LoopStatus"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "LoopStatus"); err == nil {
 		p.loopStatus, p.canLoop = decodeLoopStatus(v)
 	}
-	if v, err := m.b.Get(name, mprisPlayerIface, "Shuffle"); err == nil {
+	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "Shuffle"); err == nil {
 		p.shuffle, p.canShuffle = v.(bool)
 	}
 	return p
@@ -724,7 +738,7 @@ func (m *Media) repairAfterCommand(name string) {
 	if !alive {
 		return
 	}
-	p := m.probePlayer(name)
+	p := m.probePlayer(context.Background(), name)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p == nil {

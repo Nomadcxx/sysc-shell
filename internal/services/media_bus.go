@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -18,7 +19,7 @@ import (
 type bus interface {
 	ListNames() ([]string, error)
 	NameChanges() <-chan nameChange
-	Get(busName, iface, prop string) (any, error)
+	Get(ctx context.Context, busName, iface, prop string) (any, error)
 	// Call issues one org.mpris.MediaPlayer2.Player method on busName, named
 	// bare — "Next", not the full interface path. Every command this service
 	// sends lives on that interface.
@@ -204,9 +205,12 @@ func (b *sessionBus) ListNames() ([]string, error) {
 
 func (b *sessionBus) NameChanges() <-chan nameChange { return b.changes }
 
-func (b *sessionBus) Get(busName, iface, prop string) (any, error) {
-	v, err := b.conn.Object(busName, mprisRoot).GetProperty(iface + "." + prop)
-	if err != nil {
+func (b *sessionBus) Get(ctx context.Context, busName, iface, prop string) (any, error) {
+	call := b.conn.Object(busName, mprisRoot).CallWithContext(
+		ctx, "org.freedesktop.DBus.Properties.Get", 0, iface, prop,
+	)
+	var v dbus.Variant
+	if err := call.Store(&v); err != nil {
 		return nil, err
 	}
 	return v.Value(), nil
@@ -266,13 +270,15 @@ func (b *sessionBus) ownerFor(owner string) string {
 // names, no events, and every command refuses.
 type unavailableBus struct{}
 
-func (unavailableBus) ListNames() ([]string, error)            { return nil, nil }
-func (unavailableBus) NameChanges() <-chan nameChange          { return nil }
-func (unavailableBus) Get(string, string, string) (any, error) { return nil, nil }
-func (unavailableBus) Call(string, string, ...any) error       { return errNoMediaBus }
-func (unavailableBus) Set(string, string, string, any) error   { return errNoMediaBus }
-func (unavailableBus) Overflowed() bool                        { return false }
-func (unavailableBus) Close()                                  {}
+func (unavailableBus) ListNames() ([]string, error)   { return nil, nil }
+func (unavailableBus) NameChanges() <-chan nameChange { return nil }
+func (unavailableBus) Get(context.Context, string, string, string) (any, error) {
+	return nil, nil
+}
+func (unavailableBus) Call(string, string, ...any) error     { return errNoMediaBus }
+func (unavailableBus) Set(string, string, string, any) error { return errNoMediaBus }
+func (unavailableBus) Overflowed() bool                      { return false }
+func (unavailableBus) Close()                                {}
 
 var errNoMediaBus = errors.New("services: session bus is not available")
 

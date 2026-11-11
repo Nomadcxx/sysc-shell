@@ -165,7 +165,7 @@ func TestCapabilitiesMatchDispatch(t *testing.T) {
 	}
 	wantLimits := map[string]int{
 		"line_bytes": 65536, "consumers": 32, "topics_per_connection": 16,
-		"pending_bytes": 2097152, "write_timeout_ms": 5000,
+		"pending_bytes": 2097152, "queued_replies": 256, "write_timeout_ms": 5000,
 	}
 	if !reflect.DeepEqual(caps.Limits, wantLimits) {
 		t.Fatalf("limits = %v", caps.Limits)
