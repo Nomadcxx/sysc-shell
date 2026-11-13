@@ -201,7 +201,14 @@ func toWire(c Config) wireConfig {
 	for i := range c.Outputs {
 		conn := c.Outputs[i].Connector
 		out := wireOutput{Connector: &conn}
-		if bar := barDiff(c.Outputs[i].Bar, c.Bar); bar != nil {
+		var bar *wireBar
+		if c.Outputs[i].Set != nil {
+			stated := c.Outputs[i].wire()
+			bar = &stated
+		} else {
+			bar = barDiff(c.Outputs[i].Bar, c.Bar)
+		}
+		if bar != nil {
 			out.Bar = bar
 		}
 		w.Outputs = append(w.Outputs, out)

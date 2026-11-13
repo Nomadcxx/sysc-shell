@@ -224,6 +224,7 @@ func (c Config) Clone() Config {
 	out.Outputs = slices.Clone(c.Outputs)
 	for i := range out.Outputs {
 		out.Outputs[i].Bar = out.Outputs[i].Bar.Clone()
+		out.Outputs[i].Set = maps.Clone(out.Outputs[i].Set)
 	}
 	out.Tray.Hidden = slices.Clone(c.Tray.Hidden)
 	out.Tray.Pinned = slices.Clone(c.Tray.Pinned)
@@ -488,6 +489,10 @@ type TrayPreferences struct {
 type OutputOverride struct {
 	Connector string
 	Bar       Bar
+	// Set records fields explicitly supplied below bar, including font.size
+	// and items.left/center/right. Nil retains legacy full-Bar literals; a
+	// parsed override always has a non-nil map, even when it inherits all.
+	Set map[string]bool
 }
 
 // Wallpaper is the picker's two library roots plus the gSlapper playback
@@ -946,7 +951,7 @@ func RebaseDerivedBar(c *Config, from Theme, fromBar Bar) {
 func (c Config) ForConnector(name string) Bar {
 	for _, o := range c.Outputs {
 		if o.Connector == name {
-			return o.Bar
+			return o.resolve(c.Bar)
 		}
 	}
 	return c.Bar
@@ -964,17 +969,17 @@ func (c Config) BarFor(connector string, logicalWidth, logicalHeight int) Bar {
 	}
 	row := theme.AutoBarDensity(logicalWidth, logicalHeight)
 	before := deriveBar(b, c.Theme)
-	if row == theme.DensityStandard || b.Height != before.Height {
+	if row == theme.DensityStandard || b.Height != before.Height || c.OutputBarOverridden(connector, "height") {
 		return b
 	}
 	sized := c.Theme
 	sized.Density = row
 	after := deriveBar(b, sized)
 	b.Height = after.Height
-	if b.Padding == before.Padding {
+	if b.Padding == before.Padding && !c.OutputBarOverridden(connector, "padding") {
 		b.Padding = after.Padding
 	}
-	if b.Spacing == before.Spacing {
+	if b.Spacing == before.Spacing && !c.OutputBarOverridden(connector, "spacing") {
 		b.Spacing = after.Spacing
 	}
 	b.Row = row

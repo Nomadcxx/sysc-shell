@@ -474,6 +474,7 @@ func run(ctx context.Context) (err error) {
 	}()
 
 	runErr := wayland.Run(ctx, cfg, wayland.Callbacks{
+		OutputsChanged:    registry.UpdateDisplayOutputs,
 		NewHost:           registry.NewHost,
 		PrepareConfig:     registry.PrepareConfigWithGeneration,
 		ConfigGeneration:  registry.SettingsWriteGeneration,

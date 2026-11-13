@@ -907,10 +907,7 @@ func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
 		}
 		return settingsBody(h, theme.MarginL, h.barLaneStripFor(r))
 	case "Displays":
-		if len(entries) == 0 {
-			return settingsBody(h, theme.MarginL, settingsEmptyNote("Displays"))
-		}
-		return settingsPageColumn(h, entries)
+		return settingsBarDisplays(r, h)
 	}
 	var lead, pictureCards []*ui.Node
 	var rest []settings.Entry
@@ -956,14 +953,18 @@ func settingsCardsFor(r *Registry, h *PanelHost, e settings.Entry) *ui.Node {
 // settingsBarDimReason says why a Bar setting does not apply to the draft,
 // or "" when it does. Enabled always applies: it is how the rest comes back.
 func settingsBarDimReason(h *PanelHost, path string) string {
-	b := h.draft.Bar
+	return settingsBarDimReasonFor(h.draft.Bar, h.draft.Accessibility.HighContrast, path)
+}
+
+// settingsBarDimReasonFor judges path against one resolved bar, which is the
+// shared bar or a display's own.
+func settingsBarDimReasonFor(b config.Bar, hc bool, path string) string {
 	switch {
 	case path == "bar.enabled" || !strings.HasPrefix(path, "bar."):
 		return ""
 	case !b.Enabled:
 		return "The bar is off. Turn it on to change this."
 	}
-	hc := h.draft.Accessibility.HighContrast
 	switch path {
 	case "bar.frost-opacity":
 		if hc {
@@ -1440,9 +1441,13 @@ func settingsResetWidth(h *PanelHost) int {
 // beside a segmented control it read as one more option.
 func settingsResetButton(h *PanelHost, e settings.Entry) *ui.Node {
 	m := h.metrics()
+	name := "Reset " + e.Label
+	if e.Inherited != nil {
+		name += " on " + e.Group + " to shared"
+	}
 	return &ui.Node{
 		Kind: ui.KindButton, Text: "Reset", Action: "reset:" + e.Path,
-		Name: "Reset " + e.Label, Role: "button", Focusable: true,
+		Name: name, Role: "button", Focusable: true,
 		Width: settingsResetWidth(h), Height: m.CompactControl,
 		Fill: ui.FillOutline, Shape: ui.ShapeMedium,
 	}
@@ -2274,15 +2279,29 @@ func (r *Registry) writeDebouncedSettingsChanges(h *PanelHost, changes []setting
 }
 
 func applySettingsWriteChanges(cfg *config.Config, changes []settingsWriteChange, palettes []theme.PaletteInfo) error {
+	var outputs []string
+	for _, change := range changes {
+		if rest, ok := strings.CutPrefix(change.path, "outputs."); ok {
+			if i := strings.LastIndexByte(rest, '.'); i > 0 {
+				outputs = append(outputs, rest[:i])
+			}
+		}
+	}
 	registryFor := func(c config.Config) *settings.Registry {
-		return settings.DefaultFor(c, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)))
+		return settings.DefaultFor(c, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)), settings.WithOutputs(outputs))
 	}
 	for _, change := range changes {
 		entry := registryFor(*cfg).ByPath(change.path)
 		if entry == nil || entry.Set == nil {
 			return fmt.Errorf("settings: %q is no longer available", change.path)
 		}
-		if err := entry.Set(cfg, change.value); err != nil {
+		var err error
+		if change.reset && entry.Reset != nil {
+			err = entry.Reset(cfg)
+		} else {
+			err = entry.Set(cfg, change.value)
+		}
+		if err != nil {
 			return err
 		}
 	}

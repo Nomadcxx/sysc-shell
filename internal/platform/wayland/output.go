@@ -63,6 +63,7 @@ func (o *owner) attachOutputHandlers(h *OutputHost) {
 	h.proxy.SetGeometryHandler(func(e client.OutputGeometryEvent) {
 		if h.alive {
 			h.applyGeometry(int32(e.Transform))
+			h.make, h.model = e.Make, e.Model
 		}
 	})
 	h.proxy.SetModeHandler(func(e client.OutputModeEvent) {
@@ -82,11 +83,32 @@ func (o *owner) attachOutputHandlers(h *OutputHost) {
 			return
 		}
 		if h.applyDone() {
+			o.notifyOutputs()
 			o.fail(o.hostBecameReady(h))
 			return
 		}
+		o.notifyOutputs()
 		o.onOutputDone(h)
 	})
+}
+
+func (o *owner) notifyOutputs() {
+	if o.cb.OutputsChanged == nil {
+		return
+	}
+	var outputs []OutputInfo
+	for _, h := range o.hosts.each() {
+		if !h.alive || !h.ready() {
+			continue
+		}
+		var scale ui.Scale120
+		if h.bar != nil && h.bar.ss != nil {
+			scale = h.bar.ss.scale120
+		}
+		w, height := h.logicalSize(scale)
+		outputs = append(outputs, OutputInfo{Global: h.global, Connector: h.connector, Make: h.make, Model: h.model, Width: w, Height: height})
+	}
+	o.cb.OutputsChanged(outputs)
 }
 
 func (o *owner) onOutputDone(h *OutputHost) {

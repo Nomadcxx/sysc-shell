@@ -170,14 +170,15 @@ func (u *surfaceUnit) dropFrameCallback() error {
 // registry global name; the connector string is an attribute a reconnect may
 // reuse and is never used as identity.
 type OutputHost struct {
-	global     uint32
-	proxy      *client.Output
-	connector  string
-	transform  int32
-	modeWidth  int32
-	modeHeight int32
-	doneSeen   bool
-	policy     config.Bar
+	global      uint32
+	proxy       *client.Output
+	connector   string
+	make, model string
+	transform   int32
+	modeWidth   int32
+	modeHeight  int32
+	doneSeen    bool
+	policy      config.Bar
 	// opaqueBackground controls the compositor's opaque-region hint for this
 	// host's accepted theme.
 	opaqueBackground bool

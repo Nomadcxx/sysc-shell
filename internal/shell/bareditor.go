@@ -482,22 +482,10 @@ func (h *PanelHost) barApply(r *Registry, laneName string, items []config.Item) 
 	if h.barOutput == "" {
 		h.draft.Bar = bar
 	} else {
-		found := false
-		for i := range h.draft.Outputs {
-			if h.draft.Outputs[i].Connector != h.barOutput {
-				continue
-			}
-			// A lane is inherited whole or overridden whole, because applyBar
-			// takes it whole (D7). Touching one widget therefore forks the
-			// entire lane for this output, and the strip says so.
-			h.draft.Outputs[i].Bar = barSetLane(h.draft.Outputs[i].Bar, laneName, items)
-			found = true
-		}
-		if !found {
-			h.draft.Outputs = append(h.draft.Outputs, config.OutputOverride{
-				Connector: h.barOutput,
-				Bar:       barSetLane(config.Bar{}, laneName, items),
-			})
+		if err := h.draft.SetOutputBar(h.barOutput, "items."+laneName, bar); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return false
 		}
 	}
 	h.persistDraft(r)
@@ -738,11 +726,7 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 		if h.barOutput == "" || barLaneLabels[name] == "" {
 			return false
 		}
-		for i := range h.draft.Outputs {
-			if h.draft.Outputs[i].Connector == h.barOutput {
-				h.draft.Outputs[i].Bar = barSetLane(h.draft.Outputs[i].Bar, name, nil)
-			}
-		}
+		h.draft.ResetOutputBar(h.barOutput, "items."+name)
 		h.persistDraft(r)
 		r.rebuildPanel(h)
 		return true
@@ -923,7 +907,7 @@ func barOutputSelector(h *PanelHost, r *Registry, width int) *ui.Node {
 	}
 	row.Children = append(row.Children,
 		option("shared", "Shared", "The layout every display uses unless it overrides it"))
-	for _, conn := range r.connectorsLocked() {
+	for _, conn := range r.barDisplayConnectorsLocked(h.draft) {
 		row.Children = append(row.Children,
 			option(conn, conn, "A layout just for "+conn))
 	}
@@ -934,46 +918,13 @@ func barOutputSelector(h *PanelHost, r *Registry, width int) *ui.Node {
 // override belonging to the selected output, with the lanes it does not carry
 // filled in from the shared bar exactly as applyBar fills them at load.
 func (h *PanelHost) barEditedBar() config.Bar {
-	if h.barOutput == "" {
-		return h.draft.Bar
-	}
-	for _, o := range h.draft.Outputs {
-		if o.Connector == h.barOutput {
-			return barMergeInherited(h.draft.Bar, o.Bar)
-		}
-	}
-	return h.draft.Bar
-}
-
-// barMergeInherited fills a lane the override does not carry with the shared
-// one, which is what applyBar does at load.
-func barMergeInherited(base, over config.Bar) config.Bar {
-	out := over
-	if out.Left == nil {
-		out.Left = base.Left
-	}
-	if out.Center == nil {
-		out.Center = base.Center
-	}
-	if out.Right == nil {
-		out.Right = base.Right
-	}
-	return out
+	return h.draft.ForConnector(h.barOutput)
 }
 
 // barLaneOverridden reports whether the edited output carries this lane itself
 // rather than inheriting it.
 func (h *PanelHost) barLaneOverridden(name string) bool {
-	if h.barOutput == "" {
-		return false
-	}
-	for _, o := range h.draft.Outputs {
-		if o.Connector != h.barOutput {
-			continue
-		}
-		return barLaneItems(o.Bar, name) != nil
-	}
-	return false
+	return h.barOutput != "" && h.draft.OutputBarOverridden(h.barOutput, "items."+name)
 }
 
 // barDrop completes a pointer drag onto a lane. It is the thin caller

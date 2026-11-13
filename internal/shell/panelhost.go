@@ -77,6 +77,7 @@ type Trigger struct {
 type settingsWriteChange struct {
 	path  string
 	value string
+	reset bool
 }
 
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
@@ -711,6 +712,17 @@ func (r *Registry) focusedTriggerLocked() (uint32, Trigger) {
 			break
 		}
 	}
+	if global == 0 {
+		for g, out := range r.displayOutputs {
+			if out.Connector == r.focused {
+				global, connector = g, out.Connector
+				break
+			}
+			if global == 0 || g < global {
+				global, connector = g, out.Connector
+			}
+		}
+	}
 	return global, r.triggerLocked(global, connector)
 }
 
@@ -725,8 +737,16 @@ func (r *Registry) triggerFor(global uint32) (uint32, Trigger) {
 }
 
 func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
+	out := r.displayOutputs[global]
+	if connector == "" {
+		connector = out.Connector
+	}
 	policy := r.cfg.ForConnector(connector)
 	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Extent(), Align: "center"}
+	trig.OutW, trig.OutH = out.Width, out.Height
+	if !policy.Enabled {
+		trig.BarZone = 0
+	}
 	if bar, ok := r.bars[global]; ok {
 		w, h := bar.configuredSize()
 		// BarZone is the painted cross extent; an attached bar's overhang lies
@@ -4217,6 +4237,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "notify:") {
 		return h.activateNotify(r, n)
 	}
+	if strings.HasPrefix(n.Action, "bar-display-") && h.barDisplayAction(r, n.Action) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "bar-") && h.barActivate(r, n.Action) {
 		return true
 	}
@@ -4272,7 +4295,16 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if path, ok := strings.CutPrefix(n.Action, "reset:"); ok {
 		if e := h.set.ByPath(path); e != nil && e.Default != nil {
-			h.commitSetting(r, e, e.Default(h.draft))
+			if e.Reset != nil {
+				if err := e.Reset(&h.draft); err != nil {
+					h.errLabel = err.Error()
+				} else {
+					h.set = r.settingsForLocked(h.draft)
+					h.deferReset(r, e.Path)
+				}
+			} else {
+				h.commitSetting(r, e, e.Default(h.draft))
+			}
 			r.rebuildPanel(h)
 		}
 		return true
@@ -4995,6 +5027,16 @@ const settingsWriteDelay = 400 * time.Millisecond
 // deferDraft arms the write, replacing any write already armed, so a run of
 // edits collapses into the one that follows the last of them.
 func (h *PanelHost) deferDraft(r *Registry, path, value string) {
+	h.deferWrite(r, settingsWriteChange{path: path, value: value})
+}
+
+// deferReset arms a write that replays the entry's Reset rather than storing
+// a copied default, so the field returns to inheriting.
+func (h *PanelHost) deferReset(r *Registry, path string) {
+	h.deferWrite(r, settingsWriteChange{path: path, reset: true})
+}
+
+func (h *PanelHost) deferWrite(r *Registry, change settingsWriteChange) {
 	if h.writeTimer != nil {
 		h.writeTimer.Stop()
 	}
@@ -5005,7 +5047,7 @@ func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 		r.settingsWriteMu.Lock()
 		h.settingsWriteRevision++
 		revision = h.settingsWriteRevision
-		h.settingsWriteChanges = appendSettingsWriteChange(h.settingsWriteChanges, path, value)
+		h.settingsWriteChanges = appendSettingsWriteChange(h.settingsWriteChanges, change)
 		r.settingsWriteMu.Unlock()
 	}
 	delay := settingsWriteDelay
@@ -5047,14 +5089,14 @@ func (h *PanelHost) writeTimerExpired(r *Registry, generation, revision uint64) 
 	})
 }
 
-func appendSettingsWriteChange(changes []settingsWriteChange, path, value string) []settingsWriteChange {
-	for i, change := range changes {
-		if change.path == path {
+func appendSettingsWriteChange(changes []settingsWriteChange, change settingsWriteChange) []settingsWriteChange {
+	for i, existing := range changes {
+		if existing.path == change.path {
 			changes = append(changes[:i], changes[i+1:]...)
 			break
 		}
 	}
-	return append(changes, settingsWriteChange{path: path, value: value})
+	return append(changes, change)
 }
 
 // flushDraft writes an edit that has not settled yet. Closing the panel is

@@ -114,9 +114,17 @@ type HostIdentity struct {
 	Connector string
 }
 
+// OutputInfo is immutable display metadata, including outputs without a bar.
+type OutputInfo struct {
+	Global                 uint32
+	Connector, Make, Model string
+	Width, Height          int
+}
+
 // Callbacks are the concrete hooks the application supplies. This is a struct
 // rather than an interface because there is one implementation.
 type Callbacks struct {
+	OutputsChanged func([]OutputInfo)
 	// NewHost supplies the per-bar hooks when a bar is created for a connector.
 	NewHost func(global uint32, connector string) (HostCallbacks, error)
 	// PrepareConfig builds replacement bars for every enabled connector without
@@ -427,6 +435,7 @@ func (o *owner) connect() error {
 				o.cb.DropHost(h.global)
 			}
 		}
+		o.notifyOutputs()
 	})
 
 	// The first roundtrip delivers the globals.

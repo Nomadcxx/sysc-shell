@@ -590,7 +590,11 @@ func parseCandidate(data []byte) (Config, error) {
 				return Config{}, err
 			}
 		}
-		cfg.Outputs = append(cfg.Outputs, OutputOverride{Connector: *o.Connector, Bar: bar})
+		set := map[string]bool{}
+		if o.Bar != nil {
+			set = outputFields(*o.Bar)
+		}
+		cfg.Outputs = append(cfg.Outputs, OutputOverride{Connector: *o.Connector, Bar: bar, Set: set})
 	}
 	if wire.Plugins != nil {
 		plugins, err := applyPlugins(*wire.Plugins, "plugins")
