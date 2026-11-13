@@ -91,13 +91,23 @@ func arm(ctx context.Context, socket string, own Owned, target map[string]Policy
 	if err != nil {
 		return Ticket{}, fmt.Errorf("displays: locate this executable: %w", err)
 	}
-	if err := startRecoveryUnit(ctx, exe, token); err != nil {
-		return Ticket{}, err
+	err = startRecoveryUnit(ctx, exe, token)
+	if err == nil {
+		err = waitReady(ctx, dir, t)
 	}
-	if err := waitReady(ctx, dir, t); err != nil {
-		_ = t.setState(StateReverted, "recovery was not ready; no output changes were sent")
-		_ = cleanupTicket(dir, token)
-		return Ticket{}, err
+	if err != nil {
+		// No output command has been sent, so there is nothing to recover. A
+		// ticket left behind would block every later preview as unresolved.
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = stopRecoveryUnit(stopCtx, token)
+		return Ticket{}, errors.Join(err,
+			withTicketLock(dir, token, func() error {
+				if serr := t.setState(StateReverted, "recovery was not ready; no output changes were sent"); serr != nil {
+					return serr
+				}
+				return cleanupTicket(dir, token)
+			}))
 	}
 	return t, nil
 }
@@ -142,40 +152,59 @@ func RunRecovery(ctx context.Context, token string) error {
 	if err != nil {
 		return err
 	}
-	t, err := LoadTicket(token)
-	if err != nil {
+	// Every read-modify-write of the ticket happens under the decision lock.
+	// A restarted helper that stored a stale copy outside it could replace a
+	// concurrent Keep's committing state with the preview it loaded earlier.
+	var deadline int64
+	resolved := false
+	err = withTicketLock(dir, token, func() error {
+		t, err := LoadTicket(token)
+		if errors.Is(err, os.ErrNotExist) {
+			resolved = true
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if t.finished() {
+			resolved = true
+			return cleanupTicket(dir, token)
+		}
+		// A ticket names one compositor process. If the peer is a different
+		// one, the preview it describes is gone and acting on it would change
+		// somebody else's displays.
+		now, err := compositorIdentity(t.Socket)
+		if err != nil {
+			return err
+		}
+		if !now.Equal(t.Identity) {
+			return fmt.Errorf("%w: ticket %s expected %s, peer is %s", errStale, token, t.Identity, now)
+		}
+		if t.Attempts >= maxAttempts {
+			return fmt.Errorf("displays: recovery %s has run %d times without resolving: %s", token, t.Attempts, t.Note)
+		}
+		t.Attempts++
+		if err := t.Store(); err != nil {
+			return err
+		}
+		deadline = t.DeadlineNS
+		return writeFileAtomic(readyPath(dir, token), []byte(now.String()+"\n"), 0o600)
+	})
+	// A ticket the shell already settled and removed leaves nothing to do; a
+	// failure exit here would only make systemd restart the unit.
+	if err != nil || resolved {
 		return err
 	}
-	if t.finished() {
-		return cleanupTicket(dir, token)
-	}
-	// A ticket names one compositor process. If the peer is a different one,
-	// the preview it describes is gone and acting on it would change somebody
-	// else's displays.
-	now, err := compositorIdentity(t.Socket)
-	if err != nil {
-		return err
-	}
-	if !now.Equal(t.Identity) {
-		return fmt.Errorf("%w: ticket %s expected %s, peer is %s", errStale, token, t.Identity, now)
-	}
-	if t.Attempts >= maxAttempts {
-		return fmt.Errorf("displays: recovery %s has run %d times without resolving: %s", token, t.Attempts, t.Note)
-	}
-	t.Attempts++
-	if err := t.Store(); err != nil {
-		return err
-	}
-	if err := writeFileAtomic(readyPath(dir, token), []byte(now.String()+"\n"), 0o600); err != nil {
-		return err
-	}
-	if err := sleepUntilBoot(t.DeadlineNS); err != nil {
+	if err := sleepUntilBoot(deadline); err != nil {
 		return err
 	}
 	return withTicketLock(dir, token, func() error {
 		// Re-read under the lock: the shell may have finished a Keep while this
 		// process was waiting for its deadline.
 		fresh, err := LoadTicket(token)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -233,10 +262,7 @@ func finish(dir string, t *Ticket, state, note string, err error) error {
 	if serr := t.setState(state, note); serr != nil {
 		return serr
 	}
-	report(state, note, err)
-	if err != nil {
-		return err
-	}
+	report(state, note, nil)
 	return cleanupTicket(dir, t.Token)
 }
 
@@ -444,7 +470,7 @@ func decideRecovery(state, oldHash, candidateHash, observed string) recoveryActi
 			return actionFinishKeep
 		}
 		return actionRestoreRuntime
-	default: // StatePreview: no Keep was ever confirmed, so any candidate is a conflict.
+	default: // StatePreview: no Keep was confirmed and the file holds the old bytes, or none.
 		return actionRestoreRuntime
 	}
 }

@@ -70,7 +70,9 @@ func TestValidateMode(t *testing.T) {
 	}{
 		{"advertised, same millihertz", ModePolicy{Width: 1920, Height: 1080, RefreshMilliHz: 60000}, true},
 		{"advertised, rounded from hertz", ModePolicy{Width: 3440, Height: 1440, RefreshMilliHz: 120030}, true},
-		{"zero refresh is not a mode", ModePolicy{Width: 1920, Height: 1080}, false},
+		// A size alone is niri's own "highest rate for this resolution".
+		{"size only, advertised", ModePolicy{Width: 1920, Height: 1080}, true},
+		{"size only, not advertised", ModePolicy{Width: 1920, Height: 1200}, false},
 		{"height not advertised", ModePolicy{Width: 1920, Height: 1200, RefreshMilliHz: 60000}, false},
 		{"refresh not advertised", ModePolicy{Width: 1920, Height: 1080, RefreshMilliHz: 60001}, false},
 		{"custom from a plain advertised mode", ModePolicy{Width: 1920, Height: 1080, RefreshMilliHz: 60000, Custom: true}, false},

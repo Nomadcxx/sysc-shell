@@ -104,7 +104,9 @@ func planOutput(out niri.Output, want Policy) (geometry, layout []niri.OutputCha
 		selected := *want.Mode
 		if selected.RefreshMilliHz == 0 {
 			for _, mode := range out.Modes {
-				if mode.Width == selected.Width && mode.Height == selected.Height && mode.RefreshMilliHz > selected.RefreshMilliHz { selected.RefreshMilliHz = mode.RefreshMilliHz }
+				if mode.Width == selected.Width && mode.Height == selected.Height && mode.RefreshMilliHz > selected.RefreshMilliHz {
+					selected.RefreshMilliHz = mode.RefreshMilliHz
+				}
 			}
 		}
 		change, cerr := niri.ModeValue(out, wireMode(selected))

@@ -1,6 +1,7 @@
 package displays
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -101,7 +102,16 @@ func New(socket, root string, validate Validator) (*Service, error) {
 	if own.Managed == "" {
 		return nil, ErrNotSetUp
 	}
-	return &Service{socket: socket, root: root, own: own, validate: validate}, nil
+	svc := &Service{socket: socket, root: root, own: own, validate: validate}
+	// A shell restarted mid-preview does not take the transaction over: its
+	// independent helper still owns it. The page says so, and Preview stays
+	// refused until the helper settles it.
+	if active, ok, err := activeTicketFor(socket); err != nil {
+		svc.note = err.Error()
+	} else if ok {
+		svc.note = fmt.Sprintf("A display preview from before the shell restarted is still being resolved (%s).", active.State)
+	}
+	return svc, nil
 }
 
 // Root is the configuration root the service was given, after ownership
@@ -315,6 +325,26 @@ func (s *Service) Keep(ctx context.Context) error {
 		return err
 	}
 	token := s.ticket.Token
+	// Native validation can take seconds, so it runs before the decision lock:
+	// holding the lock through it would delay the helper past the deadline.
+	// Only this command mutex orders the shell's own writes to the ticket.
+	staged, err := LoadTicket(token)
+	if err != nil {
+		return err
+	}
+	if err := checkKeep(ctx, staged); err != nil {
+		return err
+	}
+	if err := CheckOwnership(s.root, s.own); err != nil {
+		return err
+	}
+	validated, err := s.candidate(staged.Target, staged.Before)
+	if err != nil {
+		return err
+	}
+	if err := StageAndValidate(ctx, s.validate, filepath.Join(dir, "validate-"+token), validated, s.root); err != nil {
+		return err
+	}
 	return withTicketLockContext(ctx, dir, token, func() error {
 		t, err := LoadTicket(token)
 		if err != nil {
@@ -323,6 +353,8 @@ func (s *Service) Keep(ctx context.Context) error {
 		if t.State != StatePreview {
 			return errors.New("displays: preview is being resolved")
 		}
+		// The final critical section rechecks the deadline, identities and
+		// hashes, and refuses bytes other than the ones just validated.
 		if err := checkKeep(ctx, t); err != nil {
 			return err
 		}
@@ -333,15 +365,8 @@ func (s *Service) Keep(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := StageAndValidate(ctx, s.validate, filepath.Join(dir, "validate-"+token), candidate, s.root); err != nil {
-			return err
-		}
-		// Validation may consume the remaining window or observe hotplug.
-		if err := checkKeep(ctx, t); err != nil {
-			return err
-		}
-		if err := CheckOwnership(s.root, s.own); err != nil {
-			return err
+		if !bytes.Equal(candidate, validated) {
+			return errors.New("displays: the configuration changed while it was validated")
 		}
 		t.CandidateHash = Hash(candidate)
 		if err := t.setState(StateCommitting, "the configuration was confirmed"); err != nil {
@@ -603,6 +628,9 @@ func (s *Service) plan(ctx context.Context, draft map[string]Policy) (map[string
 			}
 			if !slices.Contains([]string{"left", "right", "above", "below"}, want.Relative.Side) {
 				return nil, nil, errors.New("displays: invalid relative direction")
+			}
+			if anchor, ok := draft[want.Relative.To]; ok && anchor.Relative != nil {
+				return nil, nil, errors.New("displays: a display cannot be placed beside one that is itself placed relatively")
 			}
 		}
 		target[out.Name] = clonePolicy(want)

@@ -134,9 +134,16 @@ func TestBuildManagedValidatesBeforeWriting(t *testing.T) {
 		t.Fatal("BuildManaged accepted a transform niri does not have")
 	}
 	if _, err := BuildManaged(g, []string{"DP-1"}, map[string]Policy{
-		"DP-1": {Mode: &ModePolicy{Width: 1920, Height: 1080}},
+		"DP-1": {Mode: &ModePolicy{Height: 1080}},
 	}); err == nil {
-		t.Fatal("BuildManaged wrote a mode with no refresh rate")
+		t.Fatal("BuildManaged wrote a mode with no width")
+	}
+	// A size without a rate is native "highest rate", written without one.
+	sized, err := BuildManaged(g, []string{"DP-1"}, map[string]Policy{
+		"DP-1": {Mode: &ModePolicy{Width: 1920, Height: 1080}},
+	})
+	if err != nil || !strings.Contains(string(sized), `mode "1920x1080"`) {
+		t.Fatalf("size-only mode: err=%v\n%s", err, sized)
 	}
 }
 

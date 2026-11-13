@@ -246,22 +246,25 @@ type Registry struct {
 	// service's last reading, and displaysDraft is the edit in progress. The
 	// draft lives here, not on the settings host, because a reconfigure
 	// recreates the host and must not lose what was being edited.
-	displaysService      displaysController
-	displaysSnapshot     displays.Snapshot
-	displaysDiscovery    *displays.Discovery
-	displaysRoot         string
-	displaysDraft        map[string]map[string]string
-	displaysSelected     string
-	displaysDiagram      *ui.Image
-	displaysArmed        bool
-	displaysBusy         bool
-	displaysErr          string
-	idleApplying         bool
-	wallpaperThumbs      *icons.Worker
-	wallpaperThumbCancel context.CancelFunc
-	mediaArt             *mediaArtWorker
-	trayIconCancel       context.CancelFunc
-	pendingTrayMenu      pendingTrayMenu
+	displaysService   displaysController
+	displaysSnapshot  displays.Snapshot
+	displaysDiscovery *displays.Discovery
+	displaysRoot      string
+	displaysDraft     map[string]map[string]string
+	displaysSelected  string
+	displaysDiagram   *ui.Image
+	displaysArmed     bool
+	displaysBusy      bool
+	// displaysRevertPending is a Revert requested while another command ran;
+	// it runs as soon as that command returns.
+	displaysRevertPending bool
+	displaysErr           string
+	idleApplying          bool
+	wallpaperThumbs       *icons.Worker
+	wallpaperThumbCancel  context.CancelFunc
+	mediaArt              *mediaArtWorker
+	trayIconCancel        context.CancelFunc
+	pendingTrayMenu       pendingTrayMenu
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost

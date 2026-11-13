@@ -312,11 +312,15 @@ func TestRunRecoveryRefusesAStaleTicket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every field but the identity is structurally valid, so the refusal can
+	// only come from the peer check.
+	root := filepath.Join(runtime, "config.kdl")
 	tk := Ticket{
 		Version: ticketVersion, Token: token, State: StatePreview, Socket: socket,
-		Root: filepath.Join(runtime, "config.kdl"), Managed: filepath.Join(runtime, "m.kdl"),
+		Root: root, Managed: ManagedPath(root),
 		Previous: previousPath(dir, token), Identity: Identity{UID: os.Getuid(), PID: 1, StartTicks: 1, BootID: "elsewhere"},
-		OldHash: "old",
+		OldHash: strings.Repeat("0", 64), DeadlineNS: 1,
+		Before: []OutputState{{Name: Name{Connector: "DP-1"}}},
 	}
 	if err := tk.Store(); err != nil {
 		t.Fatal(err)

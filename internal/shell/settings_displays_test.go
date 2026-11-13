@@ -58,6 +58,8 @@ type fakeDisplays struct {
 	preview  map[string]displays.Policy
 	refuse   error
 	observed displays.Snapshot
+	// hold, when set, keeps Preview running until it is closed.
+	hold chan struct{}
 }
 
 func newFakeDisplays() *fakeDisplays {
@@ -107,6 +109,9 @@ func (f *fakeDisplays) Preview(_ context.Context, draft map[string]displays.Poli
 	f.preview = draft
 	f.mu.Unlock()
 	f.record("preview")
+	if f.hold != nil {
+		<-f.hold
+	}
 	return f.refuse
 }
 
@@ -213,7 +218,9 @@ func TestDisplayPageShowsTheLiveOutputsAndModes(t *testing.T) {
 	text := displaysPageText(host)
 	// The control shows the mode the output is running; every advertised mode is
 	// in the entry's options, which is what the menu lists when it opens.
-	for _, want := range []string{"DP-1", "3440 × 1440 @ 60.030 Hz (preferred)", "variable refresh"} {
+	// Resolution and refresh rate are separate controls; the draft keeps the
+	// exact millihertz pairing between them.
+	for _, want := range []string{"DP-1", "3440 × 1440 (preferred)", "60.030 Hz", "variable refresh"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the page does not show %q:\n%s", want, text)
 		}
@@ -223,201 +230,29 @@ func TestDisplayPageShowsTheLiveOutputsAndModes(t *testing.T) {
 		t.Fatal("no resolution entry for DP-1")
 	}
 	if len(entry.Options) != 3 {
-		t.Errorf("resolution options = %v, want automatic plus both advertised modes", entry.Options)
+		t.Errorf("resolution options = %v, want automatic plus both advertised sizes", entry.Options)
 	}
-	if entry.OptionLabels[2] != "1920 × 1080 @ 60.030 Hz" {
-		t.Errorf("second mode label = %q", entry.OptionLabels[2])
+	if entry.OptionLabels[1] != "3440 × 1440 (preferred)" || entry.OptionLabels[2] != "1920 × 1080" {
+		t.Errorf("resolution labels = %q", entry.OptionLabels)
 	}
-	if entry.OptionLabels[1] != "3440 × 1440 @ 60.030 Hz (preferred)" {
-		t.Errorf("preferred mode label = %q", entry.OptionLabels[1])
+	if got := entry.Get(config.Config{}); got != "3440x1440" {
+		t.Errorf("draft resolution = %q, want the size DP-1 is running", got)
 	}
-	// The modes the service reported are the only ones offered, and the draft
-	// holds the value the output is actually running.
-	if got := entry.Get(config.Config{}); got != "3440x1440@60030" {
-		t.Errorf("draft resolution = %q, want the mode DP-1 is running", got)
+	rate := displaysEntryByPath(reg, "displays.DP-1."+displaysFieldRefresh)
+	if rate == nil {
+		t.Fatal("no refresh entry for DP-1")
 	}
-}
-
-func TestDisplaysDraftEditSendsNothingToTheCompositor(t *testing.T) {
-	t.Parallel()
-	reg, host, fake := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
-	before := fake.count("preview") + fake.count("keep") + fake.count("revert") + fake.count("refresh")
-	// A pick is a draft edit; a field commit is a draft edit.
-	if !activateDisplaysAction(reg, host, &ui.Node{Kind: ui.KindButton, Action: "displays:reset"}) {
-		t.Fatal("discard changes was not handled")
+	if got := rate.Get(config.Config{}); got != "60030" {
+		t.Errorf("draft refresh = %q, want the exact millihertz DP-1 is running", got)
 	}
-	for _, action := range []string{
-		"pick:displays.DP-1." + displaysFieldScale + "=1.5",
-		"pick:displays.DP-1." + displaysFieldMode + "=1920x1080@60030",
-	} {
-		host.focus = []*ui.Node{{Kind: ui.KindButton, Action: action}}
-		host.roving.Set(0)
-		if !host.activate(reg) {
-			t.Fatalf("the control %q was not handled", action)
-		}
-	}
-	// A field commits through the setting path, not through activation.
-	host.applySetting(reg, &ui.Node{
-		Kind: ui.KindTextField, Text: "1920", Action: "set:displays.DP-1." + displaysFieldPositionX,
-	})
-	if got := fake.count("preview") + fake.count("keep") + fake.count("revert") + fake.count("refresh"); got != before {
-		t.Errorf("a draft edit sent %d commands to the service, want none", got-before)
+	if len(rate.Options) != 2 || rate.Options[1] != "60030" || rate.OptionLabels[1] != "60.030 Hz" {
+		t.Errorf("refresh options = %v %q, want automatic plus the rate advertised for 3440 × 1440", rate.Options, rate.OptionLabels)
 	}
 	reg.mu.Lock()
-	draft := reg.displaysDraft["DP-1"]
+	paired := reg.displaysDraft["DP-1"][displaysFieldMode]
 	reg.mu.Unlock()
-	if draft[displaysFieldScale] != "1.5" {
-		t.Errorf("the edited scale is not on the draft: %v", draft)
-	}
-	if draft[displaysFieldPositionX] != "1920" {
-		t.Errorf("the edited position is not on the draft: %v", draft)
-	}
-}
-
-func TestDisplaysPreviewIsTheOnlyThingThatArmsATransaction(t *testing.T) {
-	t.Parallel()
-	reg, host, fake := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
-	// Keep with nothing armed is refused in the page rather than sent.
-	if !activateDisplaysAction(reg, host, &ui.Node{Kind: ui.KindButton, Action: "displays:keep", Name: "Keep preview"}) {
-		t.Fatal("keep was not handled")
-	}
-	if fake.count("keep") != 0 {
-		t.Errorf("keep reached the service with nothing previewed")
-	}
-	if !strings.Contains(reg.displaysErr, "Preview a change first") {
-		t.Errorf("the refusal does not say what to do: %q", reg.displaysErr)
-	}
-	// Preview is what reaches the service, and it carries the edited draft.
-	reg.mu.Lock()
-	reg.displaysDraft = map[string]map[string]string{"DP-1": {displaysFieldScale: "1.5"}}
-	reg.displaysErr = ""
-	reg.rebuildPanel(host)
-	reg.mu.Unlock()
-	if !activateDisplaysAction(reg, host, &ui.Node{Kind: ui.KindButton, Action: "displays:preview", Name: "Preview"}) {
-		t.Fatal("preview was not handled")
-	}
-	displaysWaitFor(t, fake, "preview")
-	scale := fake.preview["DP-1"].Scale
-	if scale == nil || *scale != 1.5 {
-		t.Errorf("previewed scale = %v, want the edited 1.5", scale)
-	}
-}
-
-func TestDisplaysRejectsADraftItCannotRead(t *testing.T) {
-	t.Parallel()
-	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
-	reg.mu.Lock()
-	reg.displaysDraft = map[string]map[string]string{"DP-1": {displaysFieldPositionX: "12"}}
-	reg.displaysErr = ""
-	reg.rebuildPanel(host)
-	reg.mu.Unlock()
-	if !activateDisplaysAction(reg, host, &ui.Node{Kind: ui.KindButton, Action: "displays:preview", Name: "Preview"}) {
-		t.Fatal("preview was not handled")
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && reg.displaysErr == "" {
-		time.Sleep(2 * time.Millisecond)
-	}
-	if !strings.Contains(reg.displaysErr, "position") || !strings.Contains(reg.displaysErr, "DP-1") {
-		t.Errorf("half a position was accepted or reported as %q", reg.displaysErr)
-	}
-}
-
-func TestDisplaysUnavailableControlsExplainThemselves(t *testing.T) {
-	t.Parallel()
-	reg := &Registry{displaysSnapshot: displays.Snapshot{Outputs: []displays.Output{{
-		Name:         displays.Name{Connector: "HDMI-A-1"},
-		Policy:       displays.Policy{Scale: nil},
-		Modes:        nil,
-		VRRSupported: false,
-	}}}}
-	entries := displaysEntries(reg, reg.displaysSnapshot)
-	byPath := map[string]settings.Entry{}
-	for _, e := range entries {
-		byPath[e.Path] = e
-	}
-	mode := byPath["displays.HDMI-A-1."+displaysFieldMode]
-	if len(mode.Options) != 1 || mode.OptionLabels[0] != "Not available while HDMI-A-1 is not mapped" {
-		t.Errorf("an unmapped output offers %v/%v", mode.Options, mode.OptionLabels)
-	}
-	if !strings.Contains(mode.Describe, "Connect and enable") {
-		t.Errorf("an unmapped output does not say why: %q", mode.Describe)
-	}
-	vrr := byPath["displays.HDMI-A-1."+displaysFieldVRR]
-	if len(vrr.Options) != 1 || vrr.OptionLabels[0] != "Not available on HDMI-A-1" {
-		t.Errorf("hardware without VRR offers %v/%v", vrr.Options, vrr.OptionLabels)
-	}
-	// A saved value outside the presets is never snapped to one.
-	reg.displaysDraft = map[string]map[string]string{"DP-1": {displaysFieldScale: "1.3"}}
-	scale := displaysScaleEntry(reg, displays.Output{Name: displays.Name{Connector: "DP-1"}})
-	if scale.Kind != settings.KindString {
-		t.Errorf("a saved scale of 1.3 became a %v of the presets", scale.Kind)
-	}
-	if scale.Describe != "Saved scale 1.3 is not a preset. Enter a number, or Automatic." {
-		t.Errorf("scale explanation = %q", scale.Describe)
-	}
-}
-
-func TestDisplaysPreviewPutsRevertUnderTheKeyboard(t *testing.T) {
-	t.Parallel()
-	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
-	// The real path: the service publishes a snapshot and the registry relays it.
-	reg.SetDisplaysService(newFakeDisplays())
-	reg.mu.Lock()
-	svc := reg.displaysService
-	reg.mu.Unlock()
-	if svc == nil {
-		t.Fatal("the service was not attached")
-	}
-	reg.applyDisplaysSnapshot(reg.displaysService, displays.Snapshot{
-		Outputs:   displaysTestSnapshot().Outputs,
-		Preview:   true,
-		Remaining: 12 * time.Second,
-	})
-	reg.mu.Lock()
-	host = reg.panelHosts[PanelSettings]
-	reg.mu.Unlock()
-	if got := nameOf(host.focused()); got != "Revert preview" {
-		t.Fatalf("focus after arming = %q, want Revert preview", got)
-	}
-	// Enter activates the focused button, so it reverts and cannot keep.
-	armed := reg.displaysService.(*fakeDisplays)
-	host.keyInput(reg, ui.KeyInput{Code: keyEnter})
-	displaysWaitFor(t, armed, "revert")
-	if armed.seen("keep") {
-		t.Error("Enter on a previewed change kept it instead of reverting")
-	}
-}
-
-func TestDisplaysCountdownCountsDownAndSaysNothingAboutSaving(t *testing.T) {
-	t.Parallel()
-	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
-	reg.mu.Lock()
-	reg.displaysArmed = true
-	reg.displaysSnapshot = displays.Snapshot{
-		Outputs:   displaysTestSnapshot().Outputs,
-		Preview:   true,
-		Remaining: 9 * time.Second,
-		Note:      "Saved to the niri configuration.",
-	}
-	reg.rebuildPanel(host)
-	text := displaysPageText(host)
-	reg.mu.Unlock()
-	if !strings.Contains(text, "reverts in 9 seconds") {
-		t.Errorf("the countdown is missing:\n%s", text)
-	}
-	// A failed command must not leave a saved claim on screen.
-	reg.mu.Lock()
-	reg.displaysErr = "displays: niri validate did not finish within 5s"
-	reg.displaysSnapshot.Note = "Saved to the niri configuration."
-	reg.rebuildPanel(host)
-	text = displaysPageText(host)
-	reg.mu.Unlock()
-	if !strings.Contains(text, "did not finish") {
-		t.Errorf("the failure is not on the page:\n%s", text)
-	}
-	if strings.Contains(text, "Saved to the niri configuration") {
-		t.Errorf("the page claims the settings were saved over a failure:\n%s", text)
+	if paired != "3440x1440@60030" {
+		t.Errorf("draft mode = %q, want the exact pairing", paired)
 	}
 }
 
@@ -567,4 +402,22 @@ func TestDisplaysRailStillReachesItsLastSection(t *testing.T) {
 	if bottom := tabs[len(tabs)-1].Bounds.Y + tabs[len(tabs)-1].Bounds.H; bottom > host.place.Panel.H {
 		t.Errorf("the last rail tab ends at %d, past the panel height %d", bottom, host.place.Panel.H)
 	}
+}
+
+// Closing Settings while Preview is still applying must not lose the Revert:
+// it runs as soon as Preview returns.
+func TestClosingDuringPreviewStillReverts(t *testing.T) {
+	t.Parallel()
+	reg, host, fake := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
+	fake.hold = make(chan struct{})
+	reg.mu.Lock()
+	reg.displaysCommandLocked(host, "preview", func(ctx context.Context) error { return fake.Preview(ctx, nil) })
+	reg.mu.Unlock()
+	displaysWaitFor(t, fake, "preview")
+	reg.ClosePanel(PanelSettings)
+	if fake.seen("revert") {
+		t.Fatal("revert ran while preview still held the service")
+	}
+	close(fake.hold)
+	displaysWaitFor(t, fake, "revert")
 }

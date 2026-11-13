@@ -88,7 +88,7 @@ func TestServiceKeepsAndReverts(t *testing.T) {
 	if !strings.Contains(managed, "scale 1.5") {
 		t.Errorf("managed file does not carry the kept scale:\n%s", managed)
 	}
-	if snap := <-snapshots; snap.Preview || !strings.Contains(snap.Note, "Saved to the niri configuration") {
+	if snap := <-snapshots; snap.Preview || !strings.Contains(snap.Note, "Saved to the native compositor configuration") {
 		t.Errorf("kept snapshot = %+v, want no preview and the confirmation", snap)
 	}
 

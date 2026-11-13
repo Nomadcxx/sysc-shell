@@ -125,6 +125,15 @@ func (r *Registry) displaysCommandLocked(h *PanelHost, what string, run func(con
 		ctx, cancel := context.WithTimeout(context.Background(), displaysCommandTimeout)
 		defer cancel()
 		err := run(ctx)
+		r.mu.Lock()
+		svc, revert := r.displaysService, r.displaysRevertPending
+		r.displaysRevertPending = false
+		r.mu.Unlock()
+		if revert && svc != nil {
+			// Escape, close or navigation arrived while Preview was still
+			// applying. Revert is idempotent with nothing armed.
+			err = errors.Join(err, svc.Revert(ctx))
+		}
 		if err == nil {
 			r.mu.Lock()
 			svc := r.displaysService
@@ -186,7 +195,14 @@ func (r *Registry) displaysKeepLocked(h *PanelHost) {
 // silent when nothing is armed. Caller holds Registry.mu.
 func (r *Registry) displaysRevertLocked(h *PanelHost) {
 	svc := r.displaysService
-	if svc == nil || !r.displaysArmed {
+	if svc == nil {
+		return
+	}
+	if r.displaysBusy {
+		r.displaysRevertPending = true
+		return
+	}
+	if !r.displaysArmed {
 		return
 	}
 	r.displaysCommandLocked(h, "revert", svc.Revert)
@@ -246,23 +262,24 @@ func (r *Registry) adoptDisplays(ctx context.Context, socket string) error {
 		return err
 	}
 	// The root is remembered so the next start needs no second confirmation.
+	// The file write happens off Registry.mu; the reload it triggers publishes
+	// the stored path like any other settings write.
 	r.mu.Lock()
 	next := r.cfg
+	r.mu.Unlock()
 	if found.Kind == compositor.SyscCompositor {
 		next.Displays.SyscConfigPath = found.Root
 	} else {
 		next.Displays.NiriConfigPath = found.Root
 	}
-	err = r.writeConfig(next)
-	if err == nil {
-		r.cfg = next
+	if err := r.writeConfig(next); err != nil {
+		return err
 	}
+	r.mu.Lock()
+	r.cfg.Displays = next.Displays
 	r.displaysRoot = found.Root
 	r.displaysErr = ""
 	r.mu.Unlock()
-	if err != nil {
-		return err
-	}
 	r.SetDisplaysService(svc)
 	return nil
 }
@@ -273,6 +290,8 @@ func (r *Registry) displaysRefreshLocked(h *PanelHost) {
 	if r.displaysBusy {
 		return
 	}
+	// A successful command refreshes an attached service afterwards, so the
+	// outputs and the discovered root are both read again here.
 	if socket := os.Getenv("NIRI_SOCKET"); socket != "" {
 		r.displaysCommandLocked(h, "discover", func(context.Context) error {
 			found, err := displays.Discover(socket)
@@ -287,7 +306,7 @@ func (r *Registry) displaysRefreshLocked(h *PanelHost) {
 		return
 	}
 	if svc := r.displaysService; svc != nil {
-		r.displaysCommandLocked(h, "refresh", func(context.Context) error { svc.Refresh(); return nil })
+		r.displaysCommandLocked(h, "refresh", func(context.Context) error { return nil })
 		return
 	}
 	if h != nil {

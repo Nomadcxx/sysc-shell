@@ -3,6 +3,8 @@ package displays
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -225,5 +227,174 @@ func TestRecoveryFailureKeepsNonterminalTicket(t *testing.T) {
 	}
 	if ticket.finished() {
 		t.Fatal("failed recovery was marked complete")
+	}
+}
+
+// A helper that never started saw no output command, so its ticket must not
+// survive to block every later preview as unresolved.
+func TestArmFailureLeavesNoUnresolvedTicket(t *testing.T) {
+	svc, _ := serviceFor(t)
+	start := startRecoveryUnit
+	startRecoveryUnit = func(context.Context, string, string) error { return errors.New("no systemd") }
+	err := svc.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(1.5)}})
+	startRecoveryUnit = start
+	if err == nil {
+		t.Fatal("preview succeeded without recovery")
+	}
+	if _, ok, err := activeTicketFor(svc.socket); err != nil || ok {
+		t.Fatalf("an unarmed preview left a ticket: ok=%v err=%v", ok, err)
+	}
+	if err := svc.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(1.5)}}); err != nil {
+		t.Fatalf("the next preview was blocked: %v", err)
+	}
+}
+
+// The helper's attempt counter is a read-modify-write of the ticket, so it
+// must wait for the decision lock a Keep holds.
+func TestRecoveryStartWaitsForTheDecisionLock(t *testing.T) {
+	svc, _ := serviceFor(t)
+	window := armWindow
+	armWindow = 2 * time.Second
+	t.Cleanup(func() { armWindow = window })
+	if err := svc.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(1.5)}}); err != nil {
+		t.Fatal(err)
+	}
+	dir := mustTicketDir()
+	token := svc.ticket.Token
+	if err := os.Remove(readyPath(dir, token)); err != nil {
+		t.Fatal(err)
+	}
+	locked, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		_ = withTicketLock(dir, token, func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	go func() { done <- RunRecovery(context.Background(), token) }()
+	time.Sleep(200 * time.Millisecond)
+	if tk, err := LoadTicket(token); err != nil || tk.Attempts != 0 {
+		t.Fatalf("helper wrote the ticket while the lock was held: %+v, %v", tk, err)
+	}
+	if _, err := os.Stat(readyPath(dir, token)); err == nil {
+		t.Fatal("helper reported ready while the lock was held")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("helper: %v", err)
+	}
+	// The helper resolved the preview at its deadline, so a later start finds
+	// nothing and must exit cleanly rather than ask systemd for a restart.
+	if err := RunRecovery(context.Background(), token); err != nil {
+		t.Fatalf("a helper whose ticket was settled must exit cleanly: %v", err)
+	}
+}
+
+func TestResolveRelativeUsesProducedSizes(t *testing.T) {
+	live := map[string]niri.Output{
+		"A": {Name: "A", Logical: &niri.LogicalOutput{X: 100, Y: 50, Width: 1536, Height: 864}},
+		"B": {Name: "B", Logical: &niri.LogicalOutput{Width: 1280, Height: 720}},
+	}
+	for _, tc := range []struct {
+		side string
+		want Position
+	}{
+		{"right", Position{X: 1636, Y: 50}},
+		{"left", Position{X: -1180, Y: 50}},
+		{"below", Position{X: 100, Y: 914}},
+		{"above", Position{X: 100, Y: -670}},
+	} {
+		target := map[string]Policy{"B": {Relative: &RelativePosition{To: "A", Side: tc.side}}}
+		placed, err := resolveRelative(live, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := target["B"]
+		if got.Relative != nil || got.Position == nil || *got.Position != tc.want || placed["B"].To != "A" {
+			t.Errorf("%s: got %+v, want position %+v", tc.side, got, tc.want)
+		}
+	}
+	// An anchor that is itself being pinned elsewhere anchors at its new place.
+	target := map[string]Policy{
+		"A": {Position: &Position{X: 0, Y: 0}},
+		"B": {Relative: &RelativePosition{To: "A", Side: "right"}},
+	}
+	if _, err := resolveRelative(live, target); err != nil || *target["B"].Position != (Position{X: 1536, Y: 0}) {
+		t.Errorf("pinned anchor: %+v, %v", target["B"].Position, err)
+	}
+	chained := map[string]Policy{
+		"A": {Relative: &RelativePosition{To: "B", Side: "left"}},
+		"B": {Relative: &RelativePosition{To: "A", Side: "right"}},
+	}
+	if _, err := resolveRelative(live, chained); err == nil {
+		t.Error("a chain of relative placements was accepted")
+	}
+}
+
+// A relative placement reaches the compositor and the kept file as the
+// explicit position it resolved to, never as an automatic one.
+func TestRelativePlacementIsAppliedAndKept(t *testing.T) {
+	svc, fake := serviceFor(t)
+	fake.mu.Lock()
+	fake.outs["HDMI-A-1"] = &fakeOut{name: "HDMI-A-1", modes: []niriMode{{1280, 720, 60000}}, scale: 1, tx: "Normal"}
+	fake.mu.Unlock()
+	draft := map[string]Policy{"DP-1": {Relative: &RelativePosition{To: "HDMI-A-1", Side: "right"}}}
+	if err := svc.Preview(context.Background(), draft); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	x, y := fake.outs["DP-1"].x, fake.outs["DP-1"].y
+	fake.mu.Unlock()
+	if x != 1280 || y != 0 {
+		t.Fatalf("DP-1 sits at %d,%d, want 1280,0", x, y)
+	}
+	if err := svc.Keep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if managed := readFile(t, svc.own.Managed); !strings.Contains(managed, "x=1280") {
+		t.Fatalf("kept file lacks the resolved position:\n%s", managed)
+	}
+}
+
+// Native validation must not hold the decision lock, or a slow validator
+// would keep the helper from reverting at the deadline.
+func TestKeepValidatesOutsideTheDecisionLock(t *testing.T) {
+	svc, _ := serviceFor(t)
+	if err := svc.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(1.5)}}); err != nil {
+		t.Fatal(err)
+	}
+	token := svc.ticket.Token
+	validate := svc.validate
+	svc.validate = func(ctx context.Context, path string) error {
+		probe, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer cancel()
+		if err := withTicketLockContext(probe, mustTicketDir(), token, func() error { return nil }); err != nil {
+			return fmt.Errorf("validation held the decision lock: %w", err)
+		}
+		return validate(ctx, path)
+	}
+	if err := svc.Keep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A restarted shell reports the transaction its helper still owns instead of
+// starting a competing preview.
+func TestRestartedShellReportsAnUnresolvedPreview(t *testing.T) {
+	svc, _ := serviceFor(t)
+	if err := svc.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(1.5)}}); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(svc.socket, svc.root, svc.validate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(restarted.note, "still being resolved") {
+		t.Fatalf("restarted note = %q", restarted.note)
+	}
+	if err := restarted.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(2.0)}}); err == nil {
+		t.Fatal("a restarted shell started a competing preview")
 	}
 }

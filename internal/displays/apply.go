@@ -137,8 +137,9 @@ func checkNoOverlap(live map[string]niri.Output, target map[string]Policy) error
 		if !ok || out.Logical == nil {
 			continue
 		}
+		// The position is the one about to be sent; only the size is live.
 		rects[name] = Rect{
-			Position: Position{X: out.Logical.X, Y: out.Logical.Y},
+			Position: *want.Position,
 			Width:    int32(out.Logical.Width),
 			Height:   int32(out.Logical.Height),
 		}
@@ -160,6 +161,68 @@ func checkNoOverlap(live map[string]niri.Output, target map[string]Policy) error
 	return nil
 }
 
+// relativeTo places self beside anchor: left and right align top edges, above
+// and below align left edges.
+func relativeTo(side string, anchor Rect, w, h int32) Position {
+	switch side {
+	case "left":
+		return Position{X: anchor.X - w, Y: anchor.Y}
+	case "right":
+		return Position{X: anchor.X + anchor.Width, Y: anchor.Y}
+	case "above":
+		return Position{X: anchor.X, Y: anchor.Y - h}
+	default: // below
+		return Position{X: anchor.X, Y: anchor.Y + anchor.Height}
+	}
+}
+
+// resolveRelative turns draft-only relative placements into positions using
+// the sizes the compositor produced after mode, scale and transform, because
+// fractional scaling makes any guessed logical size wrong. It rewrites target
+// in place so the ticket and a later Keep carry the explicit position.
+func resolveRelative(live map[string]niri.Output, target map[string]Policy) (map[string]RelativePosition, error) {
+	placed := map[string]RelativePosition{}
+	for name, want := range target {
+		if want.Relative == nil {
+			continue
+		}
+		self, anchor := live[name], live[want.Relative.To]
+		if self.Logical == nil || anchor.Logical == nil {
+			return nil, fmt.Errorf("displays: %s cannot be placed beside %s, which is not active", name, want.Relative.To)
+		}
+		rect := *logicalRect(anchor)
+		if other, ok := target[want.Relative.To]; ok {
+			if other.Relative != nil {
+				return nil, fmt.Errorf("displays: %s is placed beside %s, which is itself placed relatively", name, want.Relative.To)
+			}
+			if other.Position != nil {
+				rect.Position = *other.Position
+			}
+		}
+		pos := relativeTo(want.Relative.Side, rect, int32(self.Logical.Width), int32(self.Logical.Height))
+		placed[name] = *want.Relative
+		want.Position, want.Relative = &pos, nil
+		target[name] = want
+	}
+	return placed, nil
+}
+
+// checkPlaced proves each relative placement still touches its anchor after
+// the layout phase: an automatic neighbour may have been moved by it.
+func checkPlaced(live map[string]niri.Output, placed map[string]RelativePosition) error {
+	for name, rel := range placed {
+		self, anchor := live[name], live[rel.To]
+		if self.Logical == nil || anchor.Logical == nil {
+			return fmt.Errorf("displays: %s or %s is no longer active", name, rel.To)
+		}
+		want := relativeTo(rel.Side, *logicalRect(anchor), int32(self.Logical.Width), int32(self.Logical.Height))
+		if self.Logical.X != want.X || self.Logical.Y != want.Y {
+			return fmt.Errorf("displays: %s is no longer %s of %s", name, rel.Side, rel.To)
+		}
+	}
+	return nil
+}
+
 // run applies target to every output it names, in the design's phase order, and
 // verifies the result. Geometry comes first because positions are expressed in
 // logical pixels; the arrangement is checked against the sizes the compositor
@@ -174,6 +237,14 @@ func (a *applier) run(ctx context.Context, target map[string]Policy, before []Ou
 	}
 	names := make([]string, 0, len(target))
 	for name := range target {
+		if out, ok := live[name]; ok && !a.strict {
+			// Recovery checked identity before building target; a monitor
+			// swapped since then must not receive the old one's settings.
+			if saved, found := findSaved(before, name); found && !sameOutput(saved.Name, out) {
+				a.note("%s is a different monitor now, so its earlier settings were left alone", name)
+				continue
+			}
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -199,6 +270,10 @@ func (a *applier) run(ctx context.Context, target map[string]Policy, before []Ou
 
 	// Re-query so arrangement and verification use the real logical sizes.
 	live, err = a.live(ctx)
+	if err != nil {
+		return err
+	}
+	placed, err := resolveRelative(live, target)
 	if err != nil {
 		return err
 	}
@@ -240,7 +315,7 @@ func (a *applier) run(ctx context.Context, target map[string]Policy, before []Ou
 			return err
 		}
 	}
-	return nil
+	return checkPlaced(live, placed)
 }
 
 // apply is the strict path: a preview must match exactly the arrangement the
