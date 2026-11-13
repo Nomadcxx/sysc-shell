@@ -2,7 +2,10 @@ package shell
 
 import (
 	"fmt"
+	"math"
+	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -10,6 +13,8 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/displays"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -26,12 +31,99 @@ func displaysSettingsBody(r *Registry, h *PanelHost) *ui.Node {
 	snapshot := r.displaysSnapshot
 	syncDisplaysDraftLocked(r, snapshot)
 
-	content := settingsPageColumn(h, displaysEntries(r, snapshot), displaysLead(r, snapshot)...)
+	selected := displaysSelectedOutput(r, snapshot)
+	lead := displaysLead(r, snapshot)
+	if len(snapshot.Outputs) > 0 {
+		lead = append(lead, displaysOutputSelector(h, r, snapshot, selected))
+		if r.displaysDiagram != nil {
+			lead = append(lead, &ui.Node{Kind: ui.KindImage, Image: r.displaysDiagram, ImageW: 360, ImageH: 100, Name: "Connected monitor arrangement", Role: "img"})
+		}
+		for _, out := range snapshot.Outputs {
+			if out.Logical != nil {
+				lead = append(lead, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%s: %d × %d at %d, %d", out.Name.Connector, out.Logical.Width, out.Logical.Height, out.Logical.X, out.Logical.Y), TextRole: theme.RoleCaption})
+			}
+		}
+	}
+	var entries []settings.Entry
+	for _, e := range displaysEntries(r, snapshot) {
+		if e.Group == selected {
+			entries = append(entries, e)
+		}
+	}
+	content := settingsPageColumn(h, entries, lead...)
 	content.Children = append(content.Children, displaysActions(h, r, snapshot))
 	if r.displaysService == nil {
 		content.Children = append([]*ui.Node{displaysAdoptCard(h, r)}, content.Children...)
 	}
 	return content
+}
+
+func displaysSelectedOutput(r *Registry, snapshot displays.Snapshot) string {
+	for _, out := range snapshot.Outputs {
+		if out.Name.Connector == r.displaysSelected {
+			return r.displaysSelected
+		}
+	}
+	if len(snapshot.Outputs) > 0 {
+		r.displaysSelected = snapshot.Outputs[0].Name.Connector
+	}
+	return r.displaysSelected
+}
+
+func displaysOutputSelector(h *PanelHost, r *Registry, snapshot displays.Snapshot, selected string) *ui.Node {
+	e := settings.Entry{Path: "displays.selected", Label: "Display", Kind: settings.KindEnum, Present: settings.PresentMenu, Get: func(config.Config) string { return selected }}
+	for _, out := range snapshot.Outputs {
+		e.Options = append(e.Options, out.Name.Connector)
+		identity := strings.TrimSpace(out.Name.Make + " " + out.Name.Model)
+		if identity != "" {
+			identity += " · "
+		}
+		e.OptionLabels = append(e.OptionLabels, identity+out.Name.Connector)
+	}
+	if len(e.Options) == 1 {
+		return &ui.Node{Kind: ui.KindText, Text: e.OptionLabels[0], Name: e.OptionLabels[0], Role: "heading", TextRole: theme.RoleTitle}
+	}
+	return settingsEntryRow(h, e, settingsBodyWidth(h))
+}
+
+// Snapshot relays build this immutable thumbnail off the Wayland owner. It
+// depicts observed logical rectangles; editing uses labelled fields below.
+func displaysArrangementImage(outputs []displays.Output, p Palette) *ui.Image {
+	var minX, minY, maxX, maxY int64
+	first := true
+	for _, out := range outputs {
+		if out.Logical == nil || out.Logical.Width <= 0 || out.Logical.Height <= 0 {
+			continue
+		}
+		r := out.Logical
+		x, y := int64(r.X), int64(r.Y)
+		if first {
+			minX, minY, maxX, maxY = x, y, x+int64(r.Width), y+int64(r.Height)
+			first = false
+		} else {
+			minX = min(minX, x)
+			minY = min(minY, y)
+			maxX = max(maxX, x+int64(r.Width))
+			maxY = max(maxY, y+int64(r.Height))
+		}
+	}
+	if first {
+		return nil
+	}
+	im := &ui.Image{Width: 360, Height: 100, Stride: 360 * 4, Pix: make([]byte, 360*100*4)}
+	c := render.Canvas{Width: im.Width, Height: im.Height, Stride: im.Stride, Pix: im.Pix}
+	c.FillRounded(ui.Rect{W: 360, H: 100}, 8, p.SurfaceContainer)
+	scale := math.Min(336/float64(maxX-minX), 76/float64(maxY-minY))
+	for _, out := range outputs {
+		if out.Logical == nil || out.Logical.Width <= 0 || out.Logical.Height <= 0 {
+			continue
+		}
+		r := out.Logical
+		box := ui.Rect{X: 12 + int(float64(int64(r.X)-minX)*scale), Y: 12 + int(float64(int64(r.Y)-minY)*scale), W: max(2, int(float64(r.Width)*scale)), H: max(2, int(float64(r.Height)*scale))}
+		c.FillRounded(box, 3, p.SurfaceContainerHighest)
+		c.StrokeRounded(box, 3, 2, p.Outline)
+	}
+	return im
 }
 
 // displaysLead says where the configuration is and what is true right now. A
@@ -40,7 +132,7 @@ func displaysSettingsBody(r *Registry, h *PanelHost) *ui.Node {
 // "Saved" over a refusal.
 func displaysLead(r *Registry, snapshot displays.Snapshot) []*ui.Node {
 	lead := []*ui.Node{{
-		Kind: ui.KindText, Text: displaysRootLine(r), Name: "Niri configuration",
+		Kind: ui.KindText, Text: displaysRootLine(r), Name: "Compositor configuration",
 		TextRole: theme.RoleBody,
 	}}
 	if why := displaysRootWhy(r); why != "" {
@@ -54,7 +146,7 @@ func displaysLead(r *Registry, snapshot displays.Snapshot) []*ui.Node {
 	} else {
 		lead = append(lead, &ui.Node{
 			Kind:     ui.KindText,
-			Text:     "Edits are a draft. Preview applies them live, Keep writes them to the niri configuration, and closing the page or waiting reverts them.",
+			Text:     "Preview applies your draft temporarily. Keep saves it to the compositor configuration; Revert or the timeout restores the previous settings.",
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
 	}
@@ -70,15 +162,19 @@ func displaysLead(r *Registry, snapshot displays.Snapshot) []*ui.Node {
 }
 
 func displaysRootLine(r *Registry) string {
+	name := "Niri"
+	if compositor.Detect(os.Getenv) == compositor.SyscCompositor {
+		name = "sysc-compositor"
+	}
 	switch {
 	case r.displaysService != nil:
-		return "Niri configuration: " + r.displaysService.Root()
+		return name + " configuration: " + r.displaysService.Root()
 	case r.displaysRoot != "":
-		return "Niri configuration: " + r.displaysRoot
+		return name + " configuration: " + r.displaysRoot
 	case r.displaysDiscovery != nil:
-		return "Proposed niri configuration: " + r.displaysDiscovery.Root
+		return "Proposed " + name + " configuration: " + r.displaysDiscovery.Root
 	default:
-		return "Looking for the niri configuration…"
+		return "Looking for the " + name + " configuration…"
 	}
 }
 
@@ -114,7 +210,7 @@ func displaysAdoptCard(h *PanelHost, r *Registry) *ui.Node {
 	case found.ReadOnly:
 		children = append(children, &ui.Node{
 			Kind:     ui.KindText,
-			Text:     found.Note + " Start niri with -c pointing at a configuration this account can write.",
+			Text:     found.Note + " Start the compositor with -c pointing at a configuration this account can write.",
 			TextRole: theme.RoleCaption, Tone: ui.ToneError,
 		})
 	default:
@@ -157,7 +253,7 @@ func displaysActions(h *PanelHost, r *Registry, snapshot displays.Snapshot) *ui.
 			&ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{revert, keep}})
 	} else {
 		children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-			displaysButton(h, "Preview", "displays:preview", busy || r.displaysService == nil),
+			displaysButton(h, "Preview changes", "displays:preview", busy || r.displaysService == nil || !displaysDraftDirty(r) || displaysDraftInvalid(r)),
 			displaysButton(h, "Discard changes", "displays:reset", busy || !displaysDraftDirty(r)),
 			displaysButton(h, "Read again", "displays:refresh", busy),
 		}})
@@ -185,11 +281,16 @@ func displaysEntries(r *Registry, snapshot displays.Snapshot) []settings.Entry {
 	for _, out := range snapshot.Outputs {
 		entries = append(entries,
 			displaysModeEntry(r, out),
+			displaysRefreshEntry(r, out),
 			displaysScaleEntry(r, out),
+			displaysCustomScaleEntry(r, out),
 			displaysTransformEntry(r, out),
 			displaysPositionEntry(r, out, displaysFieldPositionX, "position X", "left"),
 			displaysPositionEntry(r, out, displaysFieldPositionY, "position Y", "top"),
 			displaysVRREntry(r, out))
+		if len(snapshot.Outputs) > 1 && out.Logical != nil {
+			entries = append(entries, displaysPlacementEntry(r, out, snapshot))
+		}
 	}
 	return entries
 }
@@ -216,9 +317,12 @@ func displaysModeEntry(r *Registry, out displays.Output) settings.Entry {
 	connector := out.Name.Connector
 	entry := settings.Entry{
 		Path:  "displays." + connector + "." + displaysFieldMode,
-		Label: connector + " resolution", Describe: "Resolution and refresh rate for " + connector + ".",
+		Label: connector + " resolution", Describe: "Advertised pixel dimensions for " + connector + ".",
 		Section: displaysSection, Group: connector, Kind: settings.KindEnum, Present: settings.PresentMenu,
-		Get:          func(config.Config) string { return displaysDraftValue(r, connector, displaysFieldMode) },
+		Get: func(config.Config) string {
+			size, _, _ := strings.Cut(displaysDraftValue(r, connector, displaysFieldMode), "@")
+			return size
+		},
 		Options:      []string{displaysAuto},
 		OptionLabels: []string{"Automatic"},
 	}
@@ -231,23 +335,81 @@ func displaysModeEntry(r *Registry, out displays.Output) settings.Entry {
 		return entry
 	}
 	for _, mode := range out.Modes {
-		value := displaysModeValue(&displays.ModePolicy{
-			Width: mode.Width, Height: mode.Height, RefreshMilliHz: mode.RefreshMilliHz,
-		})
-		label := displaysModeLabel(mode)
+		value := fmt.Sprintf("%dx%d", mode.Width, mode.Height)
+		if slices.Contains(entry.Options, value) {
+			continue
+		}
+		label := fmt.Sprintf("%d × %d", mode.Width, mode.Height)
 		if mode.Preferred {
 			label += " (preferred)"
 		}
 		entry.Options = append(entry.Options, value)
 		entry.OptionLabels = append(entry.OptionLabels, label)
 	}
-	if saved := displaysDraftValue(r, connector, displaysFieldMode); !slices.Contains(entry.Options, saved) {
-		// A saved value the hardware no longer advertises is never snapped to
-		// another mode: it stays editable so the user can see it and fix it.
-		entry.Kind = settings.KindString
-		entry.Describe = fmt.Sprintf("Saved value %q is not one of the modes %s advertises. Enter WIDTHxHEIGHT@REFRESH, with the refresh rate in millihertz, or Automatic.", saved, connector)
+	if saved := entry.Get(config.Config{}); saved != "" && !slices.Contains(entry.Options, saved) {
+		entry.Options = append(entry.Options, saved)
+		entry.OptionLabels = append(entry.OptionLabels, saved+" (saved; unavailable)")
+		entry.Describe = "The saved resolution is not currently advertised. Select an advertised resolution to change it."
 	}
 	return entry
+}
+
+func displaysRefreshEntry(r *Registry, out displays.Output) settings.Entry {
+	connector := out.Name.Connector
+	e := settings.Entry{Path: "displays." + connector + "." + displaysFieldRefresh, Label: connector + " refresh rate", Describe: "Exact rates advertised for the selected resolution.", Section: displaysSection, Group: connector, Kind: settings.KindEnum, Present: settings.PresentMenu,
+		Get: func(config.Config) string {
+			_, rate, ok := strings.Cut(displaysDraftValue(r, connector, displaysFieldMode), "@")
+			if !ok {
+				return displaysAuto
+			}
+			return rate
+		}, Options: []string{displaysAuto}, OptionLabels: []string{"Automatic (highest)"}}
+	size, _, _ := strings.Cut(displaysDraftValue(r, connector, displaysFieldMode), "@")
+	for _, mode := range out.Modes {
+		if fmt.Sprintf("%dx%d", mode.Width, mode.Height) != size {
+			continue
+		}
+		value := strconv.FormatUint(uint64(mode.RefreshMilliHz), 10)
+		if slices.Contains(e.Options, value) {
+			continue
+		}
+		e.Options = append(e.Options, value)
+		e.OptionLabels = append(e.OptionLabels, displaysRefreshLabel(mode.RefreshMilliHz))
+	}
+	if size == displaysAuto || size == "" {
+		e.OptionLabels[0] = "Automatic with resolution"
+	}
+	return e
+}
+
+func displaysCustomScaleEntry(r *Registry, out displays.Output) settings.Entry {
+	e := displaysEntry(r, out, displaysFieldScaleCustom, out.Name.Connector+" custom scale", "Enter a scale greater than zero and below 10, or auto. Presets remain available above.")
+	e.Get = func(config.Config) string { return displaysDraftValue(r, out.Name.Connector, displaysFieldScale) }
+	return e
+}
+
+func displaysPlacementEntry(r *Registry, out displays.Output, snapshot displays.Snapshot) settings.Entry {
+	connector := out.Name.Connector
+	e := settings.Entry{Path: "displays." + connector + "." + displaysFieldPlacement, Label: connector + " arrangement", Describe: "Relative placements align top edges left/right, or left edges above/below. Numeric X/Y below support other alignments.", Section: displaysSection, Group: connector, Kind: settings.KindEnum, Present: settings.PresentMenu,
+		Get: func(config.Config) string {
+			if v := displaysDraftValue(r, connector, displaysFieldPlacement); v != "" {
+				return v
+			}
+			if p, _ := displaysPositionFrom(r.displaysDraft[connector]); p != nil {
+				return "numeric"
+			}
+			return displaysAuto
+		}, Options: []string{displaysAuto, "numeric"}, OptionLabels: []string{"Automatic", "Numeric X / Y"}}
+	for _, other := range snapshot.Outputs {
+		if other.Name.Connector == connector || other.Logical == nil {
+			continue
+		}
+		for _, side := range []string{"left", "right", "above", "below"} {
+			e.Options = append(e.Options, side+":"+other.Name.Connector)
+			e.OptionLabels = append(e.OptionLabels, side+" of "+other.Name.Connector)
+		}
+	}
+	return e
 }
 
 func displaysScaleEntry(r *Registry, out displays.Output) settings.Entry {
@@ -404,9 +566,29 @@ func displaysSearchEntries(r *Registry, query string) []settings.Entry {
 }
 
 func displaysDraftDirty(r *Registry) bool {
-	for _, fields := range r.displaysDraft {
-		for _, value := range fields {
-			if value != "" {
+	for connector, fields := range r.displaysDraft {
+		baseline := map[string]string{}
+		for _, out := range r.displaysSnapshot.Outputs {
+			if out.Name.Connector == connector {
+				seedDisplaysDraft(baseline, out.Policy)
+				break
+			}
+		}
+		if !reflect.DeepEqual(fields, baseline) {
+			return true
+		}
+	}
+	return false
+}
+
+func displaysDraftInvalid(r *Registry) bool {
+	target, err := displaysTarget(r.displaysDraft)
+	if err != nil {
+		return true
+	}
+	for _, out := range r.displaysSnapshot.Outputs {
+		if p, ok := target[out.Name.Connector]; ok && p.Mode != nil {
+			if err := displays.ValidateMode(out.Modes, *p.Mode); err != nil {
 				return true
 			}
 		}

@@ -16,8 +16,13 @@ type Policy struct {
 	Scale     *float64
 	Transform *TransformPolicy
 	Position  *Position
-	VRR       *VRRPolicy
+	// Relative is a draft-only placement. The applier resolves it after reading
+	// the actual post-mode/scale/transform dimensions, then clears it.
+	Relative *RelativePosition
+	VRR      *VRRPolicy
 }
+
+type RelativePosition struct{ To, Side string }
 
 // Mode is one mode an output advertises, projected from the compositor's own
 // answer. Custom mirrors the output's is_custom_mode flag rather than anything
@@ -87,11 +92,8 @@ func IsPreset(f float64) bool { return slices.Contains(ScalePresets, f) }
 // the only authority: a mode niri did not list would be sent as a custom mode
 // and change hardware behaviour the user never saw.
 func ValidateMode(advertised []Mode, want ModePolicy) error {
-	if want.RefreshMilliHz == 0 {
-		return fmt.Errorf("mode %dx%d has no refresh rate", want.Width, want.Height)
-	}
 	for _, m := range advertised {
-		if m.Width == want.Width && m.Height == want.Height && m.RefreshMilliHz == want.RefreshMilliHz {
+		if m.Width == want.Width && m.Height == want.Height && (want.RefreshMilliHz == 0 || m.RefreshMilliHz == want.RefreshMilliHz) {
 			if want.Custom && !m.Custom {
 				return fmt.Errorf("mode %dx%d@%d is not a custom mode", want.Width, want.Height, want.RefreshMilliHz)
 			}
@@ -199,6 +201,10 @@ func (p Policy) Equal(other Policy) bool {
 		return false
 	case p.Position != nil && *p.Position != *other.Position:
 		return false
+	case (p.Relative == nil) != (other.Relative == nil):
+		return false
+	case p.Relative != nil && *p.Relative != *other.Relative:
+		return false
 	case (p.VRR == nil) != (other.VRR == nil):
 		return false
 	case p.VRR != nil && *p.VRR != *other.VRR:
@@ -250,5 +256,8 @@ func (p Policy) String() string {
 // String renders a mode the way niri's config spells it: hertz with three
 // decimals, because millihertz values such as 120030 must not become 120.03.
 func (m ModePolicy) String() string {
+	if m.RefreshMilliHz == 0 {
+		return fmt.Sprintf("%dx%d", m.Width, m.Height)
+	}
 	return fmt.Sprintf("%dx%d@%.3f", m.Width, m.Height, float64(m.RefreshMilliHz)/1000)
 }

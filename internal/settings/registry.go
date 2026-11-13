@@ -712,9 +712,9 @@ func SectionClusters() []Cluster {
 		// duplicates, and Plugins is not a panel.
 		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver"}},
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
-		{"Surfaces", []string{"Panels", "Monitor", "Weather", "Display"}},
+		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
-		{"System", []string{"Session", "Accessibility"}},
+		{"System", []string{"Display Settings", "Session", "Accessibility"}},
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
 )
 
 // Discovery answers one question: which file is the compositor on this socket
@@ -12,6 +14,7 @@ import (
 // root it was not told, and the answer is only a proposal until the user
 // confirms it.
 type Discovery struct {
+	Kind compositor.Kind
 	// Root is the absolute path the compositor most likely loads.
 	Root string
 	// Source names where the proposal came from, for the confirmation text.
@@ -49,19 +52,56 @@ func Discover(socket string) (Discovery, error) {
 	if err != nil {
 		return Discovery{}, err
 	}
+	cwd, err := os.Readlink(procPath(identity.PID, "cwd"))
+	if err != nil {
+		return Discovery{}, fmt.Errorf("displays: read compositor working directory: %w", err)
+	}
+	// The peer executable, rather than the shell's inherited environment,
+	// selects which compositor's configuration may be managed.
+	if executable, e := os.Readlink(procPath(identity.PID, "exe")); e == nil && filepath.Base(executable) == "sysc-compositor" {
+		argv = append([]string{"sysc-compositor"}, argv[1:]...)
+	}
+	return discoverProcess(argv, env, cwd)
+}
+
+func discoverProcess(argv, env []string, cwd string) (Discovery, error) {
+	kind := compositor.Niri
+	if len(argv) > 0 && filepath.Base(argv[0]) == "sysc-compositor" {
+		kind = compositor.SyscCompositor
+	}
+	finish := func(path, source string, confirm bool) (Discovery, error) {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		d, err := proposal(path, source, confirm)
+		d.Kind = kind
+		if filepath.Clean(path) == filepath.Join("/etc", kind.Executable(), "config.kdl") {
+			d.ReadOnly, d.Note = true, "this is the compositor's system-wide configuration"
+		}
+		return d, err
+	}
 	if path, ok := configFromArgv(argv); ok {
-		return proposal(path, "the compositor's -c argument", false)
+		return finish(path, "the compositor's -c argument", true)
 	}
-	if path, ok := envValue(env, "NIRI_CONFIG"); ok {
-		return proposal(path, "NIRI_CONFIG in the compositor's environment", false)
+	if path, ok := envValue(env, kind.ConfigEnv()); ok {
+		return finish(path, kind.ConfigEnv()+" in the compositor's environment", true)
 	}
-	if base, ok := envValue(env, "XDG_CONFIG_HOME"); ok {
-		return proposal(filepath.Join(base, "niri", "config.kdl"), "XDG_CONFIG_HOME in the compositor's environment", true)
+	base, _ := envValue(env, "XDG_CONFIG_HOME")
+	if !filepath.IsAbs(base) {
+		home, _ := envValue(env, "HOME")
+		if filepath.IsAbs(home) {
+			base = filepath.Join(home, ".config")
+		} else {
+			base = ""
+		}
 	}
-	if home, ok := envValue(env, "HOME"); ok {
-		return proposal(filepath.Join(home, ".config", "niri", "config.kdl"), "the compositor's home directory", true)
+	if base != "" {
+		path := filepath.Join(base, kind.Executable(), "config.kdl")
+		if _, err := os.Stat(path); err == nil {
+			return finish(path, "the compositor's user configuration", true)
+		}
 	}
-	return proposal(systemConfigPath, "niri's system configuration", true)
+	return finish(filepath.Join("/etc", kind.Executable(), "config.kdl"), "the compositor's system configuration", true)
 }
 
 func proposal(path, source string, confirm bool) (Discovery, error) {

@@ -101,7 +101,13 @@ func planOutput(out niri.Output, want Policy) (geometry, layout []niri.OutputCha
 		}
 	}
 	if want.Mode != nil {
-		change, cerr := niri.ModeValue(out, wireMode(*want.Mode))
+		selected := *want.Mode
+		if selected.RefreshMilliHz == 0 {
+			for _, mode := range out.Modes {
+				if mode.Width == selected.Width && mode.Height == selected.Height && mode.RefreshMilliHz > selected.RefreshMilliHz { selected.RefreshMilliHz = mode.RefreshMilliHz }
+			}
+		}
+		change, cerr := niri.ModeValue(out, wireMode(selected))
 		if cerr != nil {
 			return nil, nil, cerr
 		}
@@ -177,7 +183,7 @@ func verifyOutput(out niri.Output, want Policy) error {
 		if got == nil {
 			return fmt.Errorf("displays: %s is not running a selectable mode", out.Name)
 		}
-		if *got != *want.Mode {
+		if got.Width != want.Mode.Width || got.Height != want.Mode.Height || (want.Mode.RefreshMilliHz != 0 && got.RefreshMilliHz != want.Mode.RefreshMilliHz) {
 			return fmt.Errorf("displays: %s is running %s, not %s", out.Name, got, want.Mode)
 		}
 	}
@@ -205,8 +211,11 @@ func verifyOutput(out niri.Output, want Policy) error {
 			return fmt.Errorf("displays: %s sits at %d,%d, not %d,%d", out.Name, out.Logical.X, out.Logical.Y, want.Position.X, want.Position.Y)
 		}
 	}
-	if want.VRR != nil && !want.VRR.OnDemand && out.VRREnabled != want.VRR.OnDemand {
+	if want.VRR != nil && !want.VRR.OnDemand && !out.VRREnabled {
 		return fmt.Errorf("displays: %s has variable refresh rate off, not on", out.Name)
+	}
+	if want.VRR == nil && out.VRREnabled {
+		return fmt.Errorf("displays: %s has variable refresh rate on, not off", out.Name)
 	}
 	return nil
 }

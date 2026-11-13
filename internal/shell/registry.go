@@ -251,6 +251,8 @@ type Registry struct {
 	displaysDiscovery    *displays.Discovery
 	displaysRoot         string
 	displaysDraft        map[string]map[string]string
+	displaysSelected     string
+	displaysDiagram      *ui.Image
 	displaysArmed        bool
 	displaysBusy         bool
 	displaysErr          string

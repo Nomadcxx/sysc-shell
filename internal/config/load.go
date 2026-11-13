@@ -198,6 +198,7 @@ type wireTerminalArt struct {
 
 type wireDisplays struct {
 	NiriConfigPath *string `json:"niri_config_path,omitempty"`
+	SyscConfigPath *string `json:"sysc_config_path,omitempty"`
 }
 
 type wireConfig struct {
@@ -371,7 +372,7 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.TerminalArt.Palette = *wire.TerminalArt.Palette
 	}
-	if wire.Displays != nil && wire.Displays.NiriConfigPath != nil {
+	if wire.Displays != nil {
 		displays, err := applyDisplays(Displays{}, *wire.Displays, "displays")
 		if err != nil {
 			return Config{}, err
@@ -747,11 +748,25 @@ func isBusNameChar(c byte) bool {
 // include, where a relative path would resolve against two different
 // directories.
 func applyDisplays(base Displays, w wireDisplays, path string) (Displays, error) {
-	if p := *w.NiriConfigPath; p != "" {
-		if !filepath.IsAbs(p) {
-			return base, pathErr(path+".niri_config_path", "%q is not an absolute path", p)
+	for _, field := range []struct {
+		name   string
+		source *string
+		target *string
+	}{
+		{"niri_config_path", w.NiriConfigPath, &base.NiriConfigPath},
+		{"sysc_config_path", w.SyscConfigPath, &base.SyscConfigPath},
+	} {
+		if field.source == nil {
+			continue
 		}
-		base.NiriConfigPath = filepath.Clean(p)
+		p := *field.source
+		if p != "" && !filepath.IsAbs(p) {
+			return base, pathErr(path+"."+field.name, "%q is not an absolute path", p)
+		}
+		if p != "" {
+			p = filepath.Clean(p)
+		}
+		*field.target = p
 	}
 	return base, nil
 }

@@ -28,18 +28,36 @@ import (
 // knowable from a config file, so the caller validates the policy against the
 // output it discovered with ValidateMode before it gets here.
 func BuildManaged(graph *Graph, order []string, policies map[string]Policy) ([]byte, error) {
+	names := make([]Name, len(order))
+	for i, connector := range order {
+		names[i] = Name{Connector: connector}
+	}
+	return buildManaged(graph, names, policies)
+}
+
+func buildManaged(graph *Graph, order []Name, policies map[string]Policy) ([]byte, error) {
 	doc := document.New()
-	for _, connector := range order {
+	changed := make(map[string]bool, len(order))
+	for _, name := range order {
+		connector := name.Connector
 		want, ok := policies[connector]
 		if !ok {
 			return nil, fmt.Errorf("displays: no policy for %s", connector)
 		}
-		name := Name{Connector: connector}
 		node, err := managedNode(graph.Find, name, want)
 		if err != nil {
 			return nil, err
 		}
 		doc.AddNode(node)
+		changed[connector] = true
+	}
+	// Managed connectors that are disconnected or untouched keep their whole
+	// existing block, including options this editor does not expose.
+	managed := ManagedPath(graph.Root.Resolved)
+	for _, source := range graph.Outputs {
+		if source.File == managed && !changed[source.Name] {
+			doc.AddNode(source.Node)
+		}
 	}
 	var buf bytes.Buffer
 	if err := kdl.Generate(doc, &buf); err != nil {
@@ -81,6 +99,7 @@ func managedNode(find findFunc, name Name, want Policy) (*document.Node, error) 
 		// pointer is replaced because the generated block must match the
 		// connector exactly rather than the name the user typed.
 		clone := source.Node.ShallowCopy()
+		clone.Children = slices.Clone(source.Node.Children)
 		node = clone
 		setArgument(node, name.Connector)
 	} else {
@@ -97,8 +116,8 @@ func validatePolicy(name Name, want Policy) error {
 			return fmt.Errorf("displays: %s: %w", name.Connector, err)
 		}
 	}
-	if want.Mode != nil && want.Mode.RefreshMilliHz == 0 {
-		return fmt.Errorf("displays: %s: mode %s has no refresh rate", name.Connector, want.Mode)
+	if want.Mode != nil && (want.Mode.Width == 0 || want.Mode.Height == 0) {
+		return fmt.Errorf("displays: %s: mode has an invalid size", name.Connector)
 	}
 	if want.Transform != nil {
 		if err := ParseTransformNative(*want.Transform); err != nil {
@@ -126,8 +145,8 @@ func applyPolicy(node *document.Node, want Policy) {
 	} else {
 		removeChild(node, "scale")
 	}
-	if want.Transform != nil {
-		replaceChild(node, childNode("transform", *want.Transform))
+	if want.Transform != nil && *want.Transform != "Normal" {
+		replaceChild(node, childNode("transform", nativeTransforms[slices.Index(Transforms, *want.Transform)]))
 	} else {
 		removeChild(node, "transform")
 	}
@@ -215,12 +234,8 @@ func setName(node *document.Node, name string) {
 // setArgument replaces the node's single name argument, which for an output
 // block is the exact connector.
 func setArgument(node *document.Node, arg string) {
-	if len(node.Arguments) == 0 {
-		node.AddArgument(arg, "")
-		return
-	}
-	node.Arguments[0].Value = arg
-	node.Arguments = node.Arguments[:1]
+	node.Arguments = nil
+	node.AddArgument(arg, "")
 }
 
 // Transforms is the set of native transform spellings. The KDL string and the
@@ -229,6 +244,10 @@ var Transforms = []string{
 	"Normal", "90", "180", "270",
 	"Flipped", "Flipped90", "Flipped180", "Flipped270",
 }
+
+// Native KDL and IPC use different spellings. Normal is encoded by omission
+// because Niri's native parser has no explicit normal transform.
+var nativeTransforms = []string{"normal", "90", "180", "270", "flipped", "flipped-90", "flipped-180", "flipped-270"}
 
 // ParseTransformNative reports whether s is a transform niri will accept. The
 // native form is the same token the IPC uses, so the check is a set

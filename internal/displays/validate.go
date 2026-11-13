@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
+
 	"github.com/sblinch/kdl-go"
 	"github.com/sblinch/kdl-go/document"
 )
@@ -35,25 +37,42 @@ type Validator func(ctx context.Context, wrapper string) error
 // concatenation, and no string that a path could escape from: a connector name
 // or a path with a space in it reaches niri as one argument.
 func NiriValidator() (Validator, error) {
-	path, err := exec.LookPath("niri")
+	return NativeValidator(compositor.Niri)
+}
+
+func NativeValidator(kind compositor.Kind) (Validator, error) {
+	name := kind.Executable()
+	path, err := exec.LookPath(name)
 	if err != nil {
-		return nil, fmt.Errorf("displays: niri is not on PATH, so candidate display settings cannot be validated: %w", err)
+		return nil, fmt.Errorf("displays: %s is not on PATH, so candidate display settings cannot be validated: %w", name, err)
 	}
 	return func(ctx context.Context, wrapper string) error {
 		ctx, cancel := context.WithTimeout(ctx, validateTimeout)
 		defer cancel()
-		var buf bytes.Buffer
+		var buf validatorOutput
 		cmd := exec.CommandContext(ctx, path, "validate", "-c", wrapper)
 		cmd.Stdout = &buf
 		cmd.Stderr = &buf
 		if err := cmd.Run(); err != nil {
 			if ctx.Err() != nil {
-				return fmt.Errorf("displays: niri validate did not finish within %v: %w", validateTimeout, ctx.Err())
+				return fmt.Errorf("displays: %s validate did not finish within %v: %w", name, validateTimeout, ctx.Err())
 			}
-			return fmt.Errorf("displays: niri rejected the staged configuration: %s", excerpt(buf.String()))
+			return fmt.Errorf("displays: %s rejected the staged configuration: %s", name, excerpt(buf.String()))
 		}
 		return nil
 	}, nil
+}
+
+// Continue draining the child after the diagnostic ceiling, without retaining
+// unbounded output while a failing native parser runs.
+type validatorOutput struct{ bytes.Buffer }
+
+func (b *validatorOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	if room := maxValidateOutput - b.Len(); room > 0 {
+		_, _ = b.Buffer.Write(p[:min(room, n)])
+	}
+	return n, nil
 }
 
 // excerpt trims validator output to something a person can act on, dropping

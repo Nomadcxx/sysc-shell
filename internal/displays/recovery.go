@@ -95,6 +95,8 @@ func arm(ctx context.Context, socket string, own Owned, target map[string]Policy
 		return Ticket{}, err
 	}
 	if err := waitReady(ctx, dir, t); err != nil {
+		_ = t.setState(StateReverted, "recovery was not ready; no output changes were sent")
+		_ = cleanupTicket(dir, token)
 		return Ticket{}, err
 	}
 	return t, nil
@@ -116,6 +118,9 @@ func waitReady(ctx context.Context, dir string, t Ticket) error {
 		}
 		if left <= 0 {
 			return fmt.Errorf("displays: recovery did not report ready within %s", armWindow)
+		}
+		if left < armWindow-applyBudget {
+			return errors.New("displays: recovery readiness consumed the application budget")
 		}
 		select {
 		case <-ctx.Done():
@@ -140,6 +145,9 @@ func RunRecovery(ctx context.Context, token string) error {
 	t, err := LoadTicket(token)
 	if err != nil {
 		return err
+	}
+	if t.finished() {
+		return cleanupTicket(dir, token)
 	}
 	// A ticket names one compositor process. If the peer is a different one,
 	// the preview it describes is gone and acting on it would change somebody
@@ -171,11 +179,17 @@ func RunRecovery(ctx context.Context, token string) error {
 		if err != nil {
 			return err
 		}
+		if err := checkTicketPeer(fresh); err != nil {
+			return err
+		}
 		return recoverLocked(ctx, dir, &fresh)
 	})
 }
 
 func recoverLocked(ctx context.Context, dir string, t *Ticket) error {
+	if err := checkTicketPeer(*t); err != nil {
+		return err
+	}
 	observed := fileDigest(t.Managed)
 	action := decideRecovery(t.State, t.OldHash, t.CandidateHash, observed)
 	switch action {
@@ -191,7 +205,10 @@ func recoverLocked(ctx context.Context, dir string, t *Ticket) error {
 		return finish(dir, t, StateReverted, joinNotes(notes), err)
 	case actionFinishKeep:
 		if err := finishKeep(ctx, t); err != nil {
-			return fail(t, err)
+			if stateErr := t.setState(StateUndo, err.Error()); stateErr != nil {
+				return stateErr
+			}
+			return recoverLocked(ctx, dir, t)
 		}
 		return finish(dir, t, StateKept, "the confirmed configuration was reloaded and verified", nil)
 	case actionUndoPublish:
@@ -210,6 +227,9 @@ func recoverLocked(ctx context.Context, dir string, t *Ticket) error {
 // but still recorded, so a reader can see that the decision was made even when
 // the compositor refused a command.
 func finish(dir string, t *Ticket, state, note string, err error) error {
+	if err != nil {
+		return fail(t, err)
+	}
 	if serr := t.setState(state, note); serr != nil {
 		return serr
 	}
@@ -266,10 +286,29 @@ func joinNotes(notes []string) string {
 // compositor is told to re-read the root it was configured with, and the result
 // is read back rather than assumed.
 func finishKeep(ctx context.Context, t *Ticket) error {
+	if err := checkTicketPeer(*t); err != nil {
+		return err
+	}
+	if fileDigest(t.Managed) != t.CandidateHash {
+		return ErrExternalEdit
+	}
 	if err := niri.Action(ctx, t.Socket, niri.LoadConfigFile{Path: t.Root}); err != nil {
 		return fmt.Errorf("displays: reload %s: %w", t.Root, err)
 	}
-	return verifyTarget(ctx, t.Socket, t.Target)
+	if err := verifyTicketTarget(ctx, *t); err != nil {
+		return err
+	}
+	own, err := LoadOwnership(t.Root)
+	if err != nil {
+		return err
+	}
+	own.ManagedSHA256 = t.CandidateHash
+	connectors, err := managedConnectors(t.Managed)
+	if err != nil {
+		return err
+	}
+	own.Connectors = connectors
+	return own.Store(t.Root)
 }
 
 // undoPublish puts the managed file back to the bytes it held when the preview
@@ -282,6 +321,9 @@ func undoPublish(t *Ticket) error {
 	previous, err := readPrevious(t.Previous)
 	if err != nil {
 		return err
+	}
+	if Hash(previous) != t.OldHash {
+		return errors.New("displays: pre-preview backup changed")
 	}
 	if err := writeFileAtomic(t.Managed, previous, 0o600); err != nil {
 		return err
@@ -297,7 +339,9 @@ func undoPublish(t *Ticket) error {
 	if err := own.Store(t.Root); err != nil {
 		return err
 	}
-	if err := niri.Action(context.Background(), t.Socket, niri.LoadConfigFile{Path: t.Root}); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), applyBudget)
+	defer cancel()
+	if err := niri.Action(ctx, t.Socket, niri.LoadConfigFile{Path: t.Root}); err != nil {
 		return fmt.Errorf("displays: reload %s: %w", t.Root, err)
 	}
 	return nil
@@ -306,21 +350,19 @@ func undoPublish(t *Ticket) error {
 // verifyTarget reads the compositor back after a reload. An output that is not
 // connected is a note, not a failure: nothing a reload can do brings it back.
 func verifyTarget(ctx context.Context, socket string, target map[string]Policy) error {
-	a := &applier{socket: socket}
+	a := &applier{socket: socket, strict: true}
 	live, err := a.live(ctx)
 	if err != nil {
 		return err
 	}
 	var failed []string
-	for _, name := range sortedOutputs(live) {
-		want, ok := target[name.Name]
-		if !ok {
+	for name, want := range target {
+		out, ok := live[name]
+		if !ok || out.Logical == nil {
+			failed = append(failed, fmt.Sprintf("displays: %s is no longer active", name))
 			continue
 		}
-		if err := verifyOutput(live[name.Name], want); err != nil {
-			if err := a.expected(name.Name); err != nil {
-				continue
-			}
+		if err := verifyOutput(out, want); err != nil {
 			failed = append(failed, err.Error())
 		}
 	}
@@ -328,6 +370,32 @@ func verifyTarget(ctx context.Context, socket string, target map[string]Policy) 
 		return errors.New(strings.Join(failed, "; "))
 	}
 	return nil
+}
+
+func checkTicketPeer(t Ticket) error {
+	peer, err := compositorIdentity(t.Socket)
+	if err != nil {
+		return err
+	}
+	if !peer.Equal(t.Identity) {
+		return errStale
+	}
+	return nil
+}
+
+func verifyTicketTarget(ctx context.Context, t Ticket) error {
+	live, err := niri.Outputs(ctx, t.Socket)
+	if err != nil {
+		return err
+	}
+	byName := make(map[string]niri.Output, len(live))
+	for _, out := range live {
+		byName[out.Name] = out
+	}
+	if err := (&applier{strict: true}).checkIdentities(byName, t.Before); err != nil {
+		return err
+	}
+	return verifyTarget(ctx, t.Socket, t.Target)
 }
 
 type recoveryAction int

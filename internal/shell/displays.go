@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/displays"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -79,6 +80,13 @@ func (r *Registry) relayDisplays(svc displaysController) {
 
 func (r *Registry) applyDisplaysSnapshot(svc displaysController, snapshot displays.Snapshot) {
 	r.mu.Lock()
+	palette := DefaultTheme().Palette
+	if h := r.panelHosts[PanelSettings]; h != nil {
+		palette = h.theme.Palette
+	}
+	r.mu.Unlock()
+	diagram := displaysArrangementImage(snapshot.Outputs, palette)
+	r.mu.Lock()
 	if r.displaysService != svc {
 		r.mu.Unlock()
 		return
@@ -90,6 +98,7 @@ func (r *Registry) applyDisplaysSnapshot(svc displaysController, snapshot displa
 	}
 	r.displaysArmed = snapshot.Preview
 	r.displaysSnapshot = snapshot
+	r.displaysDiagram = diagram
 	syncDisplaysDraftLocked(r, snapshot)
 	var publish []waylandSurface
 	if h := r.panelHosts[PanelSettings]; h != nil && h.section == displaysSection {
@@ -116,6 +125,14 @@ func (r *Registry) displaysCommandLocked(h *PanelHost, what string, run func(con
 		ctx, cancel := context.WithTimeout(context.Background(), displaysCommandTimeout)
 		defer cancel()
 		err := run(ctx)
+		if err == nil {
+			r.mu.Lock()
+			svc := r.displaysService
+			r.mu.Unlock()
+			if svc != nil {
+				svc.Refresh()
+			}
+		}
 		r.mu.Lock()
 		if current := r.panelHosts[PanelSettings]; current != nil {
 			h = current
@@ -123,8 +140,6 @@ func (r *Registry) displaysCommandLocked(h *PanelHost, what string, run func(con
 		r.displaysBusy = false
 		if err != nil {
 			r.displaysErr = err.Error()
-		} else if r.displaysService != nil {
-			r.displaysService.Refresh()
 		}
 		if h != nil {
 			r.rebuildPanel(h)
@@ -220,7 +235,7 @@ func (r *Registry) adoptDisplays(ctx context.Context, socket string) error {
 	if _, err := displays.Setup(found.Root); err != nil {
 		return err
 	}
-	validate, err := displays.NiriValidator()
+	validate, err := displays.NativeValidator(found.Kind)
 	if err != nil {
 		// The root is adopted either way: the page will say that publishing is
 		// unavailable until a native niri can validate a candidate.
@@ -233,7 +248,11 @@ func (r *Registry) adoptDisplays(ctx context.Context, socket string) error {
 	// The root is remembered so the next start needs no second confirmation.
 	r.mu.Lock()
 	next := r.cfg
-	next.Displays.NiriConfigPath = found.Root
+	if found.Kind == compositor.SyscCompositor {
+		next.Displays.SyscConfigPath = found.Root
+	} else {
+		next.Displays.NiriConfigPath = found.Root
+	}
 	err = r.writeConfig(next)
 	if err == nil {
 		r.cfg = next
@@ -254,9 +273,6 @@ func (r *Registry) displaysRefreshLocked(h *PanelHost) {
 	if r.displaysBusy {
 		return
 	}
-	if r.displaysService != nil {
-		r.displaysService.Refresh()
-	}
 	if socket := os.Getenv("NIRI_SOCKET"); socket != "" {
 		r.displaysCommandLocked(h, "discover", func(context.Context) error {
 			found, err := displays.Discover(socket)
@@ -268,6 +284,10 @@ func (r *Registry) displaysRefreshLocked(h *PanelHost) {
 			r.mu.Unlock()
 			return nil
 		})
+		return
+	}
+	if svc := r.displaysService; svc != nil {
+		r.displaysCommandLocked(h, "refresh", func(context.Context) error { svc.Refresh(); return nil })
 		return
 	}
 	if h != nil {
@@ -316,8 +336,26 @@ func seedDisplaysDraft(fields map[string]string, p displays.Policy) {
 // setDisplaysDraftLocked records one edited field. Nothing is sent anywhere: a
 // draft is a draft until Preview arms a transaction. Caller holds Registry.mu.
 func (r *Registry) setDisplaysDraftLocked(h *PanelHost, key, value string) {
-	connector, field, ok := strings.Cut(key, ".")
-	if !ok || connector == "" || field == "" {
+	if key == "selected" {
+		for _, out := range r.displaysSnapshot.Outputs {
+			if out.Name.Connector == value {
+				r.displaysSelected = value
+				if h != nil {
+					r.rebuildPanel(h)
+				}
+				return
+			}
+		}
+		return
+	}
+	connector, field := "", ""
+	for _, name := range []string{displaysFieldMode, displaysFieldRefresh, displaysFieldScale, displaysFieldScaleCustom, displaysFieldTransform, displaysFieldPositionX, displaysFieldPositionY, displaysFieldPlacement, displaysFieldVRR} {
+		if c, ok := strings.CutSuffix(key, "."+name); ok && c != "" {
+			connector, field = c, name
+			break
+		}
+	}
+	if connector == "" {
 		return
 	}
 	if r.displaysDraft == nil {
@@ -328,24 +366,59 @@ func (r *Registry) setDisplaysDraftLocked(h *PanelHost, key, value string) {
 		fields = map[string]string{}
 		r.displaysDraft[connector] = fields
 	}
-	fields[field] = value
+	switch field {
+	case displaysFieldRefresh:
+		size, _, _ := strings.Cut(fields[displaysFieldMode], "@")
+		if size == displaysAuto || size == "" {
+			return
+		}
+		fields[displaysFieldMode] = size
+		if value != displaysAuto {
+			fields[displaysFieldMode] += "@" + value
+		}
+	case displaysFieldScaleCustom:
+		fields[displaysFieldScale] = value
+	case displaysFieldMode:
+		oldSize, _, _ := strings.Cut(fields[field], "@")
+		if value != oldSize {
+			fields[field] = value
+		}
+	case displaysFieldPositionX, displaysFieldPositionY:
+		delete(fields, displaysFieldPlacement)
+		fields[field] = value
+	case displaysFieldPlacement:
+		switch value {
+		case displaysAuto:
+			fields[displaysFieldPositionX], fields[displaysFieldPositionY] = displaysAuto, displaysAuto
+			delete(fields, field)
+		case "numeric":
+			delete(fields, field)
+		default:
+			fields[field] = value
+		}
+	default:
+		fields[field] = value
+	}
 	if h != nil {
 		r.rebuildPanel(h)
 	}
 }
 
 const (
-	displaysFieldMode       = "mode"
-	displaysFieldScale      = "scale"
-	displaysFieldTransform  = "transform"
-	displaysFieldPositionX  = "position.x"
-	displaysFieldPositionY  = "position.y"
-	displaysFieldVRR        = "vrr"
-	displaysAuto            = "auto"
-	displaysVRROnDemand     = "on-demand"
-	displaysSection         = "Display"
-	displaysNotSetUpNote    = "Display settings are not set up. Adopt the compositor's configuration to enable them."
-	displaysNoValidatorNote = "niri validate is not available, so a candidate cannot be checked before it is published. Nothing will be changed."
+	displaysFieldMode        = "mode"
+	displaysFieldRefresh     = "refresh"
+	displaysFieldScale       = "scale"
+	displaysFieldScaleCustom = "scale.custom"
+	displaysFieldPlacement   = "placement"
+	displaysFieldTransform   = "transform"
+	displaysFieldPositionX   = "position.x"
+	displaysFieldPositionY   = "position.y"
+	displaysFieldVRR         = "vrr"
+	displaysAuto             = "auto"
+	displaysVRROnDemand      = "on-demand"
+	displaysSection          = "Display Settings"
+	displaysNotSetUpNote     = "Display settings are not set up. Adopt the compositor's configuration to enable them."
+	displaysNoValidatorNote  = "niri validate is not available, so a candidate cannot be checked before it is published. Nothing will be changed."
 )
 
 // displaysTarget turns the edited draft into the policies a transaction
@@ -379,7 +452,13 @@ func displaysTarget(draft map[string]map[string]string) (map[string]displays.Pol
 				p.Transform = &name
 			}
 		}
-		if _, ok := fields[displaysFieldPositionX]; ok {
+		if placement := fields[displaysFieldPlacement]; placement != "" {
+			side, to, ok := strings.Cut(placement, ":")
+			if !ok || to == "" {
+				return nil, fmt.Errorf("%s arrangement is invalid", connector)
+			}
+			p.Relative = &displays.RelativePosition{To: to, Side: side}
+		} else if _, ok := fields[displaysFieldPositionX]; ok {
 			pos, err := displaysPositionFrom(fields)
 			if err != nil {
 				return nil, fmt.Errorf("%s position: %v", connector, err)
@@ -402,7 +481,11 @@ func displaysModeValue(m *displays.ModePolicy) string {
 	if m == nil {
 		return displaysAuto
 	}
-	return fmt.Sprintf("%dx%d@%d", m.Width, m.Height, m.RefreshMilliHz)
+	size := fmt.Sprintf("%dx%d", m.Width, m.Height)
+	if m.RefreshMilliHz == 0 {
+		return size
+	}
+	return fmt.Sprintf("%s@%d", size, m.RefreshMilliHz)
 }
 
 func displaysModeLabel(m displays.Mode) string {
@@ -417,10 +500,7 @@ func displaysModeFrom(v string) (*displays.ModePolicy, error) {
 	if v == displaysAuto || v == "" {
 		return nil, nil
 	}
-	size, refresh, ok := strings.Cut(v, "@")
-	if !ok {
-		return nil, fmt.Errorf("%q is not a resolution and refresh rate", v)
-	}
+	size, refresh, explicit := strings.Cut(v, "@")
 	w, h, ok := strings.Cut(size, "x")
 	if !ok {
 		return nil, fmt.Errorf("%q is not WIDTHxHEIGHT@REFRESH", v)
@@ -433,8 +513,11 @@ func displaysModeFrom(v string) (*displays.ModePolicy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%q has no height", v)
 	}
-	milli, err := strconv.ParseUint(refresh, 10, 32)
-	if err != nil || milli == 0 {
+	var milli uint64
+	if explicit {
+		milli, err = strconv.ParseUint(refresh, 10, 32)
+	}
+	if width == 0 || height == 0 || err != nil || (explicit && milli == 0) {
 		return nil, fmt.Errorf("%q has no refresh rate in millihertz", v)
 	}
 	return &displays.ModePolicy{Width: uint16(width), Height: uint16(height), RefreshMilliHz: uint32(milli)}, nil
@@ -517,9 +600,9 @@ func displaysVRRValue(vrr *displays.VRRPolicy) string {
 
 func displaysVRRFrom(v string) (*displays.VRRPolicy, error) {
 	switch v {
-	case "", "false", "true":
-		// The two are the same policy: niri's absent node and a node without
-		// on-demand both mean "vary the refresh as it needs to".
+	case "", "false":
+		return nil, nil
+	case "true":
 		return &displays.VRRPolicy{}, nil
 	case displaysVRROnDemand:
 		return &displays.VRRPolicy{OnDemand: true}, nil

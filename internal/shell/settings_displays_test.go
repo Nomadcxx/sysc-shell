@@ -13,6 +13,42 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+func TestDisplayResolutionRefreshAndVRRPolicies(t *testing.T) {
+	r := &Registry{displaysDraft: map[string]map[string]string{"DP-1": {displaysFieldMode: "3440x1440@60030"}}}
+	out := displaysTestOutput("DP-1")
+	out.Modes = append(out.Modes, displays.Mode{Width: 3440, Height: 1440, RefreshMilliHz: 59940})
+	resolution := displaysModeEntry(r, out)
+	if got := resolution.Get(config.Config{}); got != "3440x1440" {
+		t.Fatalf("resolution = %q", got)
+	}
+	refresh := displaysRefreshEntry(r, out)
+	if len(refresh.Options) != 3 || refresh.Options[1] != "60030" || refresh.Options[2] != "59940" {
+		t.Fatalf("rates = %v", refresh.Options)
+	}
+	for _, input := range []string{"false", "true", displaysVRROnDemand} {
+		p, err := displaysVRRFrom(input)
+		if err != nil || (p == nil) != (input == "false") {
+			t.Fatalf("VRR %q = %+v, %v", input, p, err)
+		}
+	}
+	mode, err := displaysModeFrom("3440x1440")
+	if err != nil || mode.RefreshMilliHz != 0 {
+		t.Fatalf("automatic refresh = %+v, %v", mode, err)
+	}
+}
+
+func TestDisplayDraftDirtyComparesSavedPolicies(t *testing.T) {
+	r := &Registry{displaysSnapshot: displaysTestSnapshot()}
+	syncDisplaysDraftLocked(r, r.displaysSnapshot)
+	if displaysDraftDirty(r) {
+		t.Fatal("opening page created changes")
+	}
+	r.displaysDraft["DP-1"][displaysFieldScale] = "1.5"
+	if !displaysDraftDirty(r) {
+		t.Fatal("changed scale is clean")
+	}
+}
+
 // fakeDisplays is the service the page talks to. It records every command, so
 // a test can tell an edit that reached the compositor from one that did not.
 type fakeDisplays struct {

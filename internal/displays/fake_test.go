@@ -34,7 +34,11 @@ type fakeNiri struct {
 	outs map[string]*fakeOut
 	// requests counts every request the fake has seen, so a test can assert
 	// the shell actually reloaded the configuration it claimed to keep.
-	reloads int
+	reloads   int
+	queryErr  bool
+	reloadErr bool
+	failAfter int
+	applied   int
 }
 
 type fakeOut struct {
@@ -89,6 +93,11 @@ func (f *fakeNiri) outputsJSON() []byte {
 func (f *fakeNiri) apply(conn net.Conn, output string, action json.RawMessage) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failAfter > 0 && f.applied >= f.failAfter {
+		f.queryErr = true
+		reply(conn, []byte(`{"Err":"injected output failure"}`))
+		return
+	}
 	o, ok := f.outs[output]
 	if !ok {
 		f.say("missing %s", output)
@@ -96,6 +105,7 @@ func (f *fakeNiri) apply(conn net.Conn, output string, action json.RawMessage) {
 		return
 	}
 	applyAction(o, action)
+	f.applied++
 	f.say("%s %s", output, compact(action))
 	reply(conn, []byte(`{"Ok":{"OutputConfigChanged":"Applied"}}`))
 }
@@ -120,15 +130,17 @@ func applyAction(o *fakeOut, action json.RawMessage) {
 						o.current = i
 					}
 				}
+			} else {
+				o.current = 0
 			}
 		case "Scale":
 			if f, specific := specificScale(object(raw)); specific {
 				o.scale = f
+			} else {
+				o.scale = 1
 			}
 		case "Transform":
-			if s, specific := specificString(object(raw)); specific {
-				o.tx = s
-			}
+			_ = json.Unmarshal(object(raw)["transform"], &o.tx)
 		case "Position":
 			if x, y, specific := specificPosition(object(raw)); specific {
 				o.x, o.y = x, y
@@ -200,6 +212,13 @@ func (f *fakeNiri) handle(conn net.Conn) {
 		line := strings.TrimSpace(sc.Text())
 		switch {
 		case line == `"Outputs"`:
+			f.mu.Lock()
+			failed := f.queryErr
+			f.mu.Unlock()
+			if failed {
+				reply(conn, []byte(`{"Err":"injected query failure"}`))
+				continue
+			}
 			// Every query records the state it answered, so a test in another
 			// process can observe the fake's real state through the wire.
 			f.logScales()
@@ -219,6 +238,11 @@ func (f *fakeNiri) handle(conn net.Conn) {
 		default:
 			f.mu.Lock()
 			if strings.Contains(line, "LoadConfigFile") {
+				if f.reloadErr {
+					f.mu.Unlock()
+					reply(conn, []byte(`{"Err":"injected reload failure"}`))
+					continue
+				}
 				f.reloads++
 				f.say("reload %s", line)
 			}

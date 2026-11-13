@@ -101,6 +101,11 @@ func (a *applier) checkIdentities(live map[string]niri.Output, before []OutputSt
 			return fmt.Errorf("displays: %s was replaced while the transaction was open", out.Name)
 		}
 	}
+	for _, saved := range before {
+		if _, ok := live[saved.Name.Connector]; !ok {
+			return a.expected(saved.Name.Connector)
+		}
+	}
 	return nil
 }
 

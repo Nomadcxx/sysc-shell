@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -43,6 +44,8 @@ type Output struct {
 	Modes []Mode
 	// VRRSupported reports whether the hardware can vary refresh at all.
 	VRRSupported bool
+	VRREnabled   bool
+	Unavailable  string
 }
 
 // Snapshot is the whole state the page renders from. It is published by value:
@@ -117,9 +120,22 @@ func (s *Service) Subscribe() <-chan Snapshot {
 }
 
 func (s *Service) publish() {
+	// The helper can finish after timeout while the shell remains alive.
+	if s.ticket != nil {
+		if fresh, err := LoadTicket(s.ticket.Token); errors.Is(err, os.ErrNotExist) || (err == nil && fresh.finished()) {
+			s.ticket = nil
+			s.stopTicking()
+			s.note = "The display preview ended."
+			if own, err := LoadOwnership(s.root); err == nil {
+				s.own = own
+			}
+		}
+	}
 	// Building the snapshot queries the compositor, so a failing query is
 	// reported as a note rather than a panic: the page still needs to render.
-	live, err := niri.Outputs(context.Background(), s.socket)
+	ctx, cancel := context.WithTimeout(context.Background(), applyBudget)
+	defer cancel()
+	live, err := niri.Outputs(ctx, s.socket)
 	if err != nil {
 		s.note = err.Error()
 	}
@@ -138,9 +154,10 @@ func (s *Service) publish() {
 	defer s.subMu.Unlock()
 	for _, ch := range s.subs {
 		select {
-		case ch <- snap:
+		case <-ch:
 		default:
 		}
+		ch <- snap
 	}
 }
 
@@ -149,19 +166,30 @@ func (s *Service) publish() {
 // an output the page never showed must not keep a policy the managed file does
 // not agree with.
 func (s *Service) outputs(live []niri.Output, target map[string]Policy) []Output {
+	graph, graphErr := LoadGraph(s.root)
 	out := make([]Output, 0, len(live))
 	for _, o := range live {
-		want, ok := target[o.Name]
-		if !ok {
-			want, _ = effectivePolicy(o)
+		var want Policy
+		unavailable := ""
+		if graphErr != nil {
+			unavailable = graphErr.Error()
+		} else {
+			var err error
+			want, unavailable, err = savedPolicy(graph, outputName(o))
+			if err != nil {
+				unavailable = err.Error()
+			}
 		}
-		out = append(out, Output{
-			Name:         outputName(o),
-			Policy:       want,
-			Logical:      logicalRect(o),
-			Modes:        advertised(o),
-			VRRSupported: o.VRRSupported,
-		})
+		if o.Logical == nil {
+			unavailable = "This display is disabled; enable it in the native configuration before editing it."
+		}
+		if o.IsCustomMode {
+			unavailable = "Custom display modes cannot be edited here."
+		}
+		if preview, ok := target[o.Name]; ok {
+			want = preview
+		}
+		out = append(out, Output{Name: outputName(o), Policy: clonePolicy(want), Logical: logicalRect(o), Modes: advertised(o), VRRSupported: o.VRRSupported, VRREnabled: o.VRREnabled, Unavailable: unavailable})
 	}
 	slices.SortFunc(out, func(a, b Output) int { return strings.Compare(a.Name.Connector, b.Name.Connector) })
 	return out
@@ -195,43 +223,81 @@ func (s *Service) Preview(ctx context.Context, draft map[string]Policy) error {
 	if s.validate == nil {
 		return ErrNoValidator
 	}
-	if s.ticket != nil {
-		return errors.New("displays: a preview is already live")
-	}
-	if err := CheckOwnership(s.root, s.own); err != nil {
-		return err
-	}
-	target, before, err := s.plan(ctx, draft)
-	if err != nil {
-		return err
-	}
-	candidate, err := s.candidate(target)
-	if err != nil {
-		return err
-	}
-	dir, err := TicketDir()
-	if err != nil {
-		return err
-	}
-	if err := StageAndValidate(ctx, s.validate, filepath.Join(dir, "validate"), candidate, s.root); err != nil {
-		return err
-	}
-	t, err := arm(ctx, s.socket, s.own, target, before)
-	if err != nil {
-		return err
-	}
-	s.ticket = &t
-	if err := applyTarget(ctx, s.socket, target, before); err != nil {
-		// The preview did not take. Put back what the applier may have
-		// already sent, and leave nothing armed.
-		_, _ = restore(ctx, s.socket, before)
-		s.abandon(&t, err.Error())
-		return err
-	}
-	s.note = ""
-	s.startTick()
-	s.publish()
-	return nil
+	return withCompositorLock(ctx, s.socket, func() error {
+		if s.ticket != nil {
+			return errors.New("displays: a preview is already live")
+		}
+		if active, ok, err := activeTicketFor(s.socket); err != nil {
+			return err
+		} else if ok {
+			return fmt.Errorf("displays: preview %s is still unresolved", active.Token)
+		}
+		if err := CheckOwnership(s.root, s.own); err != nil {
+			return err
+		}
+		target, before, err := s.plan(ctx, draft)
+		if err != nil {
+			return err
+		}
+		candidate, err := s.candidate(target, before)
+		if err != nil {
+			return err
+		}
+		dir, err := TicketDir()
+		if err != nil {
+			return err
+		}
+		if err := StageAndValidate(ctx, s.validate, filepath.Join(dir, "validate-"+Hash([]byte(s.socket))[:16]), candidate, s.root); err != nil {
+			return err
+		}
+		if err := CheckOwnership(s.root, s.own); err != nil {
+			return err
+		}
+		if err := verifyBaseline(ctx, s.socket, before); err != nil {
+			return err
+		}
+		t, err := arm(ctx, s.socket, s.own, target, before)
+		if err != nil {
+			return err
+		}
+		s.ticket = &t
+		err = withTicketLockContext(ctx, dir, t.Token, func() error {
+			if err := checkTicketPeer(t); err != nil {
+				return err
+			}
+			if err := applyTarget(ctx, s.socket, target, before); err != nil {
+				return err
+			}
+			t.Target = target // relative positions were resolved after geometry
+			return t.Store()
+		})
+		if err != nil {
+			// A failed/cancelled caller cannot revoke independent recovery. Try
+			// restoration with its own budget and keep evidence on any failure.
+			restoreCtx, cancel := context.WithTimeout(context.Background(), applyBudget)
+			defer cancel()
+			err = errors.Join(err, withTicketLockContext(restoreCtx, dir, t.Token, func() error {
+				if err := checkTicketPeer(t); err != nil {
+					return err
+				}
+				_, restoreErr := restore(restoreCtx, s.socket, before)
+				if restoreErr != nil {
+					return fail(&t, restoreErr)
+				}
+				if settleErr := s.settle(&t, StateReverted); settleErr != nil {
+					return settleErr
+				}
+				s.ticket = nil
+				return nil
+			}))
+			s.note = err.Error()
+			return err
+		}
+		s.note = ""
+		s.startTick()
+		s.publish()
+		return nil
+	})
 }
 
 // Keep makes the previewed configuration durable. The intent is written before
@@ -241,72 +307,177 @@ func (s *Service) Preview(ctx context.Context, draft map[string]Policy) error {
 func (s *Service) Keep(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t := s.ticket
-	if t == nil {
+	if s.ticket == nil {
 		return errors.New("displays: there is no preview to keep")
-	}
-	if left, err := Remaining(t.DeadlineNS); err != nil {
-		return err
-	} else if left <= 0 {
-		// The window closed, so this is a new decision and the armed recovery
-		// owns it. Refusing here does not revoke the preview: the helper will
-		// revert it, and pretending otherwise would leave the user unsure
-		// whether the change is live.
-		return fmt.Errorf("displays: the preview window closed %s ago; the preview is being reverted", -left)
-	}
-	if err := CheckOwnership(s.root, s.own); err != nil {
-		return err
-	}
-	candidate, err := s.candidate(t.Target)
-	if err != nil {
-		return err
 	}
 	dir, err := TicketDir()
 	if err != nil {
 		return err
 	}
-	if err := StageAndValidate(ctx, s.validate, filepath.Join(dir, "validate"), candidate, s.root); err != nil {
+	token := s.ticket.Token
+	return withTicketLockContext(ctx, dir, token, func() error {
+		t, err := LoadTicket(token)
+		if err != nil {
+			return err
+		}
+		if t.State != StatePreview {
+			return errors.New("displays: preview is being resolved")
+		}
+		if err := checkKeep(ctx, t); err != nil {
+			return err
+		}
+		if err := CheckOwnership(s.root, s.own); err != nil {
+			return err
+		}
+		candidate, err := s.candidate(t.Target, t.Before)
+		if err != nil {
+			return err
+		}
+		if err := StageAndValidate(ctx, s.validate, filepath.Join(dir, "validate-"+token), candidate, s.root); err != nil {
+			return err
+		}
+		// Validation may consume the remaining window or observe hotplug.
+		if err := checkKeep(ctx, t); err != nil {
+			return err
+		}
+		if err := CheckOwnership(s.root, s.own); err != nil {
+			return err
+		}
+		t.CandidateHash = Hash(candidate)
+		if err := t.setState(StateCommitting, "the configuration was confirmed"); err != nil {
+			return err
+		}
+		s.ticket = &t
+		if err := PublishManaged(&s.own, candidate); err != nil {
+			return s.undoKeep(&t, err)
+		}
+		if err := finishKeep(ctx, &t); err != nil {
+			return s.undoKeep(&t, err)
+		}
+		if own, err := LoadOwnership(s.root); err != nil {
+			return s.undoKeep(&t, err)
+		} else {
+			s.own = own
+		}
+		if err := s.settle(&t, StateKept); err != nil {
+			return err
+		}
+		s.ticket = nil
+		s.note = "Saved to the native compositor configuration."
+		s.publish()
+		return nil
+	})
+}
+
+func checkKeep(ctx context.Context, t Ticket) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	t.CandidateHash = Hash(candidate)
-	if err := t.setState(StateCommitting, "the configuration was confirmed"); err != nil {
+	if err := checkTicketPeer(t); err != nil {
 		return err
 	}
-	if err := PublishManaged(&s.own, candidate); err != nil {
+	fresh, err := LoadTicket(t.Token)
+	if err != nil {
 		return err
 	}
-	if err := niri.Action(ctx, s.socket, niri.LoadConfigFile{Path: s.root}); err != nil {
+	if fresh.State != StatePreview {
+		return errors.New("displays: preview was already resolved")
+	}
+	if left, err := Remaining(fresh.DeadlineNS); err != nil {
+		return err
+	} else if left <= 0 {
+		return errors.New("displays: preview expired")
+	}
+	live, err := niri.Outputs(ctx, t.Socket)
+	if err != nil {
 		return err
 	}
-	if err := verifyTarget(ctx, s.socket, t.Target); err != nil {
+	byName := make(map[string]niri.Output, len(live))
+	for _, out := range live {
+		byName[out.Name] = out
+	}
+	if err := (&applier{strict: true}).checkIdentities(byName, t.Before); err != nil {
 		return err
+	}
+	return verifyTarget(ctx, t.Socket, t.Target)
+}
+
+// undoKeep is called under the same decision lock. Persisting undo before any
+// restoration makes the helper resume the correct operation after a crash.
+func (s *Service) undoKeep(t *Ticket, cause error) error {
+	if err := t.setState(StateUndo, cause.Error()); err != nil {
+		return errors.Join(cause, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), applyBudget)
+	defer cancel()
+	if err := checkTicketPeer(*t); err != nil {
+		return errors.Join(cause, fail(t, err))
+	}
+	if err := recoverLocked(ctx, mustTicketDir(), t); err != nil {
+		return errors.Join(cause, err)
+	}
+	if own, err := LoadOwnership(s.root); err == nil {
+		s.own = own
 	}
 	s.ticket = nil
-	s.note = "Saved to the niri configuration."
-	s.settle(t, StateKept)
-	s.publish()
-	return nil
+	s.stopTicking()
+	s.note = cause.Error()
+	return cause
 }
+
+func mustTicketDir() string { dir, _ := TicketDir(); return dir }
 
 // Revert gives the outputs back what they had before the preview.
 func (s *Service) Revert(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t := s.ticket
-	if t == nil {
+	if s.ticket == nil {
 		return nil
 	}
-	notes, err := restore(ctx, s.socket, t.Before)
+	dir, err := TicketDir()
 	if err != nil {
-		s.note = err.Error()
-		s.publish()
 		return err
 	}
-	s.ticket = nil
-	s.note = joinNotes(notes)
-	s.settle(t, StateReverted)
-	s.publish()
-	return nil
+	return withTicketLockContext(ctx, dir, s.ticket.Token, func() error {
+		t, err := LoadTicket(s.ticket.Token)
+		if errors.Is(err, os.ErrNotExist) {
+			s.ticket = nil
+			s.stopTicking()
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := checkTicketPeer(t); err != nil {
+			return err
+		}
+		if t.State == StateCommitting || t.State == StateUndo {
+			if err := t.setState(StateUndo, "revert requested"); err != nil {
+				return err
+			}
+			if err := recoverLocked(ctx, dir, &t); err != nil {
+				return err
+			}
+		} else if !t.finished() {
+			notes, err := restore(ctx, s.socket, t.Before)
+			if err != nil {
+				s.note = err.Error()
+				return fail(&t, err)
+			}
+			t.Note = joinNotes(notes)
+			if err := s.settle(&t, StateReverted); err != nil {
+				return err
+			}
+		}
+		s.ticket = nil
+		s.stopTicking()
+		s.note = t.Note
+		if own, err := LoadOwnership(s.root); err == nil {
+			s.own = own
+		}
+		s.publish()
+		return nil
+	})
 }
 
 // Close reverts a live preview and drops the subscribers. The service is
@@ -319,16 +490,6 @@ func (s *Service) Close(ctx context.Context) error {
 	defer s.subMu.Unlock()
 	s.subs = nil
 	return err
-}
-
-// abandon leaves a ticket the service has decided to stop caring about. Nothing
-// armed may outlive the decision, so the helper is stopped and its files go;
-// the reason is the note the page shows.
-func (s *Service) abandon(t *Ticket, note string) {
-	s.note = note
-	t.Note = note
-	_ = t.Store()
-	s.settle(t, StateReverted)
 }
 
 // startTick republishes once a second while a preview is armed, so the
@@ -372,19 +533,19 @@ func (s *Service) stopTicking() {
 // settle writes a terminal state, stops the helper and removes the ticket. It
 // runs under the command mutex, so the helper's own decision sees either the
 // state before or the state after, never neither.
-func (s *Service) settle(t *Ticket, state string) {
-	s.stopTicking()
+func (s *Service) settle(t *Ticket, state string) error {
 	if err := t.setState(state, t.Note); err != nil {
-		return
+		return err
 	}
+	s.stopTicking()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = stopRecoveryUnit(ctx, t.Token)
 	dir, err := TicketDir()
 	if err != nil {
-		return
+		return err
 	}
-	_ = cleanupTicket(dir, t.Token)
+	return cleanupTicket(dir, t.Token)
 }
 
 // plan turns a draft into a target that covers every live output, and captures
@@ -392,76 +553,143 @@ func (s *Service) settle(t *Ticket, state string) {
 // only authority on whether niri accepts the result is the staged validation
 // that follows.
 func (s *Service) plan(ctx context.Context, draft map[string]Policy) (map[string]Policy, []OutputState, error) {
+	graph, err := LoadGraph(s.root)
+	if err != nil {
+		return nil, nil, err
+	}
 	live, err := niri.Outputs(ctx, s.socket)
 	if err != nil {
 		return nil, nil, err
 	}
-	slices.SortFunc(live, func(a, b niri.Output) int { return strings.Compare(a.Name, b.Name) })
-	target := make(map[string]Policy, len(live))
-	rects := make(map[string]Rect, len(live))
+	target := map[string]Policy{}
 	before := make([]OutputState, 0, len(live))
-	connected := make(map[string]bool, len(live))
-	for _, o := range live {
-		connected[o.Name] = true
-		want, ok := draft[o.Name]
-		if !ok {
-			if want, _ = effectivePolicy(o); !ok {
-				want = Policy{}
-			}
-		}
-		if _, _, err := planOutput(o, want); err != nil {
+	connected := map[string]bool{}
+	for _, out := range live {
+		connected[out.Name] = true
+		baseline, unavailable, err := savedPolicy(graph, outputName(out))
+		if err != nil {
 			return nil, nil, err
 		}
-		if want.Scale != nil {
-			if err := ValidateScale(*want.Scale); err != nil {
-				return nil, nil, fmt.Errorf("displays: %s: %w", o.Name, err)
-			}
+		saved := beforeState(out)
+		saved.Policy = clonePolicy(baseline)
+		before = append(before, saved)
+		want, edited := draft[out.Name]
+		if !edited || want.Equal(baseline) {
+			continue
+		}
+		if unavailable != "" {
+			return nil, nil, errors.New(unavailable)
+		}
+		if out.Logical == nil || out.IsCustomMode {
+			return nil, nil, fmt.Errorf("displays: %s is disabled or running a custom mode", out.Name)
+		}
+		if err := verifyOutput(out, baseline); err != nil {
+			return nil, nil, fmt.Errorf("displays: %s differs from saved policy; restore the native baseline first: %w", out.Name, err)
+		}
+		if err := validatePolicy(outputName(out), want); err != nil {
+			return nil, nil, err
 		}
 		if want.Mode != nil {
-			if err := ValidateMode(advertised(o), *want.Mode); err != nil {
-				return nil, nil, fmt.Errorf("displays: %s: %w", o.Name, err)
+			if err := ValidateMode(advertised(out), *want.Mode); err != nil {
+				return nil, nil, err
 			}
 		}
-		if want.Transform != nil {
-			if err := ParseTransformNative(*want.Transform); err != nil {
-				return nil, nil, fmt.Errorf("displays: %s: %w", o.Name, err)
+		if _, _, err := planOutput(out, want); err != nil {
+			return nil, nil, err
+		}
+		if want.Relative != nil {
+			if want.Position != nil || want.Relative.To == out.Name {
+				return nil, nil, errors.New("displays: invalid relative placement")
+			}
+			if !slices.Contains([]string{"left", "right", "above", "below"}, want.Relative.Side) {
+				return nil, nil, errors.New("displays: invalid relative direction")
 			}
 		}
-		if want.Position != nil && o.Logical != nil {
-			rects[o.Name] = Rect{
-				Position: *want.Position,
-				Width:    int32(o.Logical.Width),
-				Height:   int32(o.Logical.Height),
-			}
-		}
-		target[o.Name] = want
-		before = append(before, beforeState(o))
+		target[out.Name] = clonePolicy(want)
 	}
-	// A draft naming an output that is not connected is refused rather than
-	// dropped. Silently applying the rest would leave the managed file and the
-	// live session disagreeing about an output the user just set.
 	for name := range draft {
 		if !connected[name] {
 			return nil, nil, fmt.Errorf("displays: %s is not connected", name)
 		}
 	}
-	if err := ValidateArrangement(rects); err != nil {
-		return nil, nil, err
+	for _, want := range target {
+		if want.Relative != nil && !connected[want.Relative.To] {
+			return nil, nil, errors.New("displays: relative display is not connected")
+		}
+	}
+	if len(target) == 0 {
+		return nil, nil, errors.New("displays: there are no changed display settings")
 	}
 	return target, before, nil
 }
 
+func verifyBaseline(ctx context.Context, socket string, before []OutputState) error {
+	live, err := niri.Outputs(ctx, socket)
+	if err != nil {
+		return err
+	}
+	byName := make(map[string]niri.Output, len(live))
+	for _, out := range live {
+		byName[out.Name] = out
+	}
+	if err := (&applier{strict: true}).checkIdentities(byName, before); err != nil {
+		return err
+	}
+	for _, saved := range before {
+		out := byName[saved.Name.Connector]
+		if saved.Logical == nil || out.IsCustomMode {
+			continue
+		}
+		if err := verifyOutput(out, saved.Policy); err != nil {
+			return fmt.Errorf("displays: saved baseline changed: %w", err)
+		}
+	}
+	return nil
+}
+
 // candidate renders the owned file for a target. The order is the target's own
 // keys, so a Keep recomputes byte for byte what the preview validated.
-func (s *Service) candidate(target map[string]Policy) ([]byte, error) {
+func (s *Service) candidate(target map[string]Policy, before []OutputState) ([]byte, error) {
 	graph, err := LoadGraph(s.root)
 	if err != nil {
 		return nil, err
 	}
-	order := make([]string, 0, len(target))
+	order := make([]Name, 0, len(target))
 	for name := range target {
-		order = append(order, name)
+		saved, ok := findSaved(before, name)
+		if !ok {
+			return nil, fmt.Errorf("displays: no identity for %s", name)
+		}
+		order = append(order, saved.Name)
 	}
-	sort.Strings(order)
-	return BuildManaged(graph, order, target)
+	sort.Slice(order, func(i, j int) bool { return order[i].Connector < order[j].Connector })
+	return buildManaged(graph, order, target)
+}
+
+func clonePolicy(p Policy) Policy {
+	if p.Mode != nil {
+		v := *p.Mode
+		p.Mode = &v
+	}
+	if p.Scale != nil {
+		v := *p.Scale
+		p.Scale = &v
+	}
+	if p.Transform != nil {
+		v := *p.Transform
+		p.Transform = &v
+	}
+	if p.Position != nil {
+		v := *p.Position
+		p.Position = &v
+	}
+	if p.Relative != nil {
+		v := *p.Relative
+		p.Relative = &v
+	}
+	if p.VRR != nil {
+		v := *p.VRR
+		p.VRR = &v
+	}
+	return p
 }

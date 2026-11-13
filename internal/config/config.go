@@ -350,6 +350,7 @@ type Wallpaper struct {
 // compositor cannot see.
 type Displays struct {
 	NiriConfigPath string
+	SyscConfigPath string
 }
 
 // TerminalArt is what Terminal Art starts on. Palette is a sysc-Go theme

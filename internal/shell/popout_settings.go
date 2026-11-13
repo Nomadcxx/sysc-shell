@@ -51,7 +51,7 @@ var settingsSectionIcons = map[string]string{
 	"Screensaver":   "schedule",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
-	"Display":       "display_settings",
+	"Display Settings": "display_settings",
 	"Tray":          "apps",
 	"Plugins":       "extension",
 	"Session":       "power_settings_new",
@@ -713,6 +713,9 @@ func settingsAddress(requested string) (section, page string, ok bool) {
 	section, page, _ = strings.Cut(requested, "/")
 	if section == "Displays" && page == "" {
 		section, page = "Bar", "Displays"
+	}
+	if section == "Display" && page == "" {
+		section = displaysSection
 	}
 	if !slices.Contains(settingsSections, section) {
 		return "", "", false

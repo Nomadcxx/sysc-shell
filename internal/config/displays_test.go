@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestDisplayRootsAreIndependent(t *testing.T) {
+	cfg, err := Parse([]byte(`{"displays":{"niri_config_path":"/niri/config.kdl","sysc_config_path":"/sysc/config.kdl"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Displays.NiriConfigPath != "/niri/config.kdl" || cfg.Displays.SyscConfigPath != "/sysc/config.kdl" {
+		t.Fatalf("roots = %+v", cfg.Displays)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil || got.Displays != cfg.Displays {
+		t.Fatalf("round trip = %+v, %v", got.Displays, err)
+	}
+	if _, err := Parse([]byte(`{"displays":{"sysc_config_path":"relative.kdl"}}`)); err == nil {
+		t.Fatal("accepted relative sysc root")
+	}
+}
+
 // The shell's own file records the managed configuration root and nothing
 // else, so a document that sets it must come back exactly.
 func TestDisplaysBlockRoundTrips(t *testing.T) {

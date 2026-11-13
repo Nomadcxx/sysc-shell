@@ -1,15 +1,20 @@
 package displays
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -117,9 +122,20 @@ func TicketDir() (string, error) {
 	if dir == "" {
 		return "", errors.New("displays: XDG_RUNTIME_DIR is not set, display transactions need a private runtime directory")
 	}
+	if !filepath.IsAbs(dir) {
+		return "", errors.New("displays: runtime directory must be absolute")
+	}
 	dir = filepath.Join(dir, "sysc-displays")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("displays: create ticket directory: %w", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || !ok || stat.Uid != uint32(os.Getuid()) {
+		return "", errors.New("displays: recovery directory must be owned by this user and not a symlink")
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return "", fmt.Errorf("displays: secure ticket directory: %w", err)
@@ -168,7 +184,62 @@ func LoadTicket(token string) (Ticket, error) {
 	if t.Socket == "" || t.Root == "" || t.Managed == "" {
 		return Ticket{}, fmt.Errorf("displays: ticket %s is missing its compositor paths", token)
 	}
+	if err := validateTicket(t, token); err != nil {
+		return Ticket{}, err
+	}
 	return t, nil
+}
+
+func validateTicket(t Ticket, token string) error {
+	dir, err := TicketDir()
+	if err != nil {
+		return err
+	}
+	if t.Token != token || !filepath.IsAbs(t.Root) || !filepath.IsAbs(t.Socket) || t.Managed != ManagedPath(t.Root) || t.Previous != previousPath(dir, token) {
+		return errors.New("displays: inconsistent recovery ticket paths or token")
+	}
+	if t.Identity.UID != os.Getuid() || t.Identity.PID <= 0 || t.Identity.StartTicks <= 0 || t.Identity.BootID == "" || t.DeadlineNS <= 0 || t.Attempts < 0 || t.Attempts > maxAttempts {
+		return errors.New("displays: invalid recovery identity or deadline")
+	}
+	if _, err := hex.DecodeString(t.OldHash); err != nil || len(t.OldHash) != 64 {
+		return errors.New("displays: invalid original hash")
+	}
+	if t.CandidateHash != "" {
+		if _, err := hex.DecodeString(t.CandidateHash); err != nil || len(t.CandidateHash) != 64 {
+			return errors.New("displays: invalid candidate hash")
+		}
+	}
+	if len(t.Before) == 0 || len(t.Before) > 128 || len(t.Target) > 128 {
+		return errors.New("displays: invalid output count")
+	}
+	seen := map[string]bool{}
+	for _, state := range t.Before {
+		name := state.Name.Connector
+		if name == "" || len(name) > 255 || strings.ContainsAny(name, "\x00\n\r") || seen[name] {
+			return errors.New("displays: invalid output identity")
+		}
+		seen[name] = true
+		if err := validatePolicy(state.Name, state.Policy); err != nil {
+			return err
+		}
+		if state.Logical != nil {
+			if err := validateRect(*state.Logical); err != nil {
+				return err
+			}
+		}
+	}
+	for name, policy := range t.Target {
+		if !seen[name] {
+			return errors.New("displays: unknown recovery output")
+		}
+		if err := validatePolicy(Name{Connector: name}, policy); err != nil {
+			return err
+		}
+		if policy.Relative != nil && (!seen[policy.Relative.To] || name == policy.Relative.To || !slices.Contains([]string{"left", "right", "above", "below"}, policy.Relative.Side)) {
+			return errors.New("displays: invalid relative recovery target")
+		}
+	}
+	return nil
 }
 
 // Store writes the ticket atomically, so a crash leaves either the previous
@@ -202,7 +273,22 @@ func readTicketFile(path string) ([]byte, error) {
 	if info.Size() > maxTicketBytes {
 		return nil, fmt.Errorf("displays: ticket %s is larger than %d bytes", path, maxTicketBytes)
 	}
-	data, err := os.ReadFile(path)
+	if info.Mode().Perm() != 0o600 {
+		return nil, fmt.Errorf("displays: ticket %s must be private", path)
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != uint32(os.Getuid()) {
+		return nil, fmt.Errorf("displays: ticket %s has another owner", path)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() {
+		return nil, errors.New("displays: ticket changed while opening")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxTicketBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("displays: read ticket: %w", err)
 	}
@@ -233,6 +319,10 @@ func readPrevious(path string) ([]byte, error) {
 // activeTicket reports the unfinished transaction in this ticket directory, so a
 // restarted shell joins or reports it instead of starting a second preview.
 func activeTicket() (Ticket, bool, error) {
+	return activeTicketFor("")
+}
+
+func activeTicketFor(socket string) (Ticket, bool, error) {
 	dir, err := TicketDir()
 	if err != nil {
 		return Ticket{}, false, err
@@ -254,7 +344,7 @@ func activeTicket() (Ticket, bool, error) {
 		if err != nil {
 			return Ticket{}, false, err
 		}
-		if !t.finished() {
+		if !t.finished() && (socket == "" || t.Socket == socket) {
 			return t, true, nil
 		}
 	}
@@ -265,16 +355,45 @@ func activeTicket() (Ticket, bool, error) {
 // recovery helper. Both processes open the same flock file, so a Keep that is
 // mid-publication and a recovery that arrives together produce one decision.
 func withTicketLock(dir, token string, fn func() error) error {
-	path := filepath.Join(dir, token+".lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	return withTicketLockContext(context.Background(), dir, token, fn)
+}
+
+func withTicketLockContext(ctx context.Context, dir, token string, fn func() error) error {
+	return withNamedLock(ctx, filepath.Join(dir, token+".lock"), fn)
+}
+
+func withCompositorLock(ctx context.Context, socket string, fn func() error) error {
+	dir, err := TicketDir()
+	if err != nil {
+		return err
+	}
+	return withNamedLock(ctx, filepath.Join(dir, "compositor-"+Hash([]byte(socket))+".lock"), fn)
+}
+
+func withNamedLock(ctx context.Context, path string, fn func() error) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return fmt.Errorf("displays: open decision lock: %w", err)
 	}
 	defer f.Close()
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		return fmt.Errorf("displays: take decision lock: %w", err)
+	for {
+		err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) {
+			return fmt.Errorf("displays: take decision lock: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	defer unix.Flock(int(f.Fd()), unix.LOCK_UN) //nolint:errcheck // released by close too
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn()
 }
 

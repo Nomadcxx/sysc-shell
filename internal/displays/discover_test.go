@@ -7,6 +7,43 @@ import (
 	"testing"
 )
 
+func TestDiscoverNativeProcessPolicy(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"niri", "sysc-compositor"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, "config.kdl"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		argv, env []string
+		want      string
+	}{
+		{"niri default", []string{"niri"}, []string{"XDG_CONFIG_HOME=" + dir}, filepath.Join(dir, "niri/config.kdl")},
+		{"sysc default", []string{"sysc-compositor"}, []string{"XDG_CONFIG_HOME=" + dir, "NIRI_CONFIG=/wrong"}, filepath.Join(dir, "sysc-compositor/config.kdl")},
+		{"sysc explicit environment", []string{"sysc-compositor"}, []string{"SYSC_COMPOSITOR_CONFIG=" + filepath.Join(dir, "sysc-compositor/config.kdl")}, filepath.Join(dir, "sysc-compositor/config.kdl")},
+		{"relative argument", []string{"sysc-compositor", "-c", "sysc-compositor/config.kdl"}, nil, filepath.Join(dir, "sysc-compositor/config.kdl")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := discoverProcess(tc.argv, tc.env, dir)
+			if err != nil || got.Root != tc.want || got.ReadOnly {
+				t.Fatalf("discovery = %+v, %v; want %s writable", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiscoverUsesExistingNativeFallback(t *testing.T) {
+	dir := t.TempDir()
+	got, err := discoverProcess([]string{"sysc-compositor"}, []string{"XDG_CONFIG_HOME=" + dir}, dir)
+	if err != nil || got.Root != "/etc/sysc-compositor/config.kdl" || !got.ReadOnly {
+		t.Fatalf("discovery = %+v, %v", got, err)
+	}
+}
+
 func TestConfigFromArgv(t *testing.T) {
 	tests := []struct {
 		name string

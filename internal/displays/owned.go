@@ -191,7 +191,7 @@ func Setup(root string) (Owned, error) {
 	// Setting up again after a successful setup is not an error: the shell
 	// re-runs discovery on every start, and a refusal here would leave the
 	// owned file looking like a stranger's the next time.
-	if existing, err := LoadOwnership(OwnershipPath(root)); err == nil &&
+	if existing, err := LoadOwnership(root); err == nil &&
 		(existing.Root == target || existing.RootPath == root) {
 		if err := CheckOwnership(root, existing); err == nil {
 			return existing, nil
@@ -461,7 +461,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("displays: replace %s: %w", path, err)
 	}
 	done = true
-	return nil
+	return syncDir(dir)
 }
 
 func syncDir(dir string) error {
