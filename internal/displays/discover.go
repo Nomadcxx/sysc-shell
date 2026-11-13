@@ -1,11 +1,14 @@
 package displays
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
 )
 
@@ -44,11 +47,21 @@ func Discover(socket string) (Discovery, error) {
 	if err != nil {
 		return Discovery{}, err
 	}
-	argv, err := procFields(identity.PID, "cmdline")
+	argv, err := peerArgv(identity.PID)
 	if err != nil {
 		return Discovery{}, err
 	}
 	env, err := procFields(identity.PID, "environ")
+	if errors.Is(err, fs.ErrPermission) {
+		// A shell whose group differs from the compositor's (a unit started
+		// through newgrp, for example) may not read its environment, so
+		// NIRI_CONFIG cannot be ruled out. Guessing would risk managing a file
+		// the compositor never loads; an explicitly saved root still works.
+		kind := argvKind(argv)
+		return Discovery{Kind: kind, ReadOnly: true, Note: fmt.Sprintf(
+			"the shell may not read the compositor's environment, so its configuration file cannot be confirmed; set displays.%s in the shell configuration to name it",
+			savedRootKey(kind))}, nil
+	}
 	if err != nil {
 		return Discovery{}, err
 	}
@@ -56,19 +69,63 @@ func Discover(socket string) (Discovery, error) {
 	if err != nil {
 		return Discovery{}, fmt.Errorf("displays: read compositor working directory: %w", err)
 	}
-	// The peer executable, rather than the shell's inherited environment,
-	// selects which compositor's configuration may be managed.
-	if executable, e := os.Readlink(procPath(identity.PID, "exe")); e == nil && filepath.Base(executable) == "sysc-compositor" {
-		argv = append([]string{"sysc-compositor"}, argv[1:]...)
-	}
 	return discoverProcess(argv, env, cwd)
 }
 
-func discoverProcess(argv, env []string, cwd string) (Discovery, error) {
-	kind := compositor.Niri
-	if len(argv) > 0 && filepath.Base(argv[0]) == "sysc-compositor" {
-		kind = compositor.SyscCompositor
+// PeerKind identifies the compositor that owns socket. It needs only what any
+// process of the same user may read, so it works where Discover cannot read the
+// compositor's environment. A saved root is chosen by this answer, never by the
+// shell's own environment.
+func PeerKind(socket string) (compositor.Kind, error) {
+	identity, err := compositorIdentity(socket)
+	if err != nil {
+		return compositor.Niri, err
 	}
+	argv, err := peerArgv(identity.PID)
+	if err != nil {
+		return compositor.Niri, err
+	}
+	return argvKind(argv), nil
+}
+
+// peerArgv reads the compositor's command line. The executable link, when
+// readable, names the binary even if argv[0] was rewritten.
+func peerArgv(pid int) ([]string, error) {
+	argv, err := procFields(pid, "cmdline")
+	if err != nil {
+		return nil, err
+	}
+	if executable, e := os.Readlink(procPath(pid, "exe")); e == nil && filepath.Base(executable) == "sysc-compositor" && len(argv) > 0 {
+		argv = append([]string{"sysc-compositor"}, argv[1:]...)
+	}
+	return argv, nil
+}
+
+func argvKind(argv []string) compositor.Kind {
+	if len(argv) > 0 && filepath.Base(argv[0]) == "sysc-compositor" {
+		return compositor.SyscCompositor
+	}
+	return compositor.Niri
+}
+
+// SavedRoot is the root the user confirmed for this compositor kind. Each
+// compositor reads only its own, so a Niri root never manages sysc-compositor.
+func SavedRoot(kind compositor.Kind, saved config.Displays) string {
+	if kind == compositor.SyscCompositor {
+		return saved.SyscConfigPath
+	}
+	return saved.NiriConfigPath
+}
+
+func savedRootKey(kind compositor.Kind) string {
+	if kind == compositor.SyscCompositor {
+		return "sysc-config-path"
+	}
+	return "niri-config-path"
+}
+
+func discoverProcess(argv, env []string, cwd string) (Discovery, error) {
+	kind := argvKind(argv)
 	finish := func(path, source string, confirm bool) (Discovery, error) {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(cwd, path)

@@ -4,9 +4,6 @@ import (
 	"context"
 	"reflect"
 	"testing"
-
-	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
 )
 
 func TestRestoreDisplaysRequested(t *testing.T) {
@@ -47,20 +44,5 @@ func TestRunRestoreDisplaysAcceptsOneToken(t *testing.T) {
 	}
 	if err := runRestoreDisplays(context.Background(), []string{"0123456789abcdef0123456789abcdef"}); err != nil {
 		t.Fatalf("a settled token was refused: %v", err)
-	}
-}
-
-// Each compositor reads only its own confirmed root.
-func TestSavedDisplaysRootIsPerCompositor(t *testing.T) {
-	saved := config.Displays{NiriConfigPath: "/n/config.kdl"}
-	if got := savedDisplaysRoot(compositor.SyscCompositor, saved); got != "" {
-		t.Errorf("sysc-compositor reused the Niri root %q", got)
-	}
-	saved.SyscConfigPath = "/s/config.kdl"
-	if got := savedDisplaysRoot(compositor.SyscCompositor, saved); got != "/s/config.kdl" {
-		t.Errorf("sysc-compositor root = %q", got)
-	}
-	if got := savedDisplaysRoot(compositor.Niri, saved); got != "/n/config.kdl" {
-		t.Errorf("niri root = %q", got)
 	}
 }

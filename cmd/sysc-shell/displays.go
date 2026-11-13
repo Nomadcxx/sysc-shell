@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/displays"
-	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
 )
 
 // restoreDisplaysFlag is the only argument the recovery helper accepts. It
@@ -46,16 +45,16 @@ func restoreDisplaysRequested(argv []string) ([]string, bool) {
 // not this shell's environment, picks the saved root and the validator, so a
 // Niri root never manages sysc-compositor or the reverse.
 func startDisplays(socket string, saved config.Displays) *displays.Service {
-	found, err := displays.Discover(socket)
+	kind, err := displays.PeerKind(socket)
 	if err != nil {
 		log.Printf("sysc-shell: display settings unavailable: %v", err)
 		return nil
 	}
-	root := savedDisplaysRoot(found.Kind, saved)
+	root := displays.SavedRoot(kind, saved)
 	if root == "" {
 		return nil
 	}
-	validate, err := displays.NativeValidator(found.Kind)
+	validate, err := displays.NativeValidator(kind)
 	if err != nil {
 		// A shell with no native validator still reads outputs; it refuses
 		// to publish a candidate it could not check first.
@@ -67,11 +66,4 @@ func startDisplays(socket string, saved config.Displays) *displays.Service {
 		return nil
 	}
 	return svc
-}
-
-func savedDisplaysRoot(kind compositor.Kind, saved config.Displays) string {
-	if kind == compositor.SyscCompositor {
-		return saved.SyscConfigPath
-	}
-	return saved.NiriConfigPath
 }

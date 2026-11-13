@@ -238,7 +238,7 @@ func (r *Registry) displaysAdoptLocked(h *PanelHost) {
 // for its root, edits that root, and constructs the service. The root it lands
 // on was shown on the page and confirmed by the user before this was called.
 func (r *Registry) adoptDisplays(ctx context.Context, socket string) error {
-	found, err := displays.Discover(socket)
+	found, err := r.displaysProposal(socket)
 	if err != nil {
 		return err
 	}
@@ -284,6 +284,24 @@ func (r *Registry) adoptDisplays(ctx context.Context, socket string) error {
 	return nil
 }
 
+// displaysProposal is the root adopt would manage. A root saved in the shell
+// configuration for the socket's compositor takes precedence over discovery,
+// which also makes the feature usable where the compositor's environment is
+// unreadable.
+func (r *Registry) displaysProposal(socket string) (displays.Discovery, error) {
+	kind, err := displays.PeerKind(socket)
+	if err != nil {
+		return displays.Discovery{}, err
+	}
+	r.mu.Lock()
+	saved := displays.SavedRoot(kind, r.cfg.Displays)
+	r.mu.Unlock()
+	if saved != "" {
+		return displays.Discovery{Kind: kind, Root: saved, Source: "the shell configuration"}, nil
+	}
+	return displays.Discover(socket)
+}
+
 // displaysRefreshLocked asks for a fresh reading of the outputs and of the
 // compositor's configuration root. Caller holds Registry.mu.
 func (r *Registry) displaysRefreshLocked(h *PanelHost) {
@@ -294,7 +312,7 @@ func (r *Registry) displaysRefreshLocked(h *PanelHost) {
 	// outputs and the discovered root are both read again here.
 	if socket := os.Getenv("NIRI_SOCKET"); socket != "" {
 		r.displaysCommandLocked(h, "discover", func(context.Context) error {
-			found, err := displays.Discover(socket)
+			found, err := r.displaysProposal(socket)
 			if err != nil {
 				return err
 			}

@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/compositor"
 )
 
 func TestDiscoverNativeProcessPolicy(t *testing.T) {
@@ -192,4 +195,19 @@ func envOr(t *testing.T, key string) string {
 		return v
 	}
 	return ""
+}
+
+// Each compositor reads only its own confirmed root.
+func TestSavedRootIsPerCompositor(t *testing.T) {
+	saved := config.Displays{NiriConfigPath: "/n/config.kdl"}
+	if got := SavedRoot(compositor.SyscCompositor, saved); got != "" {
+		t.Errorf("sysc-compositor reused the Niri root %q", got)
+	}
+	saved.SyscConfigPath = "/s/config.kdl"
+	if got := SavedRoot(compositor.SyscCompositor, saved); got != "/s/config.kdl" {
+		t.Errorf("sysc-compositor root = %q", got)
+	}
+	if got := SavedRoot(compositor.Niri, saved); got != "/n/config.kdl" {
+		t.Errorf("niri root = %q", got)
+	}
 }
