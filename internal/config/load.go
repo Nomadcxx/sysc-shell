@@ -261,6 +261,11 @@ type wireTerminalArt struct {
 	Palette *string `json:"palette,omitempty"`
 }
 
+type wireDisplays struct {
+	NiriConfigPath *string `json:"niri-config-path,omitempty"`
+	SyscConfigPath *string `json:"sysc-config-path,omitempty"`
+}
+
 type wireConfig struct {
 	Bar           *wireBar                    `json:"bar,omitempty"`
 	Theme         *wireTheme                  `json:"theme,omitempty"`
@@ -278,6 +283,7 @@ type wireConfig struct {
 	Sounds        *wireSounds                 `json:"sounds,omitempty"`
 	Wallpaper     *wireWallpaper              `json:"wallpaper,omitempty"`
 	TerminalArt   *wireTerminalArt            `json:"terminal-art,omitempty"`
+	Displays      *wireDisplays               `json:"displays,omitempty"`
 	Outputs       []wireOutput                `json:"outputs,omitempty"`
 	Templates     map[string]bool             `json:"templates,omitempty"`
 	Applications  *wireApplicationPreferences `json:"applications,omitempty"`
@@ -515,6 +521,14 @@ func parseCandidate(data []byte) (Config, error) {
 		}
 		cfg.TerminalArt.Palette = *wire.TerminalArt.Palette
 	}
+	if wire.Displays != nil {
+		displays, err := applyDisplays(Displays{}, *wire.Displays, "displays")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Displays = displays
+	}
+
 	// The base bar's geometry derives from the resolved composition before any
 	// explicit bar block is applied, so the precedence is preset, then theme
 	// axes, then the derived bar, then bar, then output. This supersedes the
@@ -1204,6 +1218,34 @@ func applySounds(w wireSounds, path string) (Sounds, error) {
 		out.Volume = *w.Volume
 	}
 	return out, nil
+}
+
+// applyDisplays resolves the displays block. The path has to be absolute: it
+// is handed to the compositor as a configuration root and to the shell's own
+// include, where a relative path would resolve against two different
+// directories.
+func applyDisplays(base Displays, w wireDisplays, path string) (Displays, error) {
+	for _, field := range []struct {
+		name   string
+		source *string
+		target *string
+	}{
+		{"niri-config-path", w.NiriConfigPath, &base.NiriConfigPath},
+		{"sysc-config-path", w.SyscConfigPath, &base.SyscConfigPath},
+	} {
+		if field.source == nil {
+			continue
+		}
+		p := *field.source
+		if p != "" && !filepath.IsAbs(p) {
+			return base, pathErr(path+"."+field.name, "%q is not an absolute path", p)
+		}
+		if p != "" {
+			p = filepath.Clean(p)
+		}
+		*field.target = p
+	}
+	return base, nil
 }
 
 // applyMonitor resolves the monitor block over its defaults. A colour must be

@@ -80,25 +80,26 @@ const settingsRailWidth = 208
 // package's inventory: a name the subset lacks shapes to nothing and paints an
 // invisible control rather than failing anywhere visible.
 var settingsSectionIcons = map[string]string{
-	"Appearance":    "palette",
-	"Palettes":      "tune",
-	"Templates":     "description",
-	"Bar":           "toolbar",
-	"Widgets":       "widgets",
-	"Panels":        "web_asset",
-	"Monitor":       "memory",
-	"Wallpaper":     "wallpaper",
-	"Terminal Art":  "terminal",
-	"Screensaver":   "schedule",
-	"Night Light":   "bedtime",
-	"Weather":       "partly_cloudy_day",
-	"Tray":          "apps",
-	"Applications":  "apps",
-	"Plugins":       "extension",
-	"Session":       "power_settings_new",
-	"Lock Screen":   "lock",
-	"Accessibility": "accessibility_new",
-	"Sounds":        "volume_up",
+	"Appearance":       "palette",
+	"Palettes":         "tune",
+	"Templates":        "description",
+	"Bar":              "toolbar",
+	"Widgets":          "widgets",
+	"Panels":           "web_asset",
+	"Monitor":          "memory",
+	"Wallpaper":        "wallpaper",
+	"Terminal Art":     "terminal",
+	"Screensaver":      "schedule",
+	"Night Light":      "bedtime",
+	"Weather":          "partly_cloudy_day",
+	"Tray":             "apps",
+	"Applications":     "apps",
+	"Plugins":          "extension",
+	"Display Settings": "display_settings",
+	"Session":          "power_settings_new",
+	"Lock Screen":      "lock",
+	"Accessibility":    "accessibility_new",
+	"Sounds":           "volume_up",
 }
 
 // settingsControlWidth is the room the trailing column takes. Controls used to
@@ -431,6 +432,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		if h.set != nil {
 			hits = overlayIdleGets(r, h.draft.Session.Locker, h.set.Search(h.query))
 		}
+		// The display entries are not in the config registry, so search adds
+		// them itself: a search for an output name must find its page.
+		hits = append(hits, displaysSearchEntries(r, h.query)...)
 		return body(settingsSearchColumn(h, hits))
 	}
 
@@ -456,6 +460,11 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if section == "Screensaver" {
 		return body(screensaverSettingsBody(r, h))
+	}
+	if section == displaysSection {
+		// A section with one body of its own: the outputs are live, so the
+		// entries are built from the service rather than from the config.
+		return body(displaysSettingsBody(r, h))
 	}
 	var entries []settings.Entry
 	if h.set != nil {
@@ -1071,6 +1080,9 @@ func settingsAddress(requested string) (section, page string, ok bool) {
 	section, page, _ = strings.Cut(requested, "/")
 	if section == "Displays" && page == "" {
 		section, page = "Bar", "Displays"
+	}
+	if section == "Display" && page == "" {
+		section = displaysSection
 	}
 	if !slices.Contains(settingsSections, section) {
 		return "", "", false

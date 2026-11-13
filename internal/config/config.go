@@ -533,6 +533,16 @@ type Wallpaper struct {
 	LowBatteryPause int
 }
 
+// Displays is where display settings live. The shell keeps one path here and
+// nothing else: the values themselves belong in the native configuration, so
+// a compositor that never loads this file still gets the user's layout. A
+// per-output override in this file would be a second source of truth that the
+// compositor cannot see.
+type Displays struct {
+	NiriConfigPath string
+	SyscConfigPath string
+}
+
 // TerminalArt is what Terminal Art starts on. Palette is a sysc-Go theme
 // name; empty means the catalog's first. The catalog is only known at run
 // time, so the loader checks the name's shape and the panel checks it exists.
@@ -679,6 +689,7 @@ type Config struct {
 	Sounds        Sounds
 	Wallpaper     Wallpaper
 	TerminalArt   TerminalArt
+	Displays      Displays
 	Outputs       []OutputOverride
 	Templates     map[string]bool
 	// TerminalOpacity is the background opacity, in percent, the shell writes

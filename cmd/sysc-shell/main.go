@@ -121,6 +121,9 @@ func run(ctx context.Context) (err error) {
 
 	registry := shell.NewRegistry(cfg)
 	registry.SetWallsService(walls.NewService())
+	if svc := startDisplays(socket, cfg.Displays); svc != nil {
+		registry.SetDisplaysService(svc)
+	}
 	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
 	// the socket that was just required; Suspend waits for the lock owner.
 	monitorPower := func(action any, what string) {
@@ -510,6 +513,13 @@ func main() {
 	// before executing it; nothing else of the shell may run first.
 	if len(os.Args) > 1 && os.Args[1] == plugin.LaunchFlag {
 		os.Exit(plugin.LaunchMain(os.Args[2:]))
+	}
+	if token, ok := restoreDisplaysRequested(os.Args[1:]); ok {
+		if err := runRestoreDisplays(context.Background(), token); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		os.Exit(runVersion(os.Args[2:], os.Stdout, os.Stderr))
