@@ -262,6 +262,7 @@ type wireTerminalArt struct {
 }
 
 type wireConfig struct {
+	Input         *Input                      `json:"input,omitempty"`
 	Bar           *wireBar                    `json:"bar,omitempty"`
 	Theme         *wireTheme                  `json:"theme,omitempty"`
 	ThemeGen      *wireThemeGen               `json:"theme-gen,omitempty"`
@@ -440,6 +441,12 @@ func parseCandidate(data []byte) (Config, error) {
 	}
 
 	cfg := Default()
+	if wire.Input != nil {
+		if err := ValidateInput(*wire.Input); err != nil {
+			return Config{}, err
+		}
+		cfg.Input = wire.Input.Clone()
+	}
 	if wire.Theme == nil || (wire.Theme.Preset == nil && wire.Theme.Density == nil) {
 		cfg.Theme.Density = theme.DensityStandard
 	}

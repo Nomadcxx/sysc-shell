@@ -5,7 +5,7 @@
 - Use Go as the application language.
 - Do not add C++, Rust, Lua, Luau, Qt, QML, or Quickshell.
 - A narrow C-library boundary is acceptable for text or graphics when a measured requirement defeats the Go implementation. Ask before adding handwritten C or CGO.
-- Support Niri first. Other compositors require a separate approved design.
+- Support Niri and sysc-compositor (design 2026-11-02). Other compositors require a separate approved design.
 - Do not implement a lock screen or a compositor.
 - Do not preserve Noctalia or DMS configuration, plugin, or QML compatibility.
 - Treat Noctalia v5 and DMS as behavior and architecture references.

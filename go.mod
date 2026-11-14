@@ -29,6 +29,7 @@ require (
 	github.com/jfreymuth/pulse v0.1.3
 	github.com/junegunn/fzf v0.74.5
 	github.com/rivo/uniseg v0.4.7
+	github.com/sblinch/kdl-go v0.0.0-20260121213736-8b7053306ca6
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/thegrumpylion/xkb-go v0.1.0

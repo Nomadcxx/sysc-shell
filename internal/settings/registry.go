@@ -815,6 +815,12 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 	r.addTemplateEntries()
 	r.addTrayEntries(cfg)
 	r.addOutputEntries(cfg)
+	r.addInputEntries(o)
+	for i := range r.entries {
+		if r.entries[i].Section == "Session" && r.entries[i].Page == "" {
+			r.entries[i].Page = "General"
+		}
+	}
 	if len(slugs) > 0 {
 		r.insertAfter("appearance.palette", Entry{
 			Path: "appearance.custom", Label: "Custom palette", Section: "Appearance", Group: "Colours & mode",
@@ -947,6 +953,8 @@ func SectionPages(section string) []string {
 	switch section {
 	case "Bar":
 		return []string{"Appearance", "Layout", "Displays"}
+	case "Session":
+		return []string{"General", "Mouse & touchpad"}
 	}
 	return nil
 }

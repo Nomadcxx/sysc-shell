@@ -220,6 +220,7 @@ func (b Bar) Clone() Bar {
 // uncloned (gh #205).
 func (c Config) Clone() Config {
 	out := c
+	out.Input = c.Input.Clone()
 	out.Bar = c.Bar.Clone()
 	out.Outputs = slices.Clone(c.Outputs)
 	for i := range out.Outputs {
@@ -657,6 +658,7 @@ func defaultSounds() Sounds { return Sounds{Volume: soundsVolumeDefault} }
 
 // Config is an immutable, fully resolved configuration.
 type Config struct {
+	Input         Input
 	Bar           Bar
 	Theme         Theme
 	ThemeGen      ThemeConfig
