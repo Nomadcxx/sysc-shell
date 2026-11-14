@@ -404,6 +404,24 @@ func TestDisplaysPageFitsAPortraitOutput(t *testing.T) {
 	}
 }
 
+// A rotating preview reaches the panel in two steps: the new scale at the old
+// size, then the placement for the narrower output at the same scale. The
+// second configure must not lay out the tree built for the first.
+func TestSettingsRelaysOutAfterItsOutputTurnsPortrait(t *testing.T) {
+	t.Parallel()
+	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1920, H: 1080})
+	configure := host.configureLocking(reg)
+	if err := configure(host.place.Panel.W, host.place.Panel.H, 180); err != nil {
+		t.Fatalf("configure at the new scale: %v", err)
+	}
+	reg.mu.Lock()
+	host.place.Panel = settingsPanelSize(720, 1280)
+	reg.mu.Unlock()
+	if err := configure(host.place.Panel.W, host.place.Panel.H, 180); err != nil {
+		t.Fatalf("configure at the portrait size: %v", err)
+	}
+}
+
 // Closing Settings while Preview is still applying must not lose the Revert:
 // it runs as soon as Preview returns.
 func TestClosingDuringPreviewStillReverts(t *testing.T) {

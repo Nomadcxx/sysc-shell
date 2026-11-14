@@ -2626,8 +2626,11 @@ func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
 		// Settings and the plugin store measure text as their trees are
 		// built, first at the bar's scale or none. At another scale the tree
 		// is rebuilt before it is laid out: laying out the stale one first
-		// can fail to fit and close the surface.
-		if built, measured := h.treeScale(); measured && built != scale120 && ui.Scale120(scale120).Valid() {
+		// can fail to fit and close the surface. A new size needs the same,
+		// because the trees size their columns from the placement: an output
+		// that rotates re-places the panel after its new scale arrived.
+		resized := h.logicalW > 0 && (w != h.logicalW || height != h.logicalH)
+		if built, measured := h.treeScale(); measured && (built != scale120 || resized) && ui.Scale120(scale120).Valid() {
 			h.logicalW, h.logicalH, h.scale120 = w, height, scale120
 			if err := h.ensureText(); err != nil {
 				return err
