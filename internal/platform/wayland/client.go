@@ -90,9 +90,14 @@ func (o *owner) pointerMotionEvent(x, y float64) Event {
 // Global invalidates every bar. SurfaceID, when set, names one aux unit on
 // that output instead of the bar. The compositor never assigns 0 as a global
 // name, so it is free to use as the broadcast sentinel.
+//
+// Hidden, when set, also says whether the bar must be shown. A nil Hidden
+// leaves the visibility alone, so an ordinary redraw never brings a hidden bar
+// back.
 type Invalidation struct {
 	Global    uint32
 	SurfaceID string
+	Hidden    *bool
 }
 
 // PreparedConfig holds replacement callbacks built before a reload changes
@@ -876,6 +881,9 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 // viewport objects, then performs the fixed initial sequence: set properties,
 // commit once without a buffer, and wait for the first configure.
 func (o *owner) createBar(h *OutputHost) error {
+	if h.bar.hidden {
+		return nil // the compositor reports a fullscreen window; the bar stays down
+	}
 	switch h.state {
 	case hostReady, hostIdle, hostClosed:
 	default:
@@ -1245,14 +1253,59 @@ func (o *owner) invalidate(inv Invalidation) {
 		}
 		return
 	}
+	if inv.Hidden != nil {
+		if err := o.setBarHidden(inv.Global, *inv.Hidden); err != nil {
+			o.fail(err)
+		}
+	}
 	for _, h := range o.hosts.each() {
 		if !h.alive {
 			continue
 		}
 		if inv.Global == 0 || h.global == inv.Global {
+			if h.bar.hidden {
+				continue
+			}
 			h.bar.sched.Invalidate()
 		}
 	}
+}
+
+// setBarHidden shows or hides the bar of one output. A hidden bar has no
+// layer surface at all: the compositor counts an exclusive zone only while the
+// surface is mapped, so tearing it down gives the whole output back to the
+// windows and lets a fullscreen window cover the screen without the bar drawn
+// on top of it.
+func (o *owner) setBarHidden(global uint32, hidden bool) error {
+	var errs []error
+	for _, h := range o.hosts.each() {
+		if !h.alive {
+			continue
+		}
+		if global != 0 && h.global != global {
+			continue
+		}
+		if h.bar.hidden == hidden {
+			continue
+		}
+		h.bar.hidden = hidden
+		if hidden {
+			if h.bar.surface != nil {
+				if err := o.teardownSurface(h); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+			}
+			h.state = hostIdle
+			continue
+		}
+		if h.bar.surface == nil && h.ready() {
+			if err := o.createBar(h); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // reloadConfig re-reads and applies the configuration file. Precommit
@@ -1447,6 +1500,11 @@ func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 			}
 			h.state = hostIdle
 			h.bar.app = HostCallbacks{}
+		case bar.Enabled && h.bar.hidden:
+			// The bar stays down while the compositor reports a fullscreen
+			// window on this output, but it keeps the fresh callbacks so it can
+			// come back with the next state change.
+			h.bar.app = update.app
 		case bar.Enabled && h.bar.surface == nil && h.ready():
 			h.bar.app = update.app
 			if err := o.createBar(h); err != nil {

@@ -212,6 +212,31 @@ func TestWindowsChangedReplacesTheWholeSet(t *testing.T) {
 	}
 }
 
+// The compositor may report the fullscreen state of a window. Niri 26.04 does
+// not send the flag, so a window without it keeps the state unknown.
+func TestWindowFullscreenFlagIsCarriedWhenTheCompositorSendsIt(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, `{"WindowsChanged":{"windows":[`+
+		`{"id":90,"title":"Fixture Full","app_id":"fixture.full","pid":1002,"workspace_id":5,`+
+		`"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{},`+
+		`"focus_timestamp":null,"is_fullscreen":true},`+
+		`{"id":91,"title":"Fixture Plain","app_id":"fixture.plain","pid":1003,"workspace_id":5,`+
+		`"is_focused":false,"is_floating":false,"is_urgent":false,"layout":{},`+
+		`"focus_timestamp":null}]}}`)
+	snap := s.snapshot()
+	if len(snap.Windows) != 2 {
+		t.Fatalf("windows = %d, want 2", len(snap.Windows))
+	}
+	full := snap.Windows[0]
+	if !full.HasFullscreen || !full.Fullscreen {
+		t.Fatalf("window 90 fullscreen = %v/%v, want true/true", full.Fullscreen, full.HasFullscreen)
+	}
+	plain := snap.Windows[1]
+	if plain.HasFullscreen || plain.Fullscreen {
+		t.Fatalf("window 91 fullscreen = %v/%v, want false/false", plain.Fullscreen, plain.HasFullscreen)
+	}
+}
+
 func TestWindowFocusChanged(t *testing.T) {
 	t.Parallel()
 	s := applyAll(t, windowsChangedFixture, windowFocusChangedFixture)

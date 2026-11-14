@@ -116,6 +116,10 @@ type surfaceUnit struct {
 	// awaitingConfigure holds a replacement policy behind the compositor's
 	// geometry acknowledgement so its tree cannot paint into the old buffer.
 	awaitingConfigure bool
+	// hidden keeps the bar down while the compositor reports that the focused
+	// window covers the output. A hidden bar has no layer surface, so it
+	// reserves no exclusive zone.
+	hidden bool
 
 	frameCallback *client.Callback
 	cleanup       cleanupStack
