@@ -446,6 +446,14 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		_ = f.Close()
 		return fmt.Errorf("displays: chmod temp: %w", err)
 	}
+	// A replaced file keeps its group. The temp file takes the process's
+	// group, which differs from the user's own when the shell runs under
+	// newgrp. Best effort: a group this account is not in cannot be kept.
+	if info, err := os.Stat(path); err == nil {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			_ = f.Chown(-1, int(st.Gid))
+		}
+	}
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("displays: write temp: %w", err)

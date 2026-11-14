@@ -438,3 +438,68 @@ func TestDisplaysUnresolvedRecordOffersAWayOut(t *testing.T) {
 		t.Errorf("an unreadable record offers the wrong action:\n%s", text)
 	}
 }
+
+// sysc-2301: an output card is titled with its connector as written, and the
+// not-set-up sentence appears once, in the adopt card.
+func TestDisplaysPageTextIsNotRepeatedOrRecased(t *testing.T) {
+	t.Parallel()
+	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
+	reg.mu.Lock()
+	text := renderText(host.root)
+	reg.mu.Unlock()
+	if !strings.Contains(text, "DP-1") || strings.Contains(text, "dp-1") {
+		t.Errorf("the output card heading is not the connector as written:\n%s", text)
+	}
+	reg.mu.Lock()
+	reg.displaysService = nil
+	reg.rebuildPanel(host)
+	text = renderText(host.root)
+	reg.mu.Unlock()
+	if n := strings.Count(text, displaysNotSetUpNote); n != 1 {
+		t.Errorf("the not-set-up sentence appears %d times, want once:\n%s", n, text)
+	}
+}
+
+// sysc-2301: an action label sits inside its outline with the shared button
+// padding, rather than touching or crossing the edges.
+func TestDisplaysActionLabelsFitTheirButtons(t *testing.T) {
+	t.Parallel()
+	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	measure := host.measureText()
+	pad := host.metrics().ButtonPadding
+	for _, action := range []string{"displays:preview", "displays:reset", "displays:refresh"} {
+		btn := findActionNode(host.root, action)
+		if btn == nil {
+			t.Fatalf("no %s button", action)
+		}
+		textW, _ := measure(btn.Text, ui.TextAttrs{})
+		if btn.Bounds.W < textW+2*pad {
+			t.Errorf("%s: button %d wide for a %d wide label, want %d of padding a side", action, btn.Bounds.W, textW, pad)
+		}
+	}
+}
+
+// sysc-2301: choosing a scale preset, or discarding the draft, shows in the
+// custom-scale field. Display entries are page-local, so the config reseed
+// never reached their fields.
+func TestDisplaysCustomScaleFollowsThePreset(t *testing.T) {
+	t.Parallel()
+	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
+	path := "displays.DP-1." + displaysFieldScaleCustom
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if f := host.fields[path]; f == nil || f.Text != "1" {
+		t.Fatalf("custom scale field before = %+v, want 1", f)
+	}
+	reg.setDisplaysDraftLocked(host, "DP-1."+displaysFieldScale, "1.5")
+	reg.rebuildPanel(host)
+	if got := host.fields[path].Text; got != "1.5" {
+		t.Errorf("custom scale field after the 1.5 preset = %q", got)
+	}
+	activateDisplaysAction(reg, host, &ui.Node{Action: "displays:reset"})
+	if got := host.fields[path].Text; got != "1" {
+		t.Errorf("custom scale field after discarding = %q, want 1", got)
+	}
+}

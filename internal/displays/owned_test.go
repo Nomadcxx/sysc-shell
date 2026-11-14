@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -388,4 +389,41 @@ func TestRootTargetRefusals(t *testing.T) {
 			t.Fatalf("rootTarget = %q, want the target so a user's symlink is preserved", got)
 		}
 	})
+}
+
+// sysc-2301: replacing the user's root keeps its group. The laptop's shell
+// runs under newgrp, so a plain create-and-rename handed config.kdl to the
+// shell's group.
+func TestAtomicReplaceKeepsTheGroup(t *testing.T) {
+	groups, err := os.Getgroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := -1
+	for _, g := range groups {
+		if g != os.Getegid() {
+			other = g
+			break
+		}
+	}
+	if other < 0 {
+		t.Skip("this account is in no second group")
+	}
+	path := filepath.Join(t.TempDir(), "config.kdl")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(path, -1, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(path, []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := int(info.Sys().(*syscall.Stat_t).Gid); got != other {
+		t.Fatalf("group after replace = %d, want %d", got, other)
+	}
 }

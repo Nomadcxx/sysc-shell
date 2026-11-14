@@ -207,7 +207,8 @@ func screensaverButton(h *PanelHost, text, action string, disabled bool) *ui.Nod
 func settingsButton(h *PanelHost, text, action string) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindButton, Text: text, Action: action, Name: text, Role: "button",
-		Focusable: true, Height: h.metrics().StandardControl, Fill: ui.FillOutline, Shape: ui.ShapeMedium,
+		Focusable: true, Height: h.metrics().StandardControl, Padding: h.metrics().ButtonPadding,
+		Fill: ui.FillOutline, Shape: ui.ShapeMedium,
 	}
 }
 

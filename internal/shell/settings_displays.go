@@ -54,6 +54,13 @@ func displaysSettingsBody(r *Registry, h *PanelHost) *ui.Node {
 	}
 	var entries []settings.Entry
 	for _, e := range displaysEntries(r, snapshot) {
+		// Display entries are page-local, so reseedSettingsFields never reaches
+		// their fields: a preset, a discard or a new snapshot must still show.
+		if f := h.fields[e.Path]; f != nil && e.Get != nil {
+			if value := e.Get(config.Config{}); f.Text != value {
+				f.SyncFrom(&ui.Node{Text: value, Cursor: len(value)})
+			}
+		}
 		if e.Group == selected {
 			entries = append(entries, e)
 		}
@@ -147,12 +154,8 @@ func displaysLead(r *Registry, snapshot displays.Snapshot) []*ui.Node {
 	if why := displaysRootWhy(r); why != "" {
 		lead = append(lead, &ui.Node{Kind: ui.KindText, Text: why, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
-	if r.displaysService == nil {
-		lead = append(lead, &ui.Node{
-			Kind: ui.KindText, Text: displaysNotSetUpNote,
-			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
-		})
-	} else {
+	// Without a service the adopt card says the page is not set up.
+	if r.displaysService != nil {
 		lead = append(lead, &ui.Node{
 			Kind:     ui.KindText,
 			Text:     "Preview applies your draft temporarily. Keep saves it to the compositor configuration; Revert or the timeout restores the previous settings.",
@@ -328,6 +331,10 @@ func displaysEntries(r *Registry, snapshot displays.Snapshot) []settings.Entry {
 		if len(snapshot.Outputs) > 1 && out.Logical != nil {
 			entries = append(entries, displaysPlacementEntry(r, out, snapshot))
 		}
+	}
+	// The group is the connector, an identifier the card must not lowercase.
+	for i := range entries {
+		entries[i].GroupLiteral = true
 	}
 	return entries
 }
