@@ -420,6 +420,14 @@ func TestSettingsRelaysOutAfterItsOutputTurnsPortrait(t *testing.T) {
 	if err := configure(host.place.Panel.W, host.place.Panel.H, 180); err != nil {
 		t.Fatalf("configure at the portrait size: %v", err)
 	}
+	// The compositor can also fit the surface to the new output before the
+	// shell re-places it.
+	reg.mu.Lock()
+	host.place.Panel = settingsPanelSize(1920, 1080)
+	reg.mu.Unlock()
+	if err := configure(600, host.place.Panel.H, 180); err != nil {
+		t.Fatalf("configure narrower than the placement: %v", err)
+	}
 }
 
 // Closing Settings while Preview is still applying must not lose the Revert:
