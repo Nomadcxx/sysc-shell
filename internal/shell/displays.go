@@ -97,6 +97,9 @@ func (r *Registry) applyDisplaysSnapshot(svc displaysController, snapshot displa
 	if r.displaysArmed && !snapshot.Preview {
 		r.displaysDraft = nil
 	}
+	if h := r.panelHosts[PanelSettings]; h != nil {
+		h.displaysRevealPending = snapshot.Preview && (!r.displaysArmed || h.displaysRevealPending)
+	}
 	r.displaysArmed = snapshot.Preview
 	r.displaysSnapshot = snapshot
 	r.displaysDiagram = diagram

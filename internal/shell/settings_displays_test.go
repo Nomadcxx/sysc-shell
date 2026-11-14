@@ -438,6 +438,27 @@ func TestSettingsSurvivesAnOutputTurningPortrait(t *testing.T) {
 	}
 }
 
+// The answer to a preview sits at the foot of the page, below the fold on a
+// laptop. Starting a preview must bring Revert into view, or the countdown
+// runs out with the buttons out of sight.
+func TestStartingAPreviewRevealsTheAnswer(t *testing.T) {
+	t.Parallel()
+	reg, host, fake := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
+	snap := displaysTestSnapshot()
+	snap.Preview, snap.Remaining = true, 20*time.Second
+	reg.applyDisplaysSnapshot(fake, snap)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	body := keyedScroll(host.root, settingsBodyKey)
+	revert := findActionNode(host.root, "displays:revert")
+	if body == nil || revert == nil {
+		t.Fatal("no settings body or Revert button")
+	}
+	if revert.Bounds.Y < body.Bounds.Y || revert.Bounds.Y+revert.Bounds.H > body.Bounds.Y+body.Bounds.H {
+		t.Fatalf("Revert at %v is outside the visible body %v (offset %d)", revert.Bounds, body.Bounds, body.ScrollOffset)
+	}
+}
+
 // Closing Settings while Preview is still applying must not lose the Revert:
 // it runs as soon as Preview returns.
 func TestClosingDuringPreviewStillReverts(t *testing.T) {

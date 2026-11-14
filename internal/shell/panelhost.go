@@ -233,6 +233,10 @@ type PanelHost struct {
 	// settingsRailRevealPending is a section that must be brought into view on
 	// the next layout, including when an IPC open arrives before configure.
 	settingsRailRevealPending string
+	// displaysRevealPending brings a starting preview's Revert into view on
+	// the next layout. It is set once per preview, so scrolling away from the
+	// answer afterwards is not taken back.
+	displaysRevealPending bool
 	// Search results have their own body and keep a separate scroll offset, so
 	// returning to the page restores the position the user left there.
 	settingsSearchScroll int
@@ -2759,6 +2763,22 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 			}
 		} else if offset, ok := settingsScrollOffsetFor(h.root, settingsRailKey); ok {
 			h.settingsRailScroll = offset
+		}
+		if h.displaysRevealPending {
+			body := keyedScroll(h.root, settingsBodyKey)
+			for _, n := range ui.Focusables(body) {
+				if n.Name != "Revert preview" {
+					continue
+				}
+				if scrollNodeIntoView(body, n) {
+					if err := layout(); err != nil {
+						return err
+					}
+				}
+				h.settingsScroll = body.ScrollOffset
+				h.displaysRevealPending = false
+				break
+			}
 		}
 	}
 	if h.id != PanelPluginStore {
