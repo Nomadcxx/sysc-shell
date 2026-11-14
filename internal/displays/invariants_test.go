@@ -113,22 +113,6 @@ func TestKeepRejectsUnpluggedOutput(t *testing.T) {
 	}
 }
 
-func TestFailedPreviewKeepsRecoveryArmed(t *testing.T) {
-	svc, fake := serviceFor(t)
-	fake.mu.Lock()
-	fake.failAfter = 2
-	fake.mu.Unlock()
-	if err := svc.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(1.5)}}); err == nil {
-		t.Fatal("broken preview succeeded")
-	}
-	if svc.ticket == nil {
-		t.Fatal("failed restoration discarded recovery")
-	}
-	if _, err := LoadTicket(svc.ticket.Token); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestKeepFailureRestoresPublishedBytes(t *testing.T) {
 	svc, fake := serviceFor(t)
 	if err := svc.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(1.5)}}); err != nil {
@@ -391,8 +375,8 @@ func TestRestartedShellReportsAnUnresolvedPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(restarted.note, "still being resolved") {
-		t.Fatalf("restarted note = %q", restarted.note)
+	if snap := snapshotOf(t, restarted); snap.Preview || snap.Unresolved == nil || snap.Unresolved.State != StatePreview {
+		t.Fatalf("restarted snapshot = %+v, want the helper's preview reported as unresolved", snap)
 	}
 	if err := restarted.Preview(context.Background(), map[string]Policy{"DP-1": {Scale: ptr(2.0)}}); err == nil {
 		t.Fatal("a restarted shell started a competing preview")

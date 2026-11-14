@@ -260,6 +260,8 @@ func displaysActions(h *PanelHost, r *Registry, snapshot displays.Snapshot) *ui.
 				TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 			},
 			&ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{revert, keep}})
+	} else if u := snapshot.Unresolved; u != nil {
+		children = append(children, displaysUnresolved(h, u, busy)...)
 	} else {
 		children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 			displaysButton(h, "Preview changes", "displays:preview", busy || r.displaysService == nil || !displaysDraftDirty(r) || displaysDraftInvalid(r)),
@@ -268,6 +270,32 @@ func displaysActions(h *PanelHost, r *Registry, snapshot displays.Snapshot) *ui.
 		}})
 	}
 	return settingsGroupCard(h, "Changes", children)
+}
+
+// displaysUnresolved is the way past a record no command of this shell is
+// driving. Preview would only be refused, so it is not offered; the one action
+// either runs the recovery the timeout would have run or, for a record that
+// does not load, moves it aside where it stays for inspection.
+func displaysUnresolved(h *PanelHost, u *displays.Unresolved, busy bool) []*ui.Node {
+	lead, label, how := "An earlier display change is not finished ("+u.State+"), so Preview is unavailable.",
+		"Restore previous settings",
+		"Restoring runs the same recovery the timeout would. If it cannot finish, the record is moved aside and the displays keep their current settings."
+	if u.Unreadable {
+		lead, label, how = "A display record cannot be read, so Preview is unavailable.",
+			"Move the record aside",
+			"Moving it aside keeps it for inspection and changes nothing on the displays."
+	}
+	nodes := []*ui.Node{
+		{Kind: ui.KindText, Name: "Unresolved display change", Text: lead, TextRole: theme.RoleBody},
+		{Kind: ui.KindText, Text: how, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+	}
+	if u.Note != "" {
+		nodes = append(nodes, &ui.Node{Kind: ui.KindText, Text: "Last reason: " + u.Note, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+	}
+	return append(nodes, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+		displaysButton(h, label, "displays:resolve", busy),
+		displaysButton(h, "Read again", "displays:refresh", busy),
+	}})
 }
 
 func displaysCountdown(left time.Duration) string {
@@ -540,6 +568,12 @@ func activateDisplaysAction(r *Registry, h *PanelHost, n *ui.Node) bool {
 	case "displays:refresh":
 		ui.Activate(n)
 		r.displaysRefreshLocked(h)
+		return true
+	case "displays:resolve":
+		ui.Activate(n)
+		if svc := r.displaysService; svc != nil && !r.displaysArmed {
+			r.displaysCommandLocked(h, "resolve", svc.Resolve)
+		}
 		return true
 	case "displays:adopt":
 		ui.Activate(n)

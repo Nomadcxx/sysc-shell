@@ -181,7 +181,11 @@ func RunRecovery(ctx context.Context, token string) error {
 			return fmt.Errorf("%w: ticket %s expected %s, peer is %s", errStale, token, t.Identity, now)
 		}
 		if t.Attempts >= maxAttempts {
-			return fmt.Errorf("displays: recovery %s has run %d times without resolving: %s", token, t.Attempts, t.Note)
+			// Another start cannot help. Say so once, keep the ticket as
+			// evidence for the page, and exit cleanly so systemd stops.
+			report("unresolved", fmt.Sprintf("gave up after %d attempts", t.Attempts), errors.New(t.Note))
+			resolved = true
+			return nil
 		}
 		t.Attempts++
 		if err := t.Store(); err != nil {

@@ -63,6 +63,21 @@ type Snapshot struct {
 	// Note is the message the page shows: the last conflict, refusal or
 	// recovery note, or "" when there is nothing to say.
 	Note string
+	// Unresolved is a record no command of this shell is driving: a preview
+	// from before the shell restarted, one whose restore failed, or a file
+	// that does not load. Preview is refused while it exists; Resolve is the
+	// way past it.
+	Unresolved *Unresolved
+}
+
+// Unresolved describes a record left in the ticket directory.
+type Unresolved struct {
+	Token string
+	// State is the ticket's state, "" when the record does not load.
+	State string
+	// Note is the last reason recorded on the ticket, or the load error.
+	Note       string
+	Unreadable bool
 }
 
 // Service owns one niri socket and one configuration root. Every command runs
@@ -102,16 +117,10 @@ func New(socket, root string, validate Validator) (*Service, error) {
 	if own.Managed == "" {
 		return nil, ErrNotSetUp
 	}
-	svc := &Service{socket: socket, root: root, own: own, validate: validate}
 	// A shell restarted mid-preview does not take the transaction over: its
-	// independent helper still owns it. The page says so, and Preview stays
-	// refused until the helper settles it.
-	if active, ok, err := activeTicketFor(socket); err != nil {
-		svc.note = err.Error()
-	} else if ok {
-		svc.note = fmt.Sprintf("A display preview from before the shell restarted is still being resolved (%s).", active.State)
-	}
-	return svc, nil
+	// independent helper still owns it, and every snapshot reports it as
+	// Unresolved until the helper settles it or the user resolves it.
+	return &Service{socket: socket, root: root, own: own, validate: validate}, nil
 }
 
 // Root is the configuration root the service was given, after ownership
@@ -159,6 +168,8 @@ func (s *Service) publish() {
 		if left, err := Remaining(s.ticket.DeadlineNS); err == nil {
 			snap.Remaining = left
 		}
+	} else {
+		snap.Unresolved = unresolvedFor(s.socket)
 	}
 	s.subMu.Lock()
 	defer s.subMu.Unlock()
@@ -292,6 +303,10 @@ func (s *Service) Preview(ctx context.Context, draft map[string]Policy) error {
 				}
 				_, restoreErr := restore(restoreCtx, s.socket, before)
 				if restoreErr != nil {
+					// The ticket stays as evidence and the helper stays armed,
+					// but this shell is no longer driving a preview: the page
+					// reports the record instead of a countdown that cannot end.
+					s.ticket = nil
 					return fail(&t, restoreErr)
 				}
 				if settleErr := s.settle(&t, StateReverted); settleErr != nil {
@@ -301,6 +316,7 @@ func (s *Service) Preview(ctx context.Context, draft map[string]Policy) error {
 				return nil
 			}))
 			s.note = err.Error()
+			s.publish()
 			return err
 		}
 		s.note = ""
@@ -503,6 +519,79 @@ func (s *Service) Revert(ctx context.Context) error {
 		s.publish()
 		return nil
 	})
+}
+
+// Resolve takes over a record this shell is not driving. It runs the decision
+// the recovery helper would; whatever that cannot settle, and any record that
+// does not load, is set aside so the evidence survives and Preview works again.
+func (s *Service) Resolve(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ticket != nil {
+		return errors.New("displays: a preview is live; keep or revert it")
+	}
+	dir, err := TicketDir()
+	if err != nil {
+		return err
+	}
+	err = withCompositorLock(ctx, s.socket, func() error {
+		active, ok, err := activeTicketFor(s.socket)
+		var bad *unreadableTicket
+		switch {
+		case errors.As(err, &bad):
+			to, err := setAside(dir, bad.Token)
+			if err != nil {
+				return err
+			}
+			s.note = "The unreadable display record was moved to " + to + ". The displays keep their current settings."
+			return nil
+		case err != nil:
+			return err
+		case !ok:
+			return nil
+		}
+		// The user is taking over from the helper, so it must not act on the
+		// record halfway through this decision.
+		_ = stopRecoveryUnit(ctx, active.Token)
+		return withTicketLockContext(ctx, dir, active.Token, func() error {
+			t, err := LoadTicket(active.Token)
+			if errors.Is(err, os.ErrNotExist) {
+				s.note = "The display preview ended."
+				return nil
+			}
+			if err == nil {
+				err = recoverLocked(ctx, dir, &t)
+			}
+			if err == nil {
+				s.note = t.Note
+				return nil
+			}
+			to, moveErr := setAside(dir, active.Token)
+			if moveErr != nil {
+				return errors.Join(err, moveErr)
+			}
+			return fmt.Errorf("displays: the previous settings could not be restored (%w); the record was moved to %s and the displays keep their current settings", err, to)
+		})
+	})
+	if own, lerr := LoadOwnership(s.root); lerr == nil {
+		s.own = own
+	}
+	s.publish()
+	return err
+}
+
+// unresolvedFor reports the first record for socket that no command of this
+// shell is driving, or nil.
+func unresolvedFor(socket string) *Unresolved {
+	t, ok, err := activeTicketFor(socket)
+	var bad *unreadableTicket
+	switch {
+	case errors.As(err, &bad):
+		return &Unresolved{Token: bad.Token, Note: bad.Err.Error(), Unreadable: true}
+	case err != nil || !ok:
+		return nil
+	}
+	return &Unresolved{Token: t.Token, State: t.State, Note: t.Note}
 }
 
 // Close reverts a live preview and drops the subscribers. The service is

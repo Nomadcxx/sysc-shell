@@ -27,6 +27,7 @@ type displaysController interface {
 	Preview(ctx context.Context, draft map[string]displays.Policy) error
 	Keep(ctx context.Context) error
 	Revert(ctx context.Context) error
+	Resolve(ctx context.Context) error
 	Close(ctx context.Context) error
 	Root() string
 }

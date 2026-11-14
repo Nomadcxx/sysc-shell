@@ -397,3 +397,44 @@ func TestClosingDuringPreviewStillReverts(t *testing.T) {
 	close(fake.hold)
 	displaysWaitFor(t, fake, "revert")
 }
+
+func (f *fakeDisplays) Resolve(context.Context) error { f.record("resolve"); return f.refuse }
+
+// sysc-2300: a record the shell is not driving must not leave the page with a
+// refused Preview and nothing to press.
+func TestDisplaysUnresolvedRecordOffersAWayOut(t *testing.T) {
+	t.Parallel()
+	reg, host, fake := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
+	reg.mu.Lock()
+	reg.displaysSnapshot.Unresolved = &displays.Unresolved{Token: "ab", State: displays.StatePreview, Note: "niri: error parsing request"}
+	reg.rebuildPanel(host)
+	text := renderText(host.root)
+	resolve := findActionNode(host.root, "displays:resolve")
+	preview := findActionNode(host.root, "displays:preview")
+	reg.mu.Unlock()
+	for _, want := range []string{"Restore previous settings", "niri: error parsing request"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the page does not show %q:\n%s", want, text)
+		}
+	}
+	if resolve == nil || resolve.State&ui.StateDisabled != 0 {
+		t.Fatalf("no usable resolve control:\n%s", text)
+	}
+	if preview != nil && preview.State&ui.StateDisabled == 0 {
+		t.Error("Preview is offered while the record refuses it")
+	}
+	reg.mu.Lock()
+	activateDisplaysAction(reg, host, resolve)
+	reg.mu.Unlock()
+	displaysWaitFor(t, fake, "resolve")
+
+	// A record that does not load is moved aside, not restored.
+	reg.mu.Lock()
+	reg.displaysSnapshot.Unresolved = &displays.Unresolved{Token: "ab", Note: "displays: ticket is not private", Unreadable: true}
+	reg.rebuildPanel(host)
+	text = renderText(host.root)
+	reg.mu.Unlock()
+	if !strings.Contains(text, "Move the record aside") || strings.Contains(text, "Restore previous settings") {
+		t.Errorf("an unreadable record offers the wrong action:\n%s", text)
+	}
+}

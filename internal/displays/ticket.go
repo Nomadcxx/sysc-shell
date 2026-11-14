@@ -342,13 +342,41 @@ func activeTicketFor(socket string) (Ticket, bool, error) {
 		token := strings.TrimSuffix(name, ".json")
 		t, err := LoadTicket(token)
 		if err != nil {
-			return Ticket{}, false, err
+			return Ticket{}, false, &unreadableTicket{Token: token, Err: err}
 		}
 		if !t.finished() && (socket == "" || t.Socket == socket) {
 			return t, true, nil
 		}
 	}
 	return Ticket{}, false, nil
+}
+
+// unreadableTicket is a record in the ticket directory that does not load. It
+// names nothing that can be restored, so it is kept as evidence and the page
+// offers to move it aside rather than refusing every preview for good.
+type unreadableTicket struct {
+	Token string
+	Err   error
+}
+
+func (e *unreadableTicket) Error() string { return e.Err.Error() }
+func (e *unreadableTicket) Unwrap() error { return e.Err }
+
+// setAside moves a record out of the way of later previews without deleting
+// it. The files are renamed into a subdirectory the ticket scan ignores, so a
+// record that cannot be read, or is not a regular file, moves as well as one
+// that can. The journal keeps the helper's own reports past logout.
+func setAside(dir, token string) (string, error) {
+	to := filepath.Join(dir, "unresolved", token)
+	if err := os.MkdirAll(to, 0o700); err != nil {
+		return "", fmt.Errorf("displays: create %s: %w", to, err)
+	}
+	for _, name := range []string{token + ".json", token + ".previous", token + ".ready"} {
+		if err := os.Rename(filepath.Join(dir, name), filepath.Join(to, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("displays: set %s aside: %w", name, err)
+		}
+	}
+	return to, cleanupTicket(dir, token)
 }
 
 // withTicketLock serializes the durable decision between the shell and the
