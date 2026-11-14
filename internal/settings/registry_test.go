@@ -436,10 +436,10 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Night Light adds one section to the Look cluster, Sounds one to System,
-	// and Applications adds one to Shell.
-	if len(names) != 19 {
-		t.Fatalf("SectionNames = %d sections, want nineteen", len(names))
+	// Night Light adds one section to the Look cluster, Sounds and Display
+	// Settings one each to System, and Applications adds one to Shell.
+	if len(names) != 20 {
+		t.Fatalf("SectionNames = %d sections, want twenty", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {

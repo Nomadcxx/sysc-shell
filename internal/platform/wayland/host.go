@@ -170,9 +170,14 @@ func (u *surfaceUnit) dropFrameCallback() error {
 // registry global name; the connector string is an attribute a reconnect may
 // reuse and is never used as identity.
 type OutputHost struct {
-	global     uint32
-	proxy      *client.Output
-	connector  string
+	global      uint32
+	proxy       *client.Output
+	connector   string
+	make, model string
+	// scale is the last fractional scale any of this output's surfaces
+	// reported. Wayland has no surfaceless way to learn it, and the logical
+	// size published for an output without a bar depends on it.
+	scale      ui.Scale120
 	transform  int32
 	modeWidth  int32
 	modeHeight int32

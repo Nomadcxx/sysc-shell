@@ -23,6 +23,56 @@ type wireReply struct {
 	Err *string `json:"Err"`
 }
 
+// call sends one request on a short-lived connection and returns the Ok value
+// of the reply. Err replies become errors here so every caller reports the
+// compositor's own message, while the shape of Ok stays with the caller: an
+// Action acknowledges with a string and a query answers with an object.
+func call(ctx context.Context, socketPath string, request []byte) (json.RawMessage, error) {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("niri: connect to %s: %w", socketPath, err)
+	}
+	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
+
+	if _, err := conn.Write(append(request, '\n')); err != nil {
+		return nil, fmt.Errorf("niri: send request: %w", err)
+	}
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
+	if !scanner.Scan() {
+		// Cancelling the context closes the connection, which is what unblocks
+		// this read, so the context is the cause the caller asked about.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := scanner.Err(); err != nil {
+			if errors.Is(err, bufio.ErrTooLong) {
+				return nil, fmt.Errorf("niri: reply line exceeds %d bytes: %w", maxLine, err)
+			}
+			return nil, fmt.Errorf("niri: read reply: %w", err)
+		}
+		return nil, errors.New("niri: no reply")
+	}
+
+	var reply struct {
+		Ok  json.RawMessage `json:"Ok"`
+		Err *string         `json:"Err"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &reply); err != nil {
+		return nil, fmt.Errorf("niri: decode reply: %w", err)
+	}
+	switch {
+	case reply.Err != nil:
+		return nil, fmt.Errorf("niri: %s", *reply.Err)
+	case len(reply.Ok) == 0:
+		return nil, errors.New("niri: reply carried no result")
+	}
+	return reply.Ok, nil
+}
+
 // Stream connects to the compositor and publishes workspace snapshots until the
 // context is cancelled. The snapshot channel carries only the newest state when
 // the consumer is slow.

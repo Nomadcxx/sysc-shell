@@ -59,6 +59,9 @@ func Write(path string, c Config) error {
 	if _, err := applyMonitor(*monitorWire(c.Monitor), "monitor"); err != nil {
 		return err
 	}
+	if _, err := applyDisplays(Displays{}, wireDisplays{NiriConfigPath: &c.Displays.NiriConfigPath, SyscConfigPath: &c.Displays.SyscConfigPath}, "displays"); err != nil {
+		return err
+	}
 	if _, err := applySounds(*soundsWire(c.Sounds), "sounds"); err != nil {
 		return err
 	}
@@ -151,6 +154,15 @@ func toWire(c Config) wireConfig {
 	if p := wallpaperDiff(c.Wallpaper, d.Wallpaper); p != nil {
 		w.Wallpaper = p
 	}
+	if c.Displays.NiriConfigPath != "" || c.Displays.SyscConfigPath != "" {
+		w.Displays = &wireDisplays{}
+		if p := c.Displays.NiriConfigPath; p != "" {
+			w.Displays.NiriConfigPath = &p
+		}
+		if p := c.Displays.SyscConfigPath; p != "" {
+			w.Displays.SyscConfigPath = &p
+		}
+	}
 	if c.TerminalArt.Palette != "" || c.TerminalArt.Blur != 0 {
 		palette, blur := c.TerminalArt.Palette, c.TerminalArt.Blur
 		w.TerminalArt = &wireTerminalArt{Palette: &palette, Blur: &blur}
@@ -201,7 +213,14 @@ func toWire(c Config) wireConfig {
 	for i := range c.Outputs {
 		conn := c.Outputs[i].Connector
 		out := wireOutput{Connector: &conn}
-		if bar := barDiff(c.Outputs[i].Bar, c.Bar); bar != nil {
+		var bar *wireBar
+		if c.Outputs[i].Set != nil {
+			stated := c.Outputs[i].wire()
+			bar = &stated
+		} else {
+			bar = barDiff(c.Outputs[i].Bar, c.Bar)
+		}
+		if bar != nil {
 			out.Bar = bar
 		}
 		w.Outputs = append(w.Outputs, out)

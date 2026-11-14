@@ -352,7 +352,9 @@ func barKeyHost(t *testing.T, bar config.Bar) (*Registry, *PanelHost) {
 	drainAux(t, reg, 2)
 	h := reg.panelHosts[PanelSettings]
 	reg.mu.Lock()
-	h.draft.Bar = bar
+	// Output edits validate the whole resulting bar, so keep the draft's valid
+	// scalar policy and install only the lanes under test.
+	h.draft.Bar.Left, h.draft.Bar.Center, h.draft.Bar.Right = bar.Left, bar.Center, bar.Right
 	h.section, h.settingsPage = "Bar", "Layout"
 	h.mods = ui.ModAlt
 	reg.rebuildPanel(h)

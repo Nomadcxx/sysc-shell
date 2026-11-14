@@ -114,9 +114,19 @@ type HostIdentity struct {
 	Connector string
 }
 
+// OutputInfo is immutable display metadata, including outputs without a bar.
+// Width and Height are logical, and zero until a surface on the output has
+// reported its scale.
+type OutputInfo struct {
+	Global                 uint32
+	Connector, Make, Model string
+	Width, Height          int
+}
+
 // Callbacks are the concrete hooks the application supplies. This is a struct
 // rather than an interface because there is one implementation.
 type Callbacks struct {
+	OutputsChanged func([]OutputInfo)
 	// NewHost supplies the per-bar hooks when a bar is created for a connector.
 	NewHost func(global uint32, connector string) (HostCallbacks, error)
 	// PrepareConfig builds replacement bars for every enabled connector without
@@ -427,6 +437,7 @@ func (o *owner) connect() error {
 				o.cb.DropHost(h.global)
 			}
 		}
+		o.notifyOutputs()
 	})
 
 	// The first roundtrip delivers the globals.
@@ -1022,6 +1033,10 @@ func (o *owner) onConfigure(h *OutputHost, u *surfaceUnit, e layershell.ZwlrLaye
 func (o *owner) onPreferredScale(h *OutputHost, u *surfaceUnit, e fractionalscale.WpFractionalScaleV1PreferredScaleEvent) {
 	if !u.ss.preferredScale(ui.Scale120(e.Scale)) {
 		return
+	}
+	if h.scale != u.ss.scale120 {
+		h.scale = u.ss.scale120
+		o.notifyOutputs()
 	}
 	if u.ss.eligible() && !u.awaitingConfigure {
 		o.failUnit(h, u, o.reconfigure(h, u))

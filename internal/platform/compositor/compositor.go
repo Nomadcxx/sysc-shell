@@ -14,6 +14,20 @@ const (
 	SyscCompositor
 )
 
+func (k Kind) Executable() string {
+	if k == SyscCompositor {
+		return "sysc-compositor"
+	}
+	return "niri"
+}
+
+func (k Kind) ConfigEnv() string {
+	if k == SyscCompositor {
+		return "SYSC_COMPOSITOR_CONFIG"
+	}
+	return "NIRI_CONFIG"
+}
+
 func Detect(getenv func(string) string) Kind {
 	if getenv("SYSC_SOCKET") != "" && strings.HasPrefix(filepath.Base(getenv("NIRI_SOCKET")), "sysc-compositor.") {
 		return SyscCompositor

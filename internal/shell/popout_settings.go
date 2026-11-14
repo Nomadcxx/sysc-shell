@@ -80,25 +80,26 @@ const settingsRailWidth = 208
 // package's inventory: a name the subset lacks shapes to nothing and paints an
 // invisible control rather than failing anywhere visible.
 var settingsSectionIcons = map[string]string{
-	"Appearance":    "palette",
-	"Palettes":      "tune",
-	"Templates":     "description",
-	"Bar":           "toolbar",
-	"Widgets":       "widgets",
-	"Panels":        "web_asset",
-	"Monitor":       "memory",
-	"Wallpaper":     "wallpaper",
-	"Terminal Art":  "terminal",
-	"Screensaver":   "schedule",
-	"Night Light":   "bedtime",
-	"Weather":       "partly_cloudy_day",
-	"Tray":          "apps",
-	"Applications":  "apps",
-	"Plugins":       "extension",
-	"Session":       "power_settings_new",
-	"Lock Screen":   "lock",
-	"Accessibility": "accessibility_new",
-	"Sounds":        "volume_up",
+	"Appearance":       "palette",
+	"Palettes":         "tune",
+	"Templates":        "description",
+	"Bar":              "toolbar",
+	"Widgets":          "widgets",
+	"Panels":           "web_asset",
+	"Monitor":          "memory",
+	"Wallpaper":        "wallpaper",
+	"Terminal Art":     "terminal",
+	"Screensaver":      "schedule",
+	"Night Light":      "bedtime",
+	"Weather":          "partly_cloudy_day",
+	"Tray":             "apps",
+	"Applications":     "apps",
+	"Plugins":          "extension",
+	"Display Settings": "display_settings",
+	"Session":          "power_settings_new",
+	"Lock Screen":      "lock",
+	"Accessibility":    "accessibility_new",
+	"Sounds":           "volume_up",
 }
 
 // settingsControlWidth is the room the trailing column takes. Controls used to
@@ -431,6 +432,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		if h.set != nil {
 			hits = overlayIdleGets(r, h.draft.Session.Locker, h.set.Search(h.query))
 		}
+		// The display entries are not in the config registry, so search adds
+		// them itself: a search for an output name must find its page.
+		hits = append(hits, displaysSearchEntries(r, h.query)...)
 		return body(settingsSearchColumn(h, hits))
 	}
 
@@ -456,6 +460,11 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if section == "Screensaver" {
 		return body(screensaverSettingsBody(r, h))
+	}
+	if section == displaysSection {
+		// A section with one body of its own: the outputs are live, so the
+		// entries are built from the service rather than from the config.
+		return body(displaysSettingsBody(r, h))
 	}
 	var entries []settings.Entry
 	if h.set != nil {
@@ -907,10 +916,7 @@ func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
 		}
 		return settingsBody(h, theme.MarginL, h.barLaneStripFor(r))
 	case "Displays":
-		if len(entries) == 0 {
-			return settingsBody(h, theme.MarginL, settingsEmptyNote("Displays"))
-		}
-		return settingsPageColumn(h, entries)
+		return settingsBarDisplays(r, h)
 	}
 	var lead, pictureCards []*ui.Node
 	var rest []settings.Entry
@@ -956,14 +962,18 @@ func settingsCardsFor(r *Registry, h *PanelHost, e settings.Entry) *ui.Node {
 // settingsBarDimReason says why a Bar setting does not apply to the draft,
 // or "" when it does. Enabled always applies: it is how the rest comes back.
 func settingsBarDimReason(h *PanelHost, path string) string {
-	b := h.draft.Bar
+	return settingsBarDimReasonFor(h.draft.Bar, h.draft.Accessibility.HighContrast, path)
+}
+
+// settingsBarDimReasonFor judges path against one resolved bar, which is the
+// shared bar or a display's own.
+func settingsBarDimReasonFor(b config.Bar, hc bool, path string) string {
 	switch {
 	case path == "bar.enabled" || !strings.HasPrefix(path, "bar."):
 		return ""
 	case !b.Enabled:
 		return "The bar is off. Turn it on to change this."
 	}
-	hc := h.draft.Accessibility.HighContrast
 	switch path {
 	case "bar.frost-opacity":
 		if hc {
@@ -1070,6 +1080,9 @@ func settingsAddress(requested string) (section, page string, ok bool) {
 	section, page, _ = strings.Cut(requested, "/")
 	if section == "Displays" && page == "" {
 		section, page = "Bar", "Displays"
+	}
+	if section == "Display" && page == "" {
+		section = displaysSection
 	}
 	if !slices.Contains(settingsSections, section) {
 		return "", "", false
@@ -1440,9 +1453,13 @@ func settingsResetWidth(h *PanelHost) int {
 // beside a segmented control it read as one more option.
 func settingsResetButton(h *PanelHost, e settings.Entry) *ui.Node {
 	m := h.metrics()
+	name := "Reset " + e.Label
+	if e.Inherited != nil {
+		name += " on " + e.Group + " to shared"
+	}
 	return &ui.Node{
 		Kind: ui.KindButton, Text: "Reset", Action: "reset:" + e.Path,
-		Name: "Reset " + e.Label, Role: "button", Focusable: true,
+		Name: name, Role: "button", Focusable: true,
 		Width: settingsResetWidth(h), Height: m.CompactControl,
 		Fill: ui.FillOutline, Shape: ui.ShapeMedium,
 	}
@@ -2274,15 +2291,29 @@ func (r *Registry) writeDebouncedSettingsChanges(h *PanelHost, changes []setting
 }
 
 func applySettingsWriteChanges(cfg *config.Config, changes []settingsWriteChange, palettes []theme.PaletteInfo) error {
+	var outputs []string
+	for _, change := range changes {
+		if rest, ok := strings.CutPrefix(change.path, "outputs."); ok {
+			if i := strings.LastIndexByte(rest, '.'); i > 0 {
+				outputs = append(outputs, rest[:i])
+			}
+		}
+	}
 	registryFor := func(c config.Config) *settings.Registry {
-		return settings.DefaultFor(c, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)))
+		return settings.DefaultFor(c, settings.WithCustomPalettes(settings.CustomPalettesFrom(palettes)), settings.WithOutputs(outputs))
 	}
 	for _, change := range changes {
 		entry := registryFor(*cfg).ByPath(change.path)
 		if entry == nil || entry.Set == nil {
 			return fmt.Errorf("settings: %q is no longer available", change.path)
 		}
-		if err := entry.Set(cfg, change.value); err != nil {
+		var err error
+		if change.reset && entry.Reset != nil {
+			err = entry.Reset(cfg)
+		} else {
+			err = entry.Set(cfg, change.value)
+		}
+		if err != nil {
 			return err
 		}
 	}

@@ -814,7 +814,7 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 	r.addWidgetEntries(cfg)
 	r.addTemplateEntries()
 	r.addTrayEntries(cfg)
-	r.addOutputEntries(cfg)
+	r.addOutputEntries(cfg, o.outputs)
 	if len(slugs) > 0 {
 		r.insertAfter("appearance.palette", Entry{
 			Path: "appearance.custom", Label: "Custom palette", Section: "Appearance", Group: "Colours & mode",
@@ -925,7 +925,7 @@ func SectionClusters() []Cluster {
 		{"Shell", []string{"Bar", "Widgets", "Tray", "Applications"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
-		{"System", []string{"Session", "Lock Screen", "Accessibility", "Sounds"}},
+		{"System", []string{"Display Settings", "Session", "Lock Screen", "Accessibility", "Sounds"}},
 	}
 }
 
@@ -1524,71 +1524,41 @@ func (r *Registry) addTrayEntries(cfg config.Config) {
 	}
 }
 
-// addOutputEntries exposes the per-connector bar overrides that have been
-// modelled since the reload work and reachable from nothing. It reads the
-// overrides the configuration already carries: creating one for a connector
-// that has none is per-output geometry, which sub-project C owns.
-func (r *Registry) addOutputEntries(cfg config.Config) {
-	for i := range cfg.Outputs {
-		conn := cfg.Outputs[i].Connector
-		override := func(c *config.Config) *config.Bar {
-			for j := range c.Outputs {
-				if c.Outputs[j].Connector == conn {
-					return &c.Outputs[j].Bar
-				}
+// addOutputEntries reuses the shared controls and validation for each output.
+// Discovery adds rows, never persistent configuration.
+func (r *Registry) addOutputEntries(cfg config.Config, connectors []string) {
+	for _, out := range cfg.Outputs {
+		connectors = append(connectors, out.Connector)
+	}
+	for _, conn := range unionOf(connectors) {
+		for _, field := range []struct{ path, key string }{
+			{"enabled", "enabled"}, {"edge", "edge"}, {"height", "height"},
+			{"gap", "gap"}, {"font-size", "font.size"},
+		} {
+			base := *r.ByPath("bar." + field.path)
+			e := base
+			e.Path, e.Group, e.Page = "outputs."+conn+"."+field.path, conn, "Displays"
+			e.GroupLiteral = true
+			if field.key == "enabled" {
+				e.Label, e.Describe = "Show bar", "Draw the bar on this display."
 			}
-			return nil
-		}
-		read := func(c config.Config, get func(config.Bar) int) int {
-			for _, o := range c.Outputs {
-				if o.Connector == conn {
-					return get(o.Bar)
-				}
+			e.Get = func(c config.Config) string {
+				c.Bar = c.ForConnector(conn)
+				return base.Get(c)
 			}
-			return 0
+			e.Default = func(c config.Config) string { return base.Get(c) }
+			e.Inherited = func(c config.Config) bool { return !c.OutputBarOverridden(conn, field.key) }
+			e.Set = func(c *config.Config, value string) error {
+				candidate := c.Clone()
+				candidate.Bar = c.ForConnector(conn)
+				if err := base.Set(&candidate, value); err != nil {
+					return err
+				}
+				return c.SetOutputBar(conn, field.key, candidate.Bar)
+			}
+			e.Reset = func(c *config.Config) error { c.ResetOutputBar(conn, field.key); return nil }
+			r.entries = append(r.entries, e)
 		}
-		r.entries = append(r.entries,
-			Entry{
-				Path: "outputs." + conn + ".enabled", Label: "Enabled", Section: "Bar", Page: "Displays", Group: conn,
-				GroupLiteral: true,
-				Describe:     "Draw the bar on this output.", Kind: KindBool,
-				Get: getBool(func(c config.Config) bool {
-					return read(c, func(b config.Bar) int {
-						if b.Enabled {
-							return 1
-						}
-						return 0
-					}) == 1
-				}),
-				Set: setBool("outputs."+conn+".enabled", func(c *config.Config, v bool) {
-					if b := override(c); b != nil {
-						b.Enabled = v
-					}
-				}),
-			},
-			Entry{
-				Path: "outputs." + conn + ".height", Label: "Thickness", Section: "Bar", Page: "Displays", Group: conn,
-				GroupLiteral: true,
-				Describe:     "Bar thickness on this output: height on top/bottom, width on left/right.", Kind: KindInt, Min: 24, Max: 128,
-				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.Height }) }),
-				Set: setInt("outputs."+conn+".height", 24, 128, func(c *config.Config, n int) {
-					if b := override(c); b != nil {
-						b.Height = n
-					}
-				}),
-			},
-			Entry{
-				Path: "outputs." + conn + ".font-size", Label: "Font size", Section: "Bar", Page: "Displays", Group: conn,
-				GroupLiteral: true,
-				Describe:     "Bar text size on this output.", Kind: KindInt, Min: 8, Max: 32,
-				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.FontSize }) }),
-				Set: setInt("outputs."+conn+".font-size", 8, 32, func(c *config.Config, n int) {
-					if b := override(c); b != nil {
-						b.FontSize = n
-					}
-				}),
-			},
-		)
 	}
 }
 
