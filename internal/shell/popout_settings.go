@@ -180,16 +180,11 @@ func settingsControlWidthFor(h *PanelHost, e settings.Entry) int {
 // settingsBodyWidth is what is left for the rows once the rail and the gutter
 // have taken theirs. The rows right-pin their controls, so the column has to
 // carry it: without a width the controls pin to the panel's own edge and every
-// enum and field is clipped by the surface. The configured surface wins over
-// the placement: when an output turns narrower, the compositor can fit the
-// surface before the shell re-places it.
+// enum and field is clipped by the surface.
 func settingsBodyWidth(h *PanelHost) int {
 	panelWidth := panelTargetSize(PanelSettings).W
 	if h != nil && h.place.Panel.W > 0 {
 		panelWidth = h.place.Panel.W
-	}
-	if h != nil && h.logicalW > 0 {
-		panelWidth = h.logicalW
 	}
 	pad := 0
 	if h != nil {

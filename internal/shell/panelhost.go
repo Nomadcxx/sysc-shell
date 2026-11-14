@@ -2719,7 +2719,18 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 		return ui.LayoutColumn(h.root, box, h.measureText())
 	}
 	if err := layout(); err != nil {
-		return err
+		// When an output shrinks, niri can configure a panel once with its
+		// old margins against the new output, narrower than the placement
+		// the shell has already sent. That configure is transient, so lay
+		// out at the placement and let the canvas clip until the next.
+		placed := h.place.Panel
+		if placed.W <= 0 || placed.H <= 0 || (w >= placed.W && height >= placed.H) {
+			return err
+		}
+		box = h.surfaceBody(max(w, placed.W), max(height, placed.H))
+		if err := layout(); err != nil {
+			return err
+		}
 	}
 	if h.fitOpenMenu(box) {
 		if err := layout(); err != nil {

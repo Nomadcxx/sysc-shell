@@ -404,29 +404,37 @@ func TestDisplaysPageFitsAPortraitOutput(t *testing.T) {
 	}
 }
 
-// A rotating preview reaches the panel in two steps: the new scale at the old
-// size, then the placement for the narrower output at the same scale. The
-// second configure must not lay out the tree built for the first.
-func TestSettingsRelaysOutAfterItsOutputTurnsPortrait(t *testing.T) {
+// The configure sequence the laptop logged when a 1.5x, 90 degree preview
+// turned eDP-1 to 720x1280: niri fitted the panel to each new output with
+// the margin of the 1920-wide placement (1280-400, then 720-400) before the
+// shell's new placement reached it. No configure may close Settings, and the
+// narrow one must still paint.
+func TestSettingsSurvivesAnOutputTurningPortrait(t *testing.T) {
 	t.Parallel()
 	reg, host, _ := displaysPage(t, 120, ui.Rect{W: 1920, H: 1080})
 	configure := host.configureLocking(reg)
-	if err := configure(host.place.Panel.W, host.place.Panel.H, 180); err != nil {
-		t.Fatalf("configure at the new scale: %v", err)
+	render := host.renderLocking(reg)
+	place := func(w, h int) {
+		reg.mu.Lock()
+		host.place.Panel = ui.Rect{W: w, H: h}
+		reg.mu.Unlock()
 	}
-	reg.mu.Lock()
-	host.place.Panel = settingsPanelSize(720, 1280)
-	reg.mu.Unlock()
-	if err := configure(host.place.Panel.W, host.place.Panel.H, 180); err != nil {
-		t.Fatalf("configure at the portrait size: %v", err)
+	place(921, 633)
+	for _, step := range []struct{ w, h int }{{1120, 820}, {880, 576}} {
+		if err := configure(step.w, step.h, 180); err != nil {
+			t.Fatalf("configure %dx%d: %v", step.w, step.h, err)
+		}
 	}
-	// The compositor can also fit the surface to the new output before the
-	// shell re-places it.
-	reg.mu.Lock()
-	host.place.Panel = settingsPanelSize(1920, 1080)
-	reg.mu.Unlock()
-	if err := configure(600, host.place.Panel.H, 180); err != nil {
-		t.Fatalf("configure narrower than the placement: %v", err)
+	place(518, 820)
+	if err := configure(320, 820, 180); err != nil {
+		t.Fatalf("configure 320x820: %v", err)
+	}
+	pw, ph := 320*3/2, 820*3/2
+	if err := render(make([]byte, pw*ph*4), pw, ph, pw*4); err != nil {
+		t.Fatalf("render at 320x820: %v", err)
+	}
+	if err := configure(518, 820, 180); err != nil {
+		t.Fatalf("configure 518x820: %v", err)
 	}
 }
 
