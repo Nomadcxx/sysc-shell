@@ -1540,7 +1540,7 @@ func (r *Registry) addOutputEntries(cfg config.Config, connectors []string) {
 			e.Path, e.Group, e.Page = "outputs."+conn+"."+field.path, conn, "Displays"
 			e.GroupLiteral = true
 			if field.key == "enabled" {
-				e.Label = "Show bar"
+				e.Label, e.Describe = "Show bar", "Draw the bar on this display."
 			}
 			e.Get = func(c config.Config) string {
 				c.Bar = c.ForConnector(conn)

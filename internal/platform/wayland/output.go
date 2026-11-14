@@ -101,11 +101,12 @@ func (o *owner) notifyOutputs() {
 		if !h.alive || !h.ready() {
 			continue
 		}
-		var scale ui.Scale120
-		if h.bar != nil && h.bar.ss != nil {
-			scale = h.bar.ss.scale120
+		// Until a surface reports the scale the logical size is unknown, and
+		// zero says so; the mode's pixels would be wrong under fractional scale.
+		var w, height int
+		if h.scale > 0 {
+			w, height = h.logicalSize(h.scale)
 		}
-		w, height := h.logicalSize(scale)
 		outputs = append(outputs, OutputInfo{Global: h.global, Connector: h.connector, Make: h.make, Model: h.model, Width: w, Height: height})
 	}
 	o.cb.OutputsChanged(outputs)

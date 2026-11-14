@@ -115,6 +115,8 @@ type HostIdentity struct {
 }
 
 // OutputInfo is immutable display metadata, including outputs without a bar.
+// Width and Height are logical, and zero until a surface on the output has
+// reported its scale.
 type OutputInfo struct {
 	Global                 uint32
 	Connector, Make, Model string
@@ -1031,6 +1033,10 @@ func (o *owner) onConfigure(h *OutputHost, u *surfaceUnit, e layershell.ZwlrLaye
 func (o *owner) onPreferredScale(h *OutputHost, u *surfaceUnit, e fractionalscale.WpFractionalScaleV1PreferredScaleEvent) {
 	if !u.ss.preferredScale(ui.Scale120(e.Scale)) {
 		return
+	}
+	if h.scale != u.ss.scale120 {
+		h.scale = u.ss.scale120
+		o.notifyOutputs()
 	}
 	if u.ss.eligible() && !u.awaitingConfigure {
 		o.failUnit(h, u, o.reconfigure(h, u))

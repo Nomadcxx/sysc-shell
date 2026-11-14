@@ -29,7 +29,9 @@ func (r *Registry) UpdateDisplayOutputs(outputs []wayland.OutputInfo) {
 	}
 	r.displayOutputs = next
 	for _, out := range next {
-		r.SetOutputLogicalSize(out.Connector, out.Width, out.Height)
+		if out.Width > 0 && out.Height > 0 {
+			r.SetOutputLogicalSize(out.Connector, out.Width, out.Height)
+		}
 	}
 	if h := r.panelHosts[PanelSettings]; h != nil {
 		h.set = r.settingsForLocked(h.draft)
@@ -94,9 +96,11 @@ func settingsBarDisplays(r *Registry, h *PanelHost) *ui.Node {
 			visible = true
 		}
 		name := strings.TrimSpace(out.Make + " " + out.Model)
+		// The connector leads: a long make and model truncates, and the
+		// connector is what tells two identical monitors apart.
 		title := conn
 		if name != "" {
-			title = name + " · " + conn
+			title = conn + " · " + name
 		}
 		status := h.tr("bar.displays.disconnected", "Disconnected")
 		if connected {

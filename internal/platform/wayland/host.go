@@ -174,11 +174,15 @@ type OutputHost struct {
 	proxy       *client.Output
 	connector   string
 	make, model string
-	transform   int32
-	modeWidth   int32
-	modeHeight  int32
-	doneSeen    bool
-	policy      config.Bar
+	// scale is the last fractional scale any of this output's surfaces
+	// reported. Wayland has no surfaceless way to learn it, and the logical
+	// size published for an output without a bar depends on it.
+	scale      ui.Scale120
+	transform  int32
+	modeWidth  int32
+	modeHeight int32
+	doneSeen   bool
+	policy     config.Bar
 	// opaqueBackground controls the compositor's opaque-region hint for this
 	// host's accepted theme.
 	opaqueBackground bool

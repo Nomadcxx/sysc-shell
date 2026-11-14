@@ -743,7 +743,9 @@ func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 	}
 	policy := r.cfg.ForConnector(connector)
 	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Extent(), Align: "center"}
-	trig.OutW, trig.OutH = out.Width, out.Height
+	if out.Width > 0 && out.Height > 0 {
+		trig.OutW, trig.OutH = out.Width, out.Height
+	}
 	if !policy.Enabled {
 		trig.BarZone = 0
 	}
