@@ -4685,9 +4685,6 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)
-	if h.id == PanelSettings {
-		h.focusDisplaysPreview()
-	}
 	restoredFocus := false
 	if focusedKey != "" {
 		for i, n := range h.focus {
@@ -4718,6 +4715,11 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	}
 	if h.id == PanelSettings && !restoredFocus {
 		h.roving.Set(0)
+	}
+	// After the restore: the Preview button that was pressed is gone from an
+	// armed tree, and the fallback above would leave the keyboard on Search.
+	if h.id == PanelSettings {
+		h.focusDisplaysPreview()
 	}
 	if h.id == PanelPluginStore && !restoredFocus {
 		h.focusPluginStoreSelection()

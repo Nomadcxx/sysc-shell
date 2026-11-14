@@ -459,6 +459,33 @@ func TestStartingAPreviewRevealsTheAnswer(t *testing.T) {
 	}
 }
 
+// Preview is pressed with the pointer, and that button is gone once the
+// preview starts. The keyboard must land on Revert, not fall back to Search,
+// so Enter undoes the change and one Tab reaches Keep.
+func TestStartingAPreviewFocusesRevert(t *testing.T) {
+	t.Parallel()
+	reg, host, fake := displaysPage(t, 120, ui.Rect{W: 1536, H: 864})
+	reg.mu.Lock()
+	for i, n := range host.focus {
+		if n.Action == "displays:preview" {
+			host.roving.Set(i)
+		}
+	}
+	reg.mu.Unlock()
+	snap := displaysTestSnapshot()
+	snap.Preview, snap.Remaining = true, 20*time.Second
+	reg.applyDisplaysSnapshot(fake, snap)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := nameOf(host.focused()); got != "Revert preview" {
+		t.Fatalf("focus when the preview starts = %q, want Revert preview", got)
+	}
+	host.keyPress(reg, keyTab)
+	if got := nameOf(host.focused()); got != "Keep preview" {
+		t.Fatalf("focus after Tab = %q, want Keep preview", got)
+	}
+}
+
 // Closing Settings while Preview is still applying must not lose the Revert:
 // it runs as soon as Preview returns.
 func TestClosingDuringPreviewStillReverts(t *testing.T) {
