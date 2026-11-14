@@ -87,9 +87,6 @@ func beforeState(out niri.Output) OutputState {
 // mode child, so niri picks the preferred mode; the file has no transform
 // child, so the reloaded transform is Normal.
 func planOutput(out niri.Output, want Policy) (geometry, layout []niri.OutputChange, err error) {
-	if want.VRR != nil && !out.VRRSupported {
-		return nil, nil, fmt.Errorf("displays: %s does not support variable refresh rate", out.Name)
-	}
 	if want.Scale != nil {
 		if err := ValidateScale(*want.Scale); err != nil {
 			return nil, nil, err
@@ -148,9 +145,13 @@ func planOutput(out niri.Output, want Policy) (geometry, layout []niri.OutputCha
 	} else {
 		layout = append(layout, niri.PositionAuto())
 	}
-	if want.VRR != nil {
+	// Hardware that cannot vary its refresh ignores a VRR request, so none is
+	// sent; the file still records what the user asked for.
+	switch {
+	case !out.VRRSupported:
+	case want.VRR != nil:
 		layout = append(layout, niri.VRRValue(true, want.VRR.OnDemand))
-	} else {
+	default:
 		layout = append(layout, niri.VRRValue(false, false))
 	}
 	return geometry, layout, nil
@@ -178,7 +179,7 @@ func restorePolicy(out niri.Output, before OutputState) Policy {
 // verifyOutput checks what the draft actually pinned. Anything the draft left
 // to niri is accepted as niri reports it: an automatic mode, a custom mode, or
 // on-demand VRR that is currently off are all correct outcomes rather than
-// failures.
+// failures. So is any VRR state on hardware that cannot vary its refresh.
 func verifyOutput(out niri.Output, want Policy) error {
 	if want.Mode != nil {
 		got := currentMode(out)
@@ -212,6 +213,9 @@ func verifyOutput(out niri.Output, want Policy) error {
 		if out.Logical.X != want.Position.X || out.Logical.Y != want.Position.Y {
 			return fmt.Errorf("displays: %s sits at %d,%d, not %d,%d", out.Name, out.Logical.X, out.Logical.Y, want.Position.X, want.Position.Y)
 		}
+	}
+	if !out.VRRSupported {
+		return nil
 	}
 	if want.VRR != nil && !want.VRR.OnDemand && !out.VRREnabled {
 		return fmt.Errorf("displays: %s has variable refresh rate off, not on", out.Name)

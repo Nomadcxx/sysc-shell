@@ -205,12 +205,17 @@ func (p Policy) Equal(other Policy) bool {
 		return false
 	case p.Relative != nil && *p.Relative != *other.Relative:
 		return false
-	case (p.VRR == nil) != (other.VRR == nil):
-		return false
-	case p.VRR != nil && *p.VRR != *other.VRR:
+	case !p.sameVRR(other):
 		return false
 	}
 	return true
+}
+
+func (p Policy) sameVRR(other Policy) bool {
+	if p.VRR == nil || other.VRR == nil {
+		return p.VRR == other.VRR
+	}
+	return *p.VRR == *other.VRR
 }
 
 // String renders a policy for the ownership explanation. Automatic is spelled

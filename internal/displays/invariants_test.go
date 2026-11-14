@@ -22,6 +22,56 @@ func TestAlwaysOnVRRReadback(t *testing.T) {
 	}
 }
 
+// The laptop's root asks for VRR on a panel that cannot vary its refresh, and
+// niri reports it off. The page must still preview from that baseline, and a
+// kept change must keep the user's request in the file.
+func TestUnsupportedVRRRequestDoesNotBlockPreview(t *testing.T) {
+	svc, fake := serviceFor(t)
+	root, _ := setupDir(t, "output \"DP-1\" {\n    scale 1\n    variable-refresh-rate\n}\n")
+	if _, err := Setup(root); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(svc.socket, root, niriValidator(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := snapshotOf(t, svc).Outputs[0].Policy
+	if draft.VRR == nil {
+		t.Fatalf("saved policy lost the VRR request: %+v", draft)
+	}
+	draft.Scale = ptr(1.5)
+	ctx := context.Background()
+	if err := svc.Preview(ctx, map[string]Policy{"DP-1": draft}); err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if err := svc.Revert(ctx); err != nil {
+		t.Fatalf("Revert: %v", err)
+	}
+	if got := fake.scale("DP-1"); got != 1 {
+		t.Fatalf("scale after Revert = %v, want 1", got)
+	}
+	if err := svc.Preview(ctx, map[string]Policy{"DP-1": draft}); err != nil {
+		t.Fatalf("second Preview: %v", err)
+	}
+	if err := svc.Keep(ctx); err != nil {
+		t.Fatalf("Keep: %v", err)
+	}
+	if managed := readFile(t, filepath.Join(filepath.Dir(root), ManagedFileName)); !strings.Contains(managed, "variable-refresh-rate") {
+		t.Fatalf("kept file dropped the VRR request:\n%s", managed)
+	}
+}
+
+// Turning VRR on for hardware without it is still refused: the request would
+// be kept in the file while the page claimed it took effect.
+func TestVRRChangeOnUnsupportedHardwareIsRefused(t *testing.T) {
+	svc, _ := serviceFor(t)
+	draft := snapshotOf(t, svc).Outputs[0].Policy
+	draft.VRR = &VRRPolicy{}
+	if err := svc.Preview(context.Background(), map[string]Policy{"DP-1": draft}); err == nil || !strings.Contains(err.Error(), "does not support variable refresh rate") {
+		t.Fatalf("Preview = %v, want the hardware refusal", err)
+	}
+}
+
 func TestGeneratedTransformsUseNativeVocabulary(t *testing.T) {
 	root, _ := setupDir(t, "")
 	g, err := LoadGraph(root)

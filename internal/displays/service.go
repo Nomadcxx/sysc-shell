@@ -700,6 +700,9 @@ func (s *Service) plan(ctx context.Context, draft map[string]Policy) (map[string
 		if err := verifyOutput(out, baseline); err != nil {
 			return nil, nil, fmt.Errorf("displays: %s differs from saved policy; restore the native baseline first: %w", out.Name, err)
 		}
+		if !out.VRRSupported && !want.sameVRR(baseline) {
+			return nil, nil, fmt.Errorf("displays: %s does not support variable refresh rate", out.Name)
+		}
 		if err := validatePolicy(outputName(out), want); err != nil {
 			return nil, nil, err
 		}

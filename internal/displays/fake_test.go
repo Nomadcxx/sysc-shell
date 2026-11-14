@@ -52,6 +52,9 @@ type fakeOut struct {
 	// vrrOnDemand records what was asked for, so a read back matches what
 	// niri would report: an on-demand request that is not refreshing is off.
 	vrrOnDemand bool
+	// vrrSupported is false by default, as on the laptop panel: niri then
+	// accepts a VRR request and reports it off.
+	vrrSupported bool
 }
 
 type niriMode struct {
@@ -73,7 +76,7 @@ func (f *fakeNiri) outputsJSON() []byte {
 		outs[name] = map[string]any{
 			"name": o.name, "make": "Test", "model": "Screen", "serial": "0",
 			"modes": modes, "current_mode": o.current, "is_custom_mode": false,
-			"vrr_supported": false, "vrr_enabled": o.vrr,
+			"vrr_supported": o.vrrSupported, "vrr_enabled": o.vrr && o.vrrSupported,
 			"logical": map[string]any{
 				"x": o.x, "y": o.y, "width": o.modes[o.current].w, "height": o.modes[o.current].h,
 				"scale": o.scale, "transform": o.tx,
