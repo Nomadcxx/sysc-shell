@@ -262,15 +262,16 @@ func displaysActions(h *PanelHost, r *Registry, snapshot displays.Snapshot) *ui.
 				Text:     "Escape, leaving this page or closing the panel reverts the preview.",
 				TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 			},
-			&ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{revert, keep}})
+		)
+		children = append(children, displaysButtonRows(h, revert, keep)...)
 	} else if u := snapshot.Unresolved; u != nil {
 		children = append(children, displaysUnresolved(h, u, busy)...)
 	} else {
-		children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+		children = append(children, displaysButtonRows(h,
 			displaysButton(h, "Preview changes", "displays:preview", busy || r.displaysService == nil || !displaysDraftDirty(r) || displaysDraftInvalid(r)),
 			displaysButton(h, "Discard changes", "displays:reset", busy || !displaysDraftDirty(r)),
 			displaysButton(h, "Read again", "displays:refresh", busy),
-		}})
+		)...)
 	}
 	return settingsGroupCard(h, "Changes", children)
 }
@@ -295,10 +296,10 @@ func displaysUnresolved(h *PanelHost, u *displays.Unresolved, busy bool) []*ui.N
 	if u.Note != "" {
 		nodes = append(nodes, &ui.Node{Kind: ui.KindText, Text: "Last reason: " + u.Note, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
-	return append(nodes, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+	return append(nodes, displaysButtonRows(h,
 		displaysButton(h, label, "displays:resolve", busy),
 		displaysButton(h, "Read again", "displays:refresh", busy),
-	}})
+	)...)
 }
 
 func displaysCountdown(left time.Duration) string {
@@ -648,6 +649,31 @@ func displaysDraftInvalid(r *Registry) bool {
 
 // displaysButton is the page's action button, disabled with the shell's own
 // disabled semantics when the command cannot run.
+// displaysButtonRows packs buttons into rows no wider than the card, keeping
+// their order. A preview that rotates or scales the output can leave Settings
+// a few hundred pixels wide, and a row that does not fit refuses the whole
+// layout, which closes the panel and with it the preview.
+func displaysButtonRows(h *PanelHost, buttons ...*ui.Node) []*ui.Node {
+	m := h.metrics()
+	width := settingsBodyWidth(h) - 2*m.CardPadding
+	measure := settingsMeasure(h)
+	var rows []*ui.Node
+	used := 0
+	for _, b := range buttons {
+		textW, _ := measure(b.Text, ui.TextAttrs{})
+		w := textW + 2*b.Padding
+		if len(rows) == 0 || used+theme.MarginS+w > width {
+			rows = append(rows, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS})
+			used = w
+		} else {
+			used += theme.MarginS + w
+		}
+		last := rows[len(rows)-1]
+		last.Children = append(last.Children, b)
+	}
+	return rows
+}
+
 func displaysButton(h *PanelHost, text, action string, disabled bool) *ui.Node {
 	n := settingsButton(h, text, action)
 	if disabled {

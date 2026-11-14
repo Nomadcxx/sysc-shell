@@ -380,6 +380,30 @@ func TestDisplaysLayoutKeepsEveryControlVisible(t *testing.T) {
 	}
 }
 
+// Previewing 1.5x at 90 degrees leaves a 1080p panel 720 logical pixels
+// wide. Settings must still lay out there, in every state of the actions:
+// a refused layout closes the panel, and closing it reverts the preview.
+func TestDisplaysPageFitsAPortraitOutput(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"idle", "armed", "unresolved"} {
+		reg, host, _ := displaysPage(t, 180, ui.Rect{W: 720, H: 1280})
+		reg.mu.Lock()
+		switch state {
+		case "armed":
+			reg.displaysArmed = true
+			reg.displaysSnapshot.Preview, reg.displaysSnapshot.Remaining = true, 12*time.Second
+		case "unresolved":
+			reg.displaysSnapshot.Unresolved = &displays.Unresolved{Token: "ab", State: "preview", Note: "injected"}
+		}
+		reg.rebuildPanel(host)
+		problems := ui.CheckFit(host.root, ui.Rect{W: host.place.Panel.W, H: host.place.Panel.H}, host.measureText())
+		reg.mu.Unlock()
+		for _, p := range problems {
+			t.Errorf("%s: %s %s", state, p.Path, p.Message)
+		}
+	}
+}
+
 // Closing Settings while Preview is still applying must not lose the Revert:
 // it runs as soon as Preview returns.
 func TestClosingDuringPreviewStillReverts(t *testing.T) {
