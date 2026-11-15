@@ -111,6 +111,9 @@ func swapWrite(path string, data []byte) error {
 		return err
 	}
 	path = resolved
+	if unchanged(path, data, 0o644) {
+		return nil
+	}
 	// A rename would sail past a read-only target the open would not: check
 	// writability first, the way writeFileAtomic always did, so a protected
 	// file is reported rather than silently replaced.
@@ -313,6 +316,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	path = resolved
+	if unchanged(path, data, mode) {
+		return nil
+	}
 	// A rename would replace an unwritable target that a direct write must
 	// fail on; keep reporting read-only files instead of silently succeeding.
 	if f, err := os.OpenFile(path, os.O_WRONLY, 0); err != nil {
@@ -347,6 +353,19 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// unchanged reports whether path already holds data with mode, so a write
+// would change nothing. Skipping it matters: a compositor reloads on every
+// rename into its configuration directory, and a reload resets runtime output
+// settings, ending a Display Settings preview early.
+func unchanged(path string, data []byte, mode os.FileMode) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != mode.Perm() {
+		return false
+	}
+	current, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(current, data)
 }
 
 func resolveSymlinkTarget(path string) (string, error) {
@@ -860,7 +879,10 @@ func ManageBlock(file, open, close, body string, force bool) error {
 		_ = rememberHash(key, hash([]byte(strings.Join(block, "\n"))))
 		return nil
 	}
-	lines := strings.Split(string(b), "\n")
+	// The final newline ends the last line rather than starting an empty one.
+	// Kept as a line, it came back after the block on every apply, and the
+	// file grew one blank line each time.
+	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
 	start, end := -1, -1
 	for i, ln := range lines {
 		switch strings.TrimSpace(ln) {
