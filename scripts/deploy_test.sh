@@ -72,6 +72,32 @@ bash "$here/sysc-shell-guard" 2>/dev/null
 [ "$(cat "$SYSC_SHELL_BIN")" = built ] && pass "install: its own stamp satisfies the guard" || fail "install: the guard rejected a fresh install"
 unset XDG_CONFIG_HOME SYSC_DEPLOY_NO_RESTART
 
+# --- install over a shell outside the unit ---------------------------------
+# niri's spawn-at-startup can own the running shell. Its IPC socket made the
+# unit's new process exit "already running" while the old binary kept going
+# (sysc-2302). A stand-in holds the socket here; systemctl and journalctl are
+# stubs, so nothing reaches the real user manager.
+guard_env
+export XDG_CONFIG_HOME=$work/home/.config XDG_RUNTIME_DIR=$work/run
+mkdir -p "$XDG_RUNTIME_DIR/sysc-shell" "$work/stub"
+printf '#!/bin/sh\necho "systemctl $*" >>"%s"\n' "$work/stub/calls" >"$work/stub/systemctl"
+printf '#!/bin/sh\nexit 0\n' >"$work/stub/journalctl"
+chmod +x "$work/stub/systemctl" "$work/stub/journalctl"
+python3 -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(); time.sleep(60)' \
+	"$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock" &
+holder=$!
+for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock" ] && break; sleep 0.1; done
+echo old >"$SYSC_SHELL_BIN"
+out=$(PATH=$work/stub:$PATH bash "$here/deploy-install.sh" "$work/built" "$here/sysc-shell-guard" "$here/../packaging/systemd/sysc-shell.service.d/deploy-guard.conf" deadbeefcafe main "" 2>&1); rc=$?
+if [ $rc = 0 ] && ! kill -0 "$holder" 2>/dev/null && [[ $out == *"pid $holder"*"outside sysc-shell.service"* ]] &&
+	grep -q 'restart sysc-shell.service' "$work/stub/calls"; then
+	pass "install: a shell outside the unit is named and stopped before the restart"
+else
+	fail "install: stray shell (rc $rc, holder alive: $(kill -0 "$holder" 2>/dev/null && echo yes || echo no)): $out"
+fi
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+unset XDG_CONFIG_HOME XDG_RUNTIME_DIR
+
 # --- deploy refusals (dry run, throwaway repositories) ---------------------
 export HOME=$work/home GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 git init -q --bare -b main "$work/origin.git"
