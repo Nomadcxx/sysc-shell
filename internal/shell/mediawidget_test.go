@@ -75,20 +75,21 @@ func TestGroupedAbsentMediaIsOmittedFromTheVisibleRow(t *testing.T) {
 	}
 }
 
-func TestMediaWidgetSwapsGlyphWithStatus(t *testing.T) {
+// Without art the leading slot showed the playback state, which is what the
+// play/pause button beside the title already shows, so the bar read "pause,
+// title, pause" whenever a player had no art yet (a KDE Connect phone, a
+// cover still loading). The fallback is a plain note in every state.
+func TestMediaWidgetFallbackNeverRepeatsTheButton(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		status services.PlaybackStatus
-		icon   string
-	}{
-		{services.PlaybackPlaying, "pause"},
-		{services.PlaybackPaused, "play_arrow"},
-		{services.PlaybackStopped, "music_note"},
-	} {
+	for _, status := range []services.PlaybackStatus{services.PlaybackPlaying, services.PlaybackPaused, services.PlaybackStopped} {
 		row := buildMediaWidget().node
-		refreshMediaWidget(row, barView{Media: services.MediaState{Available: true, Status: tc.status}})
-		if got := row.Children[0].Icon; got != tc.icon {
-			t.Errorf("status %d icon = %q, want %q", tc.status, got, tc.icon)
+		refreshMediaWidget(row, barView{Media: services.MediaState{Available: true, Status: status, CanPause: true, CanPlay: true}})
+		leading, button := row.Children[0], row.Children[2]
+		if leading.Icon != "music_note" {
+			t.Errorf("status %d leading icon = %q, want music_note", status, leading.Icon)
+		}
+		if leading.Icon == button.Icon {
+			t.Errorf("status %d shows %q on either side of the title", status, button.Icon)
 		}
 	}
 }
@@ -103,8 +104,8 @@ func TestMediaWidgetCarriesResolvedArtAndFallsBack(t *testing.T) {
 	}
 
 	refreshMediaWidget(row, barView{Media: state})
-	if fallback := row.Children[0]; fallback.Kind != ui.KindIcon || fallback.Icon != "pause" {
-		t.Fatalf("media fallback node = %+v, want the playing glyph", fallback)
+	if fallback := row.Children[0]; fallback.Kind != ui.KindIcon || fallback.Icon != "music_note" {
+		t.Fatalf("media fallback node = %+v, want the note glyph", fallback)
 	}
 }
 
