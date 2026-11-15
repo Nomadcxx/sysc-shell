@@ -90,11 +90,18 @@ type Entry struct {
 	// writer uses two rules: theme axes diff against the selected preset,
 	// everything else against config.Default().
 	Default Getter
+	// Inherited distinguishes an explicit override equal to its shared value.
+	Inherited func(config.Config) bool
+	// Reset removes an override; ordinary settings keep Set(Default).
+	Reset func(*config.Config) error
 }
 
 // IsDefault reports whether this setting still sits on its default, which is
 // what decides whether a row shows a reset control.
 func (e Entry) IsDefault(c config.Config) bool {
+	if e.Inherited != nil {
+		return e.Inherited(c)
+	}
 	if e.Get == nil || e.Default == nil {
 		return true
 	}

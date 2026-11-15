@@ -1961,7 +1961,7 @@ func TestEdgeReloadClosesAffectedTrayDrawer(t *testing.T) {
 	}
 }
 
-func TestDisablingBarClosesItsPanels(t *testing.T) {
+func TestDisablingBarKeepsSettingsAndClosesAttachedPanels(t *testing.T) {
 	reg := newPanelRegistry(t)
 	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", OutW: 1536, OutH: 864}); err != nil {
@@ -1983,8 +1983,8 @@ func TestDisablingBarClosesItsPanels(t *testing.T) {
 
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	if len(reg.panelHosts) != 0 {
-		t.Fatalf("disabling the bar retained panels: %v", reg.panelHosts)
+	if len(reg.panelHosts) != 1 || reg.panelHosts[PanelSettings] == nil {
+		t.Fatalf("disabling the bar must retain only Settings: %v", reg.panelHosts)
 	}
 }
 
@@ -2487,7 +2487,9 @@ func TestFloatingSettingsUsesStableOutputAnchor(t *testing.T) {
 // behind and the reload commit never saw the geometry change.
 func TestSettingsDraftEditsStayOffTheLiveConfig(t *testing.T) {
 	r := newPanelRegistry(t)
-	r.cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: config.Bar{Height: 36}}}
+	bar := r.cfg.Bar
+	bar.Height = 36
+	r.cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: bar}}
 	if err := r.OpenPanel(PanelSettings, 7, Trigger{OutW: 1536, OutH: 864}); err != nil {
 		t.Fatal(err)
 	}

@@ -16,10 +16,16 @@ type CustomPalette struct {
 type options struct {
 	custom      []CustomPalette
 	hideBattery bool
+	outputs     []string
 }
 
 // Option adjusts a registry at construction.
 type Option func(*options)
+
+// WithOutputs adds discovered connectors without creating saved overrides.
+func WithOutputs(connectors []string) Option {
+	return func(o *options) { o.outputs = slices.Clone(connectors) }
+}
 
 // WithCustomPalettes supplies the saved palettes, which makes the custom source
 // and the appearance.custom entry available.

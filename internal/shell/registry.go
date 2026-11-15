@@ -22,6 +22,7 @@ import (
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/buildinfo"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/displays"
 	"github.com/Nomadcxx/sysc-shell/internal/i18n"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	locksession "github.com/Nomadcxx/sysc-shell/internal/lock"
@@ -57,12 +58,13 @@ type Registry struct {
 	// outputSizes is each connector's logical size as the platform last
 	// reported it (SetOutputLogicalSize). Its own lock keeps barPolicy usable
 	// from paths that hold mu and paths that do not.
-	outputSizeMu sync.Mutex
-	outputSizes  map[string][2]int
-	cfg          config.Config
-	outputs      map[string]outputState
-	bars         map[uint32]*Bar
-	fontCatalog  registryFontCatalog
+	outputSizeMu   sync.Mutex
+	outputSizes    map[string][2]int
+	displayOutputs map[uint32]wayland.OutputInfo
+	cfg            config.Config
+	outputs        map[string]outputState
+	bars           map[uint32]*Bar
+	fontCatalog    registryFontCatalog
 	// onboardingPending keeps the first-start offer until an interactive,
 	// focused output can host it. Output loss restores the offer and its small
 	// view state for the next usable output.
@@ -349,26 +351,44 @@ type Registry struct {
 	clipboardCompletions map[string]*clipboardCommandCompletion
 
 	// tray is the service-owned tray projection.
-	tray                 *trayState
-	trayCh               chan trayclient.Message
-	traySender           trayCommandSender
-	trayMenu             *trayMenuHost
-	trayDrawer           *trayDrawerHost
-	mediaStrip           *mediaStripHost
-	mediaIntent          *mediaStripIntent
-	trayReplies          *trayReplyTracker
-	trayCloses           *trayCloseTracker
-	trayIcons            *icons.Worker
-	shutdown             shutdownState
-	wallpaperSvc         *wallpaper.Service
-	wallsService         wallsController
-	wallsSnapshot        walls.Snapshot
-	idleApplying         bool
-	wallpaperThumbs      *icons.Worker
-	wallpaperThumbCancel context.CancelFunc
-	mediaArt             *mediaArtWorker
-	trayIconCancel       context.CancelFunc
-	pendingTrayMenu      pendingTrayMenu
+	tray          *trayState
+	trayCh        chan trayclient.Message
+	traySender    trayCommandSender
+	trayMenu      *trayMenuHost
+	trayDrawer    *trayDrawerHost
+	mediaStrip    *mediaStripHost
+	mediaIntent   *mediaStripIntent
+	trayReplies   *trayReplyTracker
+	trayCloses    *trayCloseTracker
+	trayIcons     *icons.Worker
+	shutdown      shutdownState
+	wallpaperSvc  *wallpaper.Service
+	wallsService  wallsController
+	wallsSnapshot walls.Snapshot
+	// displaysService is nil until the user confirms a niri configuration
+	// root; displaysRoot remembers it from then on, displaysSnapshot is the
+	// service's last reading, and displaysDraft is the edit in progress. The
+	// draft lives here, not on the settings host, because a reconfigure
+	// recreates the host and must not lose what was being edited.
+	displaysService   displaysController
+	displaysSnapshot  displays.Snapshot
+	displaysDiscovery *displays.Discovery
+	displaysRoot      string
+	displaysDraft     map[string]map[string]string
+	displaysSelected  string
+	displaysDiagram   *ui.Image
+	displaysArmed     bool
+	displaysBusy      bool
+	// displaysRevertPending is a Revert requested while another command ran;
+	// it runs as soon as that command returns.
+	displaysRevertPending bool
+	displaysErr           string
+	idleApplying          bool
+	wallpaperThumbs       *icons.Worker
+	wallpaperThumbCancel  context.CancelFunc
+	mediaArt              *mediaArtWorker
+	trayIconCancel        context.CancelFunc
+	pendingTrayMenu       pendingTrayMenu
 	// Autopause policy state (gh-144): applied/FPS track what the driver last
 	// sent, battery caches the polled power source, and the sync mutex keeps
 	// the wayland owner, the battery poll and the idle callbacks apart.
@@ -508,6 +528,7 @@ func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
 // values stay English tokens.
 func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
 	return settings.DefaultFor(cfg,
+		settings.WithOutputs(r.barDisplayConnectorsLocked(cfg)),
 		settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)),
 		settings.WithBattery(r.autoPauseBattery.Present),
 	).Localized(i18n.Resolve(cfg.Session.Language))
@@ -1482,7 +1503,7 @@ func (r *Registry) invalidateThemePreviewLocked() {
 // panelThemeForState resolves one output against the supplied palette. The
 // retheme path passes preview candidates here without publishing them in r.
 func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens theme.Tokens) Theme {
-	connector := ""
+	connector := r.displayOutputs[output].Connector
 	if bar, ok := r.bars[output]; ok {
 		connector = bar.connector()
 	}
@@ -2418,7 +2439,13 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 								h.closeLocked()
 							}
 							if disabledOutputs[global] {
-								r.closePanelsOnOutputLocked(global)
+								// Settings floats independently of its bar and must remain
+								// usable to turn that bar back on.
+								for _, id := range r.panelIDsOnOutputLocked(global) {
+									if id != PanelSettings {
+										r.closePanelLocked(id)
+									}
+								}
 							}
 						}
 					}
@@ -2528,7 +2555,7 @@ func (r *Registry) PrepareConfigWithGeneration(cfg config.Config, identities []w
 					r.shutdown.bars.store(r.barListLocked())
 					panelOutputs := make(map[uint32]bool)
 					for _, h := range r.panelHosts {
-						if h != nil && !disabledOutputs[h.output] {
+						if h != nil && (!disabledOutputs[h.output] || h.id == PanelSettings) {
 							panelOutputs[h.output] = true
 						}
 					}
@@ -2713,6 +2740,7 @@ func (r *Registry) Close() {
 	var inhibit io.Closer
 	var wallpaperSvc *wallpaper.Service
 	var wallsSvc wallsController
+	var displaysSvc displaysController
 	var wallpaperThumbCancel context.CancelFunc
 	var polkitCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
@@ -2765,6 +2793,8 @@ func (r *Registry) Close() {
 		r.wallpaperSvc = nil
 		wallsSvc = r.wallsService
 		r.wallsService = nil
+		displaysSvc = r.displaysService
+		r.displaysService = nil
 		wallpaperThumbCancel = r.wallpaperThumbCancel
 		r.wallpaperThumbCancel = nil
 		mediaArt = r.mediaArt
@@ -2846,6 +2876,15 @@ func (r *Registry) Close() {
 		if err := wallsSvc.Close(); err != nil {
 			log.Printf("shell: close sysc-walls service: %v", err)
 		}
+	}
+	if displaysSvc != nil {
+		// A preview the shell is still holding has to go back, so the shell
+		// going away is one of the ways recovery is requested.
+		ctx, cancel := context.WithTimeout(context.Background(), closeLockGrace)
+		if err := displaysSvc.Close(ctx); err != nil {
+			log.Printf("shell: close display settings: %v", err)
+		}
+		cancel()
 	}
 	r.dwell.stop()
 	r.mediaIntent.close()

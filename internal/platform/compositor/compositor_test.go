@@ -46,3 +46,11 @@ func TestConfigDir(t *testing.T) {
 		t.Fatalf("relative XDG_CONFIG_HOME = %q, want %q", got, want)
 	}
 }
+
+func TestConfigEnv(t *testing.T) {
+	for kind, want := range map[Kind]string{Niri: "NIRI_CONFIG", SyscCompositor: "SYSC_COMPOSITOR_CONFIG"} {
+		if got := kind.ConfigEnv(); got != want {
+			t.Fatalf("%v.ConfigEnv = %q, want %q", kind, got, want)
+		}
+	}
+}

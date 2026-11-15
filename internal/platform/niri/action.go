@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"path/filepath"
 )
 
 // Quit ends the current compositor session after the shell confirmation.
@@ -20,6 +21,14 @@ type Spawn struct {
 
 // ToggleOverview toggles Niri's compositor-rendered overview.
 type ToggleOverview struct{}
+
+// LoadConfigFile asks the compositor to reload its configuration, which is how
+// a published native root takes effect without waiting for the file watcher.
+// An empty Path reloads the current root; a set Path must be absolute, because
+// a relative one would resolve against whatever cwd niri happened to have.
+type LoadConfigFile struct {
+	Path string
+}
 
 // CloseOverview closes Niri's compositor-rendered overview.
 type CloseOverview struct{}
@@ -182,6 +191,17 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"PowerOnMonitors": map[string]any{}}
 	case ToggleOverview:
 		inner = map[string]any{"ToggleOverview": map[string]any{}}
+	case LoadConfigFile:
+		if v.Path != "" && !filepath.IsAbs(v.Path) {
+			return nil, fmt.Errorf("niri: config path %q is not absolute", v.Path)
+		}
+		// An unset path reloads the current root, which niri represents as
+		// null rather than as an empty string.
+		var path any
+		if v.Path != "" {
+			path = v.Path
+		}
+		inner = map[string]any{"LoadConfigFile": map[string]any{"path": path}}
 	case CloseOverview:
 		inner = map[string]any{"CloseOverview": map[string]any{}}
 	case MoveWindowToWorkspace:

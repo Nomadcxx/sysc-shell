@@ -16,6 +16,7 @@ func populatedConfig() Config {
 	cfg.Outputs = []OutputOverride{{
 		Connector: "DP-1",
 		Bar:       Bar{Height: 64, Left: []Item{{ID: "clock"}}, Reserve: &other},
+		Set:       map[string]bool{"height": true},
 	}}
 	cfg.Tray.Hidden = []string{"id:hidden"}
 	cfg.Tray.Pinned = []string{"id:pinned"}

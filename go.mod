@@ -1,10 +1,11 @@
 module github.com/Nomadcxx/sysc-shell
 
 // The module calls x509.Certificate.Verify and http.Client.Do, so it needs a
-// standard library without GO-2026-6809 (fixed in go1.26.10) or GO-2026-6617
-// (fixed in go1.26.9). CI reads this directive for the toolchain it installs,
-// so the floor here is the floor everywhere.
-go 1.26.10
+// standard library without GO-2026-6859 (fixed in go1.26.11), GO-2026-6809
+// (fixed in go1.26.10) or GO-2026-6617 (fixed in go1.26.9). CI reads this
+// directive for the toolchain it installs, so the floor here is the floor
+// everywhere.
+go 1.26.11
 
 require (
 	github.com/Nomadcxx/sysc-clipboard v0.1.6-0.20261029180712-8ba273c1f3c1
@@ -29,6 +30,7 @@ require (
 	github.com/jfreymuth/pulse v0.1.3
 	github.com/junegunn/fzf v0.74.5
 	github.com/rivo/uniseg v0.4.7
+	github.com/sblinch/kdl-go v0.0.0-20260121213736-8b7053306ca6
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/thegrumpylion/xkb-go v0.1.0

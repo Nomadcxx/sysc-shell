@@ -77,6 +77,7 @@ type Trigger struct {
 type settingsWriteChange struct {
 	path  string
 	value string
+	reset bool
 }
 
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
@@ -232,6 +233,10 @@ type PanelHost struct {
 	// settingsRailRevealPending is a section that must be brought into view on
 	// the next layout, including when an IPC open arrives before configure.
 	settingsRailRevealPending string
+	// displaysRevealPending brings a starting preview's Revert into view on
+	// the next layout. It is set once per preview, so scrolling away from the
+	// answer afterwards is not taken back.
+	displaysRevealPending bool
 	// Search results have their own body and keep a separate scroll offset, so
 	// returning to the page restores the position the user left there.
 	settingsSearchScroll int
@@ -711,6 +716,17 @@ func (r *Registry) focusedTriggerLocked() (uint32, Trigger) {
 			break
 		}
 	}
+	if global == 0 {
+		for g, out := range r.displayOutputs {
+			if out.Connector == r.focused {
+				global, connector = g, out.Connector
+				break
+			}
+			if global == 0 || g < global {
+				global, connector = g, out.Connector
+			}
+		}
+	}
 	return global, r.triggerLocked(global, connector)
 }
 
@@ -725,8 +741,18 @@ func (r *Registry) triggerFor(global uint32) (uint32, Trigger) {
 }
 
 func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
+	out := r.displayOutputs[global]
+	if connector == "" {
+		connector = out.Connector
+	}
 	policy := r.cfg.ForConnector(connector)
 	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Extent(), Align: "center"}
+	if out.Width > 0 && out.Height > 0 {
+		trig.OutW, trig.OutH = out.Width, out.Height
+	}
+	if !policy.Enabled {
+		trig.BarZone = 0
+	}
 	if bar, ok := r.bars[global]; ok {
 		w, h := bar.configuredSize()
 		// BarZone is the painted cross extent; an attached bar's overhang lies
@@ -947,6 +973,11 @@ func (r *Registry) closePanelLocked(id PanelID) {
 	output, hasOutput := r.panels.Output(id)
 	if h != nil {
 		output, hasOutput = h.output, true
+	}
+	// Closing the page is one of the ways recovery is requested: a live
+	// preview the user walked away from is not left applied.
+	if id == PanelSettings {
+		r.displaysRevertLocked(h)
 	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
@@ -2599,8 +2630,11 @@ func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
 		// Settings and the plugin store measure text as their trees are
 		// built, first at the bar's scale or none. At another scale the tree
 		// is rebuilt before it is laid out: laying out the stale one first
-		// can fail to fit and close the surface.
-		if built, measured := h.treeScale(); measured && built != scale120 && ui.Scale120(scale120).Valid() {
+		// can fail to fit and close the surface. A new size needs the same,
+		// because the trees size their columns from the placement: an output
+		// that rotates re-places the panel after its new scale arrived.
+		resized := h.logicalW > 0 && (w != h.logicalW || height != h.logicalH)
+		if built, measured := h.treeScale(); measured && (built != scale120 || resized) && ui.Scale120(scale120).Valid() {
 			h.logicalW, h.logicalH, h.scale120 = w, height, scale120
 			if err := h.ensureText(); err != nil {
 				return err
@@ -2689,7 +2723,18 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 		return ui.LayoutColumn(h.root, box, h.measureText())
 	}
 	if err := layout(); err != nil {
-		return err
+		// When an output shrinks, niri can configure a panel once with its
+		// old margins against the new output, narrower than the placement
+		// the shell has already sent. That configure is transient, so lay
+		// out at the placement and let the canvas clip until the next.
+		placed := h.place.Panel
+		if placed.W <= 0 || placed.H <= 0 || (w >= placed.W && height >= placed.H) {
+			return err
+		}
+		box = h.surfaceBody(max(w, placed.W), max(height, placed.H))
+		if err := layout(); err != nil {
+			return err
+		}
 	}
 	if h.fitOpenMenu(box) {
 		if err := layout(); err != nil {
@@ -2718,6 +2763,22 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 			}
 		} else if offset, ok := settingsScrollOffsetFor(h.root, settingsRailKey); ok {
 			h.settingsRailScroll = offset
+		}
+		if h.displaysRevealPending {
+			body := keyedScroll(h.root, settingsBodyKey)
+			for _, n := range ui.Focusables(body) {
+				if n.Name != "Revert preview" {
+					continue
+				}
+				if scrollNodeIntoView(body, n) {
+					if err := layout(); err != nil {
+						return err
+					}
+				}
+				h.settingsScroll = body.ScrollOffset
+				h.displaysRevealPending = false
+				break
+			}
 		}
 	}
 	if h.id != PanelPluginStore {
@@ -4085,6 +4146,17 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "walls:") {
 		return activateWallsAction(r, h, n)
 	}
+	if strings.HasPrefix(n.Action, "displays:") {
+		return activateDisplaysAction(r, h, n)
+	}
+	if rest, ok := strings.CutPrefix(n.Action, "pick:displays."); ok {
+		// The display entries are not in the config registry, so the pick is
+		// resolved against the draft instead of ByPath.
+		if path, value, found := strings.Cut(rest, "="); found {
+			r.setDisplaysDraftLocked(h, path, value)
+		}
+		return true
+	}
 	switch n.Action {
 	case "plugin-close", "plugin-retry", "plugin-disable":
 		if r.plugins != nil {
@@ -4217,6 +4289,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "notify:") {
 		return h.activateNotify(r, n)
 	}
+	if strings.HasPrefix(n.Action, "bar-display-") && h.barDisplayAction(r, n.Action) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "bar-") && h.barActivate(r, n.Action) {
 		return true
 	}
@@ -4272,7 +4347,16 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if path, ok := strings.CutPrefix(n.Action, "reset:"); ok {
 		if e := h.set.ByPath(path); e != nil && e.Default != nil {
-			h.commitSetting(r, e, e.Default(h.draft))
+			if e.Reset != nil {
+				if err := e.Reset(&h.draft); err != nil {
+					h.errLabel = err.Error()
+				} else {
+					h.set = r.settingsForLocked(h.draft)
+					h.deferReset(r, e.Path)
+				}
+			} else {
+				h.commitSetting(r, e, e.Default(h.draft))
+			}
 			r.rebuildPanel(h)
 		}
 		return true
@@ -4632,6 +4716,11 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	if h.id == PanelSettings && !restoredFocus {
 		h.roving.Set(0)
 	}
+	// After the restore: the Preview button that was pressed is gone from an
+	// armed tree, and the fallback above would leave the keyboard on Search.
+	if h.id == PanelSettings {
+		h.focusDisplaysPreview()
+	}
 	if h.id == PanelPluginStore && !restoredFocus {
 		h.focusPluginStoreSelection()
 	}
@@ -4907,6 +4996,12 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 		setWallsDraft(r, h, key, settingNodeValue(n))
 		return
 	}
+	if key, ok := strings.CutPrefix(path, "displays."); ok {
+		// A draft edit sends nothing anywhere: it is a string on the
+		// registry until Preview arms a transaction.
+		r.setDisplaysDraftLocked(h, key, settingNodeValue(n))
+		return
+	}
 	if path == "idle.after" || path == "idle.delay" {
 		h.applyIdleSetting(r, path, settingNodeValue(n))
 		return
@@ -4995,6 +5090,16 @@ const settingsWriteDelay = 400 * time.Millisecond
 // deferDraft arms the write, replacing any write already armed, so a run of
 // edits collapses into the one that follows the last of them.
 func (h *PanelHost) deferDraft(r *Registry, path, value string) {
+	h.deferWrite(r, settingsWriteChange{path: path, value: value})
+}
+
+// deferReset arms a write that replays the entry's Reset rather than storing
+// a copied default, so the field returns to inheriting.
+func (h *PanelHost) deferReset(r *Registry, path string) {
+	h.deferWrite(r, settingsWriteChange{path: path, reset: true})
+}
+
+func (h *PanelHost) deferWrite(r *Registry, change settingsWriteChange) {
 	if h.writeTimer != nil {
 		h.writeTimer.Stop()
 	}
@@ -5005,7 +5110,7 @@ func (h *PanelHost) deferDraft(r *Registry, path, value string) {
 		r.settingsWriteMu.Lock()
 		h.settingsWriteRevision++
 		revision = h.settingsWriteRevision
-		h.settingsWriteChanges = appendSettingsWriteChange(h.settingsWriteChanges, path, value)
+		h.settingsWriteChanges = appendSettingsWriteChange(h.settingsWriteChanges, change)
 		r.settingsWriteMu.Unlock()
 	}
 	delay := settingsWriteDelay
@@ -5047,14 +5152,14 @@ func (h *PanelHost) writeTimerExpired(r *Registry, generation, revision uint64) 
 	})
 }
 
-func appendSettingsWriteChange(changes []settingsWriteChange, path, value string) []settingsWriteChange {
-	for i, change := range changes {
-		if change.path == path {
+func appendSettingsWriteChange(changes []settingsWriteChange, change settingsWriteChange) []settingsWriteChange {
+	for i, existing := range changes {
+		if existing.path == change.path {
 			changes = append(changes[:i], changes[i+1:]...)
 			break
 		}
 	}
-	return append(changes, settingsWriteChange{path: path, value: value})
+	return append(changes, change)
 }
 
 // flushDraft writes an edit that has not settled yet. Closing the panel is
@@ -5112,6 +5217,12 @@ func (h *PanelHost) applyMenu(r *Registry, path string) {
 		}
 		if m := h.menus[path]; m != nil {
 			setWallsDraft(r, h, key, m.Value())
+		}
+		return
+	}
+	if key, ok := strings.CutPrefix(path, "displays."); ok {
+		if m := h.menus[path]; m != nil {
+			r.setDisplaysDraftLocked(h, key, m.Value())
 		}
 		return
 	}
