@@ -184,8 +184,20 @@ func TestDiscoverReadsTheCompositorItFound(t *testing.T) {
 	if !filepath.IsAbs(d.Root) || !strings.HasSuffix(d.Root, filepath.Join("niri", "config.kdl")) {
 		t.Errorf("Discover.Root = %q, want an absolute niri/config.kdl", d.Root)
 	}
-	if d.Root != envOr(t, "XDG_CONFIG_HOME")+"/niri/config.kdl" && d.Root != envOr(t, "HOME")+"/.config/niri/config.kdl" {
-		t.Errorf("Discover.Root = %q, want it derived from this process's own environment", d.Root)
+	// The user file wins only when it exists, so a machine without one (a CI
+	// runner) is proposed niri's system file instead.
+	want := systemConfigPath
+	base := envOr(t, "XDG_CONFIG_HOME")
+	if !filepath.IsAbs(base) {
+		base = filepath.Join(envOr(t, "HOME"), ".config")
+	}
+	if user := filepath.Join(base, "niri", "config.kdl"); filepath.IsAbs(user) {
+		if _, err := os.Stat(user); err == nil {
+			want = user
+		}
+	}
+	if d.Root != want {
+		t.Errorf("Discover.Root = %q, want %q, derived from this process's own environment", d.Root, want)
 	}
 }
 
