@@ -41,9 +41,5 @@ func ConfigDir(home string, k Kind) string {
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(home, ".config")
 	}
-	name := "niri"
-	if k == SyscCompositor {
-		name = "sysc-compositor"
-	}
-	return filepath.Join(root, name)
+	return filepath.Join(root, k.Executable())
 }
