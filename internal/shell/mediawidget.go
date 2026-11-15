@@ -25,7 +25,7 @@ func hasMediaItem(items []config.Item) bool {
 	return false
 }
 
-// buildMediaWidget is the art (or state glyph), the active track's title and a
+// buildMediaWidget is the art (or a note glyph), the active track's title and a
 // play/pause button, absent while no player is on the bus. Hovering or clicking
 // the art and title opens the media strip (2026-10-08 bar media strip design).
 func buildMediaWidget(items ...config.Item) textWidget {
@@ -49,17 +49,14 @@ func buildMediaWidget(items ...config.Item) textWidget {
 	}
 }
 
-// refreshMediaWidget marks the widget absent with no player, swaps the state
-// glyph, and updates the title as tracks change.
+// refreshMediaWidget marks the widget absent with no player, swaps art for the
+// note glyph, and updates the button and title as tracks change.
 func refreshMediaWidget(row *ui.Node, v barView) bool {
 	changed := false
-	icon := "music_note"
-	switch v.Media.Status {
-	case services.PlaybackPlaying:
-		icon = "pause"
-	case services.PlaybackPaused:
-		icon = "play_arrow"
-	}
+	// The fallback is a plain note, never the playback state: the button
+	// beside the title already shows that, and a player without art (a KDE
+	// Connect phone, a cover still loading) put the same glyph either side.
+	const icon = "music_note"
 	leading := row.Children[0]
 	if v.Media.Available && v.MediaArt != nil {
 		if leading.Kind != ui.KindImage || leading.Image != v.MediaArt {
