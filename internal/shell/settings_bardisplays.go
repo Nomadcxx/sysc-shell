@@ -27,10 +27,18 @@ func (r *Registry) UpdateDisplayOutputs(outputs []wayland.OutputInfo) {
 	if maps.Equal(r.displayOutputs, next) {
 		return
 	}
+	previous := r.displayOutputs
 	r.displayOutputs = next
-	for _, out := range next {
-		if out.Width > 0 && out.Height > 0 {
-			r.SetOutputLogicalSize(out.Connector, out.Width, out.Height)
+	for global, out := range next {
+		if out.Width <= 0 || out.Height <= 0 {
+			continue
+		}
+		r.SetOutputLogicalSize(out.Connector, out.Width, out.Height)
+		// Without a bar nothing else re-places a panel when the size becomes
+		// known or changes: a barless start learns its fractional scale only
+		// from the first panel it opens.
+		if was := previous[global]; was.Width != out.Width || was.Height != out.Height {
+			r.repositionPanelsLocked(global)
 		}
 	}
 	if h := r.panelHosts[PanelSettings]; h != nil {

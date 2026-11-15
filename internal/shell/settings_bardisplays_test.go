@@ -124,3 +124,33 @@ func TestSettingsCanOpenAfterAllBarsAreHidden(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A barless start has no surface to report the fractional scale, so Settings
+// opens before the output's logical size is known. When the panel's own scale
+// makes it known, Settings must move onto the real output, not stay placed
+// for an assumed 1920x1080 that runs off a 1.25 laptop panel.
+func TestBarlessSettingsMovesWhenTheOutputSizeArrives(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.UpdateDisplayOutputs([]wayland.OutputInfo{{Global: 7, Connector: "DP-1"}})
+	r.mu.Lock()
+	r.focused = "DP-1"
+	r.cfg.Bar.Enabled = false
+	global, trig := r.focusedTriggerLocked()
+	r.mu.Unlock()
+	if err := r.OpenPanel(PanelSettings, global, trig); err != nil {
+		t.Fatal(err)
+	}
+	r.UpdateDisplayOutputs([]wayland.OutputInfo{{Global: 7, Connector: "DP-1", Width: 1536, Height: 864}})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelSettings]
+	if h == nil {
+		t.Fatal("Settings closed")
+	}
+	if h.place.Output.W != 1536 || h.place.Output.H != 864 {
+		t.Fatalf("Settings is placed on a %dx%d output, want 1536x864", h.place.Output.W, h.place.Output.H)
+	}
+	if r := h.rect; r.X < 0 || r.Y < 0 || r.X+r.W > 1536 || r.Y+r.H > 864 {
+		t.Fatalf("Settings rect %v runs off the 1536x864 output", r)
+	}
+}
