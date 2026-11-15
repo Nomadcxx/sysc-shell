@@ -38,7 +38,7 @@ Review the diff. The only `go.mod` change must be that `require` line, and the o
 `go.sum` changes must be the selected module's entries. Two lines are protected and must
 stay byte-identical:
 
-- the `go 1.26.10` directive and the CVE comment above it;
+- the `go 1.26.11` directive and the CVE comment above it;
 - `ignore ./docs`.
 
 After committing, `git diff --exit-code -- go.mod go.sum` must pass like the rest of the
