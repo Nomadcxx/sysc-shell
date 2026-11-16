@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 
+	"github.com/Nomadcxx/sysc-shell/internal/screenshot"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -342,18 +343,43 @@ func (r *Registry) setPowerPresentationLocked(h *PanelHost, full bool) {
 	h.fitPowerPlacement()
 	h.rect = h.place.Rect()
 	h.logicalW, h.logicalH = h.place.Panel.W, h.place.Panel.H
-	h.syncPowerGround(h.logicalW, h.logicalH)
+	h.syncPowerGround()
 	r.rebuildPanel(h)
 	r.sendPanelPlacementLocked(h)
 	r.publishSurface(h.output, panelSurfaceID(h.id))
 }
 
-// syncPowerGround keeps the captured backdrop only at the size it was captured
-// at. The platform recaptures the region the surface opened with, so a resized
-// view would stretch a stale frame; full screen dims the live desktop instead.
-// ponytail: blur in full screen needs an AuxUpdate that moves the capture region.
-func (h *PanelHost) syncPowerGround(w, ht int) {
-	h.powerGroundFallback = h.powerFullscreen || h.powerOpenSize != (ui.Rect{W: w, H: ht})
+// syncPowerGround crops the whole-output capture the power menu opened with to
+// the rect it occupies now: the compact card, or the output in full screen,
+// where the blurred desktop sits behind the scrim.
+func (h *PanelHost) syncPowerGround() {
+	h.backdropSharp, h.backdrop = nil, nil
+	h.powerGroundFallback = false
+	if h.powerGround == nil {
+		return
+	}
+	if h.powerCaptureOutput != h.place.Output {
+		h.powerGroundFallback = true
+		return
+	}
+	h.backdropSharp = cropGround(h.powerSharp, h.rect, h.powerCaptureOutput)
+	h.backdrop = cropGround(h.powerGround, h.rect, h.powerCaptureOutput)
+	h.powerGroundFallback = h.backdrop == nil
+}
+
+// cropGround cuts rect, in output logical pixels, out of a capture of the
+// whole output, at whatever resolution the capture is held.
+func cropGround(img *ui.Image, rect, output ui.Rect) *ui.Image {
+	if img == nil || output.W <= 0 || output.H <= 0 {
+		return nil
+	}
+	if rect == output {
+		return img
+	}
+	x0, y0 := rect.X*img.Width/output.W, rect.Y*img.Height/output.H
+	x1 := min(img.Width, ((rect.X+rect.W)*img.Width+output.W-1)/output.W)
+	y1 := min(img.Height, ((rect.Y+rect.H)*img.Height+output.H-1)/output.H)
+	return screenshot.Crop(img, ui.Rect{X: max(x0, 0), Y: max(y0, 0), W: x1 - max(x0, 0), H: y1 - max(y0, 0)})
 }
 
 func (h *PanelHost) fitPowerPlacement() {
