@@ -52,8 +52,7 @@ func (h *PanelHost) powerCardSize() (int, int) {
 }
 
 func (h *PanelHost) powerHeaderHeight() int {
-	_, th := h.measureText()(h.tr("power.title", "Power"), ui.TextAttrs{Role: theme.RoleHeadline})
-	return max(h.metrics().StandardControl, th)
+	return h.headlineRowHeight(h.tr("power.title", "Power"))
 }
 
 func powerTree(h *PanelHost) *ui.Node {

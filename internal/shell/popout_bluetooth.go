@@ -18,15 +18,17 @@ func bluetoothTree(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil && h.place.Panel.H > 0 {
 		panelH = h.place.Panel.H
 	}
-	header := bluetoothHeader(r, hostT(h), m)
-	viewportH := max(panelH-2*m.PanelPadding-m.StandardControl-theme.MarginL, 0)
+	tr := hostT(h)
+	rowH := h.headlineRowHeight(cardT(tr, "bt.title", "Bluetooth"))
+	header := bluetoothHeader(r, tr, m, rowH)
+	viewportH := max(panelH-2*m.PanelPadding-rowH-theme.MarginL, 0)
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: []*ui.Node{
 		header,
 		{Kind: ui.KindScroll, Height: viewportH, Children: []*ui.Node{bluetoothBody(r, h)}},
 	}}
 }
 
-func bluetoothHeader(r *Registry, tr translateFunc, m theme.Metrics) *ui.Node {
+func bluetoothHeader(r *Registry, tr translateFunc, m theme.Metrics, rowH int) *ui.Node {
 	state := services.BluetoothState{}
 	if r != nil {
 		state = r.bluetoothState
@@ -42,9 +44,9 @@ func bluetoothHeader(r *Registry, tr translateFunc, m theme.Metrics) *ui.Node {
 		Focusable: true, Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}
-	return &ui.Node{Kind: ui.KindRow, Height: m.StandardControl, Gap: theme.MarginL, PinEnd: true,
+	return &ui.Node{Kind: ui.KindRow, Height: rowH, Gap: theme.MarginL, PinEnd: true,
 		Children: []*ui.Node{
-			{Kind: ui.KindRow, Height: m.StandardControl, Gap: theme.MarginL, Children: []*ui.Node{icon, title}},
+			{Kind: ui.KindRow, Height: rowH, Gap: theme.MarginL, Children: []*ui.Node{icon, title}},
 			close,
 		}}
 }

@@ -263,6 +263,10 @@ type PanelHost struct {
 	// configure at another scale rebuilds it (its measured widths and the bar
 	// pictures depend on it).
 	settingsTreeScale int
+	// headlineTreeScale is the scale a headline header row was measured at;
+	// headlineMeasured says the tree has one. See headlineRowHeight.
+	headlineTreeScale int
+	headlineMeasured  bool
 	// wallpaperTreeScale is the same for the wallpaper picker, which measures
 	// its rail, path rule and decoding texture as it builds, and sizes its
 	// preview decodes in physical pixels.
@@ -2823,6 +2827,17 @@ func (h *PanelHost) measureText() ui.MeasureText {
 		// shaper owns script-aware widths whenever it is available.
 		return utf8.RuneCountInString(s) * 8, 16
 	}
+}
+
+// headlineRowHeight is the height of a panel header row titled in
+// RoleHeadline: the standard control, or the title's line where that is
+// taller, as it is on the mini row (sysc-2250). It measures, so it records the
+// scale for treeScale: a configure at another scale, or before the panel had
+// its text renderer, rebuilds the tree with real metrics.
+func (h *PanelHost) headlineRowHeight(title string) int {
+	_, th := h.measureText()(title, ui.TextAttrs{Role: theme.RoleHeadline})
+	h.headlineTreeScale, h.headlineMeasured = h.scale120, true
+	return max(h.metrics().StandardControl, th)
 }
 
 // panelReveal is the surface's reveal: its opacity and slide.
@@ -5752,7 +5767,7 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 	case PanelPower:
 		return h.powerFitScale, true
 	}
-	return 0, false
+	return h.headlineTreeScale, h.headlineMeasured
 }
 
 // applyFocusView adds transient decoration only to the paint copy. Positional
