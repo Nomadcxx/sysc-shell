@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -367,29 +368,139 @@ func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.
 	return weatherForecastSlot(m, width, ccForecastH, day, unit)
 }
 
+// ccAudioMixerAction hands the Control Centre over to the Audio panel, which
+// owns devices and per-application volume.
+const ccAudioMixerAction = "cc:audio-mixer"
+
 func ccAudio(r *Registry, h *PanelHost) *ui.Node {
-	m := h.metrics()
-	tr := ccT(h, r)
-	state := services.AudioState{}
-	ok := false
+	state, ok := services.AudioState{}, false
+	snap, ready := services.AudioSnapshot{}, false
 	if r != nil && r.audio != nil {
 		state, ok = r.audio.CachedState()
+		snap, ready = r.audio.Mixer(), r.audio.MixerReady()
 	}
-	mute := ccQuickTile(m, ccTileW, "volume_off", cardT(tr, "cc.mute", "Mute"), ccOnOff(state.Muted, tr), "cc:mute", state.Muted)
-	if !ok {
-		ccDisable(mute)
+	return ccAudioPage(h, ccT(h, r), state, ok, snap, ready)
+}
+
+// ccAudioPage is the default output, the default input and a link to the
+// Audio panel (sysc-2256). The output row drives the default sink through the
+// poll the bar already keeps, so it works before the mixer reports; the input
+// row needs the mixer, which the page leases only while it is shown.
+func ccAudioPage(h *PanelHost, tr translateFunc, state services.AudioState, ok bool, snap services.AudioSnapshot, ready bool) *ui.Node {
+	m := h.metrics()
+	outName := cardT(tr, "cc.volume", "Volume")
+	if sink := audioDefaultNode(snap.Sinks, ""); ready && sink.Description != "" {
+		outName = sink.Description
+	}
+	output := ccLevel{
+		icon: "volume_up", label: outName, mute: "cc:mute", slider: "cc:volume",
+		level: state.Level, muted: state.Muted, ok: ok,
+	}
+	if state.Muted {
+		output.icon = "volume_off"
+	}
+	source := audioApplyPending(h, audioDefaultNode(snap.Sources, ""))
+	inName := ccDash
+	if source.ID != 0 {
+		inName = cmp.Or(source.Description, source.Name)
+	} else if ready {
+		inName = cardT(tr, "cc.unavailable", "unavailable")
+	}
+	input := ccLevel{
+		icon: audioRoleIcon("Input", source.Muted), label: inName,
+		mute: fmt.Sprintf("audio-mute:%d", source.ID), slider: fmt.Sprintf("audio-vol:%d", source.ID),
+		level: source.Level, muted: source.Muted, ok: source.ID != 0,
+	}
+	width := ccBodyWidth(h) - 2*m.CardPadding
+	mixer := cardT(tr, "cc.audio_mixer", "Audio mixer")
+	if n := len(snap.Streams); ready && n > 0 {
+		mixer = fmt.Sprintf("%s · %d %s", mixer, n, h.trn("launcher.noun.app", n, "app", "apps"))
+	}
+	open := &ui.Node{
+		Kind: ui.KindButton, Action: ccAudioMixerAction, Name: mixer, Role: "button", Focusable: true,
+		Height: m.StandardControl, Padding: m.ButtonPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeStadium,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "tune", IconSize: m.IconNormal},
+			{Kind: ui.KindText, Text: mixer, TextRole: theme.RoleLabel},
+		}}},
 	}
 	rows := []*ui.Node{
-		monitorCardTitle(cardT(tr, "cc.output", "Output"), 0),
-		ccSlider(m, "volume_up", cardT(tr, "cc.volume", "Volume"), "cc:volume", state.Level, ok),
-		mute,
+		monitorCard(m, []*ui.Node{monitorCardTitle(cardT(tr, "cc.output", "Output"), 0), ccLevelRow(m, tr, width, output)}),
+		monitorCard(m, []*ui.Node{monitorCardTitle(cardT(tr, "cc.input", "Input"), 0), ccLevelRow(m, tr, width, input)}),
+		open,
 	}
 	if h != nil && h.errLabel != "" {
 		rows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, rows...)
 	}
-	card := monitorCard(m, rows)
-	card.Height = ccPageH
-	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginM, Children: rows}
+}
+
+// startAudioBodyLocked leases the mixer for the page's input row. The lease
+// is the page's own, so the Audio panel and the page never share ownership.
+func (r *Registry) startAudioBodyLocked(h *PanelHost) {
+	if r == nil || r.audio == nil || h.mixerLease != nil {
+		return
+	}
+	lease, err := r.audio.MixerAcquire()
+	if err != nil {
+		h.errLabel = err.Error()
+		return
+	}
+	h.mixerLease = lease
+}
+
+func (r *Registry) leaveAudioBodyLocked(h *PanelHost) {
+	if h == nil || h.mixerLease == nil {
+		return
+	}
+	lease := h.mixerLease
+	h.mixerLease = nil
+	// Release waits for an in-flight pw-dump poll; keep that off the owner.
+	go lease.Release()
+}
+
+// ccLevel is one audio row: the actions its mute toggle and slider send, and
+// the state they show.
+type ccLevel struct {
+	icon, label, mute, slider string
+	level                     int
+	muted, ok                 bool
+}
+
+// ccLevelRow lays out a mute toggle, a name, a slider and a percentage across
+// width. The name is pinned to two fifths of what the toggle and the
+// percentage leave and elides past it, so a long device name never pushes the
+// slider off the card, and the output and input sliders share a column.
+func ccLevelRow(m theme.Metrics, tr translateFunc, width int, l ccLevel) *ui.Node {
+	mute := &ui.Node{
+		Kind: ui.KindButton, Action: l.mute, Name: cardT(tr, "cc.mute", "Mute") + " " + l.label, Role: "button",
+		Focusable: l.ok, Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: l.icon, IconSize: m.IconNormal}},
+	}
+	if l.muted {
+		mute.State |= ui.StateSelected
+	}
+	slider := &ui.Node{
+		Kind: ui.KindSlider, Action: l.slider, Name: l.label, Role: "slider", Focusable: l.ok,
+		Value: float64(l.level), Min: 0, Max: 100, Step: 5, Absent: !l.ok,
+	}
+	if !l.ok {
+		mute.State |= ui.StateDisabled
+		slider.State |= ui.StateDisabled
+	}
+	rest := max(width-2*m.CardPadding-m.CompactControl-ccValueW-3*theme.MarginM, 0)
+	labelW := rest * 2 / 5
+	slider.Width = rest - labelW
+	return &ui.Node{
+		Kind: ui.KindCapsule, Height: ccSliderCapsuleH, Padding: m.CardPadding,
+		Fill: ui.FillContainerHighest, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+			mute,
+			{Kind: ui.KindText, Text: l.label, TextRole: theme.RoleLabel, MinWidth: labelW, MaxWidth: labelW},
+			slider,
+			{Kind: ui.KindText, Text: ccPercent(l.level, l.ok), Width: ccValueW, MinWidthText: "100%", Tabular: true},
+		}}},
+	}
 }
 
 func ccPrivacy(r *Registry, h *PanelHost) *ui.Node {

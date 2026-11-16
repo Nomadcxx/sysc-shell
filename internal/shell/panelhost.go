@@ -5525,9 +5525,10 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if h.mixerLease != nil {
 		lease := h.mixerLease
 		h.mixerLease = nil
-		// ponytail: only the audio panel owns this potentially blocking poller.
-		// If more panel resources gain blocking teardown, return cleanup work
-		// from this locked method and drain it through one shared path.
+		// ponytail: the Audio panel and the Control Centre's Audio page own
+		// this potentially blocking poller. If more panel resources gain
+		// blocking teardown, return cleanup work from this locked method and
+		// drain it through one shared path.
 		go lease.Release()
 	}
 	h.editors = nil

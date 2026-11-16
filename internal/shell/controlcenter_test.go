@@ -1131,7 +1131,7 @@ func TestAudioPageHasNoDevicePicker(t *testing.T) {
 			t.Errorf("audio page drew %q: the service reports level and mute only", banned)
 		}
 	}
-	for _, want := range []string{"Volume", "Mute"} {
+	for _, want := range []string{"Output", "Volume", "Input", "Audio mixer"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("audio page %q is missing %q", got, want)
 		}
@@ -1144,7 +1144,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		section string
 		want    []string
 	}{
-		{section: "audio", want: []string{"Volume", "Mute"}},
+		{section: "audio", want: []string{"Volume", "Input", "Audio mixer"}},
 		{section: "monitor", want: []string{"CPU", "Memory", "Temperature", "GPU", "Storage", "Network", "Disk I/O"}},
 		{section: "network", want: []string{"Network", "Wi-Fi", "Ethernet"}},
 		{section: "power", want: []string{"Battery", "Power profile", "Power menu"}},
