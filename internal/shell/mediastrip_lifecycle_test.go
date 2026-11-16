@@ -281,3 +281,50 @@ func TestMediaStripPinnedDensitySurvivesConfigAdoption(t *testing.T) {
 		t.Error("disabled output bar retained its strip")
 	}
 }
+
+// A work area shorter than the strip clamped the surface and cut off the
+// transport row (sysc-2248). The strip steps its controls down a density at a
+// time until it fits, keeping every control.
+func TestMediaStripStepsItsControlsDownToFitAShortWorkArea(t *testing.T) {
+	r, h, _ := stripTestRegistry(t, services.MediaState{Available: true, Identity: "mpv", Title: "Track", Artist: "Artist",
+		Status: services.PlaybackPlaying, CanSeek: true, CanPause: true, CanPlay: true, CanNext: true, CanPrev: true, LengthUS: 300000000})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cfg.Theme.Density = theme.DensitySpacious
+	h.rethemeLocked(r.panelThemeForState(7, r.cfg, r.tokens), r.cfg.Bar.FontFamily)
+	spacious := h.style.Metrics
+	bar := r.bars[7]
+	full := 0
+	for _, tc := range []struct {
+		name  string
+		work  int
+		fewer bool
+	}{{"tall", 600, false}, {"short", 200, true}} {
+		bar.setOutputSize(1536, tc.work+r.cfg.ForConnector(bar.connector()).ExclusiveZone())
+		h.closeLocked()
+		openStripForTest(t, h, ui.Rect{X: 800, W: 160, H: 32}, true)
+		height := int(h.spec().Height)
+		if height > tc.work {
+			t.Fatalf("%s: strip is %d tall in a %d px work area", tc.name, height, tc.work)
+		}
+		for _, n := range ui.Focusables(h.root) {
+			if n.Bounds.Y+n.Bounds.H > height-mediaStripPad {
+				t.Errorf("%s: %s at %+v is cut off by the %d px strip", tc.name, n.Name, n.Bounds, height)
+			}
+		}
+		slider := findKind(h.root, ui.KindSlider)
+		if slider == nil {
+			t.Fatalf("%s: the seek slider is gone", tc.name)
+		}
+		if full == 0 {
+			full = slider.Bounds.H
+		}
+		if stepped := slider.Bounds.H < full; stepped != tc.fewer {
+			t.Errorf("%s: slider %d tall against spacious %d; stepped down = %v, want %v",
+				tc.name, slider.Bounds.H, full, stepped, tc.fewer)
+		}
+		if h.style.Metrics != spacious {
+			t.Errorf("%s: fitting overwrote the theme's own metrics", tc.name)
+		}
+	}
+}
