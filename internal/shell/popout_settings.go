@@ -1522,6 +1522,7 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 			},
 		}}
 	case settings.KindEnum:
+		e = settingsShownEntry(e, raw)
 		// One option is a fact, not a choice: a one-row menu drew as a
 		// clipped pill (the bar's Edge, which is only ever top).
 		if len(e.Options) == 1 {
@@ -1678,6 +1679,20 @@ func settingsPickerControl(h *PanelHost, e settings.Entry, options, values []str
 	return n
 }
 
+// settingsShownEntry is the entry as an enum control shows it for its current
+// raw value: a legacy value is appended as its own row while it is current, so
+// the control never highlights a row the user did not choose (sysc-2249).
+func settingsShownEntry(e settings.Entry, raw string) settings.Entry {
+	if !slices.Contains(e.Legacy, raw) || slices.Contains(e.Options, raw) {
+		return e
+	}
+	e.Options = append(slices.Clone(e.Options), raw)
+	if len(e.OptionLabels) > 0 {
+		e.OptionLabels = append(slices.Clone(e.OptionLabels), raw)
+	}
+	return e
+}
+
 func settingsPickerOptions(e settings.Entry) ([]string, []string) {
 	if e.Kind == settings.KindFont {
 		return settingsFontOptions(e)
@@ -1707,8 +1722,9 @@ func (h *PanelHost) reseedSettingsMenus() {
 		if entry == nil || entry.Get == nil || (entry.Kind != settings.KindEnum && entry.Kind != settings.KindFont) {
 			continue
 		}
-		options, values := settingsPickerOptions(*entry)
-		menu.reseed(options, values, settingsOptionIndex(options, values, entry.Get(h.draft)))
+		raw := entry.Get(h.draft)
+		options, values := settingsPickerOptions(settingsShownEntry(*entry, raw))
+		menu.reseed(options, values, settingsOptionIndex(options, values, raw))
 	}
 }
 

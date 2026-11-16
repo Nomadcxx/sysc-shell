@@ -38,6 +38,7 @@ func audioTree(r *Registry, h *PanelHost) *ui.Node {
 
 func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 	well := m.StandardControl
+	rowH := h.headlineRowHeight("Audio")
 	closeSz := m.CompactControl
 	title := &ui.Node{Kind: ui.KindText, Text: "Audio", TextRole: theme.RoleHeadline, Name: "Audio", Role: "heading"}
 	closeBtn := &ui.Node{
@@ -50,8 +51,8 @@ func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 		Fill:     ui.FillContainerHighest,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "graphic_eq", IconSize: m.IconNormal}},
 	}
-	leading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, Children: []*ui.Node{icon, title}}
-	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, PinEnd: true, Children: []*ui.Node{
+	leading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: rowH, Children: []*ui.Node{icon, title}}
+	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: rowH, PinEnd: true, Children: []*ui.Node{
 		leading, closeBtn,
 	}}
 	tabs := &ui.Node{
@@ -63,7 +64,7 @@ func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 	}
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Height:   2*m.CardPadding + 2*well + theme.MarginL, // token-exempt: derived from the card inset, the well and the column gap below; the scan matches the leading 2 of this expression, not a hardcoded height
+		Height:   2*m.CardPadding + rowH + well + theme.MarginL, // token-exempt: derived from the card inset, the title row, the tab well and the column gap below; the scan matches the leading 2 of this expression, not a hardcoded height
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginL, Children: []*ui.Node{top, tabs}}},
 	}
 }

@@ -70,8 +70,9 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 	field.Height = m.StandardControl
 	field.Padding = m.ButtonPadding
 
+	headerH := h.headlineRowHeight(cardT(tr, "clip.title", "Clipboard History"))
 	children := []*ui.Node{
-		clipboardHeader(m, tr),
+		clipboardHeader(m, tr, headerH),
 		field,
 		clipboardFilterRow(filter, max(panelW-2*m.PanelPadding, 1), m, tr),
 		clipboardToolbar(h, m, tr),
@@ -103,7 +104,7 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 				return rows[i]
 			},
 		}
-		used := 2*m.PanelPadding + clipboardHeaderHeight(m) + m.CardGap + m.StandardControl +
+		used := 2*m.PanelPadding + headerH + m.CardGap + m.StandardControl +
 			m.CardGap + clipboardFilterHeight(m) + m.CardGap + clipboardToolbarHeight(m) + m.CardGap
 		if state := clipboardStatus(view, m, tr); state != nil {
 			used += clipboardStatusHeight + m.CardGap
@@ -133,8 +134,8 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Gap: m.CardGap, Padding: m.PanelPadding, Children: children}
 }
 
-func clipboardHeader(m theme.Metrics, tr translateFunc) *ui.Node {
-	title := &ui.Node{Kind: ui.KindRow, Gap: m.CardGap, Height: m.StandardControl, Children: []*ui.Node{
+func clipboardHeader(m theme.Metrics, tr translateFunc, rowH int) *ui.Node {
+	title := &ui.Node{Kind: ui.KindRow, Gap: m.CardGap, Height: rowH, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: "content_paste", IconSize: m.IconNormal, Tone: ui.ToneAccent},
 		{Kind: ui.KindText, Text: cardT(tr, "clip.title", "Clipboard History"), TextRole: theme.RoleHeadline, Name: cardT(tr, "clip.title", "Clipboard History"), Role: "heading"},
 	}}
@@ -143,10 +144,8 @@ func clipboardHeader(m theme.Metrics, tr translateFunc) *ui.Node {
 		Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}
-	return &ui.Node{Kind: ui.KindRow, Height: m.StandardControl, Gap: m.CardGap, PinEnd: true, Children: []*ui.Node{title, close}}
+	return &ui.Node{Kind: ui.KindRow, Height: rowH, Gap: m.CardGap, PinEnd: true, Children: []*ui.Node{title, close}}
 }
-
-func clipboardHeaderHeight(m theme.Metrics) int { return m.StandardControl }
 
 func clipboardToolbar(h *PanelHost, m theme.Metrics, tr translateFunc) *ui.Node {
 	if h != nil && h.clipboardMultiSelect {

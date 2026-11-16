@@ -2550,3 +2550,32 @@ func TestPanelRethemeAppliesMotion(t *testing.T) {
 		t.Fatal("retheme did not restart the palette blend")
 	}
 }
+
+// A header row titled in RoleHeadline is taller than the mini row's standard
+// control. Each panel has to lay out at every density and at a fractional
+// scale through the compositor's configure path (sysc-2250).
+func TestPanelsLayOutAtEveryDensityAndScale(t *testing.T) {
+	panels := []PanelID{
+		PanelAudio, PanelBluetooth, PanelClipboard, PanelClock, PanelControlCenter, PanelFiles,
+		PanelKeyboardLayout, PanelLauncher, PanelMonitor, PanelNetwork, PanelNotifications,
+		PanelPower, PanelSession, PanelSettings, PanelWallpaper, PanelWeather,
+	}
+	for _, id := range panels {
+		for _, density := range theme.Densities() {
+			for _, scale120 := range []int{120, 150} {
+				r := newPanelRegistry(t)
+				r.cfg.Theme.Density = density
+				assetBase(t, r)
+				if err := r.OpenPanel(id, 7, Trigger{BarEdge: "top", OutW: 1536, OutH: 1080}); err != nil {
+					t.Errorf("%v %s: open: %v", id, density, err)
+					continue
+				}
+				h := r.panelHosts[id]
+				w, hgt := h.surfaceSize()
+				if err := h.configureLocking(r)(w, hgt, scale120); err != nil {
+					t.Errorf("%v %s at scale %d: %v", id, density, scale120, err)
+				}
+			}
+		}
+	}
+}

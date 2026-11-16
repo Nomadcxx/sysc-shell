@@ -93,15 +93,19 @@ type PanelHost struct {
 	// Registry.settingsWriteMu.
 	settingsWriteRevision uint64
 	settingsWriteChanges  []settingsWriteChange
-	// powerGroundFallback drops the captured backdrop: full screen dims the
-	// live desktop instead, and a resized compact view would stretch a capture
-	// of its original region. powerOpenSize is that region's size.
-	powerGroundFallback bool
-	powerOpenSize       ui.Rect
-	powerLockAvailable  bool
-	powerLockLabel      string
-	powerFullscreen     bool
-	powerConfirm        string
+	// powerSharp and powerGround are the whole output as the power menu opened
+	// over it, and powerCaptureOutput the output rect they were taken at. The
+	// menu crops them to the rect it occupies, so the compact card and the
+	// full-screen scrim share one capture (sysc-2253). powerGroundFallback
+	// paints the menu opaque when that capture cannot serve its rect: the
+	// output changed geometry after the capture.
+	powerSharp, powerGround *ui.Image
+	powerCaptureOutput      ui.Rect
+	powerGroundFallback     bool
+	powerLockAvailable      bool
+	powerLockLabel          string
+	powerFullscreen         bool
+	powerConfirm            string
 	// powerFitScale is the scale the compact size was measured at.
 	powerFitScale int
 	// powerFailed is the action whose dispatch failed; errLabel holds why.
@@ -263,6 +267,10 @@ type PanelHost struct {
 	// configure at another scale rebuilds it (its measured widths and the bar
 	// pictures depend on it).
 	settingsTreeScale int
+	// headlineTreeScale is the scale a headline header row was measured at;
+	// headlineMeasured says the tree has one. See headlineRowHeight.
+	headlineTreeScale int
+	headlineMeasured  bool
 	// wallpaperTreeScale is the same for the wallpaper picker, which measures
 	// its rail, path rule and decoding texture as it builds, and sizes its
 	// preview decodes in physical pixels.
@@ -1615,8 +1623,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	if id == PanelPower {
 		h.fitPowerPlacement()
-		// The backdrop is captured from the compact rect this opens at.
-		h.powerOpenSize = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
 	}
 	h.root = r.panelTree(h)
 	r.queueFilesPanelImages(h)
@@ -2039,7 +2045,9 @@ const lensSampleRows = 8
 // replaces, so wantsLens does not distinguish the tones: the gate is the
 // ladder's, and a frame that changes nothing is dropped on arrival.
 func (h *PanelHost) wantsLens(t Theme) bool {
-	if h.id == PanelPower && h.powerGroundFallback {
+	// The power menu's ground is a crop of the whole output; a recapture of
+	// that region would hold the full-screen menu itself.
+	if h.id == PanelPower {
 		return false
 	}
 	m := materialFor(t, true)
@@ -2073,7 +2081,7 @@ func (h *PanelHost) lensRung(now time.Time) render.LensRung {
 // what makes the ground track the content as the panel appears; afterwards the
 // cadence applies, and never more than one capture is in flight.
 func (h *PanelHost) maybeRecapture(r *Registry, t Theme, now time.Time) {
-	if h.id == PanelPower && h.powerGroundFallback {
+	if h.id == PanelPower {
 		return
 	}
 	// A request that never came back is a failure. The owner has no channel to
@@ -2376,9 +2384,15 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	// material, which needs the captured pixels and therefore takes the capture
 	// whichever compositor it is on.
 	material := materialFor(h.theme, r.cfg.Theme.BlurBehind)
+	capture := region
+	if h.id == PanelPower {
+		// The power menu captures the whole output once and crops it, so
+		// full screen has a ground without a recapture (sysc-2253).
+		capture = h.place.Output
+	}
 	var blurRegion *ui.Rect
 	if r.cfg.Theme.BlurBehind && (material.Tone != render.ToneNone || !r.caps.Blur) {
-		blurRegion = &region
+		blurRegion = &capture
 	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
@@ -2408,6 +2422,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 			Backdrop: func(sharp, ground *ui.Image) {
 				r.mu.Lock()
 				defer r.mu.Unlock()
+				if h.id == PanelPower {
+					h.powerSharp, h.powerGround, h.powerCaptureOutput = sharp, ground, capture
+					h.syncPowerGround()
+					return
+				}
 				h.backdropSharp, h.backdrop = sharp, ground
 			},
 			// A live ground: the frame becomes the lens's candidate, and the
@@ -2693,7 +2712,7 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 		}
 	}
 	if h.id == PanelPower {
-		h.syncPowerGround(w, height)
+		h.syncPowerGround()
 	}
 	h.logicalW, h.logicalH, h.scale120 = w, height, scale120
 	if err := h.ensureText(); err != nil {
@@ -2823,6 +2842,17 @@ func (h *PanelHost) measureText() ui.MeasureText {
 		// shaper owns script-aware widths whenever it is available.
 		return utf8.RuneCountInString(s) * 8, 16
 	}
+}
+
+// headlineRowHeight is the height of a panel header row titled in
+// RoleHeadline: the standard control, or the title's line where that is
+// taller, as it is on the mini row (sysc-2250). It measures, so it records the
+// scale for treeScale: a configure at another scale, or before the panel had
+// its text renderer, rebuilds the tree with real metrics.
+func (h *PanelHost) headlineRowHeight(title string) int {
+	_, th := h.measureText()(title, ui.TextAttrs{Role: theme.RoleHeadline})
+	h.headlineTreeScale, h.headlineMeasured = h.scale120, true
+	return max(h.metrics().StandardControl, th)
 }
 
 // panelReveal is the surface's reveal: its opacity and slide.
@@ -4616,7 +4646,7 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		h.rect = h.place.Rect()
 		h.logicalW, h.logicalH = h.place.Panel.W, h.place.Panel.H
 		if old != h.rect && r.panelHosts[h.id] == h {
-			h.syncPowerGround(h.rect.W, h.rect.H)
+			h.syncPowerGround()
 			r.sendPanelPlacementLocked(h)
 		}
 	}
@@ -5752,7 +5782,7 @@ func (h *PanelHost) treeScale() (built int, measured bool) {
 	case PanelPower:
 		return h.powerFitScale, true
 	}
-	return 0, false
+	return h.headlineTreeScale, h.headlineMeasured
 }
 
 // applyFocusView adds transient decoration only to the paint copy. Positional

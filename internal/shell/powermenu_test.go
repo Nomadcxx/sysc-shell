@@ -267,22 +267,50 @@ func TestPowerMenuClosedHostCannotDispatch(t *testing.T) {
 	}
 }
 
-func TestPowerMenuFullscreenDimsDesktop(t *testing.T) {
+// The power menu captures the whole output once as it opens and crops it to
+// the rect it occupies: the compact card paints the desktop beneath it, and
+// full screen paints the blurred desktop behind its scrim (sysc-2253).
+func TestPowerMenuFullscreenBlursTheDesktopBehindItsScrim(t *testing.T) {
 	r, h := newPowerHost(t)
 	r.mu.Lock()
+	r.cfg.Theme.BlurBehind = true
+	spec := r.panelSpec(h, h.place.Margins())
+	r.mu.Unlock()
+	if spec.BlurRegion == nil || *spec.BlurRegion != h.place.Output {
+		t.Fatalf("power menu captures %v, want the whole output %v", spec.BlurRegion, h.place.Output)
+	}
+	// A half-resolution capture whose blue byte names each pixel's column.
+	ground := &ui.Image{Width: 960, Height: 540, Stride: 960 * 4, Pix: make([]byte, 960*540*4)}
+	for y := range ground.Height {
+		for x := range ground.Width {
+			i := y*ground.Stride + x*4
+			ground.Pix[i], ground.Pix[i+3] = byte(x), 255
+		}
+	}
+	spec.Callbacks.Backdrop(nil, ground)
+
+	r.mu.Lock()
 	defer r.mu.Unlock()
-	h.backdrop = &ui.Image{Width: 1, Height: 1, Pix: []byte{0, 0, 0, 255}}
+	compact := h.rect
+	crop := h.backdrop
+	if crop == nil || abs(crop.Width-compact.W/2) > 1 || abs(crop.Height-compact.H/2) > 1 {
+		t.Fatalf("compact ground = %+v, want the %+v rect at half resolution", crop, compact)
+	}
+	if got := crop.Pix[0]; got != byte(compact.X/2) {
+		t.Fatalf("compact ground starts at column %d, want %d", got, compact.X/2)
+	}
+
 	r.setPowerPresentationLocked(h, true)
 	s := h.rootStyle(h.theme, true)
 	if fill := s.RootFill(); fill.A == 0 || fill.A == 255 || s.Radius != 0 || s.SurfaceRadius != 0 || s.Rim.A != 0 {
 		t.Fatalf("full screen must be a translucent scrim without frame: fill %+v radius %d surface %d rim %+v", fill, s.Radius, s.SurfaceRadius, s.Rim)
 	}
-	if h.backdropFor(h.theme) != nil {
-		t.Fatal("resized surface retained old capture")
+	if h.backdrop != ground || h.backdropFor(h.theme) == nil {
+		t.Fatal("full screen must paint the whole captured desktop behind its scrim")
 	}
 	h.maybeRecapture(r, h.theme, time.Now())
 	if h.lensPending {
-		t.Fatal("resized surface requested old capture region")
+		t.Fatal("full screen asked for a recapture, which would hold the menu itself")
 	}
 	if err := h.configure(h.place.Panel.W, h.place.Panel.H, 120); err != nil {
 		t.Fatal(err)
@@ -295,9 +323,18 @@ func TestPowerMenuFullscreenDimsDesktop(t *testing.T) {
 	if abs(2*b.X+b.W-h.logicalW) > 2 || abs(2*b.Y+b.H-h.logicalH) > 2 {
 		t.Fatalf("sheet not centred in %dx%d: %+v", h.logicalW, h.logicalH, b)
 	}
+
 	r.setPowerPresentationLocked(h, false)
-	if h.backdropFor(h.theme) == nil {
-		t.Fatal("compact view at its captured size lost its backdrop")
+	if h.backdrop == nil || h.backdrop.Width != crop.Width || h.backdrop.Pix[0] != crop.Pix[0] {
+		t.Fatal("compact view lost the ground it opened with")
+	}
+
+	// A capture of an output that has since changed geometry cannot be cropped
+	// truthfully, so the menu paints opaque.
+	h.place.Output = ui.Rect{W: 2560, H: 1440}
+	h.syncPowerGround()
+	if h.backdropFor(h.theme) != nil || h.rootStyle(h.theme, true).SurfaceOpacity != 255 {
+		t.Fatal("a capture of another output geometry must not paint")
 	}
 }
 
