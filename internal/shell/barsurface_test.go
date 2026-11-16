@@ -553,10 +553,9 @@ func matrixPluginFrame(t *testing.T) pluginFrame {
 	return pluginFrame{Root: root, Revision: 1, ViewID: "matrix-view"}
 }
 
-// A plugin's unsized Material glyph takes the pill's glyph size at every
-// density, even when one converted frame outlives a bar rebuilt at another
-// density, as a plugin view outlives a reload. Its project glyph stays text
-// in the bar, so a full bar keeps its width (sysc-2270).
+// A plugin's unsized glyph, Material or project, takes the pill's glyph size
+// at every density, even when one converted frame outlives a bar rebuilt at
+// another density, as a plugin view outlives a reload (sysc-2273).
 func TestBarSizesPluginGlyphsAcrossDensities(t *testing.T) {
 	t.Parallel()
 	wire := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{
@@ -581,16 +580,15 @@ func TestBarSizesPluginGlyphsAcrossDensities(t *testing.T) {
 			bar.mu.Lock()
 			defer bar.mu.Unlock()
 			want := theme.BarGlyphSize(bar.theme.Metrics.CapsuleHeight)
-			glyph, _ := render.IconByName("github")
-			notes, github := 0, false
+			notes, github := 0, 0
 			for _, section := range bar.sections() {
 				for _, n := range section {
 					walkNodes(n, func(n *ui.Node) {
 						if n.Kind == ui.KindIcon && n.Icon == "sticky_note_2" {
 							notes = ui.IconSize(n)
 						}
-						if n.Kind == ui.KindButton && n.Text == string(glyph) {
-							github = true
+						if n.Kind == ui.KindIcon && n.Icon == "github" {
+							github = ui.IconSize(n)
 						}
 					})
 				}
@@ -598,8 +596,8 @@ func TestBarSizesPluginGlyphsAcrossDensities(t *testing.T) {
 			if notes != want {
 				t.Fatalf("material glyph size = %d, want %d", notes, want)
 			}
-			if !github {
-				t.Fatal("the project glyph is no longer the button's text")
+			if github != want {
+				t.Fatalf("project glyph size = %d, want the pill's %d", github, want)
 			}
 		})
 	}
