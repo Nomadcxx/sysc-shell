@@ -2842,6 +2842,40 @@ func TestFontPickerRoundTripsEveryRowItOffers(t *testing.T) {
 	}
 }
 
+// The standard preset keeps the legacy standard density row, which the picker
+// does not offer. It has to show that row as the current one, not highlight
+// mini, the first row, as though the user had chosen it (sysc-2249).
+func TestTheDensityPickerShowsTheLegacyStandardRow(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	e := *h.set.ByPath("appearance.density")
+	raw := e.Get(h.draft)
+	if raw != string(theme.DensityStandard) {
+		t.Fatalf("default density = %q, want %q", raw, theme.DensityStandard)
+	}
+	selected := func(h *PanelHost) string {
+		control := settingsControl(h, e, settingsDropdownFixedWidth)
+		return textOf(findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindMenu }))
+	}
+	if got := selected(h); got != raw {
+		t.Fatalf("density picker shows %q for density %q", got, raw)
+	}
+	if err := e.Set(&h.draft, raw); err != nil {
+		t.Fatalf("selecting the shown row again: %v", err)
+	}
+
+	chosen := newSettingsHost()
+	if err := e.Set(&chosen.draft, string(theme.DensityComfortable)); err != nil {
+		t.Fatal(err)
+	}
+	if got := selected(chosen); got != string(theme.DensityComfortable) {
+		t.Errorf("density picker shows %q after choosing comfortable", got)
+	}
+	if options, _ := settingsPickerOptions(settingsShownEntry(e, string(theme.DensityComfortable))); slices.Contains(options, raw) {
+		t.Errorf("picker offers the legacy row %q while comfortable is chosen: %v", raw, options)
+	}
+}
+
 // A configuration written before the picker showed descriptive names carries
 // the normalized form. The row it names has to stay selected, or opening the
 // pane silently claims the user chose whatever sorts first.

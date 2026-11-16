@@ -192,8 +192,9 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Describe: "How much room controls take. Every surface derives from it.",
 			Kind:     KindEnum,
 			Options:  densityNames,
+			Legacy:   []string{string(theme.DensityStandard)},
 			Get:      func(c config.Config) string { return string(c.Theme.Density) },
-			Set: setEnum("appearance.density", densityNames,
+			Set: setEnum("appearance.density", append(slices.Clone(densityNames), string(theme.DensityStandard)),
 				func(c *config.Config, v string) { c.Theme.Density = theme.Density(v) }),
 		},
 		{

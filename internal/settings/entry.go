@@ -69,6 +69,11 @@ type Entry struct {
 	// Options order; the option itself stays the stored value. Saved palettes
 	// use it: the slug is stored, the name the user chose is shown.
 	OptionLabels []string
+	// Legacy holds values a configuration may already carry and Set still
+	// accepts, but the picker no longer offers. A picker shows one only while
+	// it is the current value, so it never highlights a row the user did not
+	// choose.
+	Legacy []string
 	// EmptyLabel names the row a picker offers for the empty value, and is
 	// set only where empty is a state the setting can actually hold. Most
 	// cannot: the loader refuses an empty appearance font family, so a picker
