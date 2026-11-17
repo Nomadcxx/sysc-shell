@@ -10,6 +10,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -53,6 +54,11 @@ type mediaStripHost struct {
 
 	text  *render.TextRenderer
 	style render.Style
+	// fit is the density row the controls take when the theme's own row
+	// leaves the strip taller than its work area; fitted says it applies.
+	// style keeps the theme's row, so the next rebuild starts from it.
+	fit    theme.Metrics
+	fitted bool
 }
 
 func newMediaStripHost(r *Registry, harness *hostHarness) *mediaStripHost {
@@ -212,19 +218,18 @@ func (h *mediaStripHost) rebuildLocked() {
 	h.pressed = nil
 	h.pointer.setPress("")
 	h.root = mediaStripTree(state, players, position, art)
-	ui.SizeControls(h.root, h.style.Metrics)
 	connector := ""
 	if bar := h.r.bars[h.output]; bar != nil {
 		connector = bar.connector()
 	}
 	edge, anchor, body, out := h.r.barGeometryOnOutputLocked(h.output, h.anchor)
-	height, err := ui.ContentHeight(h.root, mediaStripW, h.measureText)
+	work := barWorkArea(h.r.cfg.ForConnector(connector), out)
+	height, err := h.fitLocked(work.H)
 	if err != nil {
 		log.Printf("media strip layout: %v", err)
 		h.closeLocked()
 		return
 	}
-	work := barWorkArea(h.r.cfg.ForConnector(connector), out)
 	old := h.place
 	h.place = mediaStripPlacement(edge, anchor, body, work, max(mediaStripH, height))
 	h.placed = h.place.W > 0 && h.place.H > 0
@@ -244,6 +249,43 @@ func (h *mediaStripHost) rebuildLocked() {
 		log.Printf("media strip layout: %v", err)
 		h.closeLocked()
 	}
+}
+
+// fitLocked sizes the controls for a work area workH tall and returns the
+// content height. The theme's row comes first; when the strip does not fit,
+// each smaller density row in turn, down to mini, so every control stays on
+// the strip (sysc-2248). Past mini the placement clamps it.
+func (h *mediaStripHost) fitLocked(workH int) (int, error) {
+	own := h.style.Metrics
+	rows := []theme.Metrics{own}
+	densities := theme.Densities()
+	for i := len(densities) - 1; i >= 0; i-- {
+		if row, ok := theme.MetricsFor(densities[i]); ok && row.StandardControl < own.StandardControl {
+			rows = append(rows, row)
+		}
+	}
+	height := 0
+	for i, m := range rows {
+		ui.SizeControls(h.root, m)
+		var err error
+		if height, err = ui.ContentHeight(h.root, mediaStripW, h.measureText); err != nil {
+			return 0, err
+		}
+		h.fit, h.fitted = m, i > 0
+		if workH <= 0 || height <= workH {
+			break
+		}
+	}
+	return height, nil
+}
+
+// controlStyle is style with the fitted control row, for sizing and painting.
+func (h *mediaStripHost) controlStyle() render.Style {
+	style := h.style
+	if h.fitted {
+		style.Metrics = h.fit
+	}
+	return style
 }
 
 func (h *mediaStripHost) rethemeLocked(next Theme, fontFamily string) bool {
@@ -353,7 +395,7 @@ func (h *mediaStripHost) configure(width, height, scale120 int) error {
 	if h.root == nil {
 		return nil
 	}
-	ui.SizeControls(h.root, h.style.Metrics)
+	ui.SizeControls(h.root, h.controlStyle().Metrics)
 	return ui.LayoutColumn(h.root, ui.Rect{W: width, H: height}, h.measureText)
 }
 
@@ -393,7 +435,7 @@ func (h *mediaStripHost) render(pixels []byte, width, height, stride int) error 
 	if err != nil {
 		return err
 	}
-	return render.Paint(canvas, h.root, h.text, h.style)
+	return render.Paint(canvas, h.root, h.text, h.controlStyle())
 }
 
 func (h *mediaStripHost) handle(event wayland.Event) bool {
