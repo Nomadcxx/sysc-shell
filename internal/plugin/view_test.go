@@ -277,13 +277,13 @@ func TestConvertResolvesAButtonIcon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, ok := render.IconByName("camera")
-	if !ok {
+	if _, ok := render.IconByName("camera"); !ok {
 		t.Fatal("catalogue missing camera")
 	}
 	button := got.Children[0]
-	if button.Text != string(want) || button.Action != "camera" {
-		t.Fatalf("button = %+v", button)
+	if button.Text != "" || button.Action != "camera" || len(button.Children) != 1 ||
+		button.Children[0].Kind != ui.KindIcon || button.Children[0].Icon != "camera" {
+		t.Fatalf("button = %+v, want one camera icon child", button)
 	}
 	if button.Fill != ui.FillNone {
 		t.Fatalf("camera fill = %v, want the bar pill to provide the chrome", button.Fill)
@@ -402,12 +402,11 @@ func TestConvertButtonWithIconAndLabelCarriesBoth(t *testing.T) {
 	if len(button.Children) != 2 {
 		t.Fatalf("button children = %d, want glyph and label", len(button.Children))
 	}
-	want, ok := render.IconByName("schedule")
-	if !ok {
+	if _, ok := render.IconByName("schedule"); !ok {
 		t.Fatal("catalogue missing schedule")
 	}
-	if button.Children[0].Text != string(want) {
-		t.Fatalf("glyph child = %q", button.Children[0].Text)
+	if glyph := button.Children[0]; glyph.Kind != ui.KindIcon || glyph.Icon != "schedule" {
+		t.Fatalf("glyph child = %+v, want the schedule icon", glyph)
 	}
 	if button.Children[1].Text != "5:00" || !button.Children[1].Tabular {
 		t.Fatalf("label child = %+v", button.Children[1])
@@ -1407,13 +1406,12 @@ func TestConvertedProjectGlyphKeepsItsLabelBeside(t *testing.T) {
 	}
 }
 
-// The bar keeps an unsized project glyph as text, so a full bar does not grow
-// (sysc-2270); every other view converts it to an icon the host sizes. A sized
-// icon is an icon in both.
-func TestConvertKeepsBarProjectGlyphsAsText(t *testing.T) {
+// An unsized project glyph is an icon the host sizes in every view, the bar
+// included, so it matches the Material glyphs beside it and can carry a host
+// badge (sysc-2273). A sized icon keeps its size.
+func TestConvertMakesProjectGlyphsIconsInEveryView(t *testing.T) {
 	t.Parallel()
 	ev := []v1.EventKind{v1.EventActivate}
-	glyph, _ := render.IconByName("github")
 	for _, view := range []v1.ViewKind{v1.ViewBar, v1.ViewPanel} {
 		kind := v1.KindRow
 		if view == v1.ViewPanel {
@@ -1429,30 +1427,18 @@ func TestConvertKeepsBarProjectGlyphsAsText(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", view, err)
 		}
-		bare, sized, only, both := got.Children[0], got.Children[1], got.Children[2], got.Children[3]
+		bare, sized, only, labelled := got.Children[0], got.Children[1], got.Children[2], got.Children[3]
 		if sized.Kind != ui.KindIcon || sized.IconSize != 24 {
 			t.Errorf("%s: sized = %+v, want a 24 px icon", view, sized)
 		}
-		if view == v1.ViewBar {
-			if bare.Kind != ui.KindText || bare.Text != string(glyph) {
-				t.Errorf("bar: bare = %+v, want the glyph as text", bare)
-			}
-			if only.Text != string(glyph) || len(only.Children) != 0 {
-				t.Errorf("bar: glyph-only button = %+v, want the glyph as its label", only)
-			}
-			if both.Children[0].Kind != ui.KindText || both.Children[0].Text != string(glyph) {
-				t.Errorf("bar: glyph child = %+v, want text", both.Children[0])
-			}
-			continue
-		}
 		if bare.Kind != ui.KindIcon || bare.Icon != "github" || bare.IconSize != 0 {
-			t.Errorf("panel: bare = %+v, want a host-sized icon", bare)
+			t.Errorf("%s: bare = %+v, want a host-sized icon", view, bare)
 		}
 		if only.Text != "" || len(only.Children) != 1 || only.Children[0].Kind != ui.KindIcon {
-			t.Errorf("panel: glyph-only button = %+v, want one icon child", only)
+			t.Errorf("%s: glyph-only button = %+v, want one icon child", view, only)
 		}
-		if both.Children[0].Kind != ui.KindIcon || both.Children[0].Icon != "github" {
-			t.Errorf("panel: glyph child = %+v, want an icon", both.Children[0])
+		if labelled.Children[0].Kind != ui.KindIcon || labelled.Children[0].Icon != "github" {
+			t.Errorf("%s: glyph child = %+v, want an icon", view, labelled.Children[0])
 		}
 	}
 }
