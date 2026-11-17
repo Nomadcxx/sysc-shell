@@ -974,6 +974,19 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 	}
 }
 
+// mixerHostsLocked are the open panels that draw the mixer: the Audio panel,
+// and the Control Centre while its Audio page holds a mixer lease.
+func (r *Registry) mixerHostsLocked() []*PanelHost {
+	var hosts []*PanelHost
+	if h := r.panelHosts[PanelAudio]; h != nil {
+		hosts = append(hosts, h)
+	}
+	if h := r.panelHosts[PanelControlCenter]; h != nil && h.mixerLease != nil {
+		hosts = append(hosts, h)
+	}
+	return hosts
+}
+
 func (r *Registry) relayMixer(audio *services.Audio) {
 	if audio == nil {
 		return
@@ -990,21 +1003,26 @@ func (r *Registry) relayMixer(audio *services.Audio) {
 			if !ok {
 				return
 			}
+			type surface struct {
+				output uint32
+				id     PanelID
+			}
+			var dirty []surface
 			r.mu.Lock()
-			h := r.panelHosts[PanelAudio]
-			if h == nil {
-				r.mu.Unlock()
-				continue
+			snap := audio.Mixer()
+			for _, h := range r.mixerHostsLocked() {
+				if !h.pendingAt.IsZero() && snap.At.After(h.pendingAt) {
+					h.pendingVol = nil
+					h.pendingMute = nil
+					h.pendingAt = time.Time{}
+				}
+				r.rebuildPanel(h)
+				dirty = append(dirty, surface{h.output, h.id})
 			}
-			if snap := audio.Mixer(); !h.pendingAt.IsZero() && snap.At.After(h.pendingAt) {
-				h.pendingVol = nil
-				h.pendingMute = nil
-				h.pendingAt = time.Time{}
-			}
-			r.rebuildPanel(h)
-			out := h.output
 			r.mu.Unlock()
-			r.publishSurface(out, panelSurfaceID(PanelAudio))
+			for _, s := range dirty {
+				r.publishSurface(s.output, panelSurfaceID(s.id))
+			}
 		}
 	}
 }

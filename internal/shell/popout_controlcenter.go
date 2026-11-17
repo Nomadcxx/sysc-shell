@@ -150,6 +150,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 	if h.section == "media" {
 		r.leaveMediaBodyLocked(h)
 	}
+	if h.section == "audio" {
+		r.leaveAudioBodyLocked(h)
+	}
 	fromIndex, toIndex := ccSectionIndex(h.section), ccSectionIndex(section)
 	h.pageDirection = 0
 	if toIndex > fromIndex {
@@ -173,6 +176,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 	}
 	if h.section == "media" {
 		r.startMediaBodyLocked(h)
+	}
+	if h.section == "audio" {
+		r.startAudioBodyLocked(h)
 	}
 	r.startSurfaceFrames(h)
 	return true
@@ -352,6 +358,8 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		target = PanelTerminalArt
 	case panelMonitorAction:
 		target = PanelMonitor
+	case ccAudioMixerAction:
+		target = PanelAudio
 	case "cc:close":
 		r.closePanelLocked(h.id)
 		return true
