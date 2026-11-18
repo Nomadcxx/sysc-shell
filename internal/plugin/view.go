@@ -605,6 +605,12 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 			if err != nil {
 				return nil, err
 			}
+			// A segment rests unfilled like the shell's own unless the plugin
+			// named a fill: the labelled-button accent default would make the
+			// unselected segments louder than the tonal selected one.
+			if n.Kind == v1.KindSegmented && c.Fill == "" && child.Fill == ui.FillAccent {
+				child.Fill = ui.FillNone
+			}
 			out.Children[i] = card(child)
 		}
 	}

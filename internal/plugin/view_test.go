@@ -918,6 +918,34 @@ func TestConvertPaintsADisabledButtonDisabled(t *testing.T) {
 	}
 }
 
+// A segment rests unfilled unless the plugin names a fill, like the shell's
+// own segments: the labelled-button accent default would make every
+// unselected segment louder than the tonal selected one.
+func TestConvertLeavesPluginSegmentsUnfilled(t *testing.T) {
+	t.Parallel()
+	seg := func(id string, selected bool, fill string) *v1.Node {
+		return &v1.Node{Kind: v1.KindButton, ID: id, Text: id, Name: id, Role: "button", Selected: selected, Fill: fill, Events: []v1.EventKind{v1.EventActivate}}
+	}
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindSegmented, Children: []*v1.Node{seg("a", true, ""), seg("b", false, ""), seg("c", false, "soft")}},
+		seg("plain", false, ""),
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	segs := got.Children[0].Children
+	if segs[0].Fill != ui.FillNone || segs[1].Fill != ui.FillNone || segs[2].Fill == ui.FillNone {
+		t.Fatalf("segment fills = %v %v %v", segs[0].Fill, segs[1].Fill, segs[2].Fill)
+	}
+	if !segs[0].State.Has(ui.StateSelected) {
+		t.Fatal("selected segment lost its state")
+	}
+	if got.Children[1].Fill != ui.FillAccent {
+		t.Fatalf("plain labelled button fill = %v, want the accent default", got.Children[1].Fill)
+	}
+}
+
 func TestConvertRejectsAnUnknownFill(t *testing.T) {
 	t.Parallel()
 	root := &v1.Node{Kind: v1.KindColumn, Fill: "neon"}
