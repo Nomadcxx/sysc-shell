@@ -900,6 +900,24 @@ func TestConvertMapsMinorTwoFields(t *testing.T) {
 	}
 }
 
+// A disabled plugin button must paint disabled, not only refuse activation:
+// a live-looking control that does nothing invites the click it blocks.
+func TestConvertPaintsADisabledButtonDisabled(t *testing.T) {
+	t.Parallel()
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "go", Text: "Connect", Name: "Connect", Role: "button", Fill: "accent",
+			Disabled: true, Events: []v1.EventKind{v1.EventActivate}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	btn := got.Children[0]
+	if !btn.State.Has(ui.StateDisabled) || !btn.AriaDisabled || btn.Action != "" || !btn.Focusable {
+		t.Fatalf("disabled button = state %v aria %v action %q focusable %v", btn.State, btn.AriaDisabled, btn.Action, btn.Focusable)
+	}
+}
+
 func TestConvertRejectsAnUnknownFill(t *testing.T) {
 	t.Parallel()
 	root := &v1.Node{Kind: v1.KindColumn, Fill: "neon"}

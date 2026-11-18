@@ -495,6 +495,9 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 			out.State |= ui.StateSelected
 		}
 		if n.Disabled {
+			// Painted disabled as well as blocked, so the control does not
+			// invite the activation it refuses.
+			out.State |= ui.StateDisabled
 			out.AriaDisabled = true
 			out.Action = "" // no action route: activation is blocked
 		}
