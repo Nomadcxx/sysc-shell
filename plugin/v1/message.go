@@ -37,7 +37,9 @@ const (
 	// Minor 26 adds location.get and location.changed: the place the shell's
 	// weather settings name, for a plugin granted the location capability.
 	// Minor 27 adds declared service actions and typed service status updates.
-	ProtocolMinor = 27
+	// Minor 28 adds tinted images, painted in a tone from their alpha, and
+	// the mullvad and obscura marks in the project icon face.
+	ProtocolMinor = 28
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.

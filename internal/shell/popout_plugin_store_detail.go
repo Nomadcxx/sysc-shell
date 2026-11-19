@@ -205,7 +205,7 @@ func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width in
 			ImagePath: detail.ScreenshotPath, Background: true,
 		}
 		if r.plugins != nil && r.plugins.images != nil {
-			if workerKey, ok := pluginImageKey(img); ok {
+			if workerKey, ok := pluginImageKey(img, r.plugins.decodeScale()); ok {
 				if decoded, hit, err := r.plugins.images.Request(workerKey); err == nil && hit {
 					img.Image = decoded
 				}

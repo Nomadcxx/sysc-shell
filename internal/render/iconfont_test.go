@@ -964,3 +964,53 @@ func TestSideCatRotatesEveryAnimationFrame(t *testing.T) {
 		}
 	}
 }
+
+// The vpn plugin's bar pill uses the Mullvad and Obscura marks. Each is a
+// solid shape with cut-outs, so a filled blob would fail: the Mullvad disc
+// leaves its centre (the mole) unlit, and the Obscura face leaves its eyes
+// unlit inside an inked body.
+func TestVPNMarksAreCutOutShapes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rune rune
+		// hole and solid are points as fractions of the raster box.
+		hole, solid [2]float64
+	}{
+		{"mullvad", 0xE077, [2]float64{0.42, 0.55}, [2]float64{0.5, 0.06}},
+		{"obscura", 0xE078, [2]float64{0.255, 0.42}, [2]float64{0.5, 0.5}},
+	} {
+		r, ok := IconByName(tc.name)
+		if !ok || r != tc.rune {
+			t.Fatalf("%s = %U, %v; want %U", tc.name, r, ok, tc.rune)
+		}
+		tr := NewTextRenderer(newIconFace())
+		mask, err := tr.Raster(string(r), TextSpec{Size: 96, Weight: 400}, false)
+		if err != nil || mask.Alpha == nil {
+			t.Fatalf("raster %s: %v", tc.name, err)
+		}
+		a := mask.Alpha
+		b := a.Rect
+		// Locate the ink box, then probe inside it.
+		x0, y0, x1, y1 := b.Max.X, b.Max.Y, b.Min.X, b.Min.Y
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if a.AlphaAt(x, y).A >= 128 {
+					x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+				}
+			}
+		}
+		if x1 <= x0 || y1 <= y0 {
+			t.Fatalf("%s glyph has no ink", tc.name)
+		}
+		at := func(p [2]float64) uint8 {
+			return a.AlphaAt(x0+int(p[0]*float64(x1-x0)), y0+int(p[1]*float64(y1-y0))).A
+		}
+		if got := at(tc.solid); got < 128 {
+			t.Errorf("%s: solid probe alpha %d, want ink", tc.name, got)
+		}
+		if got := at(tc.hole); got >= 128 {
+			t.Errorf("%s: cut-out probe alpha %d, want no ink", tc.name, got)
+		}
+	}
+}

@@ -442,6 +442,7 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		out.ImageW = n.ImageW
 		out.ImageH = n.ImageH
 		out.Background = n.Background
+		out.ImageTint = n.Tint
 	case v1.KindButton:
 		out.Kind = ui.KindButton
 		out.Text = n.Text
@@ -495,6 +496,9 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 			out.State |= ui.StateSelected
 		}
 		if n.Disabled {
+			// Painted disabled as well as blocked, so the control does not
+			// invite the activation it refuses.
+			out.State |= ui.StateDisabled
 			out.AriaDisabled = true
 			out.Action = "" // no action route: activation is blocked
 		}
@@ -601,6 +605,12 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 			child, err := convertNode(c, fmt.Sprintf("%s.children[%d]", path, i), view)
 			if err != nil {
 				return nil, err
+			}
+			// A segment rests unfilled like the shell's own unless the plugin
+			// named a fill: the labelled-button accent default would make the
+			// unselected segments louder than the tonal selected one.
+			if n.Kind == v1.KindSegmented && c.Fill == "" && child.Fill == ui.FillAccent {
+				child.Fill = ui.FillNone
 			}
 			out.Children[i] = card(child)
 		}

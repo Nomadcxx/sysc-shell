@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -155,6 +156,10 @@ type pluginHost struct {
 	// images decodes the absolute paths plugin image nodes name, off the
 	// Wayland owner and under the worker's caps and bounded cache.
 	images *icons.Worker
+	// imageScale is the highest output scale in 120ths, so plugin images
+	// decode at the physical pixels they paint rather than being enlarged
+	// from their logical box. Zero reads as 100%.
+	imageScale atomic.Int32
 	// ensureRaceHook, when set, runs in ensure after a runtime has started but
 	// before its slot is inserted. Production leaves it nil; tests use it to
 	// land a concurrent replace's swapping mark inside that window.
@@ -1032,16 +1037,27 @@ func (h *pluginHost) rejectView(pluginID string, kind v1.ViewKind, viewID string
 }
 
 // pluginImageKey names the decode a node wants: the path plus the box the
-// validator made it declare. The box is part of the key, so one path at two
-// sizes is two decodes rather than one badly rescaled.
-func pluginImageKey(n *ui.Node) (icons.Key, bool) {
+// validator made it declare, in physical pixels at scale120. The box is part
+// of the key, so one path at two sizes is two decodes rather than one badly
+// rescaled, and a wordmark at 150% decodes from its source rather than being
+// enlarged from a 100% raster.
+func pluginImageKey(n *ui.Node, scale120 int) (icons.Key, bool) {
+	var w, h int
 	switch {
 	case n.ImageW > 0 && n.ImageH > 0:
-		return icons.Key{Name: n.ImagePath, W: n.ImageW, H: n.ImageH}, true
+		w, h = n.ImageW, n.ImageH
 	case n.ImageSize > 0:
-		return icons.Key{Name: n.ImagePath, W: n.ImageSize, H: n.ImageSize}, true
+		w, h = n.ImageSize, n.ImageSize
+	default:
+		return icons.Key{}, false
 	}
-	return icons.Key{}, false
+	scale := ui.Scale120(max(scale120, 120))
+	return icons.Key{Name: n.ImagePath, W: scale.Physical(w), H: scale.Physical(h)}, true
+}
+
+// decodeScale is the scale plugin images decode at.
+func (h *pluginHost) decodeScale() int {
+	return max(int(h.imageScale.Load()), 120)
 }
 
 // queuePluginImages walks a freshly applied tree and fills every image node
@@ -1053,7 +1069,7 @@ func queuePluginImages(h *pluginHost, n *ui.Node) {
 		return
 	}
 	if n.Kind == ui.KindImage && n.Image == nil && n.ImagePath != "" {
-		if key, ok := pluginImageKey(n); ok {
+		if key, ok := pluginImageKey(n, h.decodeScale()); ok {
 			if image, hit, err := h.images.Request(key); err == nil && hit {
 				n.Image = image
 			}
@@ -1077,14 +1093,14 @@ func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
 	}
 	h.r.mu.Lock()
 	storePanel := h.r.panelHosts[PanelPluginStore]
-	storeImage := storePanel != nil && fillPluginImages(storePanel.root, key, image)
+	storeImage := storePanel != nil && fillPluginImages(storePanel.root, key, image, h.decodeScale())
 	var storeOutput uint32
 	if storeImage {
 		storeOutput = storePanel.output
 		h.r.rebuildPanel(storePanel)
 	}
 	filesPanel := h.r.panelHosts[PanelFiles]
-	filesImage := filesPanel != nil && fillPluginImages(filesPanel.root, key, image)
+	filesImage := filesPanel != nil && fillPluginImages(filesPanel.root, key, image, h.decodeScale())
 	var filesOutput uint32
 	if filesImage {
 		filesOutput = filesPanel.output
@@ -1096,7 +1112,7 @@ func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
 		if v.Root == nil {
 			continue
 		}
-		if fillPluginImages(v.Root, key, image) {
+		if fillPluginImages(v.Root, key, image, h.decodeScale()) {
 			if v.Kind == v1.ViewPanel {
 				panels = true
 			} else {
@@ -1122,15 +1138,15 @@ func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
 
 // fillPluginImages stamps image into the matching nodes of one tree and
 // reports whether anything changed.
-func fillPluginImages(n *ui.Node, key icons.Key, image *ui.Image) bool {
+func fillPluginImages(n *ui.Node, key icons.Key, image *ui.Image, scale120 int) bool {
 	changed := false
-	if nodeKey, ok := pluginImageKey(n); ok &&
+	if nodeKey, ok := pluginImageKey(n, scale120); ok &&
 		n.Kind == ui.KindImage && n.Image == nil && nodeKey == key {
 		n.Image = image
 		changed = true
 	}
 	for _, c := range n.Children {
-		changed = fillPluginImages(c, key, image) || changed
+		changed = fillPluginImages(c, key, image, scale120) || changed
 	}
 	return changed
 }

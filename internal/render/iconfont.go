@@ -195,6 +195,12 @@ const iconProton rune = iconGitHubUnread + 1
 // The Moonbit orb follows for its theme-tinted bar pill.
 const iconMoonbit rune = iconProton + 1
 
+// The Mullvad and Obscura marks follow for the vpn plugin's bar pill.
+const (
+	iconMullvad rune = iconMoonbit + 1 + iota
+	iconObscura
+)
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -548,6 +554,8 @@ var iconNames = map[string]rune{
 	"github-unread":         iconGitHubUnread,
 	"proton":                iconProton,
 	"moonbit":               iconMoonbit,
+	"mullvad":               iconMullvad,
+	"obscura":               iconObscura,
 }
 
 func init() {

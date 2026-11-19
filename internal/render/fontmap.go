@@ -383,7 +383,7 @@ func (m *FontMap) iconFaceFor(r rune) *font.Face {
 	inCat := r >= catRuneFirst && r <= catRuneLast
 	inDocker := r == iconDocker
 	inGitHub := r == iconGitHub || r == iconGitHubUnread
-	inBrandedMark := r >= iconProton && r <= iconMoonbit
+	inBrandedMark := r >= iconProton && r <= iconObscura
 	if !inDevice && !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify && !inGauge && !inNight && !inDetail && !inGPUMetric && !inCross && !inCat && !inDocker && !inGitHub && !inBrandedMark {
 		return nil
 	}

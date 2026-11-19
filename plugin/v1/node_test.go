@@ -838,6 +838,8 @@ func TestValidateRejectsBadMinorFiveValues(t *testing.T) {
 		{"image fields on text", &Node{Kind: KindText, Text: "x", Path: "/a.png"}, ViewPanel},
 		{"image size on text", &Node{Kind: KindText, Text: "x", ImageSize: 96}, ViewPanel},
 		{"background on text", &Node{Kind: KindText, Text: "x", Background: true}, ViewPanel},
+		{"tint on text", &Node{Kind: KindText, Text: "x", Tint: true}, ViewPanel},
+		{"tinted background image", &Node{Kind: KindImage, Path: "/a.png", ImageW: 40, ImageH: 12, Background: true, Tint: true}, ViewPanel},
 		{"stroke on text", &Node{Kind: KindText, Text: "x", Stroke: 1}, ViewPanel},
 		{"stroke on image", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Stroke: 1}, ViewPanel},
 		{"stroke negative", &Node{Kind: KindColumn, Stroke: -1}, ViewPanel},
@@ -1269,5 +1271,17 @@ func TestMinorTwentyFiveRejectsOversizedGaugeBandLabel(t *testing.T) {
 	}
 	if err := Validate(&n, ViewPanel); err == nil {
 		t.Fatal("accepted a 65-byte gauge band label")
+	}
+}
+
+func TestValidateAcceptsTintedImages(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindImage, Path: "/plugin/assets/wordmark.png", ImageW: 100, ImageH: 11, Tint: true},
+		{Kind: KindImage, Path: "/plugin/assets/mark.png", ImageSize: 22, Tint: true, Tone: ToneSubtle},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatal(err)
 	}
 }

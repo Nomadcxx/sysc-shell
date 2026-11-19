@@ -476,6 +476,12 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 			blendBackgroundImage(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, n.Image)
 			return nil
 		}
+		if n.ImageTint {
+			if mask := imageAlpha(n.Image, box.W, box.H); mask != nil {
+				blendMask(c, mask, box.X, box.Y, textColor(style, n.Tone))
+			}
+			return nil
+		}
 		if n.Shape != ui.ShapeInherit || n.Radius > 0 {
 			radius := chromeRadius(style, nodeRadius(style, n, 0), box)
 			paintImageMasked(c, box, n.Image, RoundedMask(radius, box.W, box.H))
