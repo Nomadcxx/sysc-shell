@@ -397,6 +397,9 @@ type Node struct {
 	// size the node asked for, a background is scaled to whatever the card
 	// measures.
 	Background bool
+	// ImageTint paints the raster's alpha in the node's Tone instead of its
+	// own colours, so a single-colour plugin mark follows the theme.
+	ImageTint bool
 	// Opacity is group opacity in percent. Zero means unset/full opacity; a
 	// non-zero value composites the complete subtree once, so overlapping
 	// children do not multiply their alpha.

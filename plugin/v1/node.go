@@ -366,6 +366,12 @@ type Node struct {
 	// than fit the image inside it. A cover-fill needs a container shape
 	// to fill, so it requires the explicit box.
 	Background bool `json:"background,omitempty"`
+	// Tint paints an image's alpha in the node's tone instead of the
+	// raster's own colours, the way the shell paints its own marks: a
+	// single-colour wordmark then follows every palette, light or dark.
+	// Image only, and never with Background. It arrived with protocol
+	// minor twenty-eight.
+	Tint bool `json:"tint,omitempty"`
 	// Stroke draws a rim around a row, column, or button, in logical
 	// pixels; StrokeFill names the rim's fill and defaults to the outline
 	// tone when absent.
@@ -561,6 +567,9 @@ func (v *validator) nodeIn(n *Node, path string, depth int, segmentChild bool) e
 		return err
 	}
 	if err := v.minorTwentyFour(n, path); err != nil {
+		return err
+	}
+	if err := v.minorTwentyEight(n, path); err != nil {
 		return err
 	}
 	if err := v.minorTwentyFive(n, path); err != nil {
@@ -1071,6 +1080,21 @@ func (v *validator) minorSeventeen(n *Node, path string) error {
 		if width > 128 || height > 32 {
 			return fmt.Errorf("%s: a bar image is larger than 128 by 32", path)
 		}
+	}
+	return nil
+}
+
+// minorTwentyEight validates the tinted image that arrived with protocol
+// minor twenty-eight.
+func (v *validator) minorTwentyEight(n *Node, path string) error {
+	if !n.Tint {
+		return nil
+	}
+	if n.Kind != KindImage {
+		return fmt.Errorf("%s: %s cannot be tinted", path, n.Kind)
+	}
+	if n.Background {
+		return fmt.Errorf("%s: a background image cannot be tinted", path)
 	}
 	return nil
 }

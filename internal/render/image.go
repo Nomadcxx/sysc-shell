@@ -18,6 +18,25 @@ func paintImage(c *Canvas, box ui.Rect, img *ui.Image) {
 	paintImageMasked(c, box, img, nil)
 }
 
+// imageAlpha samples a raster's alpha channel into a w×h mask, nearest
+// neighbour like paintImage, for a tinted image painted through blendMask.
+// It returns nil for a missing or malformed raster.
+func imageAlpha(img *ui.Image, w, h int) *image.Alpha {
+	if img == nil || img.Width <= 0 || img.Height <= 0 || w <= 0 || h <= 0 ||
+		img.Stride < img.Width*4 || len(img.Pix) < img.Height*img.Stride {
+		return nil
+	}
+	mask := image.NewAlpha(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		srcY := y * img.Height / h
+		for x := 0; x < w; x++ {
+			srcX := x * img.Width / w
+			mask.Pix[y*mask.Stride+x] = img.Pix[srcY*img.Stride+srcX*4+3]
+		}
+	}
+	return mask
+}
+
 func paintImageMasked(c *Canvas, box ui.Rect, img *ui.Image, mask *image.Alpha) {
 	if img == nil || img.Width <= 0 || img.Height <= 0 {
 		return

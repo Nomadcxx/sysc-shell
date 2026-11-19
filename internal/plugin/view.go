@@ -442,6 +442,7 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		out.ImageW = n.ImageW
 		out.ImageH = n.ImageH
 		out.Background = n.Background
+		out.ImageTint = n.Tint
 	case v1.KindButton:
 		out.Kind = ui.KindButton
 		out.Text = n.Text
