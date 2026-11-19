@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"image"
-	stdDraw "image/draw"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -35,6 +35,8 @@ const (
 	MaxFileBytes = 8 << 20
 	// MaxSourceDimension caps a decoded source edge before scaling.
 	MaxSourceDimension = 4096
+	// MaxTargetDimension caps an output raster edge in physical pixels.
+	MaxTargetDimension = 2048
 	// MaxCacheEntries and MaxCacheBytes bound the result cache.
 	MaxCacheEntries = 256
 	MaxCacheBytes   = 32 << 20
@@ -127,6 +129,9 @@ func (w *Worker) Lookup(key Key) (*ui.Image, bool) {
 func (w *Worker) Request(key Key) (*ui.Image, bool, error) {
 	if key.Name == "" || key.W <= 0 || key.H <= 0 {
 		return nil, false, errors.New("icons: request has no name or no target box")
+	}
+	if key.nominal() > MaxTargetDimension {
+		return nil, false, fmt.Errorf("icons: target box exceeds %d pixels per edge", MaxTargetDimension)
 	}
 	generation := w.resolverGeneration()
 	w.mu.Lock()
@@ -427,12 +432,9 @@ func svgUseCyclic(data []byte) bool {
 	return false
 }
 
-// DecodeRaster applies the same image-header and source-dimension checks as
-// Worker to bytes obtained by a caller-owned transport.
+// DecodeRaster applies the same source and target bounds as Worker to bytes
+// obtained by a caller-owned transport.
 func DecodeRaster(data []byte, width, height int) *ui.Image {
-	if width <= 0 || height <= 0 {
-		return nil
-	}
 	return decodeRaster(data, width, height)
 }
 
@@ -440,6 +442,9 @@ func DecodeRaster(data []byte, width, height int) *ui.Image {
 // requested box. The source is scaled to cover the box and cropped around its
 // centre, matching PreserveAspectCrop rather than stretching the source.
 func decodeRaster(data []byte, width, height int) *ui.Image {
+	if width <= 0 || height <= 0 || max(width, height) > MaxTargetDimension {
+		return nil
+	}
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil
@@ -459,9 +464,8 @@ func decodeRaster(data []byte, width, height int) *ui.Image {
 	return fromRGBA(target)
 }
 
-// scaleCrop covers dst with src at one uniform scale, then takes the centred
-// target-sized window. Scaling first keeps fractional crop edges correct even
-// when the target is much wider or taller than one source pixel.
+// scaleCrop covers dst with src at one uniform scale and draws only the
+// centred window that intersects dst.
 func scaleCrop(dst *image.RGBA, src image.Image) {
 	if dst == nil || src == nil || dst.Bounds().Dx() <= 0 || dst.Bounds().Dy() <= 0 {
 		return
@@ -482,10 +486,18 @@ func scaleCrop(dst *image.RGBA, src image.Image) {
 		// and bottom.
 		scaledH = (sh*dw + sw - 1) / sw
 	}
-	scaled := image.NewRGBA(image.Rect(0, 0, scaledW, scaledH))
-	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), src, sb, xdraw.Src, nil)
-	stdDraw.Draw(dst, dst.Bounds(), scaled,
-		image.Point{X: (scaledW - dw) / 2, Y: (scaledH - dh) / 2}, stdDraw.Src)
+	origin := dst.Bounds().Min.Sub(image.Pt((scaledW-dw)/2, (scaledH-dh)/2))
+	cover := image.Rectangle{Min: origin, Max: origin.Add(image.Pt(scaledW, scaledH))}
+	// ponytail: Catmull–Rom builds weights for the full cover rectangle and
+	// uses 32 bytes per intermediate sample. Past 32 MiB or the target edge
+	// limit, use the clipped bilinear scaler. A crop-aware cubic scaler
+	// could retain the sharper filter here if needed.
+	const maxFilterSamples = 1 << 20
+	var scaler xdraw.Scaler = xdraw.CatmullRom
+	if max(scaledW, scaledH) > MaxTargetDimension || int64(scaledW)*int64(sh) > maxFilterSamples {
+		scaler = xdraw.ApproxBiLinear
+	}
+	scaler.Scale(dst, cover, src, sb, xdraw.Src, nil)
 }
 
 // fromRGBA converts Go's premultiplied RGBA into the canvas's B, G, R, A order.
