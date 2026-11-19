@@ -801,8 +801,8 @@ func TestValidateAcceptsMinorFiveFields(t *testing.T) {
 	t.Parallel()
 
 	root := &Node{Kind: KindColumn, Stroke: 1, StrokeFill: "outline", Children: []*Node{
-		{Kind: KindImage, Path: "/home/x/Pictures/a.png", ImageSize: 96},
-		{Kind: KindImage, Path: "/home/x/Pictures/b.png", ImageW: 320, ImageH: 180,
+		{Kind: KindImage, Path: "/home/x/Pictures/a.png", ImageSize: 1024},
+		{Kind: KindImage, Path: "/home/x/Pictures/b.png", ImageW: 1024, ImageH: 180,
 			Background: true, Shape: "card", Radius: 12},
 		{Kind: KindButton, ID: "send", Name: "Send", Role: "button", Stroke: 1,
 			Events: []EventKind{EventActivate}, Children: []*Node{
@@ -831,8 +831,9 @@ func TestValidateRejectsBadMinorFiveValues(t *testing.T) {
 		{"image without a box", &Node{Kind: KindImage, Path: "/a.png"}, ViewPanel},
 		{"image both box forms", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, ImageW: 320, ImageH: 180}, ViewPanel},
 		{"image half a box", &Node{Kind: KindImage, Path: "/a.png", ImageW: 320}, ViewPanel},
-		{"image size over cap", &Node{Kind: KindImage, Path: "/a.png", ImageSize: MaxExtent + 1}, ViewPanel},
-		{"image box over cap", &Node{Kind: KindImage, Path: "/a.png", ImageW: MaxExtent + 1, ImageH: 180}, ViewPanel},
+		{"image size over cap", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 1025}, ViewPanel},
+		{"image width over cap", &Node{Kind: KindImage, Path: "/a.png", ImageW: 1025, ImageH: 180}, ViewPanel},
+		{"floating image height over cap", &Node{Kind: KindImage, Path: "/a.png", ImageW: 180, ImageH: 1025}, ViewFloating},
 		{"image background without a box", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Background: true}, ViewPanel},
 		{"image with children", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Children: []*Node{{Kind: KindText, Text: "x"}}}, ViewPanel},
 		{"image fields on text", &Node{Kind: KindText, Text: "x", Path: "/a.png"}, ViewPanel},

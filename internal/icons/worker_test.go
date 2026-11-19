@@ -49,6 +49,28 @@ func TestWorkerDecodesAndCachesByKey(t *testing.T) {
 	}
 }
 
+func TestImageTargetBounds(t *testing.T) {
+	worker := NewWorker(nil, nil)
+	if _, _, err := worker.Request(Square("at-limit", 2048)); err != nil {
+		t.Errorf("request at the limit: %v", err)
+	}
+	data := pngBytes(t, 1)
+	for _, key := range []Key{
+		{Name: "too-wide", W: 2049, H: 1},
+		{Name: "too-tall", W: 1, H: 2049},
+	} {
+		if _, _, err := worker.Request(key); err == nil {
+			t.Errorf("worker accepted a %dx%d request", key.W, key.H)
+		}
+		if DecodeRaster(data, key.W, key.H) != nil {
+			t.Errorf("direct decode accepted a %dx%d target", key.W, key.H)
+		}
+	}
+	if len(worker.jobs) != 1 {
+		t.Errorf("queued %d jobs, want only the request within the limit", len(worker.jobs))
+	}
+}
+
 func TestWorkerCollapsesDuplicateJobs(t *testing.T) {
 	worker, _ := startWorker(t)
 	key := Square("chat", 24)
@@ -297,6 +319,19 @@ func TestDecodeRasterPreservesAspectByCroppingTheCentre(t *testing.T) {
 	}
 	if got.Pix[0] != 0 || got.Pix[1] != 0xff || got.Pix[2] != 0 || got.Pix[3] != 0xff {
 		t.Fatalf("cropped pixel in BGRA = %v, want the centred green pixel", got.Pix[:4])
+	}
+
+	// Fitting the same strip to a tall slot exceeds the cubic filter's
+	// cover rectangle limit. The clipped scaler still samples the center.
+	tall := DecodeRaster(data.Bytes(), 1, 720)
+	if tall == nil || tall.Width != 1 || tall.Height != 720 {
+		t.Fatalf("unexpected tall crop: %v", tall)
+	}
+	for y := range tall.Height {
+		pixel := tall.Pix[y*tall.Stride:][:4]
+		if pixel[0] > 1 || pixel[1] < 254 || pixel[2] > 1 || pixel[3] != 255 {
+			t.Fatalf("cropped pixel at row %d = %v, want green", y, pixel)
+		}
 	}
 }
 

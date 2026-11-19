@@ -42,6 +42,8 @@ const (
 	// this shell supports is wider than this, so a larger number is a mistake
 	// or an attempt to make layout expensive.
 	MaxExtent = 8192
+	// MaxImageExtent bounds a plugin image edge in logical pixels.
+	MaxImageExtent = 1024
 	// MaxRadius bounds the corner-radius override. Cards and chips live in
 	// the low double digits; anything larger is a mistake or an attack on
 	// the rasteriser.
@@ -359,6 +361,7 @@ type Node struct {
 	// ImageSize fixes a square image edge in logical pixels; ImageW and
 	// ImageH fix an explicit box instead. Exactly one form is legal, and
 	// one of a pair alone is rejected rather than silently squared.
+	// Each edge must be at most MaxImageExtent.
 	ImageSize int `json:"image_size,omitempty"`
 	ImageW    int `json:"image_w,omitempty"`
 	ImageH    int `json:"image_h,omitempty"`
@@ -890,15 +893,15 @@ func (v *validator) minorFive(n *Node, path string) error {
 			return fmt.Errorf("%s: image needs an image_size or an image_w and image_h box", path)
 		}
 		if square {
-			if n.ImageSize > MaxExtent {
-				return fmt.Errorf("%s: image_size is %d, past the %d limit", path, n.ImageSize, MaxExtent)
+			if n.ImageSize > MaxImageExtent {
+				return fmt.Errorf("%s: image_size is %d, past the %d limit", path, n.ImageSize, MaxImageExtent)
 			}
 		} else {
 			if n.ImageW <= 0 || n.ImageH <= 0 {
 				return fmt.Errorf("%s: image box needs both image_w and image_h, not one of the pair", path)
 			}
-			if n.ImageW > MaxExtent || n.ImageH > MaxExtent {
-				return fmt.Errorf("%s: image box is past the %d limit", path, MaxExtent)
+			if n.ImageW > MaxImageExtent || n.ImageH > MaxImageExtent {
+				return fmt.Errorf("%s: image box is past the %d limit", path, MaxImageExtent)
 			}
 		}
 		if n.Background && !(n.ImageW > 0 && n.ImageH > 0) {

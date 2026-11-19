@@ -20,6 +20,16 @@ func TestPluginImageKeyDecodesAtPhysicalScale(t *testing.T) {
 		{"wide at 150%", wide, 180, icons.Key{Name: "/marks/wordmark.png", W: 60, H: 18}},
 		{"square at 200%", square, 240, icons.Key{Name: "/marks/logo.png", W: 48, H: 48}},
 		{"unset scale reads as 100%", square, 0, icons.Key{Name: "/marks/logo.png", W: 24, H: 24}},
+		{
+			"wide box at the physical limit",
+			&ui.Node{Kind: ui.KindImage, ImagePath: "/marks/wide.png", ImageW: 1024, ImageH: 384},
+			240, icons.Key{Name: "/marks/wide.png", W: 2048, H: 768},
+		},
+		{
+			"tall box capped at high scale",
+			&ui.Node{Kind: ui.KindImage, ImagePath: "/marks/tall.png", ImageW: 384, ImageH: 1024},
+			360, icons.Key{Name: "/marks/tall.png", W: 768, H: 2048},
+		},
 	} {
 		got, ok := pluginImageKey(tc.node, tc.scale)
 		if !ok || got != tc.want {

@@ -1040,7 +1040,8 @@ func (h *pluginHost) rejectView(pluginID string, kind v1.ViewKind, viewID string
 // validator made it declare, in physical pixels at scale120. The box is part
 // of the key, so one path at two sizes is two decodes rather than one badly
 // rescaled, and a wordmark at 150% decodes from its source rather than being
-// enlarged from a 100% raster.
+// enlarged from a 100% raster. Fit large requests inside the worker's limit
+// without distorting the declared box.
 func pluginImageKey(n *ui.Node, scale120 int) (icons.Key, bool) {
 	var w, h int
 	switch {
@@ -1052,7 +1053,13 @@ func pluginImageKey(n *ui.Node, scale120 int) (icons.Key, bool) {
 		return icons.Key{}, false
 	}
 	scale := ui.Scale120(max(scale120, 120))
-	return icons.Key{Name: n.ImagePath, W: scale.Physical(w), H: scale.Physical(h)}, true
+	pw, ph := scale.Physical(w), scale.Physical(h)
+	if max(pw, ph) > icons.MaxTargetDimension {
+		edge := max(w, h)
+		pw = max(1, (w*icons.MaxTargetDimension+edge/2)/edge)
+		ph = max(1, (h*icons.MaxTargetDimension+edge/2)/edge)
+	}
+	return icons.Key{Name: n.ImagePath, W: pw, H: ph}, true
 }
 
 // decodeScale is the scale plugin images decode at.
