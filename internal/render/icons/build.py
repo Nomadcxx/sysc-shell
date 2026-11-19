@@ -118,6 +118,12 @@ GLYPHS.append(("uniE075", 0xE075, "proton"))
 # The Moonbit orb follows for its theme-tinted bar pill.
 GLYPHS.append(("uniE076", 0xE076, "moonbit"))
 
+# The Mullvad and Obscura marks follow for the vpn plugin's bar pill: the
+# Mullvad mole cut from its disc, and the Obscura face with its eyes and
+# mouth cut from its body.
+GLYPHS.append(("uniE077", 0xE077, "mullvad"))
+GLYPHS.append(("uniE078", 0xE078, "obscura"))
+
 UPM = 1000
 # 24px SVG -> font units, y-flipped so the icon sits on the baseline.
 #
