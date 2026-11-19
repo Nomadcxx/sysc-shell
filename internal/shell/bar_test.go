@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 	"sync"
@@ -298,6 +299,7 @@ func TestBarGradientFramesFollowMotionPreference(t *testing.T) {
 			if bar.anim == nil {
 				t.Fatal("NewWithTheme left the bar animator nil")
 			}
+			layoutForTest(t, bar, 1920)
 			bar.mu.Lock()
 			root, _ := bar.renderViewLocked()
 			settled, running := bar.anim.Settled(), bar.anim.running.Load()
@@ -321,6 +323,7 @@ func TestBarGradientSettlesWhenWordmarkLeavesTree(t *testing.T) {
 	t.Parallel()
 	bar := newTestBar(t)
 	t.Cleanup(bar.stopAnimation)
+	layoutForTest(t, bar, 1920)
 	bar.mu.Lock()
 	bar.renderViewLocked()
 	if bar.anim.Settled() {
@@ -567,6 +570,46 @@ func TestBarArrangesSectionsInsideTheContentBand(t *testing.T) {
 	}
 	if arranged != want {
 		t.Fatalf("arranged %d visible items, want %d", arranged, want)
+	}
+}
+
+func TestBarOverflowLeavesCornerClean(t *testing.T) {
+	const width, corner = 320, 12
+	const stride = width * 4
+	paint := func(notifications int, wantOverflow bool) []byte {
+		t.Helper()
+		cfg := config.Default()
+		cfg.Bar.Left = []config.Item{{ID: "launcher"}}
+		cfg.Bar.Center = nil
+		cfg.Bar.Right = make([]config.Item, notifications)
+		for i := range cfg.Bar.Right {
+			cfg.Bar.Right[i] = config.Item{ID: "notifications"}
+		}
+		bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(bar.stopAnimation)
+		height := cfg.Bar.SurfaceExtent()
+		if err := bar.Configure(width, height, 120); err != nil {
+			t.Fatal(err)
+		}
+		pixels := make([]byte, stride*height)
+		if err := bar.Render(pixels, width, height, stride); err != nil {
+			t.Fatal(err)
+		}
+		if overflow := bar.Overflow(); (overflow.Right > 0) != wantOverflow {
+			t.Fatalf("%d notification widgets: overflow = %+v, want right overflow %t", notifications, overflow, wantOverflow)
+		}
+		return pixels
+	}
+
+	want, got := paint(1, false), paint(12, true)
+	for y := range corner {
+		start, end := y*stride, y*stride+corner*4
+		if !bytes.Equal(got[start:end], want[start:end]) {
+			t.Fatalf("overflow changed the top-left corner at row %d", y)
+		}
 	}
 }
 
@@ -827,9 +870,11 @@ func TestBarPressAndReleaseTrackState(t *testing.T) {
 
 func TestOnlyClickableCapsulesAnimate(t *testing.T) {
 	t.Parallel()
-	// The bar's CPU and memory display groups carry no action, so they are not
-	// chrome the pointer can light up; only actionable pills animate.
 	p := newTestBar(t)
+	t.Cleanup(p.stopAnimation)
+	p.center = append(p.center, textWidget{
+		node: &ui.Node{Kind: ui.KindCapsule, Width: p.theme.Metrics.CapsuleHeight},
+	})
 	withSyntheticAction(t, p, 1920)
 	// Settlement and value resolution write back spring state, so the caller
 	// holds the bar lock here just as Render does.
@@ -855,8 +900,8 @@ func TestOnlyClickableCapsulesAnimate(t *testing.T) {
 		}
 	}
 	walk(root)
-	if display == 0 {
-		t.Fatal("the bar has no display-only capsules to distinguish")
+	if clickable == 0 || display == 0 {
+		t.Fatalf("bar rendered %d clickable and %d display-only capsules, want both", clickable, display)
 	}
 	for _, n := range root.Children {
 		if n.Kind == ui.KindCapsule && n.Action == "" && ui.Animated(n) {

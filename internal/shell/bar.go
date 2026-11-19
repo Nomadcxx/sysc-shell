@@ -752,6 +752,11 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 			parent = clip
 		}
 		for _, n := range section {
+			// Layout clears dropped widgets' bounds. Painting their glyphs
+			// would center them at the surface origin.
+			if n.Bounds.W <= 0 || n.Bounds.H <= 0 {
+				continue
+			}
 			parent.Children = append(parent.Children, copyNode(n))
 		}
 	}
