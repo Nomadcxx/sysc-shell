@@ -49,7 +49,7 @@ func renderPanel(root *v1.Node, width, height, scale120 int, family string) (*im
 	if err != nil {
 		return nil, err
 	}
-	if err := decodeImages(tree); err != nil {
+	if err := decodeImages(tree, scale); err != nil {
 		return nil, err
 	}
 
@@ -101,8 +101,8 @@ func renderPanel(root *v1.Node, width, height, scale120 int, family string) (*im
 // icon worker does for a live panel, and fails when one cannot be decoded: a
 // screenshot with an empty box where a picture should be would mislead. Image
 // nodes are rasters (the wire validator says so); each is decoded at its
-// declared logical box, exactly as the host keys it.
-func decodeImages(root *ui.Node) error {
+// declared box in physical pixels at the render's scale, as the host keys it.
+func decodeImages(root *ui.Node, scale ui.Scale120) error {
 	decoded := map[icons.Key]*ui.Image{}
 	var walk func(n *ui.Node) error
 	walk = func(n *ui.Node) error {
@@ -111,6 +111,7 @@ func decodeImages(root *ui.Node) error {
 			if w <= 0 || h <= 0 {
 				w, h = n.ImageSize, n.ImageSize
 			}
+			w, h = scale.Physical(w), scale.Physical(h)
 			key := icons.Key{Name: n.ImagePath, W: w, H: h}
 			img, ok := decoded[key]
 			if !ok {

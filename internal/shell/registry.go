@@ -3450,6 +3450,7 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 			return err
 		}
 		r.refreshPanelPlacements(global, bar)
+		r.updatePluginImageScale()
 		if bar.scale120() != prev {
 			r.reprojectTray()
 			r.reprojectRunningApps()
@@ -3457,6 +3458,22 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		return nil
 	}
 	return hooks
+}
+
+// updatePluginImageScale records the highest bar scale for plugin image
+// decodes. A panel opens on one of those outputs, so no plugin image paints
+// at more physical pixels than this.
+func (r *Registry) updatePluginImageScale() {
+	r.mu.Lock()
+	scale := 120
+	for _, b := range r.bars {
+		scale = max(scale, b.scale120())
+	}
+	plugins := r.plugins
+	r.mu.Unlock()
+	if plugins != nil {
+		plugins.imageScale.Store(int32(scale))
+	}
 }
 
 func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Event) {

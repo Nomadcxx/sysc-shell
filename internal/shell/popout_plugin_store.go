@@ -424,7 +424,7 @@ func pluginStoreCardNode(r *Registry, h *PanelHost, listing store.Listing, width
 			ImagePath: card.ScreenshotPath, Background: true,
 		}
 		if r.plugins != nil && r.plugins.images != nil {
-			if workerKey, ok := pluginImageKey(image); ok {
+			if workerKey, ok := pluginImageKey(image, r.plugins.decodeScale()); ok {
 				if decoded, hit, err := r.plugins.images.Request(workerKey); err == nil && hit {
 					image.Image = decoded
 				}
