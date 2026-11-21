@@ -97,11 +97,11 @@ type PathRule struct {
 }
 
 // systemPaths are what any process needs from the system: its programs and
-// libraries, configuration, the kernel's views of itself, devices and scratch
-// space. None of them is the user's. The session's runtime directory is not
-// among them: it holds the bus and compositor sockets, so a confined plugin
-// gets a directory of its own there instead (pluginRuntimeDir), and reaches
-// a socket only by declaring it.
+// libraries, configuration, the kernel's views of itself, a small set of
+// character devices and scratch space. None of them is the user's. The
+// session's runtime directory is not among them: it holds the bus and
+// compositor sockets, so a confined plugin gets a directory of its own there
+// instead (pluginRuntimeDir), and reaches a socket only by declaring it.
 func systemPaths() []PathRule {
 	rules := []PathRule{
 		{Path: "/usr", Access: AccessReadExec}, {Path: "/bin", Access: AccessReadExec},
@@ -110,10 +110,25 @@ func systemPaths() []PathRule {
 		{Path: "/nix", Access: AccessReadExec},
 		{Path: "/etc", Access: AccessRead}, {Path: "/run", Access: AccessRead},
 		{Path: "/proc", Access: AccessRead}, {Path: "/sys", Access: AccessRead},
-		{Path: "/dev", Access: AccessDevice},
 		{Path: "/tmp", Access: AccessReadWrite}, {Path: "/var/tmp", Access: AccessReadWrite},
 	}
-	return rules
+	return append(rules, devicePaths()...)
+}
+
+// devicePaths are the devices a plugin needs to run: the null and randomness
+// sources and shared memory. It deliberately does not grant /dev as a whole:
+// that would also hand a plugin the input and uinput nodes, which can read
+// every keystroke or synthesize input for the whole session. A plugin that
+// genuinely needs another device must have it added here, with the reason.
+func devicePaths() []PathRule {
+	return []PathRule{
+		{Path: "/dev/null", Access: AccessReadWrite},
+		{Path: "/dev/full", Access: AccessReadWrite},
+		{Path: "/dev/zero", Access: AccessRead},
+		{Path: "/dev/random", Access: AccessRead},
+		{Path: "/dev/urandom", Access: AccessRead},
+		{Path: "/dev/shm", Access: AccessReadWrite},
+	}
 }
 
 // pluginRuntimeDir is a confined plugin's own runtime directory, beneath the
