@@ -1,9 +1,12 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -216,4 +219,75 @@ func TestRecordConsentStartsEmptyWhenMissing(t *testing.T) {
 	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got == "" {
 		t.Fatalf("missing ledger did not accept first approval: %q (%v)", got, ok)
 	}
+}
+
+// legacyDigestOf is the digest an earlier shell recorded: the manifest and the
+// entry point, framed as ContentDigest frames them, with no tree prefix.
+func legacyDigestOf(t *testing.T, dir string) string {
+	t.Helper()
+	m, err := plugin.LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := sha256.New()
+	for _, rel := range []string{"bin/" + filepath.Base(m.ExecPath), plugin.ManifestName} {
+		data, err := os.ReadFile(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.Write([]byte(rel))
+		h.Write([]byte{0})
+		h.Write([]byte(strconv.Itoa(len(data))))
+		h.Write([]byte{0})
+		h.Write(data)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func TestStoreUpgradesAnApprovalAnEarlierShellRecorded(t *testing.T) {
+	t.Parallel()
+	// A managed copy approved over its manifest and entry point only is
+	// re-recorded over its whole tree, once, while those still match; one
+	// whose entry point has since changed is left changed (audit sysc-2357).
+	f := newStoreFixture(t, nil)
+	f.publish(release(t, f.srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
+	active := filepath.Join(f.root, fixtureID)
+	legacy := legacyDigestOf(t, active)
+	if v := plugin.VerifyConsent(mustManifest(t, active), plugin.SourceManaged, func(plugin.Source, string) (plugin.ConsentRecord, bool, error) {
+		return plugin.ConsentRecord{ContentSHA256: legacy}, true, nil
+	}); v.State != plugin.ConsentLegacy {
+		t.Fatalf("fixture: legacy digest not recognised: %+v", v)
+	}
+
+	l, err := plugin.LoadConsent(plugin.ConsentPath(f.root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Set(plugin.SourceManaged, fixtureID, plugin.ConsentRecord{ContentSHA256: legacy})
+	if err := l.Save(plugin.ConsentPath(f.root)); err != nil {
+		t.Fatal(err)
+	}
+	f.await(f.st.Refresh())
+	if got, _ := approvedDigest(t, f.root, plugin.SourceManaged, fixtureID); got != currentDigest(t, active) {
+		t.Fatalf("legacy approval not upgraded: %q, tree is %q", got, currentDigest(t, active))
+	}
+
+	l.Set(plugin.SourceManaged, fixtureID, plugin.ConsentRecord{ContentSHA256: "0000"})
+	if err := l.Save(plugin.ConsentPath(f.root)); err != nil {
+		t.Fatal(err)
+	}
+	f.await(f.st.Refresh())
+	if got, _ := approvedDigest(t, f.root, plugin.SourceManaged, fixtureID); got != "0000" {
+		t.Fatalf("a non-matching approval was rewritten to %q", got)
+	}
+}
+
+func mustManifest(t *testing.T, dir string) plugin.Manifest {
+	t.Helper()
+	m, err := plugin.LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }

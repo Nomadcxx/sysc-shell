@@ -136,6 +136,7 @@ type Runtime struct {
 	stderr        []byte
 	consent       ConsentVerdict
 	boundary      Boundary
+	paths         []PathRule // the enforced filesystem rules; nil when the plugin is not confined
 	session       *Session
 	sessionCancel context.CancelFunc
 	disp          *Dispatcher
@@ -327,6 +328,15 @@ func (r *Runtime) Protocol() v1.Version {
 	return r.session.Protocol
 }
 
+// CanRead reports whether the plugin's own filesystem rules let it read
+// path. A plugin the kernel does not confine can read anything the user can.
+func (r *Runtime) CanRead(path string) bool {
+	r.mu.Lock()
+	paths := r.paths
+	r.mu.Unlock()
+	return paths == nil || rulesRead(paths, path)
+}
+
 // Status reports the current lifecycle state.
 func (r *Runtime) Status() Status {
 	r.mu.Lock()
@@ -434,6 +444,7 @@ func (r *Runtime) launch(ctx context.Context) error {
 	}
 	r.mu.Lock()
 	r.boundary = boundary
+	r.paths = paths
 	r.mu.Unlock()
 	sup := &Supervisor{
 		Manifest:         r.candidate.Manifest,

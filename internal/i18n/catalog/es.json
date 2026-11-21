@@ -406,6 +406,8 @@
  "plugins.consent_approved": "Aprobado en %s",
  "plugins.consent_changed": "Ha cambiado desde que lo aprobaste. Funciona sin sus permisos hasta que lo vuelvas a aprobar.",
  "plugins.consent_unrecorded": "Este complemento se activó antes de que se registraran las aprobaciones. Aprueba su contenido actual para mantenerlo activado.",
+ "plugins.consent_legacy": "Se aprobó antes de que las aprobaciones cubrieran todos los archivos de un complemento. Aprueba su contenido actual para cubrirlos todos.",
+ "plugins.consent_unreadable": "No se pudo leer el archivo de aprobaciones de complementos, así que este complemento funciona sin sus permisos. Repara o elimina consent.json en la carpeta de complementos.",
  "plugins.directory": "Directorio de complementos",
  "plugins.enable": "Activar %s",
  "plugins.hide_settings": "Ocultar ajustes",

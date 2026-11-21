@@ -551,12 +551,14 @@ func (h *pluginHost) consentLookup() plugin.ConsentLookup {
 	if path == "" {
 		return nil
 	}
-	return func(source plugin.Source, id string) (plugin.ConsentRecord, bool) {
+	return func(source plugin.Source, id string) (plugin.ConsentRecord, bool, error) {
 		l, err := plugin.LoadConsent(path)
 		if err != nil {
-			slog.Warn("plugin approvals unreadable; treating every copy as unrecorded", "err", err)
+			slog.Warn("plugin approvals unreadable; withholding capabilities until repaired", "err", err)
+			return plugin.ConsentRecord{}, false, err
 		}
-		return l.Lookup(source, id)
+		rec, ok := l.Lookup(source, id)
+		return rec, ok, nil
 	}
 }
 
@@ -1507,6 +1509,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 		Screenshot:          h.screenshotStart,
 		ScreenshotDirectory: h.screenshotDirectory,
 		BrowseFiles:         h.browseFiles,
+		CanRead:             rt.CanRead,
 		Location: func(ctx context.Context) (v1.Location, error) {
 			return h.location(ctx, id)
 		},

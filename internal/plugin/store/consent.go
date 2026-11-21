@@ -77,8 +77,10 @@ func (s *Store) approvalDir(source plugin.Source, id string) (string, error) {
 }
 
 // adoptApprovals records the trees of managed installs made before approvals
-// were recorded. Their user consented when the store installed them; a
-// directory the store cannot account for is left unrecorded.
+// were recorded, or approved by an earlier shell that covered only the
+// manifest and entry point. Their user consented when the store installed
+// them; a directory the store cannot account for is left unrecorded, and a
+// copy whose manifest or entry point no longer matches stays changed.
 func (s *Store) adoptApprovals(installed Installed) {
 	root := s.opts.Installer.Root
 	l, err := plugin.LoadConsent(plugin.ConsentPath(root))
@@ -89,11 +91,25 @@ func (s *Store) adoptApprovals(installed Installed) {
 		if rec.Source == SourceUnknown {
 			continue
 		}
-		if _, ok := l.Lookup(plugin.SourceManaged, id); ok {
+		if _, ok := l.Lookup(plugin.SourceManaged, id); ok && !legacyApproval(l, filepath.Join(root, id)) {
 			continue
 		}
 		if err := s.opts.Installer.recordConsent(plugin.SourceManaged, id, filepath.Join(root, id)); err != nil {
 			slog.Warn("plugin store: cannot record an earlier approval", "plugin", id, "err", err)
 		}
 	}
+}
+
+// legacyApproval reports whether the managed copy at dir matches an approval
+// an earlier shell recorded over its manifest and entry point only.
+func legacyApproval(l plugin.ConsentLedger, dir string) bool {
+	m, err := plugin.LoadManifest(dir)
+	if err != nil {
+		return false
+	}
+	lookup := func(source plugin.Source, id string) (plugin.ConsentRecord, bool, error) {
+		rec, ok := l.Lookup(source, id)
+		return rec, ok, nil
+	}
+	return plugin.VerifyConsent(m, plugin.SourceManaged, lookup).State == plugin.ConsentLegacy
 }

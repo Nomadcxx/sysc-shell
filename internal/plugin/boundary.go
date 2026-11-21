@@ -158,6 +158,27 @@ func pathRules(m Manifest, stateDir, runtimeDir, home string, sockets []string, 
 	return rules
 }
 
+// rulesRead reports whether rules let a confined plugin read path, which must
+// already be resolved. Rule paths are resolved too, as Landlock opens them.
+func rulesRead(rules []PathRule, path string) bool {
+	for _, rule := range rules {
+		switch rule.Access {
+		case AccessRead, AccessReadExec, AccessReadWrite, AccessReadWriteExec:
+		default:
+			continue
+		}
+		base, err := filepath.EvalSymlinks(rule.Path)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(base, path)
+		if err == nil && filepath.IsLocal(rel) {
+			return true
+		}
+	}
+	return false
+}
+
 // The resource ceilings. They were measured, not chosen: on 2026-10-15 the
 // fourteen plugins running on the owner's desktop peaked at 2.44 GB of
 // address space (a Go runtime reserves far more than it touches; resident

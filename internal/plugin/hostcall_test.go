@@ -826,6 +826,42 @@ func TestHostCallFilesBrowseGrantDenyAndJail(t *testing.T) {
 	}
 }
 
+// A confined plugin cannot point the unconfined host browser at a directory
+// its own rules do not let it read (audit sysc-2356).
+func TestHostCallFilesBrowseRefusesARootOutsideThePluginsReach(t *testing.T) {
+	own := t.TempDir()
+	outside := t.TempDir()
+	rules := []PathRule{{Path: own, Access: AccessReadWrite}}
+	browsed := 0
+	d := NewDispatcher(CallEnv{
+		Granted: []Capability{CapFiles},
+		BrowseFiles: func(context.Context, v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
+			browsed++
+			return v1.FilesBrowseResult{}, nil
+		},
+		CanRead: func(path string) bool { return rulesRead(rules, path) },
+	})
+	refused := d.Handle(context.Background(), &v1.HostCall{ID: "o", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: outside, Mode: "open"})})
+	if refused.OK || !strings.Contains(refused.Error, "outside the plugin's filesystem access") {
+		t.Fatalf("outside root = %+v", refused)
+	}
+	link := filepath.Join(own, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	viaLink := d.Handle(context.Background(), &v1.HostCall{ID: "l", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: link, Mode: "open"})})
+	if viaLink.OK {
+		t.Fatalf("symlinked root escaped: %+v", viaLink)
+	}
+	if browsed != 0 {
+		t.Fatalf("browser opened %d times for refused roots", browsed)
+	}
+	inside := d.Handle(context.Background(), &v1.HostCall{ID: "i", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: own, Mode: "open"})})
+	if !inside.OK || browsed != 1 {
+		t.Fatalf("own root = %+v, browsed %d", inside, browsed)
+	}
+}
+
 func TestHostCallFilesBrowseDoesNotUseCallTimeout(t *testing.T) {
 	root := t.TempDir()
 	d := NewDispatcher(CallEnv{

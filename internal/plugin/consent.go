@@ -17,24 +17,109 @@ import (
 	"time"
 )
 
-// ContentDigest is the sha256 of what a user approves when they approve a
-// plugin: its manifest, which carries the asks, and its resolved entry point,
-// which is the code. Nothing else in the directory is covered. State, caches
-// and the store's records change on every run, and digesting them would make a
-// stable approval impossible.
+// ContentDigest is the digest of what a user approves when they approve a
+// plugin: every file in its directory, since an interpreter or the entry point
+// may load any of them, plus the resolved entry point when it lives outside.
+// State, caches and the store's records are kept elsewhere, so the tree is
+// stable between approvals. A symlink contributes its target, not what it
+// points at, and is never followed; anything other than a file, directory or
+// symlink contributes its kind alone.
 //
-// Each file contributes "path \0 length \0 bytes", sorted by its slash-separated
-// path inside the plugin directory, so the result does not depend on the order
-// files are read in and bytes cannot move from one entry into the next.
+// Each entry contributes "path \0 length \0 bytes", sorted by its
+// slash-separated path inside the plugin directory, so the result does not
+// depend on the order files are read in and bytes cannot move from one entry
+// into the next. The result carries TreeDigestPrefix so a record made by an
+// earlier shell, which digested only the manifest and entry point, can never
+// be mistaken for one of these.
 func ContentDigest(m Manifest) (string, error) {
 	realDir, err := filepath.EvalSymlinks(m.Dir)
 	if err != nil {
 		return "", fmt.Errorf("plugin: digest %s: %w", m.Dir, err)
 	}
-	paths := []string{filepath.Join(realDir, ManifestName)}
 	realExec, err := filepath.EvalSymlinks(m.ExecPath)
 	if err != nil {
 		return "", fmt.Errorf("plugin: digest %s: %w", m.ID, err)
+	}
+	var entries []digestEntry
+	var total int64
+	add := func(rel string, data []byte) error {
+		if len(entries) >= maxDigestFiles {
+			return fmt.Errorf("plugin: digest %s: more than %d entries", m.ID, maxDigestFiles)
+		}
+		total += int64(len(data))
+		if total > maxDigestBytes {
+			return fmt.Errorf("plugin: digest %s: more than %d bytes", m.ID, int64(maxDigestBytes))
+		}
+		entries = append(entries, digestEntry{path: rel, data: data})
+		return nil
+	}
+	err = filepath.WalkDir(realDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(realDir, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		switch {
+		case d.IsDir():
+			return nil
+		case d.Type().IsRegular():
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return add(rel, data)
+		case d.Type()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			// A file name cannot hold NUL, so these never collide with a file.
+			return add(rel+"\x00symlink", []byte(target))
+		default:
+			return add(rel+"\x00other", []byte(d.Type().String()))
+		}
+	})
+	if err != nil {
+		return "", fmt.Errorf("plugin: digest %s: %w", m.ID, err)
+	}
+	if rel, err := filepath.Rel(realDir, realExec); err != nil || !filepath.IsLocal(rel) {
+		data, err := os.ReadFile(realExec)
+		if err != nil {
+			return "", fmt.Errorf("plugin: digest %s: %w", m.ID, err)
+		}
+		if err := add("\x00exec", data); err != nil {
+			return "", err
+		}
+	}
+	return TreeDigestPrefix + contentDigestOf(entries), nil
+}
+
+// TreeDigestPrefix marks a ContentDigest that covers the whole plugin tree.
+const TreeDigestPrefix = "tree:"
+
+// The digest's bounds. The largest plugin on the owner's desktop on
+// 2026-11-21 held 30 files and 19 MB; a tree past these is refused, which
+// withholds its capabilities, rather than read without end at every start.
+const (
+	maxDigestFiles = 4096
+	maxDigestBytes = 512 << 20
+)
+
+// legacyDigest is the digest earlier shells recorded: the manifest and the
+// resolved entry point only. It is read to honour those approvals until the
+// user approves the copy again.
+func legacyDigest(m Manifest) (string, error) {
+	realDir, err := filepath.EvalSymlinks(m.Dir)
+	if err != nil {
+		return "", err
+	}
+	paths := []string{filepath.Join(realDir, ManifestName)}
+	realExec, err := filepath.EvalSymlinks(m.ExecPath)
+	if err != nil {
+		return "", err
 	}
 	if !slices.Contains(paths, realExec) {
 		paths = append(paths, realExec)
@@ -43,11 +128,11 @@ func ContentDigest(m Manifest) (string, error) {
 	for _, path := range paths {
 		rel, err := filepath.Rel(realDir, path)
 		if err != nil {
-			return "", fmt.Errorf("plugin: digest %s: %w", m.ID, err)
+			return "", err
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return "", fmt.Errorf("plugin: digest %s: %w", m.ID, err)
+			return "", err
 		}
 		entries = append(entries, digestEntry{path: filepath.ToSlash(rel), data: data})
 	}
@@ -192,6 +277,14 @@ const (
 	// ConsentChanged is a copy whose bytes no longer match what was approved.
 	// It starts with no capabilities until the user approves it again.
 	ConsentChanged ConsentState = "changed"
+	// ConsentLegacy is a copy whose manifest and entry point match an approval
+	// an earlier shell recorded, before approvals covered every file. It keeps
+	// its grant, so nothing stops working, and the manager asks once.
+	ConsentLegacy ConsentState = "legacy"
+	// ConsentUnreadable is a copy checked against a ledger that could not be
+	// read. Whether it changed is unknown, so it starts with no capabilities
+	// until the ledger is repaired; the store will not rewrite it either.
+	ConsentUnreadable ConsentState = "unreadable"
 )
 
 // ConsentVerdict is the answer for one start.
@@ -205,10 +298,13 @@ type ConsentVerdict struct {
 }
 
 // Grants reports whether this start may hold the capabilities it asks for.
-func (v ConsentVerdict) Grants() bool { return v.State != ConsentChanged }
+func (v ConsentVerdict) Grants() bool {
+	return v.State != ConsentChanged && v.State != ConsentUnreadable
+}
 
-// ConsentLookup returns the approval recorded for one copy of a plugin.
-type ConsentLookup func(source Source, id string) (ConsentRecord, bool)
+// ConsentLookup returns the approval recorded for one copy of a plugin, or an
+// error when the ledger cannot be read.
+type ConsentLookup func(source Source, id string) (ConsentRecord, bool, error)
 
 // VerifyConsent compares a copy's bytes with its recorded approval. A copy
 // whose bytes cannot be read is treated as changed: the start that follows
@@ -221,13 +317,22 @@ func VerifyConsent(m Manifest, source Source, lookup ConsentLookup) ConsentVerdi
 	if err != nil {
 		return ConsentVerdict{State: ConsentChanged}
 	}
-	rec, ok := lookup(source, m.ID)
+	rec, ok, err := lookup(source, m.ID)
+	if err != nil {
+		return ConsentVerdict{State: ConsentUnreadable, Digest: digest}
+	}
 	if !ok {
 		return ConsentVerdict{State: ConsentUnrecorded, Digest: digest}
 	}
 	v := ConsentVerdict{State: ConsentChanged, Digest: digest, Approved: &rec}
-	if rec.ContentSHA256 != "" && rec.ContentSHA256 == digest {
+	switch {
+	case rec.ContentSHA256 == "":
+	case rec.ContentSHA256 == digest:
 		v.State = ConsentApproved
+	case !strings.HasPrefix(rec.ContentSHA256, TreeDigestPrefix):
+		if legacy, err := legacyDigest(m); err == nil && legacy == rec.ContentSHA256 {
+			v.State = ConsentLegacy
+		}
 	}
 	return v
 }

@@ -101,7 +101,9 @@ const (
 	CapClipboardWrite Capability = "clipboard-write"
 	// CapScreenshot lets a plugin start a screenshot and read the save directory.
 	CapScreenshot Capability = "screenshot"
-	// CapFiles lets a plugin open the host-owned file browser under a named root.
+	// CapFiles lets a plugin open the host's file browser under a root it
+	// names. A confined plugin may name only a root its own filesystem rules
+	// let it read, so the browser never shows it more than it can already see.
 	CapFiles Capability = "files"
 	// CapLocation lets a plugin read the place the shell's weather settings
 	// name, and be told when it changes. It is a narrow name from the start,
@@ -122,9 +124,9 @@ const (
 	// CapOutputsRead gates output.context, which no class gated before
 	// minor 19. A manifest declaring an older minor keeps it ungated.
 	CapOutputsRead Capability = "outputs-read"
-	// CapFilesBrowser is files scoped to the host-owned browser root, today
-	// the only root, so it grants what files grants. The scope exists so a
-	// second root cannot silently widen an earlier approval.
+	// CapFilesBrowser is files scoped to the host's file browser, today its
+	// only use, so it grants what files grants. The scope exists so a second
+	// use cannot silently widen an earlier approval.
 	CapFilesBrowser Capability = "files:browser"
 )
 
@@ -1247,6 +1249,8 @@ func DescribeCapability(name string) string {
 		return name + " (read and write)"
 	case CapScreenshot:
 		return name + " (capture and read)"
+	case CapFiles, CapFilesBrowser:
+		return name + " (file browser within the plugin's own file access)"
 	}
 	return name
 }

@@ -380,3 +380,39 @@ func declaredBoundary() Boundary {
 	b, _ := boundaryOf(Manifest{Filesystem: &Filesystem{}}, "/launcher", LandlockABI())
 	return b
 }
+
+func TestRulesReadFollowsTheReadableRules(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	for _, dir := range []string{"own", "own/sub", "ro", "other", "sock"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "own"), filepath.Join(base, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	rules := []PathRule{
+		{Path: filepath.Join(base, "alias"), Access: AccessReadWrite},
+		{Path: filepath.Join(base, "ro"), Access: AccessRead},
+		{Path: filepath.Join(base, "sock"), Access: AccessSocket},
+		{Path: filepath.Join(base, "missing"), Access: AccessRead},
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join(base, "own"), true},
+		{filepath.Join(base, "own", "sub"), true},
+		{filepath.Join(base, "ro"), true},
+		{filepath.Join(base, "other"), false},
+		{filepath.Join(base, "sock"), false},
+		{base, false},
+		{filepath.Join(base, "ownership"), false},
+		{"/", false},
+	} {
+		if got := rulesRead(rules, tc.path); got != tc.want {
+			t.Errorf("rulesRead(%s) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
