@@ -380,3 +380,70 @@ func declaredBoundary() Boundary {
 	b, _ := boundaryOf(Manifest{Filesystem: &Filesystem{}}, "/launcher", LandlockABI())
 	return b
 }
+
+func TestRulesReadFollowsTheReadableRules(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	for _, dir := range []string{"own", "own/sub", "ro", "other", "sock"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "own"), filepath.Join(base, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	rules := []PathRule{
+		{Path: filepath.Join(base, "alias"), Access: AccessReadWrite},
+		{Path: filepath.Join(base, "ro"), Access: AccessRead},
+		{Path: filepath.Join(base, "sock"), Access: AccessSocket},
+		{Path: filepath.Join(base, "missing"), Access: AccessRead},
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join(base, "own"), true},
+		{filepath.Join(base, "own", "sub"), true},
+		{filepath.Join(base, "ro"), true},
+		{filepath.Join(base, "other"), false},
+		{filepath.Join(base, "sock"), false},
+		{base, false},
+		{filepath.Join(base, "ownership"), false},
+		{"/", false},
+	} {
+		if got := rulesRead(rules, tc.path); got != tc.want {
+			t.Errorf("rulesRead(%s) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestRulesBrowsableRefusesTreesThePluginCanWrite(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	for _, dir := range []string{"etc/conf", "state/own", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rules := []PathRule{
+		{Path: filepath.Join(base, "etc"), Access: AccessRead},
+		{Path: filepath.Join(base, "state"), Access: AccessRead},
+		{Path: filepath.Join(base, "state", "own"), Access: AccessReadWriteExec},
+		{Path: filepath.Join(base, "tmp"), Access: AccessReadWrite},
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join(base, "etc"), true},
+		{filepath.Join(base, "etc", "conf"), true},
+		{filepath.Join(base, "state"), false},        // holds a directory the plugin writes
+		{filepath.Join(base, "state", "own"), false}, // is one
+		{filepath.Join(base, "tmp"), false},
+		{base, false},
+	} {
+		if got := rulesBrowsable(rules, tc.path); got != tc.want {
+			t.Errorf("rulesBrowsable(%s) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}

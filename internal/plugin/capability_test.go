@@ -158,7 +158,8 @@ func TestDescribeCapabilitySpellsOutABroadName(t *testing.T) {
 		"wallpaper":     "wallpaper (read and write)",
 		"screenshot":    "screenshot (capture and read)",
 		"state-read":    "state-read",
-		"files:browser": "files:browser",
+		"files":         "files (file browser within the plugin's own file access)",
+		"files:browser": "files:browser (file browser within the plugin's own file access)",
 		"panels":        "panels",
 	} {
 		if got := DescribeCapability(name); got != want {

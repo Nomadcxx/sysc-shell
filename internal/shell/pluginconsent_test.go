@@ -210,3 +210,33 @@ func TestAChangedPluginsRefusedClickToasts(t *testing.T) {
 		t.Fatalf("toasted digest %q, want the copy's %q", toasted, st.Consent.Digest)
 	}
 }
+
+// A corrupt ledger used to read as empty, so every copy fell back to the
+// unrecorded grant. It now withholds capabilities and asks for a repair the
+// store cannot make itself (audit sysc-2358).
+func TestACorruptLedgerWithholdsCapabilitiesUntilRepaired(t *testing.T) {
+	reg, host, _, managed := bindConsentPlugin(t)
+	waitConsent(t, reg, plugin.ConsentChanged)
+	reg.plugins.stopPlugin("org.sysc.timer")
+	if err := os.WriteFile(plugin.ConsentPath(managed), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.plugins.syncEnabled(); err != nil {
+		t.Fatal(err)
+	}
+	waitConsent(t, reg, plugin.ConsentUnreadable)
+	reg.plugins.mu.Lock()
+	rt := reg.plugins.slots["org.sysc.timer"].rt
+	reg.plugins.mu.Unlock()
+	if rt.Allows(plugin.CapNotifications) {
+		t.Fatal("a copy checked against a corrupt ledger kept its capabilities")
+	}
+	reg.mu.Lock()
+	reg.rebuildPanel(host)
+	repair := pluginStoreHasText(host.root, "Your plugin approvals file could not be read, so this plugin runs without its capabilities. Repair or remove consent.json in the plugins folder.")
+	approve := pluginStoreFindAction(host.root, "plugins-approve:org.sysc.timer")
+	reg.mu.Unlock()
+	if !repair || approve != nil {
+		t.Fatalf("manager row: repair=%v approve=%v", repair, approve != nil)
+	}
+}

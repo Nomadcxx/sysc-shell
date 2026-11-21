@@ -234,7 +234,7 @@ func TestConsentCardReadsAnOldGrantWithItsMeaning(t *testing.T) {
 	l := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.5.0")
 	l.Entry.Release.Capabilities = []string{"state", "files:browser"}
 	l.Resolution.Release = &l.Entry.Release
-	if !containsString(detailFor(l, false, nil, "", "en").ConsentLines, "Capabilities: state (read and write), files:browser") {
+	if !containsString(detailFor(l, false, nil, "", "en").ConsentLines, "Capabilities: state (read and write), files:browser (file browser within the plugin's own file access)") {
 		t.Fatalf("install card = %v", detailFor(l, false, nil, "", "en").ConsentLines)
 	}
 	// Respelling a grant is not a change to ask about.
