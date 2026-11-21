@@ -67,10 +67,11 @@ type CallEnv struct {
 	Screenshot          func(context.Context, string) error
 	ScreenshotDirectory func(context.Context) (string, error)
 	BrowseFiles         func(context.Context, v1.FilesBrowseParams) (v1.FilesBrowseResult, error)
-	// CanRead reports whether the plugin itself may read a resolved path.
-	// files.browse refuses a root it may not, so the unconfined host browser
-	// cannot carry a confined plugin past its own rules. Nil allows any root.
-	CanRead     func(path string) bool
+	// CanBrowse reports whether the host browser may show the plugin the
+	// resolved tree at path. files.browse refuses a root it may not, so the
+	// unconfined host browser cannot carry a confined plugin past its own
+	// rules. Nil allows any root.
+	CanBrowse   func(path string) bool
 	Location    func(context.Context) (v1.Location, error)
 	MaxPending  int
 	CallTimeout time.Duration
@@ -488,17 +489,22 @@ func (d *Dispatcher) filesBrowse(ctx context.Context, call *v1.HostCall) v1.Host
 	if start == "" {
 		start = p.Root
 	}
-	if _, err := files.Contain(p.Root, start); err != nil {
+	root, err := files.Contain(p.Root, p.Root)
+	if err != nil {
 		return failReply(call.ID, err.Error())
 	}
-	if d.env.CanRead != nil {
-		root, err := files.Contain(p.Root, p.Root)
-		if err != nil {
-			return failReply(call.ID, err.Error())
-		}
-		if !d.env.CanRead(root) {
-			return failReply(call.ID, "files root is outside the plugin's filesystem access")
-		}
+	resolvedStart, err := files.Contain(root, start)
+	if err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	if d.env.CanBrowse != nil && !d.env.CanBrowse(root) {
+		return failReply(call.ID, "files root is outside the plugin's filesystem access")
+	}
+	// Hand the host the paths that were checked, not the plugin's spelling
+	// of them, which could point somewhere else by the time it looks.
+	p.Root = root
+	if p.Path != "" {
+		p.Path = resolvedStart
 	}
 	if d.env.BrowseFiles == nil {
 		return failReply(call.ID, "file browser is not available")

@@ -1509,7 +1509,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 		Screenshot:          h.screenshotStart,
 		ScreenshotDirectory: h.screenshotDirectory,
 		BrowseFiles:         h.browseFiles,
-		CanRead:             rt.CanRead,
+		CanBrowse:           rt.CanBrowse,
 		Location: func(ctx context.Context) (v1.Location, error) {
 			return h.location(ctx, id)
 		},

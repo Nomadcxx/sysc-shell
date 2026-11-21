@@ -328,13 +328,14 @@ func (r *Runtime) Protocol() v1.Version {
 	return r.session.Protocol
 }
 
-// CanRead reports whether the plugin's own filesystem rules let it read
-// path. A plugin the kernel does not confine can read anything the user can.
-func (r *Runtime) CanRead(path string) bool {
+// CanBrowse reports whether the host's file browser may show this plugin the
+// resolved tree at path (rulesBrowsable). A plugin the kernel does not
+// confine can already read anything the user can, so it may browse anywhere.
+func (r *Runtime) CanBrowse(path string) bool {
 	r.mu.Lock()
 	paths := r.paths
 	r.mu.Unlock()
-	return paths == nil || rulesRead(paths, path)
+	return paths == nil || rulesBrowsable(paths, path)
 }
 
 // Status reports the current lifecycle state.

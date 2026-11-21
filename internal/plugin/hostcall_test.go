@@ -827,38 +827,81 @@ func TestHostCallFilesBrowseGrantDenyAndJail(t *testing.T) {
 }
 
 // A confined plugin cannot point the unconfined host browser at a directory
-// its own rules do not let it read (audit sysc-2356).
+// outside its own rules, or at one it can rewrite while the host looks
+// (audit sysc-2356).
 func TestHostCallFilesBrowseRefusesARootOutsideThePluginsReach(t *testing.T) {
-	own := t.TempDir()
+	readOnly := t.TempDir()
+	writable := t.TempDir()
 	outside := t.TempDir()
-	rules := []PathRule{{Path: own, Access: AccessReadWrite}}
-	browsed := 0
+	rules := []PathRule{{Path: readOnly, Access: AccessRead}, {Path: writable, Access: AccessReadWrite}}
+	var browsed []v1.FilesBrowseParams
 	d := NewDispatcher(CallEnv{
 		Granted: []Capability{CapFiles},
-		BrowseFiles: func(context.Context, v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
-			browsed++
+		BrowseFiles: func(_ context.Context, p v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
+			browsed = append(browsed, p)
 			return v1.FilesBrowseResult{}, nil
 		},
-		CanRead: func(path string) bool { return rulesRead(rules, path) },
+		CanBrowse: func(path string) bool { return rulesBrowsable(rules, path) },
 	})
-	refused := d.Handle(context.Background(), &v1.HostCall{ID: "o", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: outside, Mode: "open"})})
-	if refused.OK || !strings.Contains(refused.Error, "outside the plugin's filesystem access") {
-		t.Fatalf("outside root = %+v", refused)
+	browse := func(root string) v1.HostReply {
+		return d.Handle(context.Background(), &v1.HostCall{ID: "b", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: root, Mode: "open"})})
 	}
-	link := filepath.Join(own, "escape")
-	if err := os.Symlink(outside, link); err != nil {
+
+	escape := filepath.Join(writable, "escape")
+	if err := os.Symlink(outside, escape); err != nil {
 		t.Fatal(err)
 	}
-	viaLink := d.Handle(context.Background(), &v1.HostCall{ID: "l", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: link, Mode: "open"})})
-	if viaLink.OK {
-		t.Fatalf("symlinked root escaped: %+v", viaLink)
+	for _, root := range []string{outside, escape, writable, filepath.Dir(writable)} {
+		if reply := browse(root); reply.OK {
+			t.Errorf("root %s was accepted", root)
+		}
 	}
-	if browsed != 0 {
-		t.Fatalf("browser opened %d times for refused roots", browsed)
+	if len(browsed) != 0 {
+		t.Fatalf("browser opened for refused roots: %+v", browsed)
 	}
-	inside := d.Handle(context.Background(), &v1.HostCall{ID: "i", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: own, Mode: "open"})})
-	if !inside.OK || browsed != 1 {
-		t.Fatalf("own root = %+v, browsed %d", inside, browsed)
+	if reply := browse(readOnly); !reply.OK || len(browsed) != 1 {
+		t.Fatalf("read-only root = %+v, browsed %d", reply, len(browsed))
+	}
+}
+
+// The host gets the paths that were checked. A plugin that swaps a symlink
+// between the check and the host's own lookup must not move the browser.
+func TestHostCallFilesBrowseHandsTheHostTheCheckedPaths(t *testing.T) {
+	base := t.TempDir()
+	allowed := filepath.Join(base, "allowed")
+	sub := filepath.Join(allowed, "sub")
+	secret := filepath.Join(base, "secret")
+	for _, dir := range []string{sub, secret} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(allowed, link); err != nil {
+		t.Fatal(err)
+	}
+	var got v1.FilesBrowseParams
+	d := NewDispatcher(CallEnv{
+		Granted: []Capability{CapFiles},
+		BrowseFiles: func(_ context.Context, p v1.FilesBrowseParams) (v1.FilesBrowseResult, error) {
+			got = p
+			return v1.FilesBrowseResult{}, nil
+		},
+		CanBrowse: func(path string) bool {
+			ok := rulesBrowsable([]PathRule{{Path: allowed, Access: AccessRead}}, path)
+			// The plugin wins the race: the link now points elsewhere.
+			_ = os.Remove(link)
+			_ = os.Symlink(secret, link)
+			return ok
+		},
+	})
+	reply := d.Handle(context.Background(), &v1.HostCall{ID: "r", Call: v1.CallFilesBrowse, Params: jsonOf(t, v1.FilesBrowseParams{Root: link, Path: filepath.Join(link, "sub"), Mode: "open"})})
+	if !reply.OK {
+		t.Fatalf("reply = %+v", reply)
+	}
+	wantRoot, _ := filepath.EvalSymlinks(allowed)
+	if got.Root != wantRoot || got.Path != filepath.Join(wantRoot, "sub") {
+		t.Fatalf("host was handed root %q path %q; want the checked %q", got.Root, got.Path, wantRoot)
 	}
 }
 

@@ -416,3 +416,34 @@ func TestRulesReadFollowsTheReadableRules(t *testing.T) {
 		}
 	}
 }
+
+func TestRulesBrowsableRefusesTreesThePluginCanWrite(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	for _, dir := range []string{"etc/conf", "state/own", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rules := []PathRule{
+		{Path: filepath.Join(base, "etc"), Access: AccessRead},
+		{Path: filepath.Join(base, "state"), Access: AccessRead},
+		{Path: filepath.Join(base, "state", "own"), Access: AccessReadWriteExec},
+		{Path: filepath.Join(base, "tmp"), Access: AccessReadWrite},
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join(base, "etc"), true},
+		{filepath.Join(base, "etc", "conf"), true},
+		{filepath.Join(base, "state"), false},        // holds a directory the plugin writes
+		{filepath.Join(base, "state", "own"), false}, // is one
+		{filepath.Join(base, "tmp"), false},
+		{base, false},
+	} {
+		if got := rulesBrowsable(rules, tc.path); got != tc.want {
+			t.Errorf("rulesBrowsable(%s) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
