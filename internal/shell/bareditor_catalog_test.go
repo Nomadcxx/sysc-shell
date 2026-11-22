@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -131,5 +133,60 @@ func TestSearchingTheStoreFromTheAddListCarriesTheQuery(t *testing.T) {
 	}
 	if storeHost.pluginStoreDetail != "" {
 		t.Errorf("a search opened detail %q instead of the grid", storeHost.pluginStoreDetail)
+	}
+}
+
+// writeUnstartablePlugin is a widget plugin whose required command cannot be
+// on PATH, so discovery marks it not startable.
+func writeUnstartablePlugin(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "org.sysc.phone")
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const manifest = `{"schema":1,"id":"org.sysc.phone","name":"Phone Connect","version":"1.0.0",
+"protocol":{"major":1,"minor":16},"exec":"bin/run","capabilities":[],
+"requires":{"commands":["sysc-no-such-command-2399"]},"widgets":[{"id":"bar"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin", "run"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// F2 of the audit: an installed plugin that cannot start used to vanish from
+// the list, which reads the same as never having installed it.
+func TestBarAddListExplainsAnInstalledPluginThatCannotStart(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{})
+	bindWidgetPlugin(t, reg, writeUnstartablePlugin(t))
+	reg.mu.Lock()
+	tree := barAddList(reg, h, "right", 320)
+	reg.mu.Unlock()
+	if got := barAddActions(tree, "bar-add-plugin:"); len(got) != 0 {
+		t.Fatalf("a plugin that cannot start is offered for placement: %v", got)
+	}
+	row := pluginStoreFindAction(tree, "bar-add-manage:org.sysc.phone")
+	if row == nil {
+		t.Fatal("the plugin that cannot start is not listed")
+	}
+	if !pluginStoreHasText(row, "Phone Connect — needs sysc-no-such-command-2399") {
+		t.Error("the row does not say what the plugin is missing")
+	}
+}
+
+func TestTheUnstartableRowOpensPluginSettings(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{})
+	bindWidgetPlugin(t, reg, writeUnstartablePlugin(t))
+	barActivateMu(reg, h, "bar-add:right")
+	activateSettingsAction(t, reg, h, "bar-add-manage:org.sysc.phone")
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.section != "Plugins" {
+		t.Fatalf("section = %q, want Plugins", h.section)
 	}
 }

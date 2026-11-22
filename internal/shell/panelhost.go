@@ -4330,8 +4330,8 @@ func (h *PanelHost) activate(r *Registry) bool {
 			return h.selectControlCentreSection(r, section)
 		}
 		if h.id == PanelSettings {
-			h.invalidateSettingsBrowse()
-			r.settingsSectionChangingLocked(h, section)
+			h.showSettingsSection(r, section)
+			return true
 		}
 		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
 		r.rebuildPanel(h)

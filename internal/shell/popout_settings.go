@@ -2427,3 +2427,12 @@ func (r *Registry) updateConfig(update func(*config.Config, func(config.Config) 
 	}
 	return cfg, nil
 }
+
+// showSettingsSection moves Settings to section the way the rail does.
+// Registry.mu is held.
+func (h *PanelHost) showSettingsSection(r *Registry, section string) {
+	h.invalidateSettingsBrowse()
+	r.settingsSectionChangingLocked(h, section)
+	h.section, h.settingsPage, h.settingsScrollTop = section, "", true
+	r.rebuildPanel(h)
+}
