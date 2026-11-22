@@ -404,7 +404,6 @@ type PanelHost struct {
 	pluginManagerError          string
 	pluginManagerExpanded       map[string]bool
 	pluginUpdateAllNeedsConsent []string
-	pluginStoreReviewKey        string
 
 	pluginStoreQuery          BrowseQuery
 	pluginStoreSelected       string

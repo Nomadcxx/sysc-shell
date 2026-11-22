@@ -127,6 +127,22 @@ func readPluginStoreReadme(path string) string {
 	return string(data)
 }
 
+// openPluginStoreLocked opens the store beside the panel from, on the detail
+// of key when key is not empty. Registry.mu is held.
+func (r *Registry) openPluginStoreLocked(from *PanelHost, key string) {
+	trig := Trigger{BarEdge: from.place.BarEdge, BarZone: from.place.BarZone, OutW: from.place.Output.W, OutH: from.place.Output.H}
+	if err := r.openPanelRootLocked(PanelPluginStore, from.output, trig); err != nil {
+		return
+	}
+	storeHost := r.panelHosts[PanelPluginStore]
+	if storeHost == nil || key == "" {
+		return
+	}
+	storeHost.pluginStoreSelected = key
+	storeHost.pluginStoreDetail = key
+	r.rebuildPanel(storeHost)
+}
+
 // PluginSources returns the enabled sources from configuration.
 func (r *Registry) PluginSources() []store.Source {
 	r.mu.Lock()

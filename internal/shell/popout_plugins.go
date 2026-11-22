@@ -1012,14 +1012,7 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 		r.rebuildPanel(h)
 		return true
 	case "plugins-browse":
-		trig := Trigger{BarEdge: h.place.BarEdge, BarZone: h.place.BarZone, OutW: h.place.Output.W, OutH: h.place.Output.H}
-		if err := r.openPanelRootLocked(PanelPluginStore, h.output, trig); err == nil {
-			if storeHost := r.panelHosts[PanelPluginStore]; storeHost != nil && h.pluginStoreReviewKey != "" {
-				storeHost.pluginStoreSelected = h.pluginStoreReviewKey
-				storeHost.pluginStoreDetail = h.pluginStoreReviewKey
-				r.rebuildPanel(storeHost)
-			}
-		}
+		r.openPluginStoreLocked(h, "")
 		return true
 	case "plugins-source-add":
 		h.pluginManagerSourceWarning = true
@@ -1071,8 +1064,7 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 	}
 	if key, ok := strings.CutPrefix(action, "plugins-review:"); ok {
 		if _, found := pluginStoreFind(r.pluginStoreSnapshot.Listings, key); found {
-			h.pluginStoreReviewKey = key
-			r.handlePluginManager(h, &ui.Node{Action: "plugins-browse"})
+			r.openPluginStoreLocked(h, key)
 		} else {
 			h.pluginManagerError = "plugin listing is no longer available"
 			r.rebuildPanel(h)

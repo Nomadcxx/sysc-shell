@@ -162,6 +162,26 @@ func TestPluginManagerReviewOpensTheStoreDetail(t *testing.T) {
 	reg.mu.Unlock()
 }
 
+// A review opens one listing's detail; it must not stick to the Settings
+// panel, or every later Browse plugins reopens that same detail.
+func TestPluginManagerBrowseAfterReviewOpensTheGrid(t *testing.T) {
+	listing := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.5.0")
+	reg, host, _ := openPluginManagerTestPanel(t, config.Default(), store.State{Listings: []store.Listing{listing}})
+	key := pluginStoreKey(listing)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.handlePluginManager(host, &ui.Node{Action: "plugins-review:" + key})
+	reg.closePanelLocked(PanelPluginStore)
+	reg.handlePluginManager(host, &ui.Node{Action: "plugins-browse"})
+	storeHost := reg.panelHosts[PanelPluginStore]
+	if storeHost == nil {
+		t.Fatal("Browse plugins did not open the plugin store")
+	}
+	if storeHost.pluginStoreDetail != "" {
+		t.Fatalf("Browse plugins reopened the reviewed detail %q", storeHost.pluginStoreDetail)
+	}
+}
+
 func TestPluginManagerAddSourceWritesOnlyAfterValidatedConfirmation(t *testing.T) {
 	reg, host, _ := openPluginManagerTestPanel(t, config.Default(), store.State{})
 	configPath := filepath.Join(t.TempDir(), "config.json")
