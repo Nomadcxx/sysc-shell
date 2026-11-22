@@ -260,8 +260,8 @@ func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width in
 		info = append(info, h.wrappedText(detail.Description, theme.RoleBody, ui.ToneNormal, infoW, 0))
 	}
 	info = append(info,
-		pluginStoreChipSection(h, "Capabilities", detail.Capabilities, infoW),
-		pluginStoreChipSection(h, "Requires", detail.RequiredCommands, infoW),
+		pluginStoreChipSection(h, "Capabilities", detail.Capabilities, nil, infoW),
+		pluginStoreChipSection(h, "Requires", detail.RequiredCommands, detail.MissingCommands, infoW),
 	)
 	if commit := detail.CatalogCommit; commit != "" {
 		info = append(info, &ui.Node{Kind: ui.KindText, Text: "Catalog commit " + commit[:min(len(commit), 12)], TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, Tabular: true})
@@ -283,10 +283,15 @@ func pluginStoreTag(label string, fill ui.Fill, maxWidth int) *ui.Node {
 }
 
 // pluginStoreChipSection is a label over its values as chips, the way DMS
-// lists capabilities and dependencies, flowing onto more lines as needed.
-func pluginStoreChipSection(h *PanelHost, title string, values []string, width int) *ui.Node {
+// lists capabilities and dependencies, flowing onto more lines as needed. A
+// value in missing is marked as not found.
+func pluginStoreChipSection(h *PanelHost, title string, values, missing []string, width int) *ui.Node {
 	var chips []*ui.Node
 	for _, v := range values {
+		if slices.Contains(missing, v) {
+			chips = append(chips, pluginStoreTag(v+" · not found", ui.FillErrorContainer, width))
+			continue
+		}
 		chips = append(chips, pluginStoreTag(v, ui.FillContainerHighest, width))
 	}
 	body := h.flowRows(chips, width, theme.MarginXS)

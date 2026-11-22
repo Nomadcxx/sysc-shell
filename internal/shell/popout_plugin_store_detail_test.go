@@ -224,3 +224,20 @@ func TestPluginStorePendingOpReadsTheOutcomeFromTheListing(t *testing.T) {
 		}
 	}
 }
+
+func TestPluginStoreDetailChipsMarkAMissingCommand(t *testing.T) {
+	l := modelListing("org.sysc.phone", "Phone Connect", "sysc", "utilities", "1.0.0")
+	l.Entry.Release.Requires.Commands = []string{"sh", "sysc-no-such-command-2399"}
+	l.Resolution.Release = &l.Entry.Release
+	reg, host, _ := openPluginStoreTestPanel(t, store.State{Listings: []store.Listing{l}}, ui.Rect{W: 1440, H: 900})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	host.pluginStoreDetail = pluginStoreKey(l)
+	reg.rebuildPanel(host)
+	if !pluginStoreHasText(host.root, "sysc-no-such-command-2399 · not found") {
+		t.Error("the Requires chips do not mark the missing command")
+	}
+	if pluginStoreHasText(host.root, "sh · not found") {
+		t.Error("a present command is marked missing")
+	}
+}

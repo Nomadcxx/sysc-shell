@@ -284,6 +284,8 @@ type Detail struct {
 	ReleaseNotes     string
 	Capabilities     []string
 	RequiredCommands []string
+	// MissingCommands are the required commands not on PATH right now.
+	MissingCommands  []string
 	Screenshot       store.MediaKey
 	ScreenshotPath   string
 	Badges           []Badge
@@ -330,7 +332,10 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 		Homepage: listing.Entry.Homepage, ReleaseNotes: release.ReleaseNotes,
 		Capabilities:     slices.Clone(release.Capabilities),
 		RequiredCommands: slices.Clone(release.Requires.Commands),
-		Screenshot:       card.Screenshot, ScreenshotPath: card.ScreenshotPath, Badges: card.Badges,
+		// Looked up on every build, as the plugin manager does, so a
+		// command installed while the detail is open is seen.
+		MissingCommands: plugin.Manifest{Requires: release.Requires.Commands}.MissingCommands(),
+		Screenshot:      card.Screenshot, ScreenshotPath: card.ScreenshotPath, Badges: card.Badges,
 		Action: action, Reason: reason, NeedsConsent: needsConsent, StartImmediately: enabled,
 	}
 	if listing.Installed != nil {
@@ -347,7 +352,10 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 			"Catalog commit: " + listing.CatalogCommit,
 			"SHA-256: " + sha,
 			"Capabilities: " + joinOrNone(describeCapabilities(detail.Capabilities)),
-			"Required commands: " + joinOrNone(detail.RequiredCommands),
+			"Required commands: " + joinOrNone(markMissing(detail.RequiredCommands, detail.MissingCommands)),
+		}
+		if len(detail.MissingCommands) > 0 {
+			detail.ConsentLines = append(detail.ConsentLines, "It won't start until "+strings.Join(detail.MissingCommands, ", ")+" is installed.")
 		}
 		if action == ActionUpdate && listing.Installed != nil {
 			if !plugin.SameGrants(listing.Installed.Capabilities, detail.Capabilities) {
@@ -356,11 +364,23 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 			detail.ConsentLines = append(detail.ConsentLines, changeLines("Required commands", listing.Installed.Requires, detail.RequiredCommands)...)
 		}
 		detail.ConsentLines = append(detail.ConsentLines, boundaryLine(release.Filesystem, plugin.LandlockABI()))
-		if enabled {
+		if enabled && len(detail.MissingCommands) == 0 {
 			detail.ConsentLines = append(detail.ConsentLines, "It is still enabled, so it will start immediately.")
 		}
 	}
 	return detail
+}
+
+// markMissing labels each command in missing as not found.
+func markMissing(commands, missing []string) []string {
+	out := make([]string, len(commands))
+	for i, c := range commands {
+		out[i] = c
+		if slices.Contains(missing, c) {
+			out[i] = c + " (not found)"
+		}
+	}
+	return out
 }
 
 // changeLines names what an update adds to and removes from one list of

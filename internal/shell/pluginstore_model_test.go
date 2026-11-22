@@ -279,3 +279,41 @@ func TestTheConsentCardStatesTheBoundaryInForce(t *testing.T) {
 		}
 	}
 }
+
+// F3 of the 2026-11-22 audit: the store installed a plugin whose required
+// command was absent without saying so, and the plugin then could not start.
+func TestPluginStoreDetailMarksRequiredCommandsThatAreNotOnPATH(t *testing.T) {
+	l := modelListing("org.sysc.phone", "Phone Connect", "sysc", "utilities", "1.0.0")
+	l.Entry.Release.Requires.Commands = []string{"sh", "sysc-no-such-command-2399"}
+	l.Resolution.Release = &l.Entry.Release
+	detail := detailFor(l, false, nil, "", "en")
+	if len(detail.MissingCommands) != 1 || detail.MissingCommands[0] != "sysc-no-such-command-2399" {
+		t.Fatalf("missing commands = %v", detail.MissingCommands)
+	}
+	for _, want := range []string{
+		"Required commands: sh, sysc-no-such-command-2399 (not found)",
+		"It won't start until sysc-no-such-command-2399 is installed.",
+	} {
+		if !containsString(detail.ConsentLines, want) {
+			t.Errorf("consent lines lack %q: %v", want, detail.ConsentLines)
+		}
+	}
+	if detail.Action != ActionInstall {
+		t.Errorf("a missing command blocked install: action = %v", detail.Action)
+	}
+}
+
+func TestPluginStoreDetailSaysNothingWhenRequiredCommandsArePresent(t *testing.T) {
+	l := modelListing("org.sysc.phone", "Phone Connect", "sysc", "utilities", "1.0.0")
+	l.Entry.Release.Requires.Commands = []string{"sh"}
+	l.Resolution.Release = &l.Entry.Release
+	detail := detailFor(l, false, nil, "", "en")
+	if len(detail.MissingCommands) != 0 {
+		t.Fatalf("missing commands = %v", detail.MissingCommands)
+	}
+	for _, line := range detail.ConsentLines {
+		if strings.Contains(line, "not found") || strings.Contains(line, "won't start") {
+			t.Errorf("consent warns about a present command: %q", line)
+		}
+	}
+}
