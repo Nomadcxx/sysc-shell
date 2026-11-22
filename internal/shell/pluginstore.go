@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
@@ -127,19 +128,26 @@ func readPluginStoreReadme(path string) string {
 	return string(data)
 }
 
-// openPluginStoreLocked opens the store beside the panel from, on the detail
-// of key when key is not empty. Registry.mu is held.
-func (r *Registry) openPluginStoreLocked(from *PanelHost, key string) {
+// openPluginStoreLocked opens the store beside the panel from: on the detail
+// of key when key is not empty, otherwise on the grid searched for query.
+// Registry.mu is held.
+func (r *Registry) openPluginStoreLocked(from *PanelHost, key, query string) {
 	trig := Trigger{BarEdge: from.place.BarEdge, BarZone: from.place.BarZone, OutW: from.place.Output.W, OutH: from.place.Output.H}
 	if err := r.openPanelRootLocked(PanelPluginStore, from.output, trig); err != nil {
 		return
 	}
 	storeHost := r.panelHosts[PanelPluginStore]
-	if storeHost == nil || key == "" {
+	switch {
+	case storeHost == nil:
+		return
+	case key != "":
+		storeHost.pluginStoreSelected = key
+		storeHost.pluginStoreDetail = key
+	case query != "":
+		storeHost.search = ui.NewField(query)
+	default:
 		return
 	}
-	storeHost.pluginStoreSelected = key
-	storeHost.pluginStoreDetail = key
 	r.rebuildPanel(storeHost)
 }
 

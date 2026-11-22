@@ -716,7 +716,11 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 			return false
 		}
 		// The add list stays open: it is where the user comes back to.
-		r.openPluginStoreLocked(h, key)
+		r.openPluginStoreLocked(h, key, "")
+		return true
+
+	case action == "bar-add-store-search":
+		r.openPluginStoreLocked(h, "", strings.TrimSpace(h.barAddFilter))
 		return true
 
 	case strings.HasPrefix(action, "bar-output:"):
@@ -848,6 +852,12 @@ func barAddList(r *Registry, h *PanelHost, laneName string, width int) *ui.Node 
 			Kind: ui.KindText, Text: "No widgets match.",
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
+		// The store searches every source, category and description, so it
+		// is the next place to look rather than a dead end here.
+		if query != "" {
+			col.Children = append(col.Children, row("bar-add-store-search",
+				"Search the plugin store for “"+strings.TrimSpace(h.barAddFilter)+"”"))
+		}
 	}
 	return col
 }

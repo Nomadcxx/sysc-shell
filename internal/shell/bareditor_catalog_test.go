@@ -91,3 +91,45 @@ func TestActivatingACatalogRowOpensItsStoreDetail(t *testing.T) {
 		t.Error("handing off to the store closed the add list the user will come back to")
 	}
 }
+
+// An empty result is the one place the list cannot help, so it hands the
+// query to the store, which also searches sources and categories.
+func TestAnEmptyAddResultOffersToSearchTheStore(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{})
+	for query, want := range map[string]bool{"zzz": true, "": false, "air": false} {
+		h.barAddFilter = query
+		reg.mu.Lock()
+		reg.pluginStoreSnapshot = store.State{Listings: barCatalogListings()}
+		tree := barAddList(reg, h, "right", 240)
+		reg.mu.Unlock()
+		if got := len(barAddActions(tree, "bar-add-store-search")) == 1; got != want {
+			t.Errorf("query %q: store search row offered = %v, want %v", query, got, want)
+		}
+		if want && !pluginStoreHasText(tree, "Search the plugin store for “zzz”") {
+			t.Errorf("query %q: the row does not name the query", query)
+		}
+	}
+}
+
+func TestSearchingTheStoreFromTheAddListCarriesTheQuery(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{})
+	barActivateMu(reg, h, "bar-add:right")
+	h.barAddFilter = "pollen count"
+	if !barActivateMu(reg, h, "bar-add-store-search") {
+		t.Fatal("the store search row was not handled")
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	storeHost := reg.panelHosts[PanelPluginStore]
+	if storeHost == nil {
+		t.Fatal("the store search row did not open the plugin store")
+	}
+	if storeHost.search == nil || storeHost.search.Text != "pollen count" {
+		t.Fatalf("store search = %+v, want the add list's query", storeHost.search)
+	}
+	if storeHost.pluginStoreDetail != "" {
+		t.Errorf("a search opened detail %q instead of the grid", storeHost.pluginStoreDetail)
+	}
+}
