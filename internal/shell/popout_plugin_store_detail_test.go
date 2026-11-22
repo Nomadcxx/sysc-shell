@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
@@ -239,5 +240,42 @@ func TestPluginStoreDetailChipsMarkAMissingCommand(t *testing.T) {
 	}
 	if pluginStoreHasText(host.root, "sh · not found") {
 		t.Error("a present command is marked missing")
+	}
+}
+
+// F6 of the audit: with the consent open, the header's Install stayed live
+// beside Confirm Install, and pressing it again reset the consent.
+func TestPluginStoreConsentHidesTheHeaderPrimary(t *testing.T) {
+	listing := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.4.0")
+	reg, host, _ := openPluginStoreTestPanel(t, store.State{Listings: []store.Listing{listing}}, ui.Rect{W: 1440, H: 900})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	host.pluginStoreDetail = pluginStoreKey(listing)
+	reg.rebuildPanel(host)
+	pluginStoreActivateAction(t, reg, host, "store-primary")
+	if pluginStoreFindAction(host.root, "store-confirm") == nil {
+		t.Fatal("the consent did not open")
+	}
+	if pluginStoreFindAction(host.root, "store-primary") != nil {
+		t.Error("the header primary is still offered beside the confirmation")
+	}
+	if f := host.focused(); f == nil || f.Action != "store-cancel-confirmation" {
+		t.Errorf("focus after the consent opened = %+v, want Cancel", f)
+	}
+	pluginStoreActivateAction(t, reg, host, "store-cancel-confirmation")
+	if pluginStoreFindAction(host.root, "store-primary") == nil {
+		t.Error("cancelling the consent did not bring the header primary back")
+	}
+}
+
+// F5 of the audit: the card's outlined "Install" read as a one-click button,
+// but the whole card opens the detail. It is a status, so it reads as one.
+func TestPluginStoreCardStatusForAnInstallableListingIsNotAButton(t *testing.T) {
+	status := pluginStoreCardStatus(Card{Action: ActionInstall}, theme.Metrics{})
+	if status.Fill == ui.FillOutline {
+		t.Error("the installable status is outlined like a button")
+	}
+	if !pluginStoreHasText(status, "Not installed") || pluginStoreHasText(status, "Install") {
+		t.Error("the installable status does not read as a status")
 	}
 }

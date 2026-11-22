@@ -499,7 +499,8 @@ func pluginStoreBadgeFill(tone BadgeTone) ui.Fill {
 // pluginStoreCardStatus is the card's state as a small chip beside the title,
 // where DMS keeps its install button.
 func pluginStoreCardStatus(card Card, m theme.Metrics) *ui.Node {
-	icon, label, fill := "download", "Install", ui.FillOutline
+	// A status, not a button: the whole card is what opens the detail.
+	icon, label, fill := "download", "Not installed", ui.FillNone
 	switch card.Action {
 	case ActionInstalled:
 		icon, label, fill = "check", "Installed", ui.FillNone
@@ -709,7 +710,11 @@ func (h *PanelHost) focusPluginStoreSelection() {
 	// A detail opens on its action, so Enter then Enter reaches the consent
 	// step and never installs by itself; without one, on Back.
 	keys := []string{"store-card:" + h.pluginStoreSelected}
-	if h.pluginStoreDetail != "" {
+	switch {
+	case h.pluginStoreDetail != "" && (h.pluginStoreRemoveConfirm || h.pluginStoreConsent != nil && h.pluginStoreConsent.key == h.pluginStoreDetail):
+		// A confirmation opens on Cancel, so a third Enter cannot install.
+		keys = []string{"store-cancel-confirmation", "store-back"}
+	case h.pluginStoreDetail != "":
 		keys = []string{"store-primary", "store-back"}
 	}
 	for _, key := range keys {

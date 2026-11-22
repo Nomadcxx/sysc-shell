@@ -151,7 +151,7 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 		children = append(children, &ui.Node{Kind: ui.KindSeparator, Width: body})
 		children = append(children, markdownNodes(detail.Readme, body, metrics, h.measureText())...)
 	}
-	header := pluginStoreDetailHeader(detail, width, metrics)
+	header := pluginStoreDetailHeader(detail, consentOpen || h.pluginStoreRemoveConfirm, width, metrics)
 	headerH, _ := ui.ContentHeight(header, width, h.measureText())
 	bodyHeight := max(h.place.Panel.H-2*pluginStorePadding-headerH-pluginStoreGap, metrics.StandardControl)
 	return &ui.Node{Kind: ui.KindColumn, Gap: pluginStoreGap, Children: []*ui.Node{
@@ -166,8 +166,9 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 }
 
 // pluginStoreDetailHeader is back and the plugin's name at the start, and its
-// links, primary action and close pinned to the end (DMS's detail bar).
-func pluginStoreDetailHeader(detail Detail, width int, metrics theme.Metrics) *ui.Node {
+// links, primary action and close pinned to the end (DMS's detail bar). While
+// a confirmation is open it carries the action, so the header drops its own.
+func pluginStoreDetailHeader(detail Detail, confirming bool, width int, metrics theme.Metrics) *ui.Node {
 	var actions []*ui.Node
 	if detail.Homepage != "" {
 		actions = append(actions, pluginStoreIconButton("store-open-homepage", "Open homepage", "link", metrics))
@@ -176,7 +177,9 @@ func pluginStoreDetailHeader(detail Detail, width int, metrics theme.Metrics) *u
 		actions = append(actions, pluginStoreIconButton("store-open-release-notes", "Open release notes", "description", metrics))
 	}
 	// With no action to offer, the reason sits where the action would.
-	actions = append(actions, pluginStoreDetailPrimary(detail, metrics))
+	if !confirming {
+		actions = append(actions, pluginStoreDetailPrimary(detail, metrics))
+	}
 	actions = append(actions, pluginStoreIconButton("store-close", "Close", "close", metrics))
 	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 		pluginStoreIconButton("store-back", "Back to plugins", "chevron_left", metrics),
