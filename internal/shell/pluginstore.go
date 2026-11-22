@@ -76,7 +76,9 @@ func (r *Registry) relayPluginStoreUpdates(st *store.Store, updates <-chan store
 				panel  PanelID
 			}
 			var publish []publication
-			if settingsHost := r.panelHosts[PanelSettings]; settingsHost != nil && settingsHost.section == "Plugins" {
+			// The Plugins page and the bar editor's open add list both read
+			// this snapshot.
+			if settingsHost := r.panelHosts[PanelSettings]; settingsHost != nil && (settingsHost.section == "Plugins" || settingsHost.barAdding != "") {
 				r.rebuildPanel(settingsHost)
 				publish = append(publish, publication{settingsHost.output, PanelSettings})
 			}
