@@ -30,6 +30,9 @@ type fakeWallsService struct {
 	closes     int
 	accept     bool
 	idleResult <-chan error
+	// stopAnswers makes StopPreview publish a snapshot even with no preview
+	// running, as walls.Service does.
+	stopAnswers bool
 }
 
 func newFakeWallsService(snapshot walls.Snapshot) *fakeWallsService {
@@ -114,9 +117,15 @@ func (f *fakeWallsService) Preview() bool {
 
 func (f *fakeWallsService) StopPreview() bool {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.stops++
-	return f.accept
+	accept, answer, snapshot := f.accept, f.stopAnswers, f.snapshot
+	f.mu.Unlock()
+	if answer {
+		snapshot.ActionMessage = "No Preview session is active."
+		snapshot.Previewing, snapshot.PreviewReady, snapshot.PreviewStopping = false, false, false
+		f.Publish(snapshot)
+	}
+	return accept
 }
 
 func (f *fakeWallsService) Close() error {

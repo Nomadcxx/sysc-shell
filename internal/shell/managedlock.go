@@ -117,7 +117,11 @@ func (r *Registry) coordinateBackground() {
 		r.mu.Unlock()
 		r.syncAutoPause()
 		if svc != nil {
-			svc.StopPreview()
+			// The service answers every stop with a snapshot, and each
+			// snapshot queues another pass; stop only a running preview.
+			if svc.Snapshot().Previewing {
+				svc.StopPreview()
+			}
 			if !lease.WallsKnown {
 				snap := svc.Snapshot()
 				if snap.UnitKnown && !snap.UnitStale {
