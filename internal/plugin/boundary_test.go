@@ -159,6 +159,41 @@ func installContainedHelper(t *testing.T, mode, manifest string) Manifest {
 	return m
 }
 
+func TestSystemPathsGrantOnlyNamedDevices(t *testing.T) {
+	want := map[string]Access{
+		"/dev/null":    AccessReadWrite,
+		"/dev/full":    AccessReadWrite,
+		"/dev/zero":    AccessRead,
+		"/dev/random":  AccessRead,
+		"/dev/urandom": AccessRead,
+		"/dev/shm":     AccessReadWrite,
+	}
+	got := map[string]Access{}
+	for _, rule := range systemPaths() {
+		if rule.Path == "/dev" {
+			t.Fatalf("system paths grant all of /dev")
+		}
+		if strings.HasPrefix(rule.Path, "/dev/") {
+			got[rule.Path] = rule.Access
+		}
+	}
+	for path, access := range want {
+		if got[path] != access {
+			t.Errorf("%s access = %d, want %d", path, got[path], access)
+		}
+	}
+	for path := range got {
+		if _, ok := want[path]; !ok {
+			t.Errorf("unexpected device grant %s", path)
+		}
+	}
+	for _, path := range []string{"/dev/input", "/dev/uinput"} {
+		if _, ok := got[path]; ok {
+			t.Errorf("%s must not be granted", path)
+		}
+	}
+}
+
 func TestAConfinedPluginReachesOnlyWhatItDeclared(t *testing.T) {
 	if LandlockABI() < 1 {
 		t.Skipf("this kernel offers Landlock ABI %d; ABI 1 is the floor. Recorded unrun.", LandlockABI())
@@ -182,12 +217,12 @@ func TestAConfinedPluginReachesOnlyWhatItDeclared(t *testing.T) {
 	manifest := string(manifestWith(t, FilesystemMinor, map[string]any{"read": []string{allowed}}))
 	m := installContainedHelper(t, "probe", manifest)
 	opts := launcherOptions(t)
-	opts.SystemPaths = []PathRule{
+	opts.SystemPaths = append([]PathRule{
 		{Path: "/usr", Access: AccessReadExec}, {Path: "/bin", Access: AccessReadExec},
 		{Path: "/lib", Access: AccessReadExec}, {Path: "/lib64", Access: AccessReadExec},
 		{Path: "/etc", Access: AccessRead}, {Path: "/proc", Access: AccessRead},
-		{Path: "/sys", Access: AccessRead}, {Path: "/dev", Access: AccessDevice},
-	}
+		{Path: "/sys", Access: AccessRead},
+	}, devicePaths()...)
 	other := filepath.Join(opts.StateDir, "org.example.other")
 	if err := os.MkdirAll(other, 0o700); err != nil {
 		t.Fatal(err)
