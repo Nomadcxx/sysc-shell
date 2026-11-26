@@ -2,8 +2,10 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,8 +19,8 @@ func digestOf(t *testing.T, dir string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d) != 64 {
-		t.Fatalf("digest %q is not a hex sha256", d)
+	if hex, ok := strings.CutPrefix(d, TreeDigestPrefix); !ok || len(hex) != 64 {
+		t.Fatalf("digest %q is not a tree sha256", d)
 	}
 	return d
 }
@@ -31,19 +33,49 @@ func TestContentDigestCoversCodeAndAsksOnly(t *testing.T) {
 		t.Fatal("identical plugins digest differently")
 	}
 
-	// State, caches and records written beside the plugin are not its code.
+	// Every file an interpreter or the entry point may load is part of what
+	// was approved, not only the manifest and entry point (audit sysc-2357).
 	base := digestOf(t, a)
-	for _, extra := range []string{"state.json", "installed.json", "cache/thumb.png"} {
-		path := filepath.Join(a, extra)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	helper := filepath.Join(a, "depth_helper.py")
+	if err := os.WriteFile(helper, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if got := digestOf(t, a); got != base {
-		t.Fatal("digest covers files the plugin did not declare")
+	withHelper := digestOf(t, a)
+	if withHelper == base {
+		t.Fatal("digest ignores a sibling file")
+	}
+	if err := os.WriteFile(helper, []byte("import os; os.system('x')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if digestOf(t, a) == withHelper {
+		t.Fatal("digest ignores a changed sibling file")
+	}
+	if err := os.Remove(helper); err != nil {
+		t.Fatal(err)
+	}
+	if digestOf(t, a) != base {
+		t.Fatal("removing the sibling did not restore the digest")
+	}
+
+	// A symlink is recorded by its target, never followed out of the tree.
+	if err := os.Symlink("/etc/hostname", filepath.Join(a, "link")); err != nil {
+		t.Fatal(err)
+	}
+	linked := digestOf(t, a)
+	if linked == base {
+		t.Fatal("digest ignores a symlink")
+	}
+	if err := os.Remove(filepath.Join(a, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/passwd", filepath.Join(a, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if digestOf(t, a) == linked {
+		t.Fatal("digest ignores where a symlink points")
+	}
+	if err := os.Remove(filepath.Join(a, "link")); err != nil {
+		t.Fatal(err)
 	}
 
 	// A changed entry point is a changed plugin.
@@ -112,7 +144,7 @@ func TestConsentVerdict(t *testing.T) {
 		{"changed bytes withdraw every capability", SourceManaged, ConsentRecord{ContentSHA256: "00"}, true, ConsentChanged, false},
 		{"a record without a digest is not an approval", SourceUser, ConsentRecord{}, true, ConsentChanged, false},
 	} {
-		v := VerifyConsent(m, tc.source, func(Source, string) (ConsentRecord, bool) { return tc.rec, tc.have })
+		v := VerifyConsent(m, tc.source, func(Source, string) (ConsentRecord, bool, error) { return tc.rec, tc.have, nil })
 		if v.State != tc.want {
 			t.Errorf("%s: state = %q, want %q", tc.name, v.State, tc.want)
 		}
@@ -170,6 +202,70 @@ func TestConsentLedgerRefusesAnotherSchema(t *testing.T) {
 	}
 }
 
+// An approval an earlier shell recorded over the manifest and entry point
+// keeps its grant while those still match, and asks once; it never matches a
+// tree that changed in the files it did cover.
+func TestConsentVerdictHonoursALegacyApproval(t *testing.T) {
+	t.Parallel()
+	dir := writePlugin(t, timerManifest, "bin/sysc-plugin-timer")
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := legacyDigest(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(Source, string) (ConsentRecord, bool, error) {
+		return ConsentRecord{ContentSHA256: legacy}, true, nil
+	}
+	if err := os.WriteFile(filepath.Join(dir, "helper.py"), []byte("pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if v := VerifyConsent(m, SourceUser, lookup); v.State != ConsentLegacy || !v.Grants() {
+		t.Fatalf("legacy approval = %+v; want legacy and granted", v)
+	}
+	if err := os.WriteFile(m.ExecPath, []byte("#!/bin/sh\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if v := VerifyConsent(m, SourceUser, lookup); v.State != ConsentChanged {
+		t.Fatalf("legacy approval of an older entry point = %+v; want changed", v)
+	}
+	// A tree record never falls back to the legacy comparison.
+	tree := func(Source, string) (ConsentRecord, bool, error) {
+		return ConsentRecord{ContentSHA256: TreeDigestPrefix + legacy}, true, nil
+	}
+	if v := VerifyConsent(m, SourceUser, tree); v.State != ConsentChanged {
+		t.Fatalf("stale tree record = %+v; want changed", v)
+	}
+}
+
+// An unreadable ledger cannot say whether a copy changed, so it must not
+// fall back to the unrecorded grant (audit sysc-2358).
+func TestConsentVerdictWithholdsWhenTheLedgerIsUnreadable(t *testing.T) {
+	t.Parallel()
+	dir := writePlugin(t, timerManifest, "bin/sysc-plugin-timer")
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreadable := func(Source, string) (ConsentRecord, bool, error) {
+		return ConsentRecord{}, false, errors.New("consent.json: invalid character")
+	}
+	for _, source := range []Source{SourceUser, SourceManaged} {
+		v := VerifyConsent(m, source, unreadable)
+		if v.State != ConsentUnreadable || v.Grants() {
+			t.Errorf("%s: verdict = %+v, grants %v; want unreadable and withheld", source, v, v.Grants())
+		}
+		if v.Digest != digestOf(t, dir) {
+			t.Errorf("%s: digest = %q, want the plugin's own", source, v.Digest)
+		}
+	}
+	if v := VerifyConsent(m, SourceSystem, unreadable); v.State != ConsentExempt {
+		t.Errorf("system copy = %+v; the package manager guards it, not the ledger", v)
+	}
+}
+
 func TestRuntimeWithdrawsTheGrantFromAChangedCopy(t *testing.T) {
 	t.Parallel()
 	m := installHelper(t, "ok")
@@ -187,8 +283,8 @@ func TestRuntimeWithdrawsTheGrantFromAChangedCopy(t *testing.T) {
 		{"changed", "0000", ConsentChanged, false},
 	} {
 		opts := helperOptions()
-		opts.Consent = func(Source, string) (ConsentRecord, bool) {
-			return ConsentRecord{ContentSHA256: tc.recorded}, true
+		opts.Consent = func(Source, string) (ConsentRecord, bool, error) {
+			return ConsentRecord{ContentSHA256: tc.recorded}, true, nil
 		}
 		r := NewRuntime(Candidate{Dir: m.Dir, Source: SourceUser, Manifest: m}, opts)
 		if err := r.Start(context.Background()); err != nil {

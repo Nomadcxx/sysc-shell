@@ -173,6 +173,55 @@ func pathRules(m Manifest, stateDir, runtimeDir, home string, sockets []string, 
 	return rules
 }
 
+// rulesBrowsable reports whether the host may show a confined plugin the tree
+// at path, which must already be resolved: the plugin can read it, and no
+// part of it is a place the plugin can write. The host browser re-resolves
+// paths as the user moves through it, so a directory the plugin could rename
+// or replace with a symlink between two lookups would carry the unconfined
+// browser out of the plugin's domain. Rule paths are resolved too, as
+// Landlock opens them.
+func rulesBrowsable(rules []PathRule, path string) bool {
+	if !rulesRead(rules, path) {
+		return false
+	}
+	for _, rule := range rules {
+		switch rule.Access {
+		case AccessReadWrite, AccessReadWriteExec, AccessDevice:
+		default:
+			continue
+		}
+		base, err := filepath.EvalSymlinks(rule.Path)
+		if err != nil {
+			continue
+		}
+		if within(base, path) || within(path, base) {
+			return false
+		}
+	}
+	return true
+}
+
+// rulesRead reports whether rules let a confined plugin read path.
+func rulesRead(rules []PathRule, path string) bool {
+	for _, rule := range rules {
+		switch rule.Access {
+		case AccessRead, AccessReadExec, AccessReadWrite, AccessReadWriteExec:
+		default:
+			continue
+		}
+		if base, err := filepath.EvalSymlinks(rule.Path); err == nil && within(base, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// within reports whether path is base or beneath it.
+func within(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	return err == nil && filepath.IsLocal(rel)
+}
+
 // The resource ceilings. They were measured, not chosen: on 2026-10-15 the
 // fourteen plugins running on the owner's desktop peaked at 2.44 GB of
 // address space (a Go runtime reserves far more than it touches; resident

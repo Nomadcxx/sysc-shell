@@ -406,6 +406,8 @@
  "plugins.consent_approved": "Aprovado em %s",
  "plugins.consent_changed": "Mudou desde que você o aprovou. Funciona sem as suas permissões até você aprová-lo de novo.",
  "plugins.consent_unrecorded": "Este plugin foi ativado antes de as aprovações serem registradas. Aprove o conteúdo atual para mantê-lo ativado.",
+ "plugins.consent_legacy": "Foi aprovado antes de as aprovações cobrirem todos os arquivos de um plugin. Aprove o conteúdo atual para cobrir todos eles.",
+ "plugins.consent_unreadable": "Não foi possível ler o arquivo de aprovações de plugins, então este plugin funciona sem as suas permissões. Repare ou remova consent.json na pasta de plugins.",
  "plugins.directory": "Diretório de plugins",
  "plugins.enable": "Ativar %s",
  "plugins.hide_settings": "Ocultar configurações",

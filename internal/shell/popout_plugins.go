@@ -748,6 +748,12 @@ func pluginConsentLine(h *PanelHost, v plugin.ConsentVerdict) pluginConsentRow {
 	case plugin.ConsentChanged:
 		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_changed",
 			"Changed since you approved it. It runs without its capabilities until you approve it again."), tone: ui.ToneError, ask: true}
+	case plugin.ConsentLegacy:
+		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_legacy",
+			"Approved before approvals covered every file in a plugin. Approve its current contents to cover them all."), tone: ui.ToneSubtle, ask: true}
+	case plugin.ConsentUnreadable:
+		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_unreadable",
+			"Your plugin approvals file could not be read, so this plugin runs without its capabilities. Repair or remove consent.json in the plugins folder."), tone: ui.ToneError}
 	case plugin.ConsentUnrecorded:
 		return pluginConsentRow{text: cardT(hostT(h), "plugins.consent_unrecorded",
 			"This plugin was enabled before approvals were recorded. Approve its current contents to keep it enabled."), tone: ui.ToneSubtle, ask: true}
@@ -788,6 +794,7 @@ func pluginBoundaryLine(h *PanelHost, b plugin.Boundary, signalAny bool) string 
 
 // digestPrefix is the short form of a content digest a person can compare.
 func digestPrefix(digest string) string {
+	digest = strings.TrimPrefix(digest, plugin.TreeDigestPrefix)
 	if len(digest) > 12 {
 		return digest[:12]
 	}
