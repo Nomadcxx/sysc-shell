@@ -171,6 +171,49 @@ func TestListLimitedReportsTruncation(t *testing.T) {
 	}
 }
 
+func TestListLimitedNonPositiveLimitListsNothing(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		entries, more, err := ListLimited(t.TempDir(), ".", limit, false)
+		if err != nil {
+			t.Fatalf("limit %d: %v", limit, err)
+		}
+		if entries != nil || more {
+			t.Fatalf("limit %d: entries=%v more=%v, want nil false", limit, entries, more)
+		}
+	}
+}
+
+func TestListLimitedRejectsNonDirectory(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ListLimited(root, file, 10, false); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("err = %v, want not a directory", err)
+	}
+}
+
+func TestReadListingCandidatesReportsReadFailure(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readListingCandidates(root, file, 10, false); err == nil {
+		t.Fatal("reading a regular file as a directory succeeded")
+	}
+}
+
+func TestResolveCandidateDropsVanishedAndEscapedEntries(t *testing.T) {
+	root := t.TempDir()
+	for _, c := range []listingCandidate{{name: "gone"}, {name: "../outside"}} {
+		if _, ok := resolveCandidate(root, root, c); ok {
+			t.Fatalf("%q resolved, want it dropped", c.name)
+		}
+	}
+}
+
 func TestLoadErrorCopySeparatesVanishedFolders(t *testing.T) {
 	for _, errno := range []syscall.Errno{
 		syscall.ENOENT, syscall.ENOTCONN, syscall.EIO, syscall.ENODEV, syscall.ESHUTDOWN, syscall.ESTALE,
