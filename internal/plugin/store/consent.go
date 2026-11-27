@@ -54,6 +54,35 @@ func (in *Installer) saveConsent(l plugin.ConsentLedger) error {
 	return nil
 }
 
+// replaceConsent records rec as the managed approval for id and returns a
+// function that puts back the approval it replaced. The approval is written
+// before a tree move so a live tree never lacks the approval that describes it.
+// If the move is abandoned, the caller must run the returned restore.
+func (in *Installer) replaceConsent(id string, rec plugin.ConsentRecord) (func() error, error) {
+	path := plugin.ConsentPath(in.Root)
+	l, err := plugin.LoadConsent(path)
+	if err != nil {
+		return nil, fail(KindDisk, err, "approvals unreadable; not rewriting the ledger")
+	}
+	old, had := l.Lookup(plugin.SourceManaged, id)
+	l.Set(plugin.SourceManaged, id, rec)
+	if err := in.saveConsent(l); err != nil {
+		return nil, err
+	}
+	return func() error {
+		l, err := plugin.LoadConsent(path)
+		if err != nil {
+			return err
+		}
+		if had {
+			l.Set(plugin.SourceManaged, id, old)
+		} else {
+			l.Delete(plugin.SourceManaged, id)
+		}
+		return in.saveConsent(l)
+	}, nil
+}
+
 func (in *Installer) forgetConsent(id string) error {
 	l, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
 	if err != nil {

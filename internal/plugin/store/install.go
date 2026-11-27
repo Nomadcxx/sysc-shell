@@ -146,31 +146,13 @@ func (in *Installer) swapIn(id, staged string, rec Record) error {
 	if err != nil {
 		return err
 	}
-	consentPath := plugin.ConsentPath(in.Root)
-	ledger, err := plugin.LoadConsent(consentPath)
-	if err != nil {
-		return fail(KindDisk, err, "approvals unreadable; not rewriting the ledger")
-	}
-	oldConsent, hadConsent := ledger.Lookup(plugin.SourceManaged, id)
 	newConsent, err := in.consentRecord(staged)
 	if err != nil {
 		return err
 	}
-	ledger.Set(plugin.SourceManaged, id, newConsent)
-	if err := in.saveConsent(ledger); err != nil {
+	restoreConsent, err := in.replaceConsent(id, newConsent)
+	if err != nil {
 		return err
-	}
-	restoreConsent := func() error {
-		l, err := plugin.LoadConsent(consentPath)
-		if err != nil {
-			return err
-		}
-		if hadConsent {
-			l.Set(plugin.SourceManaged, id, oldConsent)
-		} else {
-			l.Delete(plugin.SourceManaged, id)
-		}
-		return in.saveConsent(l)
 	}
 
 	active, prev := in.paths(id)
@@ -209,10 +191,14 @@ func (in *Installer) swapIn(id, staged string, rec Record) error {
 			consentErr = restoreConsent()
 		}
 		joined := errors.Join(err, undoErr, consentErr)
-		if undoErr != nil {
+		switch {
+		case undoErr != nil:
 			return fail(KindDisk, joined, "the new version is active with its approval, but its installed record could not be saved")
+		case consentErr != nil:
+			return fail(KindDisk, joined, "the update was rolled back, but its previous approval was not restored")
+		default:
+			return fail(KindDisk, joined, "the update was rolled back because its installed record could not be saved")
 		}
-		return fail(KindDisk, joined, "the update was rolled back because its installed record could not be saved")
 	}
 	return nil
 }
@@ -255,6 +241,29 @@ func (in *Installer) undoSwap(id string, had bool) error {
 	return nil
 }
 
+// undoRollback puts the installed version back after a rollback's record could
+// not be saved. The rolled-back tree moves aside, the installed tree returns to
+// active, and the rolled-back tree takes its place as the kept version.
+func (in *Installer) undoRollback(id string) error {
+	active, prev := in.paths(id)
+	hold, err := in.stage("undo-rollback-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(hold)
+	tmp := filepath.Join(hold, id)
+	if err := in.doRename(active, tmp); err != nil {
+		return err
+	}
+	if err := in.doRename(prev, active); err != nil {
+		if rerr := in.doRename(tmp, active); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		return err
+	}
+	return in.doRename(tmp, prev)
+}
+
 // Rollback swaps the installed version with the kept previous one.
 func (in *Installer) Rollback(id string) error {
 	if !v1.ValidPluginID(id) {
@@ -269,22 +278,42 @@ func (in *Installer) Rollback(id string) error {
 		if err != nil {
 			return err
 		}
-		hold, err := in.stage("rollback-")
+		nextConsent, err := in.consentRecord(prev)
 		if err != nil {
 			return err
 		}
+		restoreConsent, err := in.replaceConsent(id, nextConsent)
+		if err != nil {
+			return err
+		}
+		hold, err := in.stage("rollback-")
+		if err != nil {
+			return fail(KindDisk, errors.Join(err, restoreConsent()), "")
+		}
 		defer os.RemoveAll(hold)
-		held := filepath.Join(hold, id)
-		if err := in.doRename(active, held); err != nil {
-			return fail(KindDisk, err, "")
+		staged := filepath.Join(hold, id)
+		if err := in.doRename(prev, staged); err != nil {
+			return fail(KindDisk, errors.Join(err, restoreConsent()), "")
 		}
-		if err := in.doRename(prev, active); err != nil {
-			if rerr := in.doRename(held, active); rerr != nil {
-				return fail(KindDisk, errors.Join(err, rerr), "restoring the installed version failed")
+		if err := in.doRename(active, prev); err != nil {
+			rerr := in.doRename(staged, prev)
+			joined := errors.Join(err, rerr, restoreConsent())
+			if rerr != nil {
+				return fail(KindDisk, joined, "restoring the previous version failed")
 			}
-			return fail(KindDisk, err, "")
+			return fail(KindDisk, joined, "")
 		}
-		keepErr := in.doRename(held, prev)
+		if err := in.doRename(staged, active); err != nil {
+			rerr := in.doRename(prev, active)
+			if rerr == nil {
+				rerr = in.doRename(staged, prev)
+			}
+			joined := errors.Join(err, rerr, restoreConsent())
+			if rerr != nil {
+				return fail(KindDisk, joined, "restoring the installed version failed")
+			}
+			return fail(KindDisk, joined, "")
+		}
 
 		cur := records[id]
 		next := Record{Source: SourceUnknown}
@@ -292,25 +321,32 @@ func (in *Installer) Rollback(id string) error {
 			next = *cur.Previous
 		}
 		cur.Previous = nil
-		if keepErr == nil {
-			next.Previous = &cur
-		}
+		next.Previous = &cur
 		records[id] = next
-		if err := records.Save(in.Root); err != nil {
-			return err
-		}
-		if err := in.recordConsent(plugin.SourceManaged, id, active); err != nil {
-			return err
-		}
-		if keepErr != nil {
-			return fail(KindDisk, keepErr, "rolled back, but the replaced version could not be kept")
+		if err := in.saveRecords(records); err != nil {
+			undoErr := in.undoRollback(id)
+			var consentErr error
+			if undoErr == nil {
+				consentErr = restoreConsent()
+			}
+			joined := errors.Join(err, undoErr, consentErr)
+			switch {
+			case undoErr != nil:
+				return fail(KindDisk, joined, "the rollback could not be undone, so its installed record was not saved")
+			case consentErr != nil:
+				return fail(KindDisk, joined, "the rollback was undone, but its previous approval was not restored")
+			default:
+				return fail(KindDisk, joined, "the rollback was undone because its installed record could not be saved")
+			}
 		}
 		return nil
 	})
 }
 
 // Remove deletes every version of id. Its configuration is not the store's to
-// touch: an absent plugin keeps its settings and placements.
+// touch: an absent plugin keeps its settings and placements. The trees move
+// aside before their approval and record are forgotten, so a failed write can
+// put them back rather than leave a live tree without its approval.
 func (in *Installer) Remove(id string) error {
 	if !v1.ValidPluginID(id) {
 		return fail(KindNotListed, nil, "%q is not a plugin id", id)
@@ -321,16 +357,61 @@ func (in *Installer) Remove(id string) error {
 			return err
 		}
 		active, prev := in.paths(id)
-		for _, dir := range []string{active, prev} {
-			if err := os.RemoveAll(dir); err != nil {
-				return fail(KindDisk, err, "")
-			}
-		}
-		delete(records, id)
-		if err := records.Save(in.Root); err != nil {
+		hold, err := in.stage("remove-")
+		if err != nil {
 			return err
 		}
-		return in.forgetConsent(id)
+		defer os.RemoveAll(hold)
+
+		type move struct{ from, to string }
+		moves := []move{
+			{from: active, to: filepath.Join(hold, "active")},
+			{from: prev, to: filepath.Join(hold, "prev")},
+		}
+		var moved []move
+		restore := func() error {
+			var errs []error
+			for i := len(moved) - 1; i >= 0; i-- {
+				if err := in.doRename(moved[i].to, moved[i].from); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			return errors.Join(errs...)
+		}
+		for _, m := range moves {
+			if !exists(m.from) {
+				continue
+			}
+			if err := in.doRename(m.from, m.to); err != nil {
+				return fail(KindDisk, errors.Join(err, restore()), "")
+			}
+			moved = append(moved, m)
+		}
+		if err := in.forgetConsent(id); err != nil {
+			return fail(KindDisk, errors.Join(err, restore()), "")
+		}
+		delete(records, id)
+		if err := in.saveRecords(records); err != nil {
+			rerr := restore()
+			var cerr error
+			dir := active
+			if !exists(dir) {
+				dir = prev
+			}
+			if exists(dir) {
+				cerr = in.recordConsent(plugin.SourceManaged, id, dir)
+			}
+			joined := errors.Join(err, rerr, cerr)
+			switch {
+			case rerr != nil:
+				return fail(KindDisk, joined, "the removal could not be undone after its record could not be saved")
+			case cerr != nil:
+				return fail(KindDisk, joined, "the removal was undone, but its approval was not restored")
+			default:
+				return fail(KindDisk, joined, "the removal was undone because its record could not be saved")
+			}
+		}
+		return nil
 	})
 }
 
@@ -344,6 +425,13 @@ func (in *Installer) CleanStaging() error {
 // active, so only .prev/<id> is left and LoadInstalled would drop the
 // record. For each directory under .prev whose active counterpart is
 // missing, it renames .prev/<id> back to <root>/<id>.
+//
+// A crash after the approval write but before the tree move, in swapIn or
+// Rollback, leaves the live tree with the other version's digest approved.
+// VerifyConsent reports changed, so the plugin starts without capabilities
+// until it is approved again. Closing that window needs a durable pending
+// marker; the approval is deliberately written first so a crash can never
+// leave a live tree with no approval at all.
 func (in *Installer) RecoverInterrupted() error {
 	prevRoot := filepath.Join(in.Root, ".prev")
 	entries, err := os.ReadDir(prevRoot)

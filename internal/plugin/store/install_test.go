@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -118,6 +119,224 @@ func TestUpdateKeepsThePreviousVersionAndRollbackRestoresIt(t *testing.T) {
 	}
 }
 
+func TestRollbackApprovalFailureLeavesTheInstalledVersionAlone(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(in.Root, fixtureID)
+	wantDigest := currentDigest(t, active)
+	in.saveConsentLedger = func(plugin.ConsentLedger) error { return errors.New("injected") }
+	err := in.Rollback(fixtureID)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.saveConsentLedger = nil
+	if got := installedVersion(t, in.Root); got != "1.5.0" {
+		t.Fatalf("installed %s, want 1.5.0 kept", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != wantDigest {
+		t.Fatalf("approval %q (%v), want %q", got, ok, wantDigest)
+	}
+	if got := installedVersion(t, filepath.Join(in.Root, ".prev")); got != "1.4.0" {
+		t.Fatalf("previous %s, want 1.4.0 kept", got)
+	}
+}
+
+func TestRollbackRenameFailureKeepsTheInstalledVersion(t *testing.T) {
+	t.Parallel()
+	for _, failAt := range []int{1, 2} {
+		in, srv := newInstaller(t)
+		ctx := context.Background()
+		if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+			t.Fatal(err)
+		}
+		if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+			t.Fatal(err)
+		}
+		wantDigest := currentDigest(t, filepath.Join(in.Root, fixtureID))
+		calls := 0
+		in.rename = func(a, b string) error {
+			if calls++; calls == failAt {
+				return errors.New("injected")
+			}
+			return os.Rename(a, b)
+		}
+		err := in.Rollback(fixtureID)
+		if KindOf(err) != KindDisk {
+			t.Errorf("rename %d failing: err = %v", failAt, err)
+		}
+		in.rename = nil
+		if got := installedVersion(t, in.Root); got != "1.5.0" {
+			t.Errorf("rename %d failing: installed %s, want 1.5.0 kept", failAt, got)
+		}
+		if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != wantDigest {
+			t.Errorf("rename %d failing: approval %q (%v), want %q", failAt, got, ok, wantDigest)
+		}
+	}
+}
+
+func TestRollbackRenameFailureAfterTheSwapRestoresTheInstalledVersion(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	wantDigest := currentDigest(t, filepath.Join(in.Root, fixtureID))
+	calls := 0
+	in.rename = func(a, b string) error {
+		if calls++; calls == 3 {
+			return errors.New("injected")
+		}
+		return os.Rename(a, b)
+	}
+	err := in.Rollback(fixtureID)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.rename = nil
+	if got := installedVersion(t, in.Root); got != "1.5.0" {
+		t.Fatalf("installed %s, want 1.5.0 restored", got)
+	}
+	if got := installedVersion(t, filepath.Join(in.Root, ".prev")); got != "1.4.0" {
+		t.Fatalf("previous %s, want 1.4.0 kept", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != wantDigest {
+		t.Fatalf("approval %q (%v), want %q", got, ok, wantDigest)
+	}
+}
+
+func TestRollbackReportsAnUnrestoredInstalledVersion(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	in.rename = func(a, b string) error {
+		if calls++; calls == 3 || calls == 4 {
+			return errors.New("injected")
+		}
+		return os.Rename(a, b)
+	}
+	err := in.Rollback(fixtureID)
+	if KindOf(err) != KindDisk || !strings.Contains(err.Error(), "restoring the installed version failed") {
+		t.Fatalf("err = %v, want a disk error saying the installed version was not restored", err)
+	}
+	in.rename = nil
+	if err := in.RecoverInterrupted(); err != nil {
+		t.Fatalf("RecoverInterrupted: %v", err)
+	}
+	if got := installedVersion(t, in.Root); got != "1.5.0" {
+		t.Fatalf("after recovery: %s, want 1.5.0", got)
+	}
+}
+
+func TestRollbackReceiptFailureRestoresTheInstalledVersion(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	wantDigest := currentDigest(t, filepath.Join(in.Root, fixtureID))
+	in.saveInstalled = func(Installed) error { return errors.New("injected") }
+	err := in.Rollback(fixtureID)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.saveInstalled = nil
+	if got := installedVersion(t, in.Root); got != "1.5.0" {
+		t.Fatalf("installed %s, want 1.5.0 restored", got)
+	}
+	if got := installedVersion(t, filepath.Join(in.Root, ".prev")); got != "1.4.0" {
+		t.Fatalf("previous %s, want 1.4.0 kept", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != wantDigest {
+		t.Fatalf("approval %q (%v), want %q", got, ok, wantDigest)
+	}
+}
+
+func TestRollbackUndoFailureReportsTheRolledBackVersion(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	in.saveInstalled = func(Installed) error { return errors.New("injected") }
+	calls := 0
+	in.rename = func(a, b string) error {
+		if calls++; calls == 4 {
+			return errors.New("injected")
+		}
+		return os.Rename(a, b)
+	}
+	err := in.Rollback(fixtureID)
+	if KindOf(err) != KindDisk || !strings.Contains(err.Error(), "rollback could not be undone") {
+		t.Fatalf("err = %v, want the rolled-back version reported", err)
+	}
+	in.rename = nil
+	in.saveInstalled = nil
+	if got := installedVersion(t, in.Root); got != "1.4.0" {
+		t.Fatalf("installed %s, want 1.4.0 active", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != currentDigest(t, filepath.Join(in.Root, fixtureID)) {
+		t.Fatalf("approval %q (%v) does not describe the active tree", got, ok)
+	}
+}
+
+func TestRollbackUndoReportsAnUnrestoredApproval(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	in.saveInstalled = func(Installed) error { return errors.New("injected") }
+	consentCalls := 0
+	in.saveConsentLedger = func(l plugin.ConsentLedger) error {
+		if consentCalls++; consentCalls == 2 {
+			return errors.New("injected")
+		}
+		return l.Save(plugin.ConsentPath(in.Root))
+	}
+	err := in.Rollback(fixtureID)
+	if KindOf(err) != KindDisk || !strings.Contains(err.Error(), "previous approval was not restored") {
+		t.Fatalf("err = %v, want the unrestored approval reported", err)
+	}
+	in.saveInstalled = nil
+	in.saveConsentLedger = nil
+	if got := installedVersion(t, in.Root); got != "1.5.0" {
+		t.Fatalf("installed %s, want 1.5.0 restored", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got == currentDigest(t, filepath.Join(in.Root, fixtureID)) {
+		t.Fatalf("approval %q (%v) should still describe the abandoned 1.4.0 tree", got, ok)
+	}
+}
+
 func TestAFailedSwapKeepsThePreviousVersion(t *testing.T) {
 	t.Parallel()
 	for _, failAt := range []int{1, 2} {
@@ -125,6 +344,10 @@ func TestAFailedSwapKeepsThePreviousVersion(t *testing.T) {
 		ctx := context.Background()
 		if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
 			t.Fatal(err)
+		}
+		wantDigest, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID)
+		if !ok {
+			t.Fatal("first install recorded no approval")
 		}
 		calls := 0
 		in.rename = func(a, b string) error {
@@ -141,6 +364,151 @@ func TestAFailedSwapKeepsThePreviousVersion(t *testing.T) {
 		if got := installedVersion(t, in.Root); got != "1.4.0" {
 			t.Errorf("rename %d failing: installed %s, want 1.4.0 kept", failAt, got)
 		}
+		if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != wantDigest {
+			t.Errorf("rename %d failing: approval %q (%v), want %q", failAt, got, ok, wantDigest)
+		}
+	}
+}
+
+func TestAFailedSwapRestoreKeepsThePreviousVersionRecoverable(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	wantDigest, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID)
+	if !ok {
+		t.Fatal("first install recorded no approval")
+	}
+	calls := 0
+	in.rename = func(a, b string) error {
+		if calls++; calls == 2 || calls == 3 {
+			return errors.New("injected")
+		}
+		return os.Rename(a, b)
+	}
+	err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)))
+	if KindOf(err) != KindDisk || !strings.Contains(err.Error(), "restoring the previous version failed") {
+		t.Fatalf("err = %v, want a disk error saying the previous version was not restored", err)
+	}
+	in.rename = nil
+	if err := in.RecoverInterrupted(); err != nil {
+		t.Fatalf("RecoverInterrupted: %v", err)
+	}
+	if got := installedVersion(t, in.Root); got != "1.4.0" {
+		t.Fatalf("after recovery: %s, want 1.4.0", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != wantDigest {
+		t.Fatalf("after recovery: approval %q (%v), want %q", got, ok, wantDigest)
+	}
+}
+
+func TestAFirstInstallThatCannotSaveItsReceiptLeavesNothing(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	in.saveInstalled = func(Installed) error { return errors.New("injected") }
+	err := in.Install(context.Background(), plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil)))
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.saveInstalled = nil
+	active, prev := in.paths(fixtureID)
+	for _, dir := range []string{active, prev} {
+		if _, err := os.Stat(dir); err == nil {
+			t.Errorf("%s survived the failed first install", dir)
+		}
+	}
+	if _, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); ok {
+		t.Fatal("a first install that could not save its receipt kept an approval")
+	}
+	records, err := LoadInstalled(in.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := records[fixtureID]; ok {
+		t.Fatal("a first install that could not save its receipt kept a record")
+	}
+}
+
+func TestAFailedUndoLeavesTheNewVersionApproved(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	in.saveInstalled = func(records Installed) error {
+		if records[fixtureID].Version == "1.5.0" {
+			return errors.New("injected")
+		}
+		return records.Save(in.Root)
+	}
+	calls := 0
+	in.rename = func(a, b string) error {
+		if calls++; calls == 3 {
+			return errors.New("injected")
+		}
+		return os.Rename(a, b)
+	}
+	err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)))
+	if KindOf(err) != KindDisk || !strings.Contains(err.Error(), "new version is active with its approval") {
+		t.Fatalf("err = %v, want the active new version reported", err)
+	}
+	in.rename = nil
+	in.saveInstalled = nil
+	if got := installedVersion(t, in.Root); got != "1.5.0" {
+		t.Fatalf("installed %s, want 1.5.0 still active", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != currentDigest(t, filepath.Join(in.Root, fixtureID)) {
+		t.Fatalf("approval %q (%v) does not describe the active tree", got, ok)
+	}
+}
+
+func TestAFailedApprovalRestoreAfterAReceiptFailureIsReported(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	in.saveInstalled = func(records Installed) error {
+		if records[fixtureID].Version == "1.5.0" {
+			return errors.New("injected")
+		}
+		return records.Save(in.Root)
+	}
+	consentCalls := 0
+	in.saveConsentLedger = func(l plugin.ConsentLedger) error {
+		if consentCalls++; consentCalls == 2 {
+			return errors.New("injected")
+		}
+		return l.Save(plugin.ConsentPath(in.Root))
+	}
+	err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)))
+	if KindOf(err) != KindDisk || !strings.Contains(err.Error(), "previous approval was not restored") {
+		t.Fatalf("err = %v, want the unrestored approval reported", err)
+	}
+	in.saveInstalled = nil
+	in.saveConsentLedger = nil
+	if got := installedVersion(t, in.Root); got != "1.4.0" {
+		t.Fatalf("installed %s, want 1.4.0 kept", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got == currentDigest(t, filepath.Join(in.Root, fixtureID)) {
+		t.Fatalf("approval %q (%v) should still describe the abandoned 1.5.0 tree", got, ok)
+	}
+}
+
+func TestSwapInRejectsAStagedTreeWithoutAManifest(t *testing.T) {
+	t.Parallel()
+	in := &Installer{Root: filepath.Join(t.TempDir(), "plugins")}
+	staged := filepath.Join(t.TempDir(), fixtureID)
+	if err := os.Mkdir(staged, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := in.swapIn(fixtureID, staged, Record{Version: "1.5.0"})
+	if KindOf(err) != KindManifest {
+		t.Fatalf("err = %v, want %s", err, KindManifest)
 	}
 }
 
@@ -251,6 +619,83 @@ func TestRemoveDeletesEveryVersion(t *testing.T) {
 // TestRecoverInterruptedRestoresAStrandedPrev proves F5: a crash between the
 // two renames in swapIn leaves only .prev/<id>, with the active directory
 // gone. RecoverInterrupted must put it back so LoadInstalled sees it again.
+func TestRemoveApprovalFailureLeavesThePlugin(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	if err := in.Install(context.Background(), plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	in.saveConsentLedger = func(plugin.ConsentLedger) error { return errors.New("injected") }
+	err := in.Remove(fixtureID)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.saveConsentLedger = nil
+	if _, err := os.Stat(filepath.Join(in.Root, fixtureID)); err != nil {
+		t.Fatalf("active tree gone after a failed approval write: %v", err)
+	}
+	if _, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok {
+		t.Fatal("approval gone after a failed approval write")
+	}
+}
+
+func TestRemoveReceiptFailureRestoresThePlugin(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	if err := in.Install(context.Background(), plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	in.saveInstalled = func(Installed) error { return errors.New("injected") }
+	err := in.Remove(fixtureID)
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.saveInstalled = nil
+	active, _ := in.paths(fixtureID)
+	if got := installedVersion(t, in.Root); got != "1.4.0" {
+		t.Fatalf("installed %s, want 1.4.0 restored", got)
+	}
+	if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != currentDigest(t, active) {
+		t.Fatalf("approval %q (%v) does not describe the restored tree", got, ok)
+	}
+}
+
+func TestRemoveRenameFailureRestoresThePlugin(t *testing.T) {
+	t.Parallel()
+	for _, failAt := range []int{1, 2} {
+		in, srv := newInstaller(t)
+		ctx := context.Background()
+		if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+			t.Fatal(err)
+		}
+		if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+			t.Fatal(err)
+		}
+		wantDigest := currentDigest(t, filepath.Join(in.Root, fixtureID))
+		calls := 0
+		in.rename = func(a, b string) error {
+			if calls++; calls == failAt {
+				return errors.New("injected")
+			}
+			return os.Rename(a, b)
+		}
+		err := in.Remove(fixtureID)
+		if KindOf(err) != KindDisk {
+			t.Errorf("rename %d failing: err = %v", failAt, err)
+		}
+		in.rename = nil
+		if got := installedVersion(t, in.Root); got != "1.5.0" {
+			t.Errorf("rename %d failing: installed %s, want 1.5.0 restored", failAt, got)
+		}
+		if got := installedVersion(t, filepath.Join(in.Root, ".prev")); got != "1.4.0" {
+			t.Errorf("rename %d failing: previous %s, want 1.4.0 kept", failAt, got)
+		}
+		if got, ok := approvedDigest(t, in.Root, plugin.SourceManaged, fixtureID); !ok || got != wantDigest {
+			t.Errorf("rename %d failing: approval %q (%v), want %q", failAt, got, ok, wantDigest)
+		}
+	}
+}
+
 func TestRecoverInterruptedRestoresAStrandedPrev(t *testing.T) {
 	t.Parallel()
 	in, srv := newInstaller(t)
