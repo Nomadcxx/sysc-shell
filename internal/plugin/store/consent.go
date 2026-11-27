@@ -13,19 +13,41 @@ import (
 // makes to the managed tree was consented to by the operation that made it,
 // so the store records what that operation left behind.
 func (in *Installer) recordConsent(source plugin.Source, id, dir string) error {
-	m, err := plugin.LoadManifest(dir)
+	rec, err := in.consentRecord(dir)
 	if err != nil {
-		return fail(KindManifest, err, "")
-	}
-	digest, err := plugin.ContentDigest(m)
-	if err != nil {
-		return fail(KindDisk, err, "")
+		return err
 	}
 	l, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
 	if err != nil {
 		return fail(KindDisk, err, "approvals unreadable; not rewriting the ledger")
 	}
-	l.Set(source, id, plugin.RecordFor(m, digest, time.Now().UTC()))
+	l.Set(source, id, rec)
+	if err := in.saveConsent(l); err != nil {
+		return err
+	}
+	return nil
+}
+
+// consentRecord describes the tree at dir as an approval.
+func (in *Installer) consentRecord(dir string) (plugin.ConsentRecord, error) {
+	m, err := plugin.LoadManifest(dir)
+	if err != nil {
+		return plugin.ConsentRecord{}, fail(KindManifest, err, "")
+	}
+	digest, err := plugin.ContentDigest(m)
+	if err != nil {
+		return plugin.ConsentRecord{}, fail(KindDisk, err, "")
+	}
+	return plugin.RecordFor(m, digest, time.Now().UTC()), nil
+}
+
+func (in *Installer) saveConsent(l plugin.ConsentLedger) error {
+	if in.saveConsentLedger != nil {
+		if err := in.saveConsentLedger(l); err != nil {
+			return fail(KindDisk, err, "recording the approval failed")
+		}
+		return nil
+	}
 	if err := l.Save(plugin.ConsentPath(in.Root)); err != nil {
 		return fail(KindDisk, err, "recording the approval failed")
 	}
@@ -38,7 +60,7 @@ func (in *Installer) forgetConsent(id string) error {
 		return fail(KindDisk, err, "approvals unreadable; not rewriting the ledger")
 	}
 	l.Delete(plugin.SourceManaged, id)
-	if err := l.Save(plugin.ConsentPath(in.Root)); err != nil {
+	if err := in.saveConsent(l); err != nil {
 		return fail(KindDisk, err, "forgetting the approval failed")
 	}
 	return nil

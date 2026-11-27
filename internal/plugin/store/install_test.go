@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -140,6 +141,87 @@ func TestAFailedSwapKeepsThePreviousVersion(t *testing.T) {
 		if got := installedVersion(t, in.Root); got != "1.4.0" {
 			t.Errorf("rename %d failing: installed %s, want 1.4.0 kept", failAt, got)
 		}
+	}
+}
+
+func TestAReceiptFailureRollsBackTheUpdateAndItsApproval(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	before, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantApproval, ok := before.Lookup(plugin.SourceManaged, fixtureID)
+	if !ok {
+		t.Fatal("first install recorded no approval")
+	}
+	in.saveInstalled = func(records Installed) error {
+		if records[fixtureID].Version == "1.5.0" {
+			return errors.New("injected")
+		}
+		return records.Save(in.Root)
+	}
+	err = in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)))
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.saveInstalled = nil
+	if got := installedVersion(t, in.Root); got != "1.4.0" {
+		t.Fatalf("installed %s, want 1.4.0 restored", got)
+	}
+	m, err := plugin.LoadManifest(filepath.Join(in.Root, fixtureID))
+	if err != nil || m.Version != "1.4.0" {
+		t.Fatalf("active manifest = %+v, err = %v", m, err)
+	}
+	after, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotApproval, ok := after.Lookup(plugin.SourceManaged, fixtureID)
+	if !ok || !reflect.DeepEqual(gotApproval, wantApproval) {
+		t.Fatalf("approval after rollback = %+v, want %+v", gotApproval, wantApproval)
+	}
+}
+
+func TestAnApprovalFailureLeavesTheInstalledVersionAlone(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	before, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	in.saveConsentLedger = func(l plugin.ConsentLedger) error {
+		if calls++; calls == 1 {
+			return errors.New("injected")
+		}
+		return l.Save(plugin.ConsentPath(in.Root))
+	}
+	err = in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)))
+	if KindOf(err) != KindDisk {
+		t.Fatalf("err = %v, want %s", err, KindDisk)
+	}
+	in.saveConsentLedger = nil
+	if got := installedVersion(t, in.Root); got != "1.4.0" {
+		t.Fatalf("installed %s, want 1.4.0 kept", got)
+	}
+	if _, err := os.Stat(filepath.Join(in.Root, ".prev", fixtureID)); err == nil {
+		t.Fatal("approval failed but the tree was swapped")
+	}
+	after, err := plugin.LoadConsent(plugin.ConsentPath(in.Root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("approval ledger changed: %+v, want %+v", after, before)
 	}
 }
 

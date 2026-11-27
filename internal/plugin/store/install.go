@@ -30,6 +30,10 @@ type Installer struct {
 
 	// rename is os.Rename unless a test injects a failure.
 	rename func(oldpath, newpath string) error
+	// saveInstalled and saveConsentLedger are the normal writers unless a
+	// test injects a failure.
+	saveInstalled     func(Installed) error
+	saveConsentLedger func(plugin.ConsentLedger) error
 }
 
 // Plan is one resolved release to install.
@@ -142,36 +146,113 @@ func (in *Installer) swapIn(id, staged string, rec Record) error {
 	if err != nil {
 		return err
 	}
+	consentPath := plugin.ConsentPath(in.Root)
+	ledger, err := plugin.LoadConsent(consentPath)
+	if err != nil {
+		return fail(KindDisk, err, "approvals unreadable; not rewriting the ledger")
+	}
+	oldConsent, hadConsent := ledger.Lookup(plugin.SourceManaged, id)
+	newConsent, err := in.consentRecord(staged)
+	if err != nil {
+		return err
+	}
+	ledger.Set(plugin.SourceManaged, id, newConsent)
+	if err := in.saveConsent(ledger); err != nil {
+		return err
+	}
+	restoreConsent := func() error {
+		l, err := plugin.LoadConsent(consentPath)
+		if err != nil {
+			return err
+		}
+		if hadConsent {
+			l.Set(plugin.SourceManaged, id, oldConsent)
+		} else {
+			l.Delete(plugin.SourceManaged, id)
+		}
+		return in.saveConsent(l)
+	}
+
 	active, prev := in.paths(id)
 	had := exists(active)
 	if had {
 		if err := os.MkdirAll(filepath.Dir(prev), 0o755); err != nil {
-			return fail(KindDisk, err, "")
+			return fail(KindDisk, errors.Join(err, restoreConsent()), "")
 		}
 		if err := os.RemoveAll(prev); err != nil {
-			return fail(KindDisk, err, "")
+			return fail(KindDisk, errors.Join(err, restoreConsent()), "")
 		}
 		if err := in.doRename(active, prev); err != nil {
-			return fail(KindDisk, err, "")
+			return fail(KindDisk, errors.Join(err, restoreConsent()), "")
 		}
 	}
 	if err := in.doRename(staged, active); err != nil {
+		var rerr error
 		if had {
-			if rerr := in.doRename(prev, active); rerr != nil {
-				return fail(KindDisk, errors.Join(err, rerr), "restoring the previous version failed")
-			}
+			rerr = in.doRename(prev, active)
 		}
-		return fail(KindDisk, err, "")
+		joined := errors.Join(err, rerr, restoreConsent())
+		if had && rerr != nil {
+			return fail(KindDisk, joined, "restoring the previous version failed")
+		}
+		return fail(KindDisk, joined, "")
 	}
 	if old, ok := records[id]; ok && had {
 		old.Previous = nil
 		rec.Previous = &old
 	}
 	records[id] = rec
-	if err := records.Save(in.Root); err != nil {
+	if err := in.saveRecords(records); err != nil {
+		undoErr := in.undoSwap(id, had)
+		var consentErr error
+		if undoErr == nil {
+			consentErr = restoreConsent()
+		}
+		joined := errors.Join(err, undoErr, consentErr)
+		if undoErr != nil {
+			return fail(KindDisk, joined, "the new version is active with its approval, but its installed record could not be saved")
+		}
+		return fail(KindDisk, joined, "the update was rolled back because its installed record could not be saved")
+	}
+	return nil
+}
+
+func (in *Installer) saveRecords(records Installed) error {
+	if in.saveInstalled != nil {
+		if err := in.saveInstalled(records); err != nil {
+			return fail(KindDisk, err, "")
+		}
+		return nil
+	}
+	return records.Save(in.Root)
+}
+
+// undoSwap puts the previous tree back after the new one was activated. It is
+// only used while the store worker still holds the plugin stopped.
+func (in *Installer) undoSwap(id string, had bool) error {
+	active, prev := in.paths(id)
+	if !had {
+		if err := os.RemoveAll(active); err != nil {
+			return err
+		}
+		return nil
+	}
+	hold, err := in.stage("undo-")
+	if err != nil {
 		return err
 	}
-	return in.recordConsent(plugin.SourceManaged, id, active)
+	defer os.RemoveAll(hold)
+	held := filepath.Join(hold, id)
+	if err := in.doRename(active, held); err != nil {
+		return err
+	}
+	if err := in.doRename(prev, active); err != nil {
+		if rerr := in.doRename(held, active); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		return err
+	}
+	return nil
 }
 
 // Rollback swaps the installed version with the kept previous one.
