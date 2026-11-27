@@ -112,3 +112,29 @@ func TestPluginStoreRelaySkipsREADMEWorkWhenPanelsAreClosed(t *testing.T) {
 	}
 	t.Fatal("closed-panel relay did not publish the worker snapshot")
 }
+
+// The bar editor's add list reads the catalog, so a store update has to reach
+// it while it is open, or a fresh catalog or a finished install shows late.
+func TestPluginStoreRelayRebuildsAnOpenBarAddList(t *testing.T) {
+	reg, h := barKeyHost(t, config.Bar{})
+	barActivateMu(reg, h, "bar-add:right")
+	st := store.New(store.Options{})
+	updates := make(chan store.State, 1)
+	reg.mu.Lock()
+	reg.pluginStore = st
+	reg.mu.Unlock()
+	go reg.relayPluginStoreUpdates(st, updates)
+	listing := modelListing("org.sysc.airquality", "Air Quality & Pollen", "sysc", "weather", "0.4.0")
+	updates <- store.State{Listings: []store.Listing{listing}}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		rendered := pluginStoreHasText(h.root, "Air Quality & Pollen")
+		reg.mu.Unlock()
+		if rendered {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("store update did not rebuild the open bar add list")
+}

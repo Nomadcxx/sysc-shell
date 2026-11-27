@@ -14,7 +14,7 @@ import (
 func modelListing(id, name, source, category, version string) store.Listing {
 	release := catalog.Release{
 		Version: version, Protocol: v1.Version{Major: 1, Minor: 0},
-		Capabilities: []string{"panels"}, Requires: catalog.Requires{Commands: []string{"notify-send"}},
+		Capabilities: []string{"panels"}, Requires: catalog.Requires{Commands: []string{"sh"}},
 		Assets: map[string]catalog.Asset{"linux-amd64": {
 			URL: "https://example.com/plugin.tar.gz", SHA256: strings.Repeat("a", 64), Size: 1,
 		}},
@@ -158,7 +158,7 @@ func TestPluginStoreDetailCarriesPinnedConsentAndStartWarning(t *testing.T) {
 	l.Entry.ReleaseNotes = "https://example.com/releases/1.4.0"
 	l.Entry.Screenshot = &catalog.Screenshot{URL: "https://example.com/timer.png", SHA256: strings.Repeat("c", 64)}
 	l.Entry.Release.Capabilities = []string{"panels", "settings"}
-	l.Entry.Release.Requires.Commands = []string{"notify-send"}
+	l.Entry.Release.Requires.Commands = []string{"sh"}
 	l.Resolution.Release = &l.Entry.Release
 	l.Resolution.AssetKey = "linux-amd64"
 	media := map[string]store.MediaState{strings.Repeat("c", 64): {Path: "/cache/timer.png"}}
@@ -177,7 +177,7 @@ func TestPluginStoreDetailCarriesPinnedConsentAndStartWarning(t *testing.T) {
 		t.Fatalf("consent lines = %v", detail.ConsentLines)
 	}
 
-	l.Installed = &store.Record{Source: "sysc", Version: "1.3.0", Capabilities: []string{"panels", "settings"}, Requires: []string{"notify-send"}}
+	l.Installed = &store.Record{Source: "sysc", Version: "1.3.0", Capabilities: []string{"panels", "settings"}, Requires: []string{"sh"}}
 	l.Status = store.StatusUpdateAvailable
 	l.UpdateAvailable = true
 	detail = detailFor(l, false, nil, "", "en")
@@ -238,7 +238,7 @@ func TestConsentCardReadsAnOldGrantWithItsMeaning(t *testing.T) {
 		t.Fatalf("install card = %v", detailFor(l, false, nil, "", "en").ConsentLines)
 	}
 	// Respelling a grant is not a change to ask about.
-	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"state-read", "state-write", "files"}, Requires: []string{"notify-send"}}
+	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"state-read", "state-write", "files"}, Requires: []string{"sh"}}
 	l.Status, l.UpdateAvailable = store.StatusUpdateAvailable, true
 	detail := detailFor(l, false, nil, "", "en")
 	if detail.NeedsConsent {
@@ -276,6 +276,44 @@ func TestTheConsentCardStatesTheBoundaryInForce(t *testing.T) {
 	} {
 		if got := boundaryLine(tc.fs, tc.abi); got != tc.want {
 			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// F3 of the 2026-11-22 audit: the store installed a plugin whose required
+// command was absent without saying so, and the plugin then could not start.
+func TestPluginStoreDetailMarksRequiredCommandsThatAreNotOnPATH(t *testing.T) {
+	l := modelListing("org.sysc.phone", "Phone Connect", "sysc", "utilities", "1.0.0")
+	l.Entry.Release.Requires.Commands = []string{"sh", "sysc-no-such-command-2399"}
+	l.Resolution.Release = &l.Entry.Release
+	detail := detailFor(l, false, nil, "", "en")
+	if len(detail.MissingCommands) != 1 || detail.MissingCommands[0] != "sysc-no-such-command-2399" {
+		t.Fatalf("missing commands = %v", detail.MissingCommands)
+	}
+	for _, want := range []string{
+		"Required commands: sh, sysc-no-such-command-2399 (not found)",
+		"It won't start until sysc-no-such-command-2399 is installed.",
+	} {
+		if !containsString(detail.ConsentLines, want) {
+			t.Errorf("consent lines lack %q: %v", want, detail.ConsentLines)
+		}
+	}
+	if detail.Action != ActionInstall {
+		t.Errorf("a missing command blocked install: action = %v", detail.Action)
+	}
+}
+
+func TestPluginStoreDetailSaysNothingWhenRequiredCommandsArePresent(t *testing.T) {
+	l := modelListing("org.sysc.phone", "Phone Connect", "sysc", "utilities", "1.0.0")
+	l.Entry.Release.Requires.Commands = []string{"sh"}
+	l.Resolution.Release = &l.Entry.Release
+	detail := detailFor(l, false, nil, "", "en")
+	if len(detail.MissingCommands) != 0 {
+		t.Fatalf("missing commands = %v", detail.MissingCommands)
+	}
+	for _, line := range detail.ConsentLines {
+		if strings.Contains(line, "not found") || strings.Contains(line, "won't start") {
+			t.Errorf("consent warns about a present command: %q", line)
 		}
 	}
 }

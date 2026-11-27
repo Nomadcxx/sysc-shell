@@ -404,7 +404,6 @@ type PanelHost struct {
 	pluginManagerError          string
 	pluginManagerExpanded       map[string]bool
 	pluginUpdateAllNeedsConsent []string
-	pluginStoreReviewKey        string
 
 	pluginStoreQuery          BrowseQuery
 	pluginStoreSelected       string
@@ -4331,8 +4330,8 @@ func (h *PanelHost) activate(r *Registry) bool {
 			return h.selectControlCentreSection(r, section)
 		}
 		if h.id == PanelSettings {
-			h.invalidateSettingsBrowse()
-			r.settingsSectionChangingLocked(h, section)
+			h.showSettingsSection(r, section)
+			return true
 		}
 		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
 		r.rebuildPanel(h)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -709,6 +710,25 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 		h.barAddFilter = ""
 		return h.barApply(r, laneName, next)
 
+	case strings.HasPrefix(action, "bar-add-catalog:"):
+		laneName, key, ok := strings.Cut(strings.TrimPrefix(action, "bar-add-catalog:"), ":")
+		if !ok || barLaneLabels[laneName] == "" || key == "" {
+			return false
+		}
+		// The add list stays open: it is where the user comes back to.
+		r.openPluginStoreLocked(h, key, "")
+		return true
+
+	case strings.HasPrefix(action, "bar-add-manage:"):
+		// The plugin manager is where a plugin that cannot start says why
+		// and offers what can be done about it.
+		h.showSettingsSection(r, "Plugins")
+		return true
+
+	case action == "bar-add-store-search":
+		r.openPluginStoreLocked(h, "", strings.TrimSpace(h.barAddFilter))
+		return true
+
 	case strings.HasPrefix(action, "bar-output:"):
 		h.barOutput = strings.TrimPrefix(action, "bar-output:")
 		if h.barOutput == "shared" {
@@ -778,12 +798,27 @@ func barAddList(r *Registry, h *PanelHost, laneName string, width int) *ui.Node 
 	var pluginRows []*ui.Node
 	if r != nil && r.plugins != nil {
 		for _, c := range r.plugins.discovered().Plugins {
-			if !c.Startable() || len(c.Manifest.Widgets) == 0 {
+			// A shadowed copy is hidden behind the copy that is listed.
+			if len(c.Manifest.Widgets) == 0 || c.ShadowedBy != "" {
 				continue
 			}
 			name := c.Manifest.Name
 			if name == "" {
 				name = c.Manifest.ID
+			}
+			if !c.Startable() {
+				// Listed with its reason rather than left out: missing reads
+				// the same as never installed.
+				reason := "can't load"
+				if len(c.MissingCommands) > 0 {
+					reason = "needs " + strings.Join(c.MissingCommands, ", ")
+				}
+				if matches(name, c.Manifest.ID) {
+					unavailable := row("bar-add-manage:"+c.Manifest.ID, name+" — "+reason)
+					unavailable.Children[0].Tone = ui.ToneSubtle
+					pluginRows = append(pluginRows, unavailable)
+				}
+				continue
 			}
 			for _, w := range c.Manifest.Widgets {
 				text := name
@@ -806,11 +841,44 @@ func barAddList(r *Registry, h *PanelHost, laneName string, width int) *ui.Node 
 		col.Children = append(col.Children, pluginRows...)
 		shown += len(pluginRows)
 	}
+	// Catalog plugins the machine does not have yet. Install and its consent
+	// stay in the store, so a row only opens that plugin's store detail.
+	var catalogRows []*ui.Node
+	if r != nil {
+		locale := r.pluginStoreDetailLocale(h)
+		for _, l := range r.pluginStoreSnapshot.Listings {
+			if l.Status != store.StatusAvailable {
+				continue
+			}
+			name := l.Entry.LocalizedName(locale)
+			if !matches(name, l.Entry.Name, l.Entry.ID) {
+				continue
+			}
+			if l.Source != "sysc" {
+				name += " · " + badgeLabel(l.Source)
+			}
+			catalogRows = append(catalogRows, row("bar-add-catalog:"+laneName+":"+pluginStoreKey(l), name))
+		}
+	}
+	if len(catalogRows) > 0 {
+		col.Children = append(col.Children, &ui.Node{
+			Kind: ui.KindText, Text: "Available to install",
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+		col.Children = append(col.Children, catalogRows...)
+		shown += len(catalogRows)
+	}
 	if shown == 0 {
 		col.Children = append(col.Children, &ui.Node{
 			Kind: ui.KindText, Text: "No widgets match.",
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
+		// The store searches every source, category and description, so it
+		// is the next place to look rather than a dead end here.
+		if query != "" {
+			col.Children = append(col.Children, row("bar-add-store-search",
+				"Search the plugin store for “"+strings.TrimSpace(h.barAddFilter)+"”"))
+		}
 	}
 	return col
 }

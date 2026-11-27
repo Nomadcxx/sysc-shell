@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
@@ -75,7 +76,9 @@ func (r *Registry) relayPluginStoreUpdates(st *store.Store, updates <-chan store
 				panel  PanelID
 			}
 			var publish []publication
-			if settingsHost := r.panelHosts[PanelSettings]; settingsHost != nil && settingsHost.section == "Plugins" {
+			// The Plugins page and the bar editor's open add list both read
+			// this snapshot.
+			if settingsHost := r.panelHosts[PanelSettings]; settingsHost != nil && (settingsHost.section == "Plugins" || settingsHost.barAdding != "") {
 				r.rebuildPanel(settingsHost)
 				publish = append(publish, publication{settingsHost.output, PanelSettings})
 			}
@@ -125,6 +128,31 @@ func readPluginStoreReadme(path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+// openPluginStoreLocked opens the store beside the panel from: on the detail
+// of key when key is not empty, otherwise on the grid searched for query.
+// Registry.mu is held.
+func (r *Registry) openPluginStoreLocked(from *PanelHost, key, query string) {
+	trig := Trigger{BarEdge: from.place.BarEdge, BarZone: from.place.BarZone, OutW: from.place.Output.W, OutH: from.place.Output.H}
+	if err := r.openPanelRootLocked(PanelPluginStore, from.output, trig); err != nil {
+		return
+	}
+	storeHost := r.panelHosts[PanelPluginStore]
+	switch {
+	case storeHost == nil:
+		return
+	case key != "":
+		storeHost.pluginStoreSelected = key
+		storeHost.pluginStoreResetDetail()
+		storeHost.pluginStoreDetail = key
+	case query != "":
+		storeHost.pluginStoreResetDetail()
+		storeHost.search = ui.NewField(query)
+	default:
+		return
+	}
+	r.rebuildPanel(storeHost)
 }
 
 // PluginSources returns the enabled sources from configuration.

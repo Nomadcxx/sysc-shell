@@ -151,7 +151,7 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 		children = append(children, &ui.Node{Kind: ui.KindSeparator, Width: body})
 		children = append(children, markdownNodes(detail.Readme, body, metrics, h.measureText())...)
 	}
-	header := pluginStoreDetailHeader(detail, width, metrics)
+	header := pluginStoreDetailHeader(detail, consentOpen || h.pluginStoreRemoveConfirm, width, metrics)
 	headerH, _ := ui.ContentHeight(header, width, h.measureText())
 	bodyHeight := max(h.place.Panel.H-2*pluginStorePadding-headerH-pluginStoreGap, metrics.StandardControl)
 	return &ui.Node{Kind: ui.KindColumn, Gap: pluginStoreGap, Children: []*ui.Node{
@@ -166,8 +166,9 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 }
 
 // pluginStoreDetailHeader is back and the plugin's name at the start, and its
-// links, primary action and close pinned to the end (DMS's detail bar).
-func pluginStoreDetailHeader(detail Detail, width int, metrics theme.Metrics) *ui.Node {
+// links, primary action and close pinned to the end (DMS's detail bar). While
+// a confirmation is open it carries the action, so the header drops its own.
+func pluginStoreDetailHeader(detail Detail, confirming bool, width int, metrics theme.Metrics) *ui.Node {
 	var actions []*ui.Node
 	if detail.Homepage != "" {
 		actions = append(actions, pluginStoreIconButton("store-open-homepage", "Open homepage", "link", metrics))
@@ -176,7 +177,9 @@ func pluginStoreDetailHeader(detail Detail, width int, metrics theme.Metrics) *u
 		actions = append(actions, pluginStoreIconButton("store-open-release-notes", "Open release notes", "description", metrics))
 	}
 	// With no action to offer, the reason sits where the action would.
-	actions = append(actions, pluginStoreDetailPrimary(detail, metrics))
+	if !confirming {
+		actions = append(actions, pluginStoreDetailPrimary(detail, metrics))
+	}
 	actions = append(actions, pluginStoreIconButton("store-close", "Close", "close", metrics))
 	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 		pluginStoreIconButton("store-back", "Back to plugins", "chevron_left", metrics),
@@ -260,8 +263,8 @@ func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width in
 		info = append(info, h.wrappedText(detail.Description, theme.RoleBody, ui.ToneNormal, infoW, 0))
 	}
 	info = append(info,
-		pluginStoreChipSection(h, "Capabilities", detail.Capabilities, infoW),
-		pluginStoreChipSection(h, "Requires", detail.RequiredCommands, infoW),
+		pluginStoreChipSection(h, "Capabilities", detail.Capabilities, nil, infoW),
+		pluginStoreChipSection(h, "Requires", detail.RequiredCommands, detail.MissingCommands, infoW),
 	)
 	if commit := detail.CatalogCommit; commit != "" {
 		info = append(info, &ui.Node{Kind: ui.KindText, Text: "Catalog commit " + commit[:min(len(commit), 12)], TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, Tabular: true})
@@ -283,10 +286,15 @@ func pluginStoreTag(label string, fill ui.Fill, maxWidth int) *ui.Node {
 }
 
 // pluginStoreChipSection is a label over its values as chips, the way DMS
-// lists capabilities and dependencies, flowing onto more lines as needed.
-func pluginStoreChipSection(h *PanelHost, title string, values []string, width int) *ui.Node {
+// lists capabilities and dependencies, flowing onto more lines as needed. A
+// value in missing is marked as not found.
+func pluginStoreChipSection(h *PanelHost, title string, values, missing []string, width int) *ui.Node {
 	var chips []*ui.Node
 	for _, v := range values {
+		if slices.Contains(missing, v) {
+			chips = append(chips, pluginStoreTag(v+" · not found", ui.FillErrorContainer, width))
+			continue
+		}
 		chips = append(chips, pluginStoreTag(v, ui.FillContainerHighest, width))
 	}
 	body := h.flowRows(chips, width, theme.MarginXS)
@@ -447,13 +455,20 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 	r.rebuildPanel(h)
 }
 
-func (h *PanelHost) pluginStoreLeaveDetail(r *Registry) {
+// pluginStoreResetDetail drops every piece of state that belongs to one open
+// detail. Navigation must not carry a pinned consent, a live removal
+// confirmation, an old error, or a pending operation into another plugin.
+func (h *PanelHost) pluginStoreResetDetail() {
 	h.pluginStorePending = nil
 	h.pluginStoreDetail = ""
 	h.pluginStoreConsent = nil
 	h.pluginStoreRemoveConfirm = false
 	h.pluginStoreDetailErr = ""
 	h.pluginStoreDetailScroll = 0
+}
+
+func (h *PanelHost) pluginStoreLeaveDetail(r *Registry) {
+	h.pluginStoreResetDetail()
 	r.rebuildPanel(h)
 }
 
