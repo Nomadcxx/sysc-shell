@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -20,6 +21,11 @@ const (
 	PlaybackPaused
 	PlaybackPlaying
 )
+
+// maxMediaTextBytes bounds every display string copied from a player. A
+// title only needs enough text to scroll; accepting an arbitrarily large
+// property lets one player make the shell shape and rasterise it later.
+const maxMediaTextBytes = 1024
 
 const (
 	// mprisPrefix marks the bus names that are players. A session bus carries
@@ -456,6 +462,7 @@ func (m *Media) probePlayer(parent context.Context, name string) *mediaPlayer {
 	p := &mediaPlayer{}
 	p.Bus = name
 	p.Identity, _ = v.(string)
+	p.Identity = clipMediaText(p.Identity)
 
 	if v, err := m.b.Get(ctx, name, mprisPlayerIface, "Metadata"); err == nil {
 		p.title, p.artist, p.album, p.artKey, p.lengthUS, p.trackID = decodeMetadata(v)
@@ -509,6 +516,7 @@ func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64,
 		return
 	}
 	title, _ = meta["xesam:title"].(string)
+	title = clipMediaText(title)
 	switch a := meta["xesam:artist"].(type) {
 	case []string:
 		artist = strings.Join(a, ", ")
@@ -523,7 +531,9 @@ func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64,
 	case string:
 		artist = a
 	}
+	artist = clipMediaText(artist)
 	album, _ = meta["xesam:album"].(string)
+	album = clipMediaText(album)
 	switch l := meta["mpris:length"].(type) {
 	case int64:
 		lengthUS = l
@@ -540,6 +550,19 @@ func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64,
 		artKey = u
 	}
 	return
+}
+
+// clipMediaText keeps the prefix of a display string within the byte budget
+// without splitting a UTF-8 sequence.
+func clipMediaText(s string) string {
+	if len(s) <= maxMediaTextBytes {
+		return s
+	}
+	cut := maxMediaTextBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 func acceptedArtURL(raw string) bool {

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -1460,6 +1461,26 @@ func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style 
 	return nil
 }
 
+// maxMarqueeRunes bounds the run handed to shaping and rasterisation. The
+// cell clips whatever overflows, so more glyphs than this can never be seen,
+// and an unbounded run from a property or file name must not size a mask.
+const maxMarqueeRunes = 512
+
+// clipMarqueeText truncates before measurement, on a rune boundary.
+func clipMarqueeText(s string) string {
+	if utf8.RuneCountInString(s) <= maxMarqueeRunes {
+		return s
+	}
+	n := 0
+	for i := range s {
+		if n == maxMarqueeRunes {
+			return s[:i]
+		}
+		n++
+	}
+	return s
+}
+
 func marqueeMetrics(text *TextRenderer, s string, spec TextSpec, tabular bool) (advance, gap, cycle int, err error) {
 	advance, _, err = text.Measure(s, spec, tabular)
 	if err != nil {
@@ -1480,6 +1501,7 @@ func paintTextMarquee(c *Canvas, s string, box ui.Rect, text *TextRenderer, styl
 	if s == "" || box.W <= 0 || box.H <= 0 {
 		return nil
 	}
+	s = clipMarqueeText(s)
 	advance, _, cycle, err := marqueeMetrics(text, s, spec, tabular)
 	if err != nil {
 		return err
