@@ -3,6 +3,7 @@ package files
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -33,14 +34,174 @@ type Entry struct {
 
 // ListLimited lists at most limit entries and reports whether more exist.
 func ListLimited(root, dir string, limit int, hidden bool) ([]Entry, bool, error) {
-	out, err := list(root, dir, hidden)
+	if limit <= 0 {
+		return nil, false, nil
+	}
+	resolved, err := listingDir(root, dir)
 	if err != nil {
 		return nil, false, err
 	}
-	if len(out) > limit {
-		return out[:limit], true, nil
+	candidates, total, err := readListingCandidates(root, resolved, limit, hidden)
+	if err != nil {
+		return nil, false, err
 	}
-	return out, false, nil
+	out := make([]Entry, 0, limit)
+	for _, c := range candidates {
+		if len(out) == limit {
+			break
+		}
+		entry, ok := resolveCandidate(root, resolved, c)
+		if !ok {
+			continue
+		}
+		out = append(out, entry)
+	}
+	slices.SortFunc(out, compareEntries)
+	return out, total > len(out), nil
+}
+
+// listingCandidate keeps only what ordering needs. Paths and metadata are
+// resolved for the chosen page so a directory with many children cannot
+// make the panel resolve every one of them.
+type listingCandidate struct {
+	name string
+	dir  bool
+}
+
+const listingBatch = 4096
+
+// listingCandidateSlack leaves room for entries that disappear or fail to
+// resolve between the scan and the final stat.
+const listingCandidateSlack = 16
+
+func listingDir(root, dir string) (string, error) {
+	resolved, err := Contain(root, dir)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("files: stat: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("files: %s is not a directory", resolved)
+	}
+	return resolved, nil
+}
+
+func validListingName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsRune(name, 0) && !strings.ContainsAny(name, "/\\")
+}
+
+// readListingCandidates streams the directory and retains only the first
+// page worth of names from each bucket (directories then files).
+func readListingCandidates(root, resolved string, limit int, hidden bool) ([]listingCandidate, int, error) {
+	f, err := os.Open(resolved)
+	if err != nil {
+		return nil, 0, fmt.Errorf("files: read: %w", err)
+	}
+	defer f.Close()
+
+	keep := limit + listingCandidateSlack
+	dirs := make([]listingCandidate, 0, keep)
+	regular := make([]listingCandidate, 0, keep)
+	total := 0
+	for {
+		ents, readErr := f.ReadDir(listingBatch)
+		for _, ent := range ents {
+			name := ent.Name()
+			if !validListingName(name) {
+				continue
+			}
+			if name[0] == '.' && !hidden {
+				continue
+			}
+			isDir := ent.IsDir()
+			if ent.Type()&fs.ModeSymlink != 0 {
+				contained, err := Contain(root, filepath.Join(resolved, name))
+				if err != nil {
+					continue
+				}
+				st, err := os.Stat(contained)
+				if err != nil {
+					continue
+				}
+				isDir = st.IsDir()
+			}
+			total++
+			c := listingCandidate{name: name, dir: isDir}
+			if isDir {
+				dirs = append(dirs, c)
+				if len(dirs) > keep*2 {
+					dirs = firstCandidates(dirs, keep)
+				}
+			} else {
+				regular = append(regular, c)
+				if len(regular) > keep*2 {
+					regular = firstCandidates(regular, keep)
+				}
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return nil, 0, fmt.Errorf("files: read: %w", readErr)
+		}
+	}
+	candidates := append(firstCandidates(dirs, keep), firstCandidates(regular, keep)...)
+	return candidates, total, nil
+}
+
+func firstCandidates(in []listingCandidate, keep int) []listingCandidate {
+	slices.SortFunc(in, compareCandidates)
+	if len(in) > keep {
+		return in[:keep]
+	}
+	return in
+}
+
+func resolveCandidate(root, resolved string, c listingCandidate) (Entry, bool) {
+	child := filepath.Join(resolved, c.name)
+	contained, err := Contain(root, child)
+	if err != nil {
+		return Entry{}, false
+	}
+	st, err := os.Stat(contained)
+	if err != nil {
+		return Entry{}, false
+	}
+	return Entry{Name: c.name, Path: child, Target: contained, Dir: st.IsDir(), Size: st.Size(), ModTime: st.ModTime()}, true
+}
+
+func compareCandidates(a, b listingCandidate) int {
+	if a.dir != b.dir {
+		if a.dir {
+			return -1
+		}
+		return 1
+	}
+	return compareEntryNames(a.name, b.name)
+}
+
+func compareEntries(a, b Entry) int {
+	if a.Dir != b.Dir {
+		if a.Dir {
+			return -1
+		}
+		return 1
+	}
+	return compareEntryNames(a.Name, b.Name)
+}
+
+func compareEntryNames(a, b string) int {
+	if n := strings.Compare(strings.ToLower(a), strings.ToLower(b)); n != 0 {
+		return n
+	}
+	return strings.Compare(a, b)
 }
 
 // LoadErrorCopy words a folder-read failure for the panel. A folder that
@@ -67,59 +228,6 @@ func LoadErrorCopy(err error) string {
 func List(root, dir string) ([]Entry, error) {
 	out, _, err := ListLimited(root, dir, MaxEntries, false)
 	return out, err
-}
-
-// list reads dir after jailing it under root. Hidden names and symlink
-// escapes are omitted, not errors, unless hidden is set.
-func list(root, dir string, hidden bool) ([]Entry, error) {
-	resolved, err := Contain(root, dir)
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("files: stat: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("files: %s is not a directory", resolved)
-	}
-	ents, err := os.ReadDir(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("files: read: %w", err)
-	}
-	out := make([]Entry, 0, len(ents))
-	for _, ent := range ents {
-		name := ent.Name()
-		if name == "" || name == "." || name == ".." {
-			continue
-		}
-		if name[0] == '.' && !hidden {
-			continue
-		}
-		if strings.ContainsRune(name, 0) || strings.ContainsAny(name, "/\\") {
-			continue
-		}
-		child := filepath.Join(resolved, name)
-		contained, err := Contain(root, child)
-		if err != nil {
-			continue
-		}
-		st, err := os.Stat(contained)
-		if err != nil {
-			continue
-		}
-		out = append(out, Entry{Name: name, Path: child, Target: contained, Dir: st.IsDir(), Size: st.Size(), ModTime: st.ModTime()})
-	}
-	slices.SortFunc(out, func(a, b Entry) int {
-		if a.Dir != b.Dir {
-			if a.Dir {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-	})
-	return out, nil
 }
 
 // Walk moves from cwd to name (".." or a single path element) still under root.
