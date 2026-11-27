@@ -2,6 +2,7 @@ package wallpaper
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -11,7 +12,9 @@ import (
 	"io"
 	"math"
 	"os"
+	"sync"
 	"syscall"
+	"time"
 
 	_ "golang.org/x/image/webp"
 )
@@ -19,7 +22,67 @@ import (
 const (
 	MaxDepthMaskFileBytes int64 = 64 << 20
 	MaxDepthMaskPixels    int64 = 64 << 20
+	// MaxDepthMaskDecodeBytes bounds the decoded images that concurrent
+	// mask loads may hold at once. A full-size mask reserves 5 bytes per
+	// pixel plus its encoded size, so large masks are decoded one at a
+	// time instead of multiplying into gigabytes.
+	MaxDepthMaskDecodeBytes int64 = 512 << 20
+	depthMaskHeaderBytes    int64 = 1 << 20
+	depthMaskBudgetPoll           = 25 * time.Millisecond
 )
+
+// depthDecodeBudget is a weighted gate for decoded mask memory. Waiters poll
+// so a cancelled host call does not stay queued behind a large decode.
+type depthDecodeBudget struct {
+	mu       sync.Mutex
+	used     int64
+	capacity int64
+}
+
+func newDepthDecodeBudget(capacity int64) *depthDecodeBudget {
+	return &depthDecodeBudget{capacity: capacity}
+}
+
+func (b *depthDecodeBudget) acquire(ctx context.Context, n int64) error {
+	if n <= 0 {
+		n = 1
+	}
+	if n > b.capacity {
+		return fmt.Errorf("reservation %d exceeds %d-byte budget", n, b.capacity)
+	}
+	for {
+		b.mu.Lock()
+		if b.used <= b.capacity-n {
+			b.used += n
+			b.mu.Unlock()
+			return nil
+		}
+		b.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(depthMaskBudgetPoll):
+		}
+	}
+}
+
+func (b *depthDecodeBudget) release(n int64) {
+	b.mu.Lock()
+	b.used -= n
+	if b.used < 0 {
+		b.used = 0
+	}
+	b.mu.Unlock()
+}
+
+var depthMaskDecodeBudget = newDepthDecodeBudget(MaxDepthMaskDecodeBytes)
+
+func depthMaskDecodeReservation(width, height int, fileBytes int64) int64 {
+	if width <= 0 || height <= 0 {
+		return 1
+	}
+	return int64(width)*int64(height)*5 + fileBytes
+}
 
 // DepthGeometry describes the logical placement of a clock surface and the
 // wallpaper transform it must follow. Surface and output dimensions and
@@ -36,6 +99,12 @@ type DepthGeometry struct {
 // LoadDepthMask reads a bounded grayscale PNG and verifies it matches the
 // selected wallpaper's decoded header dimensions.
 func LoadDepthMask(maskPath, wallpaperPath string) (*image.Alpha, error) {
+	return LoadDepthMaskContext(context.Background(), maskPath, wallpaperPath)
+}
+
+// LoadDepthMaskContext is LoadDepthMask with a cancellation-aware wait for
+// aggregate decode memory.
+func LoadDepthMaskContext(ctx context.Context, maskPath, wallpaperPath string) (*image.Alpha, error) {
 	maskFile, err := openDepthFile(maskPath)
 	if err != nil {
 		return nil, fmt.Errorf("wallpaper: open depth mask %q: %w", maskPath, err)
@@ -48,20 +117,34 @@ func LoadDepthMask(maskPath, wallpaperPath string) (*image.Alpha, error) {
 	if info.Size() > MaxDepthMaskFileBytes {
 		return nil, fmt.Errorf("wallpaper: depth mask %q exceeds %d bytes", maskPath, MaxDepthMaskFileBytes)
 	}
-	data, err := io.ReadAll(io.LimitReader(maskFile, MaxDepthMaskFileBytes+1))
+	header, err := io.ReadAll(io.LimitReader(maskFile, depthMaskHeaderBytes))
 	if err != nil {
 		return nil, fmt.Errorf("wallpaper: read depth mask %q: %w", maskPath, err)
 	}
-	if int64(len(data)) > MaxDepthMaskFileBytes {
-		return nil, fmt.Errorf("wallpaper: depth mask %q exceeds %d bytes", maskPath, MaxDepthMaskFileBytes)
-	}
-	maskConfig, err := png.DecodeConfig(bytes.NewReader(data))
+	maskConfig, err := png.DecodeConfig(bytes.NewReader(header))
 	if err != nil {
 		return nil, fmt.Errorf("wallpaper: decode depth-mask PNG %q: %w", maskPath, err)
 	}
 	if err := validateDepthImageSize(maskConfig.Width, maskConfig.Height); err != nil {
 		return nil, fmt.Errorf("wallpaper: depth mask %q: %w", maskPath, err)
 	}
+	reservation := depthMaskDecodeReservation(maskConfig.Width, maskConfig.Height, info.Size())
+	if err := depthMaskDecodeBudget.acquire(ctx, reservation); err != nil {
+		return nil, fmt.Errorf("wallpaper: wait to decode depth mask %q: %w", maskPath, err)
+	}
+	defer depthMaskDecodeBudget.release(reservation)
+
+	remaining := MaxDepthMaskFileBytes - int64(len(header)) + 1
+	rest, err := io.ReadAll(io.LimitReader(maskFile, remaining))
+	if err != nil {
+		return nil, fmt.Errorf("wallpaper: read depth mask %q: %w", maskPath, err)
+	}
+	if int64(len(header))+int64(len(rest)) > MaxDepthMaskFileBytes {
+		return nil, fmt.Errorf("wallpaper: depth mask %q exceeds %d bytes", maskPath, MaxDepthMaskFileBytes)
+	}
+	data := make([]byte, 0, len(header)+len(rest))
+	data = append(data, header...)
+	data = append(data, rest...)
 
 	wallpaperFile, err := openDepthFile(wallpaperPath)
 	if err != nil {

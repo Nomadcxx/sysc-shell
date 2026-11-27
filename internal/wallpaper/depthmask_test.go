@@ -2,8 +2,10 @@ package wallpaper
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"image"
 	"image/gif"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func writeDepthTestImage(t *testing.T, path, format string, img image.Image) {
@@ -351,4 +354,28 @@ func pngIHDR(width, height int) []byte {
 	data[24], data[25] = 8, 0
 	binary.BigEndian.PutUint32(data[29:33], crc32.ChecksumIEEE(data[12:29]))
 	return data
+}
+
+func TestDepthDecodeBudgetReservesAndReleasesMemory(t *testing.T) {
+	budget := newDepthDecodeBudget(10)
+	if err := budget.acquire(context.Background(), 8); err != nil {
+		t.Fatalf("first reservation: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := budget.acquire(ctx, 8); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contended reservation error = %v, want deadline exceeded", err)
+	}
+	budget.release(8)
+	if err := budget.acquire(context.Background(), 8); err != nil {
+		t.Fatalf("reservation after release: %v", err)
+	}
+	budget.release(8)
+}
+
+func TestDepthDecodeBudgetRejectsOversizedReservation(t *testing.T) {
+	budget := newDepthDecodeBudget(10)
+	if err := budget.acquire(context.Background(), 11); err == nil {
+		t.Fatal("oversized reservation was accepted")
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -94,6 +95,18 @@ func TestPluginWallpaperSnapshotRevisionTracksVisibleChanges(t *testing.T) {
 	scaleChange := projection.project(snapshot, "stretch")
 	if scaleChange.Revision != stateChange.Revision+1 {
 		t.Fatalf("scale change revision = %d, want %d", scaleChange.Revision, stateChange.Revision+1)
+	}
+}
+
+func TestWallpaperMaskRejectsStaleImageBeforeDecoding(t *testing.T) {
+	f := newWallpaperMaskFixture(t, wallpaper.KindImage, false, false)
+	err := f.host.registerWallpaperMask(context.Background(), "plugin-a", v1.WallpaperMaskSetParams{
+		Output:        "DP-1",
+		WallpaperPath: f.wallpaperB,
+		MaskPath:      filepath.Join(t.TempDir(), "absent.png"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "no longer has the requested image") {
+		t.Fatalf("stale mask error = %v, want assignment refusal before decoding", err)
 	}
 }
 

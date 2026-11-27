@@ -82,6 +82,36 @@ func (h *pluginHost) wallpaperSnapshot(context.Context) (v1.WallpaperSnapshotRes
 	return h.wallpaperProjection.project(svc.Snapshot(), scale), nil
 }
 
+// checkWallpaperMaskTargetLocked verifies that a mask request still names the
+// live image assignment it was made for. The caller holds h.r.mu.
+func (h *pluginHost) checkWallpaperMaskTargetLocked(output, wallpaperPath string) error {
+	svc := h.r.wallpaperSvc
+	if svc == nil {
+		return errors.New("wallpaper service is not available")
+	}
+	if h.r.depthClocks == nil {
+		return errors.New("depth clock host is not available")
+	}
+	snapshot := svc.Snapshot()
+	if !slices.Contains(snapshot.Connectors, output) {
+		return fmt.Errorf("wallpaper output %q is unavailable", output)
+	}
+	if _, ok := h.r.outputGlobalsLocked()[output]; !ok {
+		return fmt.Errorf("wallpaper output %q has no live host", output)
+	}
+	if snapshot.Runtime[output].State == wallpaper.StateStarting {
+		return fmt.Errorf("wallpaper output %q is transitioning", output)
+	}
+	if _, covered := snapshot.Covered[output]; covered {
+		return fmt.Errorf("wallpaper output %q is covered", output)
+	}
+	assignment, ok := snapshot.Assignments[output]
+	if !ok || assignment.Kind != wallpaper.KindImage || assignment.Path != wallpaperPath {
+		return fmt.Errorf("wallpaper output %q no longer has the requested image", output)
+	}
+	return nil
+}
+
 func (h *pluginHost) registerWallpaperMask(ctx context.Context, owner string, p v1.WallpaperMaskSetParams) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -102,15 +132,21 @@ func (h *pluginHost) registerWallpaperMask(ctx context.Context, owner string, p 
 		return nil
 	}
 
-	mask, err := wallpaper.LoadDepthMask(p.MaskPath, p.WallpaperPath)
+	if owner == "" {
+		return errors.New("wallpaper depth mask owner is empty")
+	}
+	h.r.mu.Lock()
+	err := h.checkWallpaperMaskTargetLocked(p.Output, p.WallpaperPath)
+	h.r.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	mask, err := wallpaper.LoadDepthMaskContext(ctx, p.MaskPath, p.WallpaperPath)
 	if err != nil {
 		return fmt.Errorf("invalid wallpaper depth mask: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if owner == "" {
-		return errors.New("wallpaper depth mask owner is empty")
 	}
 
 	h.r.mu.Lock()
@@ -118,36 +154,9 @@ func (h *pluginHost) registerWallpaperMask(ctx context.Context, owner string, p 
 		h.r.mu.Unlock()
 		return err
 	}
-	svc := h.r.wallpaperSvc
-	if svc == nil {
+	if err := h.checkWallpaperMaskTargetLocked(p.Output, p.WallpaperPath); err != nil {
 		h.r.mu.Unlock()
-		return errors.New("wallpaper service is not available")
-	}
-	if h.r.depthClocks == nil {
-		h.r.mu.Unlock()
-		return errors.New("depth clock host is not available")
-	}
-	snapshot := svc.Snapshot()
-	if !slices.Contains(snapshot.Connectors, p.Output) {
-		h.r.mu.Unlock()
-		return fmt.Errorf("wallpaper output %q is unavailable", p.Output)
-	}
-	if _, ok := h.r.outputGlobalsLocked()[p.Output]; !ok {
-		h.r.mu.Unlock()
-		return fmt.Errorf("wallpaper output %q has no live host", p.Output)
-	}
-	if snapshot.Runtime[p.Output].State == wallpaper.StateStarting {
-		h.r.mu.Unlock()
-		return fmt.Errorf("wallpaper output %q is transitioning", p.Output)
-	}
-	if _, covered := snapshot.Covered[p.Output]; covered {
-		h.r.mu.Unlock()
-		return fmt.Errorf("wallpaper output %q is covered", p.Output)
-	}
-	assignment, ok := snapshot.Assignments[p.Output]
-	if !ok || assignment.Kind != wallpaper.KindImage || assignment.Path != p.WallpaperPath {
-		h.r.mu.Unlock()
-		return fmt.Errorf("wallpaper output %q no longer has the requested image", p.Output)
+		return err
 	}
 	descriptor := depthClockDescriptor{
 		owner: owner, wallpaperPath: p.WallpaperPath, maskPath: p.MaskPath, mask: mask,
