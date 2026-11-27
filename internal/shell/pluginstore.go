@@ -144,8 +144,10 @@ func (r *Registry) openPluginStoreLocked(from *PanelHost, key, query string) {
 		return
 	case key != "":
 		storeHost.pluginStoreSelected = key
+		storeHost.pluginStoreResetDetail()
 		storeHost.pluginStoreDetail = key
 	case query != "":
+		storeHost.pluginStoreResetDetail()
 		storeHost.search = ui.NewField(query)
 	default:
 		return

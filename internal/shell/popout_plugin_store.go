@@ -32,11 +32,7 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 		if pluginStoreHasListing(state.Listings, h.pluginStoreDetail) {
 			return pluginStoreRoot([]*ui.Node{pluginStoreDetail(r, h, h.pluginStoreDetail, inner, metrics)})
 		}
-		h.pluginStoreDetail = ""
-		h.pluginStoreConsent = nil
-		h.pluginStoreRemoveConfirm = false
-		h.pluginStoreDetailErr = ""
-		h.pluginStoreDetailScroll = 0
+		h.pluginStoreResetDetail()
 	}
 	listings := browseListings(state.Listings, h.pluginStoreQuery)
 	if !pluginStoreHasListing(listings, h.pluginStoreSelected) {
@@ -659,11 +655,8 @@ func (h *PanelHost) pluginStoreKeyPress(r *Registry, key uint32) bool {
 		h.movePluginStoreSelection(r, index+delta, listings)
 	case keyEnter:
 		if h.pluginStoreSelected != "" {
+			h.pluginStoreResetDetail()
 			h.pluginStoreDetail = h.pluginStoreSelected
-			h.pluginStoreConsent = nil
-			h.pluginStoreRemoveConfirm = false
-			h.pluginStoreDetailErr = ""
-			h.pluginStoreDetailScroll = 0
 			r.rebuildPanel(h)
 		}
 	default:
@@ -774,13 +767,9 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 		h.pluginStoreScroll = 0
 		r.rebuildPanel(h)
 	case strings.HasPrefix(n.Action, "store-open:"):
-		h.pluginStorePending = nil
 		h.pluginStoreSelected = strings.TrimPrefix(n.Action, "store-open:")
+		h.pluginStoreResetDetail()
 		h.pluginStoreDetail = h.pluginStoreSelected
-		h.pluginStoreConsent = nil
-		h.pluginStoreRemoveConfirm = false
-		h.pluginStoreDetailErr = ""
-		h.pluginStoreDetailScroll = 0
 		r.rebuildPanel(h)
 	case n.Action == "store-back":
 		h.pluginStoreLeaveDetail(r)

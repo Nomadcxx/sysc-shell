@@ -359,6 +359,49 @@ func TestPluginStoreKeyboardOpensDetailSearchesAndEscapesInOrder(t *testing.T) {
 	}
 }
 
+// Opening another detail while the store is already open must replace every
+// piece of the old detail. A stale removal confirmation could otherwise remove
+// the newly selected plugin.
+func TestPluginStoreOpenReplacesDetailState(t *testing.T) {
+	timer := modelListing("org.sysc.timer", "Timer", "sysc", "utilities", "1.4.0")
+	clock := modelListing("org.sysc.clock", "Clock", "sysc", "utilities", "1.0.0")
+	reg, host, _ := openPluginStoreTestPanel(t, store.State{Listings: []store.Listing{timer, clock}}, ui.Rect{W: 1600, H: 1000})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	timerKey, clockKey := pluginStoreKey(timer), pluginStoreKey(clock)
+	host.pluginStoreSelected = timerKey
+	host.pluginStoreDetail = timerKey
+	host.pluginStoreConsent = &pluginStorePinnedConsent{key: timerKey, listing: timer, action: ActionRemove, enabled: true}
+	host.pluginStoreRemoveConfirm = true
+	host.pluginStoreDetailErr = "old failure"
+	host.pluginStoreDetailScroll = 42
+
+	reg.openPluginStoreLocked(host, clockKey, "")
+	if host.pluginStoreSelected != clockKey || host.pluginStoreDetail != clockKey {
+		t.Fatalf("opened detail = %q/%q, want %q", host.pluginStoreSelected, host.pluginStoreDetail, clockKey)
+	}
+	if host.pluginStoreConsent != nil || host.pluginStoreRemoveConfirm || host.pluginStoreDetailErr != "" || host.pluginStoreDetailScroll != 0 {
+		t.Fatalf("old detail state survived: consent=%v confirm=%v err=%q scroll=%d",
+			host.pluginStoreConsent, host.pluginStoreRemoveConfirm, host.pluginStoreDetailErr, host.pluginStoreDetailScroll)
+	}
+	if pluginStoreFindAction(host.root, "store-confirm") != nil {
+		t.Fatal("a stale confirmation survived the detail change")
+	}
+
+	host.pluginStoreConsent = &pluginStorePinnedConsent{key: clockKey, listing: clock, action: ActionInstall, enabled: true}
+	host.pluginStoreRemoveConfirm = true
+	host.pluginStoreDetailErr = "old failure"
+	host.pluginStoreDetailScroll = 42
+	reg.openPluginStoreLocked(host, "", "timer")
+	if host.pluginStoreDetail != "" || host.pluginStoreConsent != nil || host.pluginStoreRemoveConfirm || host.pluginStoreDetailErr != "" || host.pluginStoreDetailScroll != 0 {
+		t.Fatalf("query open kept detail state: detail=%q consent=%v confirm=%v err=%q scroll=%d",
+			host.pluginStoreDetail, host.pluginStoreConsent, host.pluginStoreRemoveConfirm, host.pluginStoreDetailErr, host.pluginStoreDetailScroll)
+	}
+	if host.search == nil || host.search.Text != "timer" || host.pluginStoreQuery.Text != "timer" {
+		t.Fatalf("query open = search %v, query %q", host.search, host.pluginStoreQuery.Text)
+	}
+}
+
 func pluginStoreActivateAction(t *testing.T, reg *Registry, host *PanelHost, action string) {
 	t.Helper()
 	index := pluginStoreFocusIndex(host, action)

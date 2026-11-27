@@ -455,13 +455,20 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 	r.rebuildPanel(h)
 }
 
-func (h *PanelHost) pluginStoreLeaveDetail(r *Registry) {
+// pluginStoreResetDetail drops every piece of state that belongs to one open
+// detail. Navigation must not carry a pinned consent, a live removal
+// confirmation, an old error, or a pending operation into another plugin.
+func (h *PanelHost) pluginStoreResetDetail() {
 	h.pluginStorePending = nil
 	h.pluginStoreDetail = ""
 	h.pluginStoreConsent = nil
 	h.pluginStoreRemoveConfirm = false
 	h.pluginStoreDetailErr = ""
 	h.pluginStoreDetailScroll = 0
+}
+
+func (h *PanelHost) pluginStoreLeaveDetail(r *Registry) {
+	h.pluginStoreResetDetail()
 	r.rebuildPanel(h)
 }
 

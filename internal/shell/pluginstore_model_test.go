@@ -14,7 +14,7 @@ import (
 func modelListing(id, name, source, category, version string) store.Listing {
 	release := catalog.Release{
 		Version: version, Protocol: v1.Version{Major: 1, Minor: 0},
-		Capabilities: []string{"panels"}, Requires: catalog.Requires{Commands: []string{"notify-send"}},
+		Capabilities: []string{"panels"}, Requires: catalog.Requires{Commands: []string{"sh"}},
 		Assets: map[string]catalog.Asset{"linux-amd64": {
 			URL: "https://example.com/plugin.tar.gz", SHA256: strings.Repeat("a", 64), Size: 1,
 		}},
@@ -158,7 +158,7 @@ func TestPluginStoreDetailCarriesPinnedConsentAndStartWarning(t *testing.T) {
 	l.Entry.ReleaseNotes = "https://example.com/releases/1.4.0"
 	l.Entry.Screenshot = &catalog.Screenshot{URL: "https://example.com/timer.png", SHA256: strings.Repeat("c", 64)}
 	l.Entry.Release.Capabilities = []string{"panels", "settings"}
-	l.Entry.Release.Requires.Commands = []string{"notify-send"}
+	l.Entry.Release.Requires.Commands = []string{"sh"}
 	l.Resolution.Release = &l.Entry.Release
 	l.Resolution.AssetKey = "linux-amd64"
 	media := map[string]store.MediaState{strings.Repeat("c", 64): {Path: "/cache/timer.png"}}
@@ -177,7 +177,7 @@ func TestPluginStoreDetailCarriesPinnedConsentAndStartWarning(t *testing.T) {
 		t.Fatalf("consent lines = %v", detail.ConsentLines)
 	}
 
-	l.Installed = &store.Record{Source: "sysc", Version: "1.3.0", Capabilities: []string{"panels", "settings"}, Requires: []string{"notify-send"}}
+	l.Installed = &store.Record{Source: "sysc", Version: "1.3.0", Capabilities: []string{"panels", "settings"}, Requires: []string{"sh"}}
 	l.Status = store.StatusUpdateAvailable
 	l.UpdateAvailable = true
 	detail = detailFor(l, false, nil, "", "en")
@@ -238,7 +238,7 @@ func TestConsentCardReadsAnOldGrantWithItsMeaning(t *testing.T) {
 		t.Fatalf("install card = %v", detailFor(l, false, nil, "", "en").ConsentLines)
 	}
 	// Respelling a grant is not a change to ask about.
-	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"state-read", "state-write", "files"}, Requires: []string{"notify-send"}}
+	l.Installed = &store.Record{Source: "sysc", Version: "1.4.0", Capabilities: []string{"state-read", "state-write", "files"}, Requires: []string{"sh"}}
 	l.Status, l.UpdateAvailable = store.StatusUpdateAvailable, true
 	detail := detailFor(l, false, nil, "", "en")
 	if detail.NeedsConsent {
