@@ -185,3 +185,32 @@ func TestLoadErrorCopySeparatesVanishedFolders(t *testing.T) {
 		t.Errorf("operation failure was reworded: %q", got)
 	}
 }
+
+func TestListLimitedKeepsSortedFirstPageForLargeDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "zz-dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5000; i++ {
+		name := fmt.Sprintf("file-%04d", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, more, err := ListLimited(root, root, 200, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !more {
+		t.Fatal("large listing did not report truncation")
+	}
+	if len(entries) != 200 {
+		t.Fatalf("entries = %d, want 200", len(entries))
+	}
+	if entries[0].Name != "zz-dir" || !entries[0].Dir {
+		t.Fatalf("first entry = %+v, want zz-dir", entries[0])
+	}
+	if entries[1].Name != "file-0000" || entries[199].Name != "file-0198" {
+		t.Fatalf("page bounds = %q..%q", entries[1].Name, entries[199].Name)
+	}
+}
