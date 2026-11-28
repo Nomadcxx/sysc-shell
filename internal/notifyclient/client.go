@@ -376,6 +376,13 @@ func (c *Client) SendProducer(command protocol.Command) (uint64, error) {
 	if !c.Supports(protocol.CapabilityBatteryProducer) {
 		return 0, ErrUnsupported
 	}
+	// A service without producer-actions rejects the unknown field and with
+	// it the whole request; the toast still posts, without its buttons.
+	if p := command.Producer; p != nil && len(p.Actions) > 0 && !c.Supports(protocol.CapabilityProducerActions) {
+		stripped := *p
+		stripped.Actions = nil
+		command.Producer = &stripped
+	}
 	return c.Send(command)
 }
 

@@ -55,7 +55,7 @@ func (r *Registry) PluginWithheldToast(id, name string, c plugin.Capability) {
 	key, english := withheldToastBody(c)
 	summary := fmt.Sprintf(i18n.T(locale, "plugins.withheld_toast_summary", "%s changed since you approved it"), name)
 	body := i18n.T(locale, key, english)
-	if _, err := r.publishToast("sysc-shell:plugin-withheld:"+id, summary, body, protocol.UrgencyNormal, -1); err != nil {
+	if _, err := r.publishToast("sysc-shell:plugin-withheld:"+id, summary, body, protocol.UrgencyNormal, -1, nil); err != nil {
 		log.Printf("shell: plugin %s withheld toast: %v", id, err)
 	}
 }

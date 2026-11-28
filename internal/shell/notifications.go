@@ -278,6 +278,7 @@ func (s *notifyState) historyCount() int {
 func (r *Registry) applyNotify(m notifyclient.Message) {
 	arrived := r.notify.arrival(m)
 	r.notify.applyNotify(m)
+	r.pluginToasts.apply(m)
 	// A snapshot is the service answering: anything held back while it was
 	// unreachable, such as the startup theme apply's report, can go now.
 	if m.Kind == notifyclient.KindSnapshot {
@@ -377,6 +378,13 @@ func (r *Registry) sendNotify(c protocol.Command) error {
 	return err
 }
 
+// invokeNotifyAction sends a click on notification id to the service, which
+// closes the toast, and to the plugin that posted it, if one did.
+func (r *Registry) invokeNotifyAction(id uint32, key string) {
+	r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: key})
+	r.pluginToasts.route(id, key)
+}
+
 var errNotifyUnavailable = errors.New("notifications are not available")
 
 // notifyCommandSender is the client's Send seam: one method, so tests can
@@ -402,10 +410,9 @@ func (r *Registry) BindNotifications(sender notifyCommandSender) {
 // PluginNotify is the plugin host's notify seam: it republishes each plugin
 // toast as a producer command with a unique key, because the service replaces
 // live notifications that share one key. The reply ID is the client request
-// ID; plugins treat it as opaque.
-//
-// ponytail: v1 Actions are dropped — the producer protocol has no actions.
-func (r *Registry) PluginNotify(ctx context.Context, p v1.NotifyParams) (v1.NotifyResult, error) {
+// ID; plugins treat it as opaque. A click on one of the toast's actions goes
+// to owner as well as to the service.
+func (r *Registry) PluginNotify(ctx context.Context, owner pluginToastOwner, p v1.NotifyParams) (v1.NotifyResult, error) {
 	if r.producerSender == nil {
 		return v1.NotifyResult{}, errNotifyUnavailable
 	}
@@ -424,8 +431,14 @@ func (r *Registry) PluginNotify(ctx context.Context, p v1.NotifyParams) (v1.Noti
 	if timeout <= 0 {
 		timeout = -1 // server default; 0 would mean never expire
 	}
-	id, err := r.publishToast(fmt.Sprintf("sysc-shell:plugin-toast:%d", r.pluginNotifySeq.Add(1)),
-		p.Summary, p.Body, urgency, timeout)
+	var actions []protocol.Action
+	for _, a := range p.Actions {
+		actions = append(actions, protocol.Action{Key: a.Key, Label: a.Label})
+	}
+	id, err := r.pluginToasts.publish(owner, func() (uint64, error) {
+		return r.publishToast(fmt.Sprintf("sysc-shell:plugin-toast:%d", r.pluginNotifySeq.Add(1)),
+			p.Summary, p.Body, urgency, timeout, actions)
+	})
 	if err != nil {
 		return v1.NotifyResult{}, err
 	}
@@ -434,7 +447,7 @@ func (r *Registry) PluginNotify(ctx context.Context, p v1.NotifyParams) (v1.Noti
 
 // publishToast posts one sysc-shell toast through the service's producer
 // protocol. A timeout of -1 is the service default; 0 never expires.
-func (r *Registry) publishToast(key, summary, body string, urgency protocol.Urgency, timeoutMS int32) (uint64, error) {
+func (r *Registry) publishToast(key, summary, body string, urgency protocol.Urgency, timeoutMS int32, actions []protocol.Action) (uint64, error) {
 	if r.producerSender == nil {
 		return 0, errNotifyUnavailable
 	}
@@ -447,6 +460,7 @@ func (r *Registry) publishToast(key, summary, body string, urgency protocol.Urge
 			Body:            body,
 			Urgency:         urgency,
 			ExpireTimeoutMS: timeoutMS,
+			Actions:         actions,
 		},
 	})
 }

@@ -825,7 +825,7 @@ func (h *toastHost) drawnRect(connector string, card toastCard) ui.Rect {
 }
 
 func (h *toastHost) invoke(id uint32, key string) {
-	h.r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: key})
+	h.r.invokeNotifyAction(id, key)
 }
 func (h *toastHost) dismiss(id uint32) {
 	h.r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})

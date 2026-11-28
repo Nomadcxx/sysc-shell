@@ -173,3 +173,19 @@ func TestLocationChangedRoundTrips(t *testing.T) {
 		t.Fatalf("decoded %#v", msg)
 	}
 }
+
+func TestNotifyActionEventRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	want := NotifyActionEvent{ID: 42, Key: "keep:x"}
+	if err := NewEncoder(&buf).Encode(&want); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := NewDecoder(&buf, ToPlugin).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := msg.(*NotifyActionEvent)
+	if !ok || got.Type != TypeNotifyAction || got.ID != want.ID || got.Key != want.Key {
+		t.Fatalf("decoded %#v", msg)
+	}
+}

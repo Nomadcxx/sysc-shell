@@ -60,6 +60,7 @@ var registry = map[Direction]map[string]func() Message{
 		TypeSettingsChanged: func() Message { return &SettingsChanged{} },
 		TypeHostReply:       func() Message { return &HostReply{} },
 		TypeServiceAction:   func() Message { return &ServiceAction{} },
+		TypeNotifyAction:    func() Message { return &NotifyActionEvent{} },
 	},
 }
 
@@ -143,6 +144,8 @@ func stamp(m Message) error {
 	case *HostReply:
 		v.Type = name
 	case *ServiceAction:
+		v.Type = name
+	case *NotifyActionEvent:
 		v.Type = name
 	case *PluginHello:
 		v.Type = name

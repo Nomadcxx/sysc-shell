@@ -203,7 +203,7 @@ func (r *Registry) showPolkitToast(summary, body string) {
 		return
 	}
 	key := fmt.Sprintf("sysc-shell:polkit:%d", r.pluginNotifySeq.Add(1))
-	if _, err := r.publishToast(key, summary, body, protocol.UrgencyNormal, -1); err != nil {
+	if _, err := r.publishToast(key, summary, body, protocol.UrgencyNormal, -1, nil); err != nil {
 		log.Printf("shell: polkit toast: %v", err)
 	}
 }

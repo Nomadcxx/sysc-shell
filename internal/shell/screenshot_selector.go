@@ -263,7 +263,7 @@ func (r *Registry) finishRegion(sel *regionSelector, frame *ui.Image, crop ui.Re
 		r.screenshotToast(path, fmt.Errorf("saved to %s but not copied: %w", path, copyErr))
 	case copyErr == nil:
 		log.Print("screenshot: ", saveErr)
-		if _, err := r.publishToast(screenshotToastKey, "Screenshot copied", "Not saved: "+saveErr.Error(), protocol.UrgencyNormal, -1); err != nil {
+		if _, err := r.publishToast(screenshotToastKey, "Screenshot copied", "Not saved: "+saveErr.Error(), protocol.UrgencyNormal, -1, nil); err != nil {
 			log.Printf("screenshot toast: %v", err)
 		}
 	default:
