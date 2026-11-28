@@ -41,7 +41,9 @@ const (
 	// the mullvad and obscura marks in the project icon face.
 	// Minor 29 adds notify.action: a click on a plugin notification's button
 	// or body, delivered to the plugin that posted it.
-	ProtocolMinor = 29
+	// Minor 30 adds coloured spans on text nodes. A host below 30 refuses a
+	// node that carries them, so a plugin sends plain text to an older host.
+	ProtocolMinor = 30
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.
@@ -66,6 +68,10 @@ const ServiceActionMinor = 27
 // NotifyActionMinor is the first protocol minor that carries notify.action.
 // The host sends it only to a plugin that negotiated this minor or newer.
 const NotifyActionMinor = 29
+
+// TextSpansMinor is the first protocol minor whose hosts accept spans on a
+// text node.
+const TextSpansMinor = 30
 
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the

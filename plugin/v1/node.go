@@ -19,6 +19,7 @@ import (
 	"math"
 	"strconv"
 	"time"
+	"unicode/utf8"
 )
 
 // The version-one ceilings. They are constants rather than configuration
@@ -33,6 +34,8 @@ const (
 	MaxChildren = 256
 	// MaxTextBytes bounds the text a single node carries.
 	MaxTextBytes = 64 << 10
+	// MaxTextSpans bounds the spans a single text node carries.
+	MaxTextSpans = 64
 	// MaxInputBytes gives editable note bodies a larger, still bounded payload.
 	MaxInputBytes = 1 << 20
 	// MaxIdentBytes bounds node IDs, keys, icon names, accessible names, and
@@ -203,6 +206,13 @@ const (
 // the user's palette.
 type Tone string
 
+// TextSpan is one coloured run of a text node's content. Tone is the same
+// semantic set a node's own tone uses.
+type TextSpan struct {
+	Text string `json:"text"`
+	Tone Tone   `json:"tone,omitempty"`
+}
+
 const (
 	ToneNormal Tone = ""
 	ToneError  Tone = "error"
@@ -260,6 +270,10 @@ type Node struct {
 	// Text is a label on a button, the content of a text node, and the
 	// plugin's view of a field's value.
 	Text string `json:"text,omitempty"`
+	// Spans colour a text node's content run by run. The node measures and
+	// wraps exactly as if Text were the spans joined, so only the paint
+	// differs; Text must then be empty. Minor thirty.
+	Spans []TextSpan `json:"spans,omitempty"`
 	// Icon names a symbol from the shell's catalogue. It is a name rather than
 	// a codepoint or a path so that the shell owns which glyphs exist.
 	Icon string `json:"icon,omitempty"`
@@ -576,6 +590,9 @@ func (v *validator) nodeIn(n *Node, path string, depth int, segmentChild bool) e
 		return err
 	}
 	if err := v.minorTwentyFive(n, path); err != nil {
+		return err
+	}
+	if err := v.minorThirty(n, path); err != nil {
 		return err
 	}
 	if n.Selected && (!segmentChild || n.Kind != KindButton) {
@@ -1098,6 +1115,40 @@ func (v *validator) minorTwentyEight(n *Node, path string) error {
 	}
 	if n.Background {
 		return fmt.Errorf("%s: a background image cannot be tinted", path)
+	}
+	return nil
+}
+
+// minorThirty validates the coloured text spans that arrived with protocol
+// minor thirty.
+func (v *validator) minorThirty(n *Node, path string) error {
+	if n.Spans == nil {
+		return nil
+	}
+	if n.Kind != KindText {
+		return fmt.Errorf("%s: spans are only valid on a text node", path)
+	}
+	if n.Text != "" {
+		return fmt.Errorf("%s: a text node carries text or spans, not both", path)
+	}
+	if len(n.Spans) == 0 {
+		return fmt.Errorf("%s: spans is empty; omit it and send text", path)
+	}
+	if len(n.Spans) > MaxTextSpans {
+		return fmt.Errorf("%s: %d spans, more than the %d allowed", path, len(n.Spans), MaxTextSpans)
+	}
+	total := 0
+	for i, span := range n.Spans {
+		if !knownTones[span.Tone] {
+			return fmt.Errorf("%s.spans[%d]: unknown tone %q", path, i, span.Tone)
+		}
+		if !utf8.ValidString(span.Text) {
+			return fmt.Errorf("%s.spans[%d]: text is not valid UTF-8", path, i)
+		}
+		total += len(span.Text)
+	}
+	if total > MaxTextBytes {
+		return fmt.Errorf("%s: spans hold %d bytes, more than the %d allowed", path, total, MaxTextBytes)
 	}
 	return nil
 }
