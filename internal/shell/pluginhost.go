@@ -29,7 +29,8 @@ import (
 type PluginHostOptions struct {
 	Roots    []plugin.Root
 	StateDir string
-	Notify   func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	// Notify posts a plugin's toast; the owner hears clicks on its actions.
+	Notify func(context.Context, pluginToastOwner, v1.NotifyParams) (v1.NotifyResult, error)
 	// Launcher is the shell binary, which applies each plugin's boundary
 	// before executing it (plugin.LaunchFlag). Empty starts plugins directly.
 	Launcher string
@@ -1443,6 +1444,12 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 	if !rt.Status().Consent.Grants() {
 		withheld = plugin.WithheldChanged
 	}
+	var notify func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	if h.opts.Notify != nil {
+		notify = func(ctx context.Context, p v1.NotifyParams) (v1.NotifyResult, error) {
+			return h.opts.Notify(ctx, h.toastOwner(id, rt), p)
+		}
+	}
 	return plugin.CallEnv{
 		PluginID: id,
 		Granted:  grantedCaps(rt),
@@ -1475,7 +1482,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 			}
 			return h.closePanel(id, p)
 		},
-		Notify: h.opts.Notify,
+		Notify: notify,
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},

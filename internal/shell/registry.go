@@ -420,6 +420,8 @@ type Registry struct {
 	// pluginNotifySeq makes each plugin toast a unique producer key; the
 	// service replaces live notifications that share a key.
 	pluginNotifySeq atomic.Uint32
+	// pluginToasts routes clicks on plugin toasts back to their plugin.
+	pluginToasts pluginToasts
 	// niriScreenshot sends a screenshot action and waits for its file. Tests
 	// replace it; nil uses niri.Screenshot on $NIRI_SOCKET.
 	niriScreenshot func(ctx context.Context, action any, path string) error
@@ -1709,7 +1711,7 @@ func (r *Registry) flushTemplateToasts() {
 	}
 	r.templateMu.Unlock()
 	for key, toast := range pending {
-		if _, err := r.publishToast(key, toast.summary, toast.body, protocol.UrgencyNormal, -1); err != nil {
+		if _, err := r.publishToast(key, toast.summary, toast.body, protocol.UrgencyNormal, -1, nil); err != nil {
 			if !errors.Is(err, errNotifyUnavailable) {
 				log.Printf("shell: template toast (will retry on reconnect): %v", err)
 			}

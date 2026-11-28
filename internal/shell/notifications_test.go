@@ -359,11 +359,23 @@ func TestNotificationWithoutAnImageFallsBackToTheDesktopEntryIcon(t *testing.T) 
 type pluginToastRecorder struct {
 	mu   sync.Mutex
 	seen []protocol.Command
+	sent []protocol.Command
 	next uint64
 	err  error
 }
 
-func (s *pluginToastRecorder) Send(protocol.Command) (uint64, error) { return 0, nil }
+func (s *pluginToastRecorder) Send(c protocol.Command) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sent = append(s.sent, c)
+	return 0, nil
+}
+
+func (s *pluginToastRecorder) sentCommands() []protocol.Command {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]protocol.Command(nil), s.sent...)
+}
 
 func (s *pluginToastRecorder) SendProducer(c protocol.Command) (uint64, error) {
 	s.mu.Lock()
@@ -387,12 +399,12 @@ func TestPluginNotifyPublishesReplacingFreeToasts(t *testing.T) {
 	rec := &pluginToastRecorder{}
 	r.BindNotifications(rec)
 
-	if _, err := r.PluginNotify(context.Background(), v1.NotifyParams{
+	if _, err := r.PluginNotify(context.Background(), nil, v1.NotifyParams{
 		Summary: "Pinged Pixel", Urgency: v1.UrgencyNormal, TimeoutMS: 2500,
 	}); err != nil {
 		t.Fatalf("PluginNotify: %v", err)
 	}
-	res, err := r.PluginNotify(context.Background(), v1.NotifyParams{
+	res, err := r.PluginNotify(context.Background(), nil, v1.NotifyParams{
 		Summary: "Ringing", Body: "find me", Urgency: v1.UrgencyCritical,
 	})
 	if err != nil {
@@ -430,7 +442,7 @@ func TestPluginNotifyPublishesReplacingFreeToasts(t *testing.T) {
 
 func TestPluginNotifyWithoutClientReportsUnavailable(t *testing.T) {
 	r := NewRegistry(config.Default())
-	if _, err := r.PluginNotify(context.Background(), v1.NotifyParams{Summary: "x"}); err == nil {
+	if _, err := r.PluginNotify(context.Background(), nil, v1.NotifyParams{Summary: "x"}); err == nil {
 		t.Fatal("want error before BindNotifications")
 	}
 }
@@ -442,7 +454,7 @@ func TestPluginNotifyPostsNothingOnceCancelled(t *testing.T) {
 	r.BindNotifications(rec)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := r.PluginNotify(ctx, v1.NotifyParams{Summary: "late"}); !errors.Is(err, context.Canceled) {
+	if _, err := r.PluginNotify(ctx, nil, v1.NotifyParams{Summary: "late"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("PluginNotify = %v, want context.Canceled", err)
 	}
 	if got := rec.commands(); len(got) != 0 {

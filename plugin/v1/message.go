@@ -39,7 +39,9 @@ const (
 	// Minor 27 adds declared service actions and typed service status updates.
 	// Minor 28 adds tinted images, painted in a tone from their alpha, and
 	// the mullvad and obscura marks in the project icon face.
-	ProtocolMinor = 28
+	// Minor 29 adds notify.action: a click on a plugin notification's button
+	// or body, delivered to the plugin that posted it.
+	ProtocolMinor = 29
 )
 
 // ViewErrorMinor is the first protocol minor that carries view.error.
@@ -61,6 +63,10 @@ const LocationMinor = 26
 // and status updates.
 const ServiceActionMinor = 27
 
+// NotifyActionMinor is the first protocol minor that carries notify.action.
+// The host sends it only to a plugin that negotiated this minor or newer.
+const NotifyActionMinor = 29
+
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
 // message rather than guessing.
@@ -78,6 +84,7 @@ const (
 	TypeLocationChanged = "location.changed"
 	TypeHostReply       = "host.reply"
 	TypeServiceAction   = "service.action"
+	TypeNotifyAction    = "notify.action"
 
 	// Plugin to host.
 	TypePluginHello   = "plugin.hello"
@@ -624,6 +631,18 @@ type LocationChanged struct {
 }
 
 func (*LocationChanged) messageType() string { return TypeLocationChanged }
+
+// NotifyActionEvent reports a click on a notification this plugin posted. ID
+// is the notification service's id for it, not the notify call's result; Key
+// is the action's key, or "default" for a click on the body of a
+// notification that offered a "default" action. It carries no view revision.
+type NotifyActionEvent struct {
+	Type string `json:"type"`
+	ID   uint32 `json:"id"`
+	Key  string `json:"key"`
+}
+
+func (*NotifyActionEvent) messageType() string { return TypeNotifyAction }
 
 // ClipboardReadParams has no options: clipboard imports always read bounded
 // plain text from the current selection.

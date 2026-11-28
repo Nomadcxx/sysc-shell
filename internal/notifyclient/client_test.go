@@ -580,3 +580,44 @@ func replyEnvelope(requestID uint64, reply protocol.Reply) []byte {
 	})
 	return frame
 }
+
+// An older service rejects a producer request with an unknown field, so
+// actions go only to a service that advertises producer-actions; the toast
+// itself still posts.
+func TestSendProducerSendsActionsOnlyWithCapability(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		capabilities []string
+		wantActions  int
+	}{
+		{"older service", []string{RequiredCapability, RequiredLifetimeCapability, protocol.CapabilityBatteryProducer}, 0},
+		{"producer-actions", []string{RequiredCapability, RequiredLifetimeCapability, protocol.CapabilityBatteryProducer, protocol.CapabilityProducerActions}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := startService(t)
+			messages := make(chan Message, 32)
+			client := run(t, service.dir, messages)
+			conn := service.accept(t)
+			service.handshakeCapabilities(t, conn, tc.capabilities)
+			service.write(t, conn, snapshotEnvelope(1, "first"))
+			await(t, messages, KindSnapshot)
+
+			actions := []protocol.Action{{Key: "keep:x", Label: "Keep"}}
+			if _, err := client.SendProducer(protocol.Command{Kind: protocol.CommandProducerPublish, Producer: &protocol.ProducerRequest{
+				Key: "sysc-shell:plugin-toast:1", Summary: "Renews soon", Actions: actions,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			var decoded protocol.Command
+			if err := protocol.DecodeStrict(service.read(t, conn).Payload, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Producer == nil || len(decoded.Producer.Actions) != tc.wantActions {
+				t.Fatalf("producer = %#v, want %d actions", decoded.Producer, tc.wantActions)
+			}
+			if len(actions) != 1 {
+				t.Fatal("SendProducer changed the caller's actions")
+			}
+		})
+	}
+}

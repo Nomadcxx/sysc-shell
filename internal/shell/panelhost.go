@@ -4489,10 +4489,10 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 	case "remove":
 		r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryRemove, IDs: []uint32{id}})
 	case "default":
-		r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: "default"})
+		r.invokeNotifyAction(id, "default")
 	case "action":
 		if len(parts) == 2 {
-			r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: parts[1]})
+			r.invokeNotifyAction(id, parts[1])
 		}
 	case "link":
 		// A link in a card body is not a notification command: it hands the

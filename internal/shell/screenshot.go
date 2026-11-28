@@ -75,7 +75,7 @@ func (r *Registry) screenshotToast(path string, err error) {
 		log.Print("screenshot: ", err)
 		summary, body, urgency = "Screenshot failed", err.Error(), protocol.UrgencyCritical
 	}
-	if _, sendErr := r.publishToast(screenshotToastKey, summary, body, urgency, -1); sendErr != nil {
+	if _, sendErr := r.publishToast(screenshotToastKey, summary, body, urgency, -1, nil); sendErr != nil {
 		log.Printf("screenshot toast: %v", sendErr)
 	}
 }
