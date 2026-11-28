@@ -943,6 +943,9 @@ func copyNode(n *ui.Node) *ui.Node {
 	if len(n.Frames) > 0 {
 		c.Frames = append([]string(nil), n.Frames...)
 	}
+	if len(n.Runs) > 0 {
+		c.Runs = append([]ui.TextRun(nil), n.Runs...)
+	}
 	if len(n.Children) > 0 {
 		c.Children = make([]*ui.Node, len(n.Children))
 		for i, child := range n.Children {
@@ -984,6 +987,9 @@ func copyNodeVisible(n *ui.Node, view ui.Rect, bounded bool) *ui.Node {
 	}
 	if len(n.Frames) > 0 {
 		c.Frames = append([]string(nil), n.Frames...)
+	}
+	if len(n.Runs) > 0 {
+		c.Runs = append([]ui.TextRun(nil), n.Runs...)
 	}
 	if len(n.Children) > 0 {
 		prune := bounded && flowChildren(n.Kind)

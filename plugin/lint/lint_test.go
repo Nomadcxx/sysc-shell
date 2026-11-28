@@ -1,9 +1,12 @@
 package lint_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/plugin/lint"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -85,5 +88,43 @@ func TestTreeJudgesASizedIconAgainstTheBar(t *testing.T) {
 	hero := panelRoot(&v1.Node{Kind: v1.KindIcon, Icon: "cat-run-0", IconSize: 96})
 	if f := lint.Tree(hero, v1.ViewPanel, 360, 400); len(f) != 0 {
 		t.Fatalf("hero findings = %v, want none", f)
+	}
+}
+
+// A text node sent as coloured spans lays out exactly as the same text sent
+// whole, so a view that linted before still lints.
+func TestSpansMeasureLikeText(t *testing.T) {
+	spans := []v1.TextSpan{
+		{Text: "▒▓██▀▀▀▀▀███▄ ████ ████████████ ▄███▀▀▀▀▀████ ▒▓██ ", Tone: v1.ToneAccent},
+		{Text: "▄▄▄", Tone: v1.ToneSubtle},
+		{Text: " ██▓▒ ▒▓██▀▀▀▀▀███▄", Tone: v1.ToneAccent},
+	}
+	var whole strings.Builder
+	for _, s := range spans {
+		whole.WriteString(s.Text)
+	}
+	button := func() *v1.Node {
+		return &v1.Node{Kind: v1.KindButton, ID: "b", Text: "Add", Name: "Add", Role: "button"}
+	}
+	for _, width := range []int{758, 290} {
+		asText := panelRoot(paddedRow(42, &v1.Node{Kind: v1.KindText, Text: whole.String()}, button()))
+		asSpans := panelRoot(paddedRow(42, &v1.Node{Kind: v1.KindText, Spans: spans}, button()))
+		want := fmt.Sprint(lint.Tree(asText, v1.ViewPanel, width, 200))
+		if got := fmt.Sprint(lint.Tree(asSpans, v1.ViewPanel, width, 200)); got != want {
+			t.Fatalf("at %d px, spans lint %s, text lints %s", width, got, want)
+		}
+	}
+	text, err := plugin.Convert(panelRoot(&v1.Node{Kind: v1.KindText, Text: whole.String()}), v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spanned, err := plugin.Convert(panelRoot(&v1.Node{Kind: v1.KindText, Spans: spans}), v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tw, _ := plugin.Measure(text.Children[0].Text, ui.TextAttrsOf(text.Children[0]))
+	sw, _ := plugin.Measure(spanned.Children[0].Text, ui.TextAttrsOf(spanned.Children[0]))
+	if sw != tw || tw == 0 {
+		t.Fatalf("measured width: spans %d, text %d", sw, tw)
 	}
 }

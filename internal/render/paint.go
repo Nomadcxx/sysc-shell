@@ -427,6 +427,9 @@ func paintNodeOpacity(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	switch n.Kind {
 	case ui.KindText:
+		if len(n.Runs) > 0 && !n.Marquee {
+			return paintTextRuns(c, n, text, style)
+		}
 		if n.Marquee {
 			return paintTextMarquee(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text,
 				style, textSpec(style, n), n.Tabular, textColor(style, n.Tone), n.Underline, n.TextOffset)
@@ -1430,26 +1433,40 @@ func SpecFor(style Style, attrs ui.TextAttrs) TextSpec {
 }
 
 func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, spec TextSpec, tabular bool, fg Color, underline bool) error {
-	if s == "" || box.W <= 0 {
-		return nil
-	}
-	fitted, _, err := text.Truncate(s, spec, box.W, tabular)
-	if err != nil {
-		return err
-	}
-	if fitted == "" {
-		return nil // not even an ellipsis fits
-	}
-	// Raster with the same flag measurement used, or the drawn run and the
-	// space reserved for it would disagree.
-	mask, err := text.Raster(fitted, spec, tabular)
-	if err != nil {
+	fitted, mask, err := fitText(s, box, text, spec, tabular)
+	if err != nil || fitted == "" {
 		return err
 	}
 	// Weight and slant are resolved faces now, not a re-blend at an offset
 	// and a sheared mask. The scanner returns the closest cut it has, so a
 	// family with no bold degrades to its regular rather than to a smear.
 	blendMask(c, mask.Alpha, box.X, box.Y, fg)
+	finishText(c, mask, box, spec, fg, underline)
+	return nil
+}
+
+// fitText truncates s to box and rasterises what is left. An empty result
+// means nothing fits, not even an ellipsis.
+func fitText(s string, box ui.Rect, text *TextRenderer, spec TextSpec, tabular bool) (string, Mask, error) {
+	if s == "" || box.W <= 0 {
+		return "", Mask{}, nil
+	}
+	fitted, _, err := text.Truncate(s, spec, box.W, tabular)
+	if err != nil || fitted == "" {
+		return "", Mask{}, err
+	}
+	// Raster with the same flag measurement used, or the drawn run and the
+	// space reserved for it would disagree.
+	mask, err := text.Raster(fitted, spec, tabular)
+	if err != nil {
+		return "", Mask{}, err
+	}
+	return fitted, mask, nil
+}
+
+// finishText paints what a text mask carries beyond coverage: colour glyphs
+// and the underline.
+func finishText(c *Canvas, mask Mask, box ui.Rect, spec TextSpec, fg Color, underline bool) {
 	if mask.Color != nil {
 		paintImage(c, ui.Rect{X: box.X, Y: box.Y, W: mask.Color.Width, H: mask.Color.Height}, mask.Color)
 	}
@@ -1458,6 +1475,43 @@ func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style 
 		rule := ui.Rect{X: box.X, Y: box.Y + box.H - th, W: min(mask.Advance, box.W), H: th}
 		fillRect(c, rule, fg)
 	}
+}
+
+// paintTextRuns paints a text node whose runs carry their own tones. The text
+// is truncated and rasterised whole, as paintText does, so every glyph lands
+// where the plain text's would; the runs only split that one mask into
+// column bands. A run truncation cut off gives way to the run before it,
+// which also colours the ellipsis.
+func paintTextRuns(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	spec := textSpec(style, n)
+	fitted, mask, err := fitText(n.Text, box, text, spec, n.Tabular)
+	if err != nil || fitted == "" {
+		return err
+	}
+	kept := len(fitted)
+	if fitted != n.Text {
+		kept -= len(ellipsis)
+	}
+	width := mask.Alpha.Bounds().Dx()
+	height := mask.Alpha.Bounds().Dy()
+	x := 0
+	for i, run := range n.Runs {
+		end := width
+		if i+1 < len(n.Runs) && n.Runs[i+1].Start < kept {
+			w, _, err := text.Measure(fitted[:run.End], spec, n.Tabular)
+			if err != nil {
+				return err
+			}
+			end = min(w, width)
+		}
+		blendMaskBand(c, mask.Alpha, ui.Rect{X: x, W: end - x, H: height}, box.X, box.Y, textColor(style, run.Tone))
+		if end == width {
+			break
+		}
+		x = end
+	}
+	finishText(c, mask, box, spec, textColor(style, n.Tone), n.Underline)
 	return nil
 }
 

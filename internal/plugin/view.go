@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -141,6 +142,9 @@ func cloneNode(n *v1.Node) *v1.Node {
 	}
 	if n.Accept != nil {
 		out.Accept = append([]string(nil), n.Accept...)
+	}
+	if n.Spans != nil {
+		out.Spans = append([]v1.TextSpan(nil), n.Spans...)
 	}
 	if len(n.Children) > 0 {
 		out.Children = make([]*v1.Node, len(n.Children))
@@ -307,16 +311,7 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 		Absent:      n.Absent,
 		Placeholder: n.Placeholder,
 	}
-	switch n.Tone {
-	case v1.ToneError:
-		out.Tone = ui.ToneError
-	case v1.ToneSubtle:
-		out.Tone = ui.ToneSubtle
-	case v1.ToneAccent:
-		out.Tone = ui.ToneAccent
-	case v1.ToneWarning:
-		out.Tone = ui.ToneWarning
-	}
+	out.Tone = uiTone(n.Tone)
 
 	if n.Fill != "" {
 		fill, ok := wireFills[n.Fill]
@@ -377,6 +372,9 @@ func convertNode(n *v1.Node, path string, view v1.ViewKind) (*ui.Node, error) {
 	case v1.KindText:
 		out.Kind = ui.KindText
 		out.Text = n.Text
+		if len(n.Spans) > 0 {
+			out.Text, out.Runs = joinSpans(n.Spans)
+		}
 	case v1.KindIcon:
 		icon, err := iconNode(n.Icon, path)
 		if err != nil {
@@ -668,4 +666,33 @@ func card(out *ui.Node) *ui.Node {
 	out.Fill, out.Radius = ui.FillNone, 0
 	out.Stroke, out.StrokeFill = 0, ui.FillNone
 	return wrapper
+}
+
+// uiTone maps a wire tone onto the shell's. Validation has already refused
+// any tone outside the set.
+func uiTone(t v1.Tone) ui.Tone {
+	switch t {
+	case v1.ToneError:
+		return ui.ToneError
+	case v1.ToneSubtle:
+		return ui.ToneSubtle
+	case v1.ToneAccent:
+		return ui.ToneAccent
+	case v1.ToneWarning:
+		return ui.ToneWarning
+	}
+	return ui.ToneNormal
+}
+
+// joinSpans gives a span node the text it measures as, the spans joined, and
+// the byte range each span colours within it.
+func joinSpans(spans []v1.TextSpan) (string, []ui.TextRun) {
+	var b strings.Builder
+	runs := make([]ui.TextRun, 0, len(spans))
+	for _, s := range spans {
+		start := b.Len()
+		b.WriteString(s.Text)
+		runs = append(runs, ui.TextRun{Start: start, End: b.Len(), Tone: uiTone(s.Tone)})
+	}
+	return b.String(), runs
 }

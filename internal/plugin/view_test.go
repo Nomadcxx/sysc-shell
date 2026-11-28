@@ -1488,3 +1488,35 @@ func TestConvertMakesProjectGlyphsIconsInEveryView(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertSpansSetsRuns(t *testing.T) {
+	spans := []v1.TextSpan{
+		{Text: "▒▓██ ", Tone: v1.ToneAccent},
+		{Text: "▄▄▄", Tone: v1.ToneSubtle},
+		{Text: " ██", Tone: v1.ToneNormal},
+	}
+	root, err := Convert(&v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindText, Spans: spans}}}, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := root.Children[0]
+	if n.Text != "▒▓██ ▄▄▄ ██" {
+		t.Fatalf("text = %q, want the spans joined", n.Text)
+	}
+	want := []ui.TextRun{
+		{Start: 0, End: len("▒▓██ "), Tone: ui.ToneAccent},
+		{Start: len("▒▓██ "), End: len("▒▓██ ▄▄▄"), Tone: ui.ToneSubtle},
+		{Start: len("▒▓██ ▄▄▄"), End: len(n.Text), Tone: ui.ToneNormal},
+	}
+	if !reflect.DeepEqual(n.Runs, want) {
+		t.Fatalf("runs = %+v, want %+v", n.Runs, want)
+	}
+
+	plain, err := Convert(&v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindText, Text: "x"}}}, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Children[0].Runs != nil {
+		t.Fatalf("a plain text node grew runs: %+v", plain.Children[0].Runs)
+	}
+}

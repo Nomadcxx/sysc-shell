@@ -1286,3 +1286,41 @@ func TestValidateAcceptsTintedImages(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// bitsubArtRow is the first row of bitsub's header art as it sends it: block
+// glyphs in two tones, about 160 bytes for 49 runes.
+var bitsubArtRow = []TextSpan{
+	{Text: "▒▓██▀▀▀▀▀███▄ ████ ████████████ ▄███▀▀▀▀▀████ ▒▓██ ", Tone: ToneAccent},
+	{Text: "▄▄▄", Tone: ToneSubtle},
+	{Text: " ██▓▒ ▒▓██▀▀▀▀▀███▄", Tone: ToneAccent},
+}
+
+func TestSpansValidation(t *testing.T) {
+	panel := func(n *Node) *Node { return &Node{Kind: KindColumn, Children: []*Node{n}} }
+	tooMany := make([]TextSpan, MaxTextSpans+1)
+	for i := range tooMany {
+		tooMany[i] = TextSpan{Text: "x"}
+	}
+	for name, tc := range map[string]struct {
+		node *Node
+		want string
+	}{
+		"spans on a row": {&Node{Kind: KindRow, Spans: bitsubArtRow}, "root.children[0]: spans"},
+		"text and spans": {&Node{Kind: KindText, Text: "x", Spans: bitsubArtRow}, "root.children[0]: "},
+		"empty spans":    {&Node{Kind: KindText, Spans: []TextSpan{}}, "root.children[0]: "},
+		"65 spans":       {&Node{Kind: KindText, Spans: tooMany}, "root.children[0]: "},
+		"unknown tone":   {&Node{Kind: KindText, Spans: []TextSpan{{Text: "x", Tone: "purple"}}}, "root.children[0].spans[0]: "},
+		"invalid utf-8":  {&Node{Kind: KindText, Spans: []TextSpan{{Text: "ok"}, {Text: "\xff"}}}, "root.children[0].spans[1]: "},
+		"too many bytes": {&Node{Kind: KindText, Spans: []TextSpan{{Text: strings.Repeat("x", MaxTextBytes)}, {Text: "y"}}}, "root.children[0]: "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := Validate(panel(tc.node), ViewPanel)
+			if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want an error starting %q", err, tc.want)
+			}
+		})
+	}
+	if err := Validate(panel(&Node{Kind: KindText, Spans: bitsubArtRow}), ViewPanel); err != nil {
+		t.Fatalf("art row rejected: %v", err)
+	}
+}

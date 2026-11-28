@@ -225,6 +225,9 @@ type GradientPaint struct {
 type Node struct {
 	Kind Kind
 	Text string
+	// Runs colour byte ranges of a text node's Text, in order and covering it.
+	// Layout ignores them; only the painter reads them.
+	Runs []TextRun
 	// Placeholder is input guidance painted only while Text is empty. Name
 	// remains the accessible identity.
 	Placeholder string
@@ -616,6 +619,12 @@ const (
 // is still a value and stays normal, carrying its age in the text; the muted
 // token measures 1.47:1 against the background and cannot carry text at all.
 type Tone uint8
+
+// TextRun paints Text[Start:End] of a text node in Tone.
+type TextRun struct {
+	Start, End int
+	Tone       Tone
+}
 
 const (
 	ToneNormal Tone = iota
